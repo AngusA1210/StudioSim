@@ -1,0 +1,136 @@
+extends Node3D
+## One instrument in the room: its body, stand, label and light, plus its sound source in the audio core.
+## The node's origin is where the sound comes from.
+
+var kind := ""
+var display_name := ""
+var color := Color.WHITE
+var size := Vector3.ONE
+var playable := false
+var source_id := -1
+var muted := false
+var carried := false
+var visibility := 1.0
+var glow := 0.0
+
+var _audio: SoundRoomAudio
+var _spin := 0.0
+var _body: MeshInstance3D
+var _body_material: StandardMaterial3D
+var _stand: MeshInstance3D
+var _foot: MeshInstance3D
+var _light: OmniLight3D
+var _label: Label3D
+var _collider: CollisionShape3D
+var _sent_position := Vector3.INF
+var _sent_visibility := -1.0
+
+
+func setup(spec: Dictionary, audio: SoundRoomAudio) -> void:
+	_audio = audio
+	kind = spec.kind
+	display_name = spec.name
+	color = spec.color
+	size = spec.size
+	playable = spec.get("playable", false)
+	_spin = spec.get("spin", 0.0)
+	name = display_name
+	position = spec.position
+
+	_body_material = StandardMaterial3D.new()
+	_body_material.albedo_color = color.darkened(0.7)
+	_body_material.emission_enabled = true
+	_body_material.emission = color
+	_body = _box(size, _body_material)
+	if _spin != 0.0:
+		_body.rotation.y = PI / 4
+
+	var stand_material := StandardMaterial3D.new()
+	stand_material.albedo_color = Color(0.03, 0.032, 0.04)
+	_stand = _box(Vector3(0.07, 1.0, 0.07), stand_material)
+	_foot = _box(Vector3(0.5, 0.05, 0.5), stand_material)
+
+	_light = OmniLight3D.new()
+	_light.light_color = color
+	_light.omni_range = 5.0
+	add_child(_light)
+
+	_label = Label3D.new()
+	_label.text = display_name
+	_label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	_label.font_size = 40
+	_label.pixel_size = 0.004
+	_label.outline_size = 10
+	_label.modulate = color.lightened(0.35)
+	_label.position = Vector3(0, size.y / 2 + 0.3, 0)
+	add_child(_label)
+
+	# Something solid to bump into, on the default layer only (sound passes through instruments).
+	var body := StaticBody3D.new()
+	_collider = CollisionShape3D.new()
+	var cylinder := CylinderShape3D.new()
+	cylinder.radius = 0.4
+	cylinder.height = 2.0
+	_collider.shape = cylinder
+	body.add_child(_collider)
+	add_child(body)
+
+	source_id = audio.add_source(kind, position, spec.gain, spec.send)
+
+
+func _process(delta: float) -> void:
+	var target := minf(1.0, sqrt(_audio.get_source_level(source_id)) * 1.6)
+	glow = lerpf(glow, target, minf(1.0, delta * (40.0 if target > glow else 7.0)))
+	var on := 0.0 if muted else 1.0
+	_body_material.emission_energy_multiplier = 0.03 + (0.3 + 2.4 * glow) * on
+	_light.light_energy = (0.12 + 2.2 * glow) * on
+	_body.scale = Vector3.ONE * (1.0 + 0.07 * glow)
+	if _spin != 0.0:
+		_body.rotate_y(_spin * delta * (0.4 + 2.0 * glow))
+	_update_stand()
+	if not global_position.is_equal_approx(_sent_position):
+		_sent_position = global_position
+		_audio.set_source_position(source_id, global_position)
+
+
+func set_visibility(value: float) -> void:
+	# Smoothed in the audio core; only resend when it actually changes.
+	visibility = value
+	if absf(value - _sent_visibility) > 0.01:
+		_sent_visibility = value
+		_audio.set_source_visibility(source_id, value)
+
+
+func set_muted(value: bool) -> void:
+	muted = value
+	_audio.set_source_muted(source_id, value)
+	_label.text = display_name + ("  (muted)" if value else "")
+	_label.modulate.a = 0.55 if value else 1.0
+
+
+func set_carried(value: bool) -> void:
+	carried = value
+	_collider.disabled = value
+
+
+func set_highlighted(value: bool) -> void:
+	_label.outline_modulate = color.darkened(0.2) if value else Color(0, 0, 0, 0.85)
+
+
+func _update_stand() -> void:
+	var bottom := global_position.y - size.y / 2
+	_stand.visible = not carried and bottom > 0.02
+	_foot.visible = _stand.visible
+	_stand.scale.y = maxf(bottom, 0.01)
+	_stand.position.y = -size.y / 2 - bottom / 2
+	_foot.position.y = -global_position.y + 0.025
+
+
+func _box(box_size: Vector3, material: Material) -> MeshInstance3D:
+	var mesh := MeshInstance3D.new()
+	var box := BoxMesh.new()
+	box.size = box_size
+	mesh.mesh = box
+	mesh.material_override = material
+	add_child(mesh)
+	return mesh

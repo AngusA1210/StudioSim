@@ -1,0 +1,4 @@
+[submodule "audio_core/thirdparty/godot-cpp"]
+	path = audio_core/thirdparty/godot-cpp
+	url = https://github.com/godotengine/godot-cpp.git
+	branch = 4.5

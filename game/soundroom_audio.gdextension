@@ -1,0 +1,24 @@
+[configuration]
+
+entry_symbol = "soundroom_audio_init"
+compatibility_minimum = "4.5"
+; The extension owns a real-time audio thread, so it is not safe to hot-reload.
+reloadable = false
+
+[libraries]
+
+macos.debug = "res://bin/libsoundroom_audio.dylib"
+macos.release = "res://bin/libsoundroom_audio.dylib"
+windows.debug.x86_64 = "res://bin/soundroom_audio.dll"
+windows.release.x86_64 = "res://bin/soundroom_audio.dll"
+linux.debug.x86_64 = "res://bin/libsoundroom_audio.so"
+linux.release.x86_64 = "res://bin/libsoundroom_audio.so"
+
+[dependencies]
+
+macos.debug = { "res://bin/libphonon.dylib" : "" }
+macos.release = { "res://bin/libphonon.dylib" : "" }
+windows.debug.x86_64 = { "res://bin/phonon.dll" : "" }
+windows.release.x86_64 = { "res://bin/phonon.dll" : "" }
+linux.debug.x86_64 = { "res://bin/libphonon.so" : "" }
+linux.release.x86_64 = { "res://bin/libphonon.so" : "" }

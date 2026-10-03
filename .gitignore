@@ -1,0 +1,12 @@
+# Godot's import cache
+game/.godot/
+
+# Build output (the extension and Steam Audio are copied into game/bin by the build)
+audio_core/build/
+game/bin/
+
+# Third-party downloads, fetched by tools/fetch_deps.sh
+audio_core/thirdparty/steamaudio/
+audio_core/thirdparty/miniaudio/
+
+.DS_Store

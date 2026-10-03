@@ -1,0 +1,861 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sound Room · Phase 0 prototype</title>
+<style>
+  :root {
+    --ink: #e9ecf5; --dim: #9aa1b8;
+    --panel: rgba(13, 15, 23, .78); --line: rgba(255, 255, 255, .12);
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; height: 100%; overflow: hidden; background: #07080c; color: var(--ink);
+    font: 13px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    -webkit-user-select: none; user-select: none;
+  }
+  #gl { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+  .hidden { display: none !important; }
+  kbd {
+    display: inline-block; min-width: 1.7em; padding: 0 .45em; margin: 0 1px;
+    border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px;
+    background: rgba(255, 255, 255, .07); color: var(--ink);
+    font: 600 11px/1.65 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; text-align: center;
+  }
+  .panel {
+    position: fixed; padding: 10px 12px; background: var(--panel);
+    border: 1px solid var(--line); border-radius: 10px;
+    -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+  }
+
+  #status { top: 14px; left: 14px; min-width: 236px; }
+  #status div { display: flex; align-items: center; gap: 8px; height: 23px; color: var(--dim); }
+  #status b { margin-left: auto; color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+  #status b.off, #st-warn { color: #ff9b7a; }
+
+  #mapbox { top: 14px; right: 14px; padding: 8px 8px 9px; }
+  #map { display: block; width: 176px; height: 128px; }
+  .meter { display: flex; align-items: center; gap: 6px; margin-top: 5px; color: var(--dim); font: 600 10px/1 ui-monospace, Menlo, monospace; }
+  .meter i { flex: 1; height: 5px; border-radius: 3px; background: rgba(255, 255, 255, .09); overflow: hidden; }
+  .meter u { display: block; height: 100%; width: 0; border-radius: 3px; background: #7ce3d0; }
+
+  #help { left: 14px; bottom: 14px; display: grid; grid-template-columns: auto auto; gap: 4px 12px; align-items: center; color: var(--dim); }
+  #help span:nth-child(odd) { text-align: right; white-space: nowrap; }
+
+  #cross {
+    position: fixed; left: 50%; top: 50%; width: 6px; height: 6px; margin: -3px 0 0 -3px;
+    border-radius: 50%; border: 1.5px solid rgba(255, 255, 255, .8); pointer-events: none;
+  }
+  #hint, #resume {
+    position: fixed; left: 50%; padding: 5px 13px; border-radius: 99px; white-space: nowrap; pointer-events: none;
+    background: var(--panel); border: 1px solid var(--line);
+  }
+  #hint { top: 50%; transform: translate(-50%, 26px); }
+  #hint:empty { display: none; }
+  #resume { top: 16px; transform: translateX(-50%); color: var(--dim); }
+
+  .label {
+    position: fixed; left: 0; top: 0; padding: 2px 10px 2px 8px; border-radius: 99px; white-space: nowrap;
+    pointer-events: none; background: rgba(10, 12, 18, .72); border: 1px solid var(--line);
+    font-weight: 600; font-size: 12px; will-change: transform;
+  }
+  .label::before { content: ""; display: inline-block; width: 7px; height: 7px; margin-right: 6px; border-radius: 50%; background: var(--c); }
+  .label.target { border-color: var(--c); }
+  .label.muted { color: var(--dim); }
+  .label.muted::before { background: transparent; box-shadow: inset 0 0 0 1.5px var(--dim); }
+
+  #piano { left: 50%; bottom: 18px; transform: translateX(-50%); padding: 10px 12px 12px; }
+  #piano p { margin: 0 0 9px; color: var(--dim); text-align: center; }
+  #kb { position: relative; width: 438px; height: 104px; }
+  #kb div {
+    position: absolute; top: 0; display: flex; align-items: flex-end; justify-content: center; padding-bottom: 7px;
+    border-radius: 0 0 5px 5px; font: 600 11px/1 ui-monospace, Menlo, monospace;
+  }
+  #kb .w { width: 42px; height: 104px; background: #e9ecf5; color: #555b70; }
+  #kb .k { width: 28px; height: 64px; background: #171a26; color: #9aa1b8; box-shadow: 0 0 0 1px #000; z-index: 1; }
+  #kb .on { background: #ff7ad1; color: #2a0d20; }
+
+  #overlay {
+    position: fixed; inset: 0; display: grid; place-items: center; background: rgba(5, 6, 10, .66);
+    -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px);
+  }
+  .card {
+    width: min(540px, calc(100vw - 32px)); padding: 28px 30px 24px; border-radius: 16px;
+    background: rgba(15, 17, 26, .94); border: 1px solid var(--line);
+  }
+  .card small { color: #7ce3d0; font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
+  .card h1 { margin: 6px 0 10px; font-size: 30px; font-weight: 650; letter-spacing: -.01em; }
+  .card p { margin: 0 0 12px; color: var(--dim); font-size: 14px; line-height: 1.55; }
+  .card p.phones { color: var(--ink); }
+  .card button {
+    margin-top: 6px; padding: 11px 22px; border: 0; border-radius: 10px; cursor: pointer;
+    background: #7ce3d0; color: #06231d; font: 650 15px/1 inherit; font-family: inherit;
+  }
+  .card button:hover { background: #9af0df; }
+  .card ul {
+    list-style: none; margin: 20px 0 0; padding: 16px 0 0; border-top: 1px solid var(--line);
+    display: grid; grid-template-columns: 1fr 1fr; gap: 7px 18px; color: var(--dim);
+  }
+  #err { color: #ff9b7a; }
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<div id="labels"></div>
+<div id="cross"></div>
+<div id="hint"></div>
+<div id="resume" class="hidden">Click to capture the mouse, or drag to look</div>
+
+<div id="status" class="panel">
+  <div>Binaural (HRTF) <b id="st-hrtf">on</b><kbd>B</kbd></div>
+  <div>Room reverb <b id="st-rev">on</b><kbd>R</kbd></div>
+  <div>Keys fast path <b id="st-fast">on</b><kbd>M</kbd></div>
+  <div>Output latency <b id="st-lat">–</b></div>
+  <div id="st-warn" class="hidden">Slow output device. Wired headphones fix this.</div>
+</div>
+
+<div id="mapbox" class="panel">
+  <canvas id="map" width="352" height="256"></canvas>
+  <div class="meter">L<i><u id="mL"></u></i></div>
+  <div class="meter">R<i><u id="mR"></u></i></div>
+</div>
+
+<div id="help" class="panel">
+  <span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></span><span>move · <kbd>Shift</kbd> run</span>
+  <span>mouse</span><span>look around</span>
+  <span><kbd>G</kbd> or click</span><span>carry an instrument, put it down</span>
+  <span><kbd>F</kbd></span><span>mute the one you are looking at</span>
+  <span><kbd>E</kbd></span><span>play the Keys when you are next to them</span>
+</div>
+
+<div id="piano" class="panel hidden">
+  <p><kbd>Q</kbd> stop playing · <kbd>Z</kbd><kbd>X</kbd> octave · lowest key is <span id="oct">C4</span></p>
+  <div id="kb"></div>
+</div>
+
+<div id="overlay">
+  <div class="card">
+    <small>Phase 0 · throwaway prototype</small>
+    <h1>Sound Room</h1>
+    <p>Four instruments play on one shared clock from fixed spots in this room, and a fifth is yours to play. Walk around and listen to how the mix changes with where you stand and which way you face.</p>
+    <p class="phones">Use headphones. Binaural audio falls apart on speakers.</p>
+    <button id="go">Enter the room</button>
+    <p id="err"></p>
+    <ul>
+      <li><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move, mouse to look</li>
+      <li><kbd>G</kbd> or click: carry an instrument</li>
+      <li><kbd>E</kbd> play the Keys up close</li>
+      <li><kbd>F</kbd> mute an instrument</li>
+      <li><kbd>B</kbd> binaural on / off</li>
+      <li><kbd>R</kbd> room reverb on / off</li>
+    </ul>
+  </div>
+</div>
+
+<script>
+(() => {
+'use strict';
+
+/* ─────────── World ─────────── */
+const ROOM = { hx: 7, hz: 5, h: 4 };                               // half-extents and ceiling height, metres
+const WALL = { x0: -2.65, x1: -2.35, z0: -3.4, z1: -0.4, h: 3 };   // free-standing partition
+const EYE = 1.65, RADIUS = 0.3, REACH = 4.2, PLAY_REACH = 2.8;
+const REF_DIST = 1.5;          // a source is at full level inside this distance and falls as 1/d beyond it
+const REVERB_LEVEL = 0.16, MASTER = 0.85;
+const LIMITER_MAKEUP = 1.545;  // gain the limiter adds to anything under its threshold (measured in Chromium)
+const FAST_TRIM = 1.38;        // makes the Keys as loud on the fast path as on the binaural one (measured)
+const BPM = 92, STEP = 60 / BPM / 4, SWING = 0.14;
+
+const player = { x: 0, z: 3.6, yaw: 0, pitch: 0 };
+const instruments = [
+  { id: 'drums', name: 'Drums', color: [1.00, 0.42, 0.26], x:  0.5, y: 0.90, z: -3.6, size: [0.90, 0.60, 0.90], gain: 0.50, send: 0.6 },
+  { id: 'bass',  name: 'Bass',  color: [0.58, 0.44, 1.00], x: -5.0, y: 1.00, z: -2.0, size: [0.70, 1.20, 0.50], gain: 0.38, send: 0.4 },
+  { id: 'pad',   name: 'Pad',   color: [0.25, 0.84, 0.75], x:  4.8, y: 1.60, z: -1.6, size: [0.60, 0.60, 0.60], gain: 1.00, send: 1.0, spin: 0.25 },
+  { id: 'bells', name: 'Bells', color: [1.00, 0.82, 0.29], x: -4.6, y: 1.60, z:  2.4, size: [0.42, 0.42, 0.42], gain: 0.42, send: 1.0, spin: -0.6 },
+  { id: 'keys',  name: 'Keys',  color: [1.00, 0.48, 0.82], x:  3.0, y: 0.95, z:  1.8, size: [1.30, 0.12, 0.42], gain: 0.20, send: 0.9, playable: true },
+];
+const byId = {};
+for (const i of instruments) {
+  byId[i.id] = i; i.glow = 0; i.occ = 0; i.muted = false; i.rot = 0; i.dist = 0;
+  i.lin = i.color.map(v => Math.pow(v, 2.2));   // the colours above are sRGB; shading happens in linear light
+}
+
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+const $ = id => document.getElementById(id);
+
+/* ─────────── Rendering (WebGL 2, boxes only) ─────────── */
+const canvas = $('gl');
+const gl = canvas.getContext('webgl2', { antialias: true });
+if (!gl) { $('err').textContent = 'This prototype needs WebGL 2. Try a current Chrome, Edge, Firefox or Safari.'; return; }
+
+const VS = `#version 300 es
+layout(location = 0) in vec3 aPos;
+layout(location = 1) in vec3 aNor;
+uniform mat4 uVP, uModel;
+uniform mat3 uNormal;
+out vec3 vWorld, vNor;
+void main() {
+  vec4 w = uModel * vec4(aPos, 1.0);
+  vWorld = w.xyz; vNor = uNormal * aNor;
+  gl_Position = uVP * w;
+}`;
+const FS = `#version 300 es
+precision highp float;
+in vec3 vWorld, vNor;
+uniform vec3 uColor, uEmissive, uCam;
+uniform float uGrid;
+uniform vec3 uLightPos[5];
+uniform vec3 uLightCol[5];
+out vec4 frag;
+void main() {
+  vec3 n = normalize(vNor);
+  vec3 base = uColor;
+  if (uGrid > 0.5) {                       // one-metre grid on the room surfaces
+    vec2 p = abs(n.y) > 0.5 ? vWorld.xz : (abs(n.x) > 0.5 ? vWorld.zy : vWorld.xy);
+    vec2 g = abs(fract(p - 0.5) - 0.5) / fwidth(p);
+    base += vec3(0.03, 0.034, 0.046) * (1.0 - min(min(g.x, g.y), 1.0));
+  }
+  vec3 col = base * mix(vec3(0.30, 0.31, 0.38), vec3(0.80, 0.83, 0.95), n.y * 0.5 + 0.5);
+  for (int i = 0; i < 5; i++) {            // every instrument lights the room with its own sound level
+    vec3 L = uLightPos[i] - vWorld;
+    float d2 = dot(L, L);
+    float ndl = max(dot(n, L) * inversesqrt(d2 + 1e-4), 0.0) * 0.85 + 0.15;
+    col += base * uLightCol[i] * ndl / (1.0 + 0.3 * d2);
+  }
+  col += uEmissive;
+  col = mix(col, vec3(0.012, 0.014, 0.02), 1.0 - exp(-length(vWorld - uCam) * 0.035));
+  col = vec3(1.0) - exp(-col * 1.5);
+  frag = vec4(pow(col, vec3(0.4545)), 1.0);
+}`;
+
+function compile(type, src) {
+  const s = gl.createShader(type);
+  gl.shaderSource(s, src); gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+  return s;
+}
+const prog = gl.createProgram();
+gl.attachShader(prog, compile(gl.VERTEX_SHADER, VS));
+gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, FS));
+gl.linkProgram(prog);
+if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+gl.useProgram(prog);
+const U = {};
+for (const n of ['uVP', 'uModel', 'uNormal', 'uColor', 'uEmissive', 'uGrid', 'uCam', 'uLightPos', 'uLightCol']) U[n] = gl.getUniformLocation(prog, n);
+
+{ // unit cube: each face is [normal, u, v] with u × v = normal, so the quad winds counter-clockwise from outside
+  const faces = [
+    [[1, 0, 0], [0, 1, 0], [0, 0, 1]], [[-1, 0, 0], [0, 0, 1], [0, 1, 0]],
+    [[0, 1, 0], [0, 0, 1], [1, 0, 0]], [[0, -1, 0], [1, 0, 0], [0, 0, 1]],
+    [[0, 0, 1], [1, 0, 0], [0, 1, 0]], [[0, 0, -1], [0, 1, 0], [1, 0, 0]],
+  ];
+  const v = [];
+  for (const [n, a, b] of faces)
+    for (const [s, t] of [[-1, -1], [1, -1], [1, 1], [-1, -1], [1, 1], [-1, 1]])
+      v.push(.5 * (n[0] + s * a[0] + t * b[0]), .5 * (n[1] + s * a[1] + t * b[1]), .5 * (n[2] + s * a[2] + t * b[2]), n[0], n[1], n[2]);
+  gl.bindVertexArray(gl.createVertexArray());
+  gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(v), gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 24, 0);
+  gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 24, 12);
+  gl.enable(gl.DEPTH_TEST); gl.enable(gl.CULL_FACE);
+}
+
+// column-major 4×4 helpers
+function perspective(fovy, aspect, near, far) {
+  const f = 1 / Math.tan(fovy / 2), nf = 1 / (near - far);
+  return new Float32Array([f / aspect, 0, 0, 0, 0, f, 0, 0, 0, 0, (far + near) * nf, -1, 0, 0, 2 * far * near * nf, 0]);
+}
+function mul(a, b) {
+  const o = new Float32Array(16);
+  for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++)
+    o[c * 4 + r] = a[r] * b[c * 4] + a[4 + r] * b[c * 4 + 1] + a[8 + r] * b[c * 4 + 2] + a[12 + r] * b[c * 4 + 3];
+  return o;
+}
+// yaw 0 looks down -Z (the Web Audio listener's default), positive yaw turns left, positive pitch looks up
+function basis(yaw, pitch) {
+  const sy = Math.sin(yaw), cy = Math.cos(yaw), sp = Math.sin(pitch), cp = Math.cos(pitch);
+  return { f: [-sy * cp, sp, -cy * cp], r: [cy, 0, -sy], u: [sy * sp, cp, cy * sp] };
+}
+function viewMatrix({ f, r, u }, p) {
+  return new Float32Array([
+    r[0], u[0], -f[0], 0, r[1], u[1], -f[1], 0, r[2], u[2], -f[2], 0,
+    -(r[0] * p[0] + r[1] * p[1] + r[2] * p[2]), -(u[0] * p[0] + u[1] * p[1] + u[2] * p[2]), f[0] * p[0] + f[1] * p[1] + f[2] * p[2], 1]);
+}
+
+const M = new Float32Array(16), N = new Float32Array(9), ZERO = new Float32Array(3);
+function box(cx, cy, cz, sx, sy, sz, color, emissive = ZERO, rot = 0, grid = 0) {
+  const c = Math.cos(rot), s = Math.sin(rot);
+  M[0] = c * sx; M[1] = 0; M[2] = -s * sx; M[3] = 0;
+  M[4] = 0; M[5] = sy; M[6] = 0; M[7] = 0;
+  M[8] = s * sz; M[9] = 0; M[10] = c * sz; M[11] = 0;
+  M[12] = cx; M[13] = cy; M[14] = cz; M[15] = 1;
+  N[0] = c; N[1] = 0; N[2] = -s; N[3] = 0; N[4] = 1; N[5] = 0; N[6] = s; N[7] = 0; N[8] = c;
+  gl.uniformMatrix4fv(U.uModel, false, M); gl.uniformMatrix3fv(U.uNormal, false, N);
+  gl.uniform3fv(U.uColor, color); gl.uniform3fv(U.uEmissive, emissive); gl.uniform1f(U.uGrid, grid);
+  gl.drawArrays(gl.TRIANGLES, 0, 36);
+}
+
+const FLOOR = [0.024, 0.027, 0.037], SHELL = [0.03, 0.034, 0.047], CEIL = [0.018, 0.02, 0.027];
+const PARTITION = [0.06, 0.066, 0.088], STAND = [0.02, 0.022, 0.028], MUTED = [0.035, 0.037, 0.045];
+const LP = new Float32Array(15), LC = new Float32Array(15), C3 = new Float32Array(3), E3 = new Float32Array(3);
+
+function render(vp, eye) {
+  const { hx, hz, h } = ROOM, T = 0.5;
+  gl.viewport(0, 0, canvas.width, canvas.height);
+  gl.clearColor(0.02, 0.022, 0.03, 1);
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+  gl.uniformMatrix4fv(U.uVP, false, vp);
+  gl.uniform3fv(U.uCam, eye);
+  instruments.forEach((inst, i) => {
+    const k = inst.muted ? 0.05 : 1 + 9 * inst.glow;
+    LP[i * 3] = inst.x; LP[i * 3 + 1] = inst.y; LP[i * 3 + 2] = inst.z;
+    LC[i * 3] = inst.lin[0] * k; LC[i * 3 + 1] = inst.lin[1] * k; LC[i * 3 + 2] = inst.lin[2] * k;
+  });
+  gl.uniform3fv(U.uLightPos, LP); gl.uniform3fv(U.uLightCol, LC);
+
+  box(0, -T / 2, 0, 2 * hx + 2 * T, T, 2 * hz + 2 * T, FLOOR, ZERO, 0, 1);
+  box(0, h + T / 2, 0, 2 * hx + 2 * T, T, 2 * hz + 2 * T, CEIL, ZERO, 0, 1);
+  box(-hx - T / 2, h / 2, 0, T, h, 2 * hz, SHELL, ZERO, 0, 1);
+  box(hx + T / 2, h / 2, 0, T, h, 2 * hz, SHELL, ZERO, 0, 1);
+  box(0, h / 2, -hz - T / 2, 2 * hx, h, T, SHELL, ZERO, 0, 1);
+  box(0, h / 2, hz + T / 2, 2 * hx, h, T, SHELL, ZERO, 0, 1);
+  box((WALL.x0 + WALL.x1) / 2, WALL.h / 2, (WALL.z0 + WALL.z1) / 2, WALL.x1 - WALL.x0, WALL.h, WALL.z1 - WALL.z0, PARTITION, ZERO, 0, 1);
+
+  for (const inst of instruments) {
+    const [sx, sy, sz] = inst.size, c = inst.lin, bottom = inst.y - sy / 2;
+    if (inst !== carried) {
+      box(inst.x, 0.025, inst.z, 0.5, 0.05, 0.5, STAND);
+      box(inst.x, bottom / 2, inst.z, 0.07, bottom, 0.07, STAND);
+    }
+    const k = (inst.muted ? 0.03 : 0.22 + 1.0 * inst.glow) * (inst === target ? 1.6 : 1), s = 1 + 0.07 * inst.glow;
+    for (let j = 0; j < 3; j++) { C3[j] = inst.muted ? MUTED[j] : c[j] * 0.3; E3[j] = c[j] * k; }
+    box(inst.x, inst.y, inst.z, sx * s, sy * s, sz * s, C3, E3, inst.rot);
+  }
+}
+
+/* ─────────── Audio graph ───────────
+   voice → bus ─┬→ tone (air absorption + occlusion) → direct → HRTF panner → master → limiter → soft clip → out
+                ├→ reverb send → shared room reverb ─────────────────────────↗
+                └→ analyser (drives the glow)
+   The Keys are played live, so by default they take a fast path: a plain stereo panner feeding `live`, which joins
+   after the limiter. In Chromium the HRTF panner delays its input ~6 ms and the limiter another 6 ms (measured). */
+let ctx = null, A = null;
+const mtof = m => 440 * Math.pow(2, (m - 69) / 12);
+
+function makeImpulse(rt60) {                 // decaying stereo noise: highs die faster, a few early reflections up front
+  const sr = ctx.sampleRate, pre = Math.floor(sr * 0.012), len = pre + Math.floor(sr * rt60 * 1.25);
+  const buf = ctx.createBuffer(2, len, sr), a = Math.exp(-2 * Math.PI * 2500 / sr);
+  for (let c = 0; c < 2; c++) {
+    const d = buf.getChannelData(c);
+    let lp = 0, e = 0;
+    for (let i = pre; i < len; i++) {
+      const t = (i - pre) / sr, n = Math.random() * 2 - 1;
+      lp = lp * a + n * (1 - a);
+      d[i] = (lp * 2.5 * Math.pow(10, -3 * t / rt60) + (n - lp) * Math.pow(10, -3 * t / (rt60 * 0.5))) * Math.min(1, t / 0.004);
+    }
+    for (let k = 0; k < 6; k++) {
+      const t = 0.006 + Math.random() * 0.045;
+      d[Math.floor(t * sr)] += (Math.random() < 0.5 ? -1 : 1) * 8 * (1 - t / 0.07);
+    }
+    for (let i = 0; i < len; i++) e += d[i] * d[i];
+    const s = 1 / Math.sqrt(e);              // unit energy, so REVERB_LEVEL alone sets the wet level
+    for (let i = 0; i < len; i++) d[i] *= s;
+  }
+  return buf;
+}
+
+function softClipCurve() {                   // identity up to 0.7, then eases toward ±1; covers inputs up to ±2
+  const c = new Float32Array(2049);
+  for (let i = 0; i < c.length; i++) {
+    const x = (i / (c.length - 1) * 2 - 1) * 2, a = Math.abs(x);
+    c[i] = Math.sign(x) * (a <= 0.7 ? a : 0.7 + 0.3 * Math.tanh((a - 0.7) / 0.3));
+  }
+  return c;
+}
+
+function initAudio() {
+  ctx = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 'interactive' });
+  const master = new GainNode(ctx, { gain: 0 });
+  const limiter = new DynamicsCompressorNode(ctx, { threshold: -8, knee: 4, ratio: 16, attack: 0.002, release: 0.15 });
+  const live = new GainNode(ctx, { gain: 0 });            // fast path for the instrument you play yourself
+  const sum = new GainNode(ctx, { gain: 0.5 });           // halve, clip on a ±2 curve: a zero-delay safety net on the final mix
+  const clip = new WaveShaperNode(ctx, { curve: softClipCurve(), oversample: 'none' });
+  master.connect(limiter).connect(sum); live.connect(sum); sum.connect(clip).connect(ctx.destination);
+  master.gain.linearRampToValueAtTime(MASTER, ctx.currentTime + 1.2);
+  live.gain.linearRampToValueAtTime(MASTER * LIMITER_MAKEUP * FAST_TRIM, ctx.currentTime + 1.2);
+
+  const split = ctx.createChannelSplitter(2);
+  const meters = [new AnalyserNode(ctx, { fftSize: 1024 }), new AnalyserNode(ctx, { fftSize: 1024 })];
+  clip.connect(split); split.connect(meters[0], 0); split.connect(meters[1], 1);
+
+  const reverbIn = new BiquadFilterNode(ctx, { type: 'highpass', frequency: 160 });
+  const convolver = ctx.createConvolver();
+  convolver.normalize = false; convolver.buffer = makeImpulse(1.1);
+  const reverbOut = new GainNode(ctx, { gain: REVERB_LEVEL });
+  reverbIn.connect(convolver).connect(reverbOut).connect(master);
+
+  const noise = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate), nd = noise.getChannelData(0);
+  for (let i = 0; i < nd.length; i++) nd[i] = Math.random() * 2 - 1;
+
+  for (const inst of instruments) {
+    const bus = new GainNode(ctx, { gain: inst.gain, channelCount: 1, channelCountMode: 'explicit' });
+    const tone = new BiquadFilterNode(ctx, { type: 'lowpass', frequency: 18000, Q: 0.5 });
+    const direct = new GainNode(ctx, { gain: 1 });
+    const fast = !!inst.playable && fastKeys;
+    const panner = new PannerNode(ctx, {
+      panningModel: fast ? 'equalpower' : 'HRTF', distanceModel: 'inverse', refDistance: REF_DIST, rolloffFactor: 1,
+      positionX: inst.x, positionY: inst.y, positionZ: inst.z,
+    });
+    const send = new GainNode(ctx, { gain: inst.send });
+    const analyser = new AnalyserNode(ctx, { fftSize: 256 });
+    bus.connect(tone).connect(direct).connect(panner).connect(fast ? live : master);
+    bus.connect(send).connect(reverbIn);
+    bus.connect(analyser);
+    inst.node = { bus, tone, direct, panner, analyser, buf: new Float32Array(256) };
+  }
+  A = { master, live, limiter, meters, reverbOut, noise, buf: new Float32Array(1024) };
+}
+
+/* ─────────── Voices ─────────── */
+function noiseHit(out, t, decay, level, type, freq, q = 0.7) {
+  const src = new AudioBufferSourceNode(ctx, { buffer: A.noise });
+  const f = new BiquadFilterNode(ctx, { type, frequency: freq, Q: q }), g = new GainNode(ctx, { gain: 0 });
+  g.gain.setValueAtTime(level, t); g.gain.exponentialRampToValueAtTime(0.001, t + decay);
+  src.connect(f).connect(g).connect(out);
+  src.start(t, Math.random() * 1.5); src.stop(t + decay + 0.02);
+}
+function tone(out, t, type, f0, f1, sweep, level, decay) {
+  const o = new OscillatorNode(ctx, { type, frequency: f0 }), g = new GainNode(ctx, { gain: 0 });
+  o.frequency.setValueAtTime(f0, t); o.frequency.exponentialRampToValueAtTime(f1, t + sweep);
+  g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(level, t + 0.003); g.gain.exponentialRampToValueAtTime(0.001, t + decay);
+  o.connect(g).connect(out); o.start(t); o.stop(t + decay + 0.02);
+}
+function kick(t, v) {
+  const out = byId.drums.node.bus;
+  tone(out, t, 'sine', 150, 48, 0.085, v, 0.38);
+  noiseHit(out, t, 0.018, v * 0.45, 'lowpass', 3500);
+}
+function snare(t, v) {
+  const out = byId.drums.node.bus;
+  noiseHit(out, t, 0.2, v * 0.6, 'bandpass', 2200, 0.6);
+  noiseHit(out, t, 0.08, v * 0.3, 'highpass', 5000);
+  tone(out, t, 'triangle', 205, 165, 0.06, v * 0.45, 0.11);
+}
+function hat(t, v, open) {
+  noiseHit(byId.drums.node.bus, t, open ? 0.3 : 0.07, v * 0.34, 'highpass', 8000);
+}
+function bass(t, midi, dur, v) {
+  const f = mtof(midi), out = byId.bass.node.bus;
+  const saw = new OscillatorNode(ctx, { type: 'sawtooth', frequency: f }), sub = new OscillatorNode(ctx, { frequency: f });
+  const lp = new BiquadFilterNode(ctx, { type: 'lowpass', Q: 4 });
+  const sg = new GainNode(ctx, { gain: 0.55 }), ug = new GainNode(ctx, { gain: 0.6 }), g = new GainNode(ctx, { gain: 0 });
+  lp.frequency.setValueAtTime(1500, t); lp.frequency.exponentialRampToValueAtTime(360, t + 0.2);
+  g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(v, t + 0.006);
+  g.gain.exponentialRampToValueAtTime(v * 0.6, t + dur); g.gain.linearRampToValueAtTime(0, t + dur + 0.06);
+  saw.connect(sg).connect(lp).connect(g); sub.connect(ug).connect(g); g.connect(out);
+  saw.start(t); sub.start(t); saw.stop(t + dur + 0.1); sub.stop(t + dur + 0.1);
+}
+function pad(t, notes, dur, v) {
+  const lp = new BiquadFilterNode(ctx, { type: 'lowpass', Q: 0.7 }), g = new GainNode(ctx, { gain: 0 });
+  lp.frequency.setValueAtTime(600, t); lp.frequency.linearRampToValueAtTime(1900, t + dur * 0.55); lp.frequency.linearRampToValueAtTime(700, t + dur + 1.2);
+  g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(v, t + 0.5);
+  g.gain.setValueAtTime(v, t + dur); g.gain.linearRampToValueAtTime(0, t + dur + 1.2);
+  lp.connect(g).connect(byId.pad.node.bus);
+  for (const m of notes) for (const detune of [-8, 8]) {
+    const o = new OscillatorNode(ctx, { type: 'sawtooth', frequency: mtof(m), detune });
+    o.connect(lp); o.start(t); o.stop(t + dur + 1.25);
+  }
+}
+function bell(t, midi, v) {                   // two-operator FM, inharmonic ratio, fast-decaying index
+  const f = mtof(midi);
+  const car = new OscillatorNode(ctx, { frequency: f }), mod = new OscillatorNode(ctx, { frequency: f * 3.5 });
+  const mg = new GainNode(ctx, { gain: 0 }), g = new GainNode(ctx, { gain: 0 });
+  mg.gain.setValueAtTime(f * 2.4, t); mg.gain.exponentialRampToValueAtTime(f * 0.2, t + 0.3);
+  g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(v, t + 0.003); g.gain.exponentialRampToValueAtTime(0.0001, t + 1.2);
+  mod.connect(mg).connect(car.frequency); car.connect(g).connect(byId.bells.node.bus);
+  car.start(t); mod.start(t); car.stop(t + 1.25); mod.stop(t + 1.25);
+}
+
+// the player's instrument: electric-piano-ish FM, played live from the computer keyboard
+const KEYMAP = { KeyA: 0, KeyW: 1, KeyS: 2, KeyE: 3, KeyD: 4, KeyF: 5, KeyT: 6, KeyG: 7, KeyY: 8, KeyH: 9, KeyU: 10, KeyJ: 11, KeyK: 12, KeyO: 13, KeyL: 14, KeyP: 15, Semicolon: 16 };
+const held = new Map();
+let octave = 0;
+function keyOn(code) {
+  if (held.has(code)) return;
+  const f = mtof(60 + 12 * octave + KEYMAP[code]), t = ctx.currentTime;
+  const mod = new OscillatorNode(ctx, { frequency: f });
+  const mg = new GainNode(ctx, { gain: 0 }), g = new GainNode(ctx, { gain: 0 });
+  mg.gain.setValueAtTime(f * 1.5, t); mg.gain.exponentialRampToValueAtTime(f * 0.3, t + 0.6);
+  g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.42, t + 0.002); g.gain.setTargetAtTime(0.1, t + 0.002, 0.9);
+  mod.connect(mg); g.connect(byId.keys.node.bus);
+  const oscs = [mod];
+  for (const detune of [-4, 4]) {
+    const car = new OscillatorNode(ctx, { frequency: f, detune });
+    mg.connect(car.frequency); car.connect(g); oscs.push(car);
+  }
+  for (const o of oscs) o.start(t);
+  held.set(code, { g, oscs });
+  pianoEls[code].classList.add('on');
+}
+function keyOff(code) {
+  const v = held.get(code);
+  if (!v) return;
+  held.delete(code);
+  const t = ctx.currentTime;
+  if (v.g.gain.cancelAndHoldAtTime) v.g.gain.cancelAndHoldAtTime(t); else v.g.gain.cancelScheduledValues(t);
+  v.g.gain.setTargetAtTime(0, t, 0.07);
+  for (const o of v.oscs) o.stop(t + 0.6);
+  pianoEls[code].classList.remove('on');
+}
+
+/* ─────────── Sequencer: one shared clock, events scheduled ahead on the audio timeline ─────────── */
+const CHORDS = [   // Am7 · Fmaj7 · Cmaj7 · G6, all white keys so the Keys always fit
+  { root: 45, pad: [55, 57, 60, 64], tones: [69, 72, 76, 79, 81, 84] },
+  { root: 41, pad: [53, 57, 60, 64], tones: [69, 72, 76, 77, 81, 84] },
+  { root: 48, pad: [55, 59, 60, 64], tones: [67, 71, 72, 76, 79, 84] },
+  { root: 43, pad: [55, 59, 62, 64], tones: [67, 71, 74, 76, 79, 83] },
+];
+const BASS = { 0: [0, 3], 6: [0, 1.5], 8: [12, 1], 10: [0, 2.5], 14: [7, 1.5] };   // step → [semitones above root, length in steps]
+const BELLS = [
+  [0, -1, 2, -1, 3, -1, 2, 1, -1, 4, -1, 2, -1, 3, -1, -1],
+  [1, -1, 3, -1, 2, -1, 4, -1, 5, -1, 3, -1, 2, -1, 1, -1],
+];
+let nextStep = 0, nextTime = 0;
+
+function scheduleStep(n, t0) {
+  const s = n % 16, bar = Math.floor(n / 16) % 4, chord = CHORDS[bar];
+  const t = t0 + (s % 2 ? STEP * SWING : 0);
+  if (s === 0 || s === 6 || s === 10 || (bar === 3 && s === 13)) kick(t, s === 0 ? 1 : 0.8);
+  if (s === 4 || s === 12) snare(t, 0.9);
+  if (bar === 3 && s === 15) snare(t, 0.3);
+  if (s % 2 === 0) hat(t, s % 4 === 0 ? 0.6 : 0.4, bar % 2 === 1 && s === 14);
+  else if (Math.random() < 0.25) hat(t, 0.2, false);
+  if (BASS[s]) bass(t, chord.root + BASS[s][0], BASS[s][1] * STEP, 0.8);
+  if (s === 0) pad(t0, chord.pad, 16 * STEP, 0.07);
+  const b = BELLS[bar % 2][s];
+  if (b >= 0) bell(t, chord.tones[b], 0.45 + (s % 4 === 0 ? 0.2 : 0) + Math.random() * 0.1);
+}
+function tick() {
+  const now = ctx.currentTime;
+  if (nextTime < now) {                       // fell behind (tab was in the background): skip ahead, stay on the grid
+    const skip = Math.ceil((now - nextTime) / STEP);
+    nextStep += skip; nextTime += skip * STEP;
+  }
+  while (nextTime < now + 0.14) { scheduleStep(nextStep, nextTime); nextStep++; nextTime += STEP; }
+}
+
+/* ─────────── Spatial updates ─────────── */
+function segmentHitsWall(ax, az, bx, bz) {   // 2D slab test against the partition's footprint
+  let t0 = 0, t1 = 1;
+  for (const [p, d, lo, hi] of [[ax, bx - ax, WALL.x0, WALL.x1], [az, bz - az, WALL.z0, WALL.z1]]) {
+    if (Math.abs(d) < 1e-9) { if (p < lo || p > hi) return false; continue; }
+    let ta = (lo - p) / d, tb = (hi - p) / d;
+    if (ta > tb) [ta, tb] = [tb, ta];
+    t0 = Math.max(t0, ta); t1 = Math.min(t1, tb);
+    if (t0 > t1) return false;
+  }
+  return true;
+}
+const RAYS = [-0.45, -0.225, 0, 0.225, 0.45];
+function occlusion(inst) {                    // fraction of five parallel rays the partition blocks, for a soft edge
+  const dx = inst.x - player.x, dz = inst.z - player.z, d = Math.hypot(dx, dz);
+  if (d < 1e-6) return 0;
+  const px = -dz / d, pz = dx / d;
+  let hits = 0;
+  for (const o of RAYS) if (segmentHitsWall(player.x + px * o, player.z + pz * o, inst.x + px * o, inst.z + pz * o)) hits++;
+  return hits / RAYS.length;
+}
+let spatialTick = 0;
+function updateSpatial(b, dt) {
+  const L = ctx.listener, f = b.f, u = b.u;
+  if (L.positionX) {
+    L.positionX.value = player.x; L.positionY.value = EYE; L.positionZ.value = player.z;
+    L.forwardX.value = f[0]; L.forwardY.value = f[1]; L.forwardZ.value = f[2];
+    L.upX.value = u[0]; L.upY.value = u[1]; L.upZ.value = u[2];
+  } else {                                    // Firefox still only has the older setters
+    L.setPosition(player.x, EYE, player.z);
+    L.setOrientation(f[0], f[1], f[2], u[0], u[1], u[2]);
+  }
+  const t = ctx.currentTime, apply = ++spatialTick % 3 === 0;
+  for (const inst of instruments) {
+    inst.occ += (occlusion(inst) - inst.occ) * Math.min(1, dt * 9);
+    if (!apply) continue;
+    const d = Math.hypot(inst.x - player.x, inst.y - EYE, inst.z - player.z);
+    const cutoff = 18000 / (1 + d * 0.05) * Math.pow(1100 / 18000, inst.occ);
+    inst.node.tone.frequency.setTargetAtTime(cutoff, t, 0.04);
+    inst.node.direct.gain.setTargetAtTime(1 - 0.55 * inst.occ, t, 0.04);
+  }
+}
+function rms(analyser, buf) {
+  analyser.getFloatTimeDomainData(buf);
+  let e = 0;
+  for (let i = 0; i < buf.length; i++) e += buf[i] * buf[i];
+  return Math.sqrt(e / buf.length);
+}
+function updateLevels(dt) {
+  for (const inst of instruments) {
+    const v = Math.min(1, Math.sqrt(rms(inst.node.analyser, inst.node.buf)) * 1.6);
+    inst.glow += (v - inst.glow) * Math.min(1, dt * (v > inst.glow ? 40 : 7));
+    if (inst.spin) inst.rot += inst.spin * dt * (0.4 + 2 * inst.glow);
+  }
+}
+
+/* ─────────── Player, input, interaction ─────────── */
+let started = false, locked = false, dragging = false, playMode = false;
+let target = null, carried = null, hrtf = true, reverb = true, fastKeys = true;
+const down = new Set();
+
+function move(dt) {
+  let fwd = 0, strafe = 0, turn = 0;
+  if (!playMode) {                            // in play mode these keys are notes
+    if (down.has('KeyW')) fwd++; if (down.has('KeyS')) fwd--;
+    if (down.has('KeyD')) strafe++; if (down.has('KeyA')) strafe--;
+  }
+  if (down.has('ArrowUp')) fwd++; if (down.has('ArrowDown')) fwd--;
+  if (down.has('ArrowLeft')) turn++; if (down.has('ArrowRight')) turn--;
+  player.yaw += turn * 1.9 * dt;
+  const len = Math.hypot(fwd, strafe);
+  if (len > 0) {
+    const sp = (down.has('ShiftLeft') || down.has('ShiftRight') ? 5.5 : 2.8) * dt / len;
+    const sy = Math.sin(player.yaw), cy = Math.cos(player.yaw);
+    player.x += (-sy * fwd + cy * strafe) * sp;
+    player.z += (-cy * fwd - sy * strafe) * sp;
+  }
+  player.x = clamp(player.x, -ROOM.hx + RADIUS, ROOM.hx - RADIUS);
+  player.z = clamp(player.z, -ROOM.hz + RADIUS, ROOM.hz - RADIUS);
+  const x0 = WALL.x0 - RADIUS, x1 = WALL.x1 + RADIUS, z0 = WALL.z0 - RADIUS, z1 = WALL.z1 + RADIUS;
+  if (player.x > x0 && player.x < x1 && player.z > z0 && player.z < z1) {
+    const pen = [player.x - x0, x1 - player.x, player.z - z0, z1 - player.z], m = Math.min(...pen);
+    if (m === pen[0]) player.x = x0; else if (m === pen[1]) player.x = x1; else if (m === pen[2]) player.z = z0; else player.z = z1;
+  }
+  for (const inst of instruments) {
+    if (inst === carried) continue;
+    const dx = player.x - inst.x, dz = player.z - inst.z, d = Math.hypot(dx, dz);
+    if (d < 0.6 && d > 1e-6) { player.x = inst.x + dx / d * 0.6; player.z = inst.z + dz / d * 0.6; }
+  }
+}
+function updateCarry() {
+  if (!carried) return;
+  let x = clamp(player.x - Math.sin(player.yaw) * 1.5, -ROOM.hx + 0.6, ROOM.hx - 0.6);
+  const z = clamp(player.z - Math.cos(player.yaw) * 1.5, -ROOM.hz + 0.6, ROOM.hz - 0.6), m = 0.5;
+  if (x > WALL.x0 - m && x < WALL.x1 + m && z > WALL.z0 - m && z < WALL.z1 + m)
+    x = player.x < (WALL.x0 + WALL.x1) / 2 ? WALL.x0 - m : WALL.x1 + m;
+  carried.x = x; carried.z = z;
+  carried.y = clamp(EYE - 0.35 + Math.sin(player.pitch) * 1.4, carried.size[1] / 2 + 0.25, 2.8);
+  const p = carried.node.panner;
+  p.positionX.value = x; p.positionY.value = carried.y; p.positionZ.value = z;
+}
+function pickTarget() {                       // the instrument you are facing, if it is within reach
+  const fx = -Math.sin(player.yaw), fz = -Math.cos(player.yaw);
+  let best = null, bestDot = 0.955;           // within about 17° of your heading
+  for (const inst of instruments) {
+    const dx = inst.x - player.x, dy = inst.y - EYE, dz = inst.z - player.z, flat = Math.hypot(dx, dz) || 1e-6;
+    inst.dist = Math.hypot(flat, dy);
+    if (inst.dist > REACH || Math.abs(Math.atan2(dy, flat) - player.pitch) > 0.9) continue;
+    const dot = (dx * fx + dz * fz) / flat;
+    if (dot > bestDot) { bestDot = dot; best = inst; }
+  }
+  return best;
+}
+function grabOrDrop() {
+  if (playMode) return;
+  if (carried) carried = null;
+  else if (target) { carried = target; target = null; }
+}
+function toggleMute(inst) {
+  inst.muted = !inst.muted;
+  inst.node.bus.gain.setTargetAtTime(inst.muted ? 0 : inst.gain, ctx.currentTime, 0.03);
+  inst.label.textContent = inst.muted ? inst.name + ' · muted' : inst.name;
+  inst.label.classList.toggle('muted', inst.muted);
+}
+function setPlayMode(on) {
+  playMode = on;
+  $('piano').classList.toggle('hidden', !on);
+  $('help').classList.toggle('hidden', on);
+  if (!on) for (const code of [...held.keys()]) keyOff(code);
+}
+function setHrtf(on) {
+  hrtf = on;
+  for (const inst of instruments) inst.node.panner.panningModel = on && !(inst.playable && fastKeys) ? 'HRTF' : 'equalpower';
+  $('st-hrtf').textContent = on ? 'on' : 'off · plain stereo';
+  $('st-hrtf').classList.toggle('off', !on);
+}
+function setFastKeys(on) {                    // off: the Keys are binaural like everything else, at the cost of ~12 ms
+  fastKeys = on;
+  const p = byId.keys.node.panner;
+  p.disconnect(); p.connect(on ? A.live : A.master);
+  p.panningModel = on || !hrtf ? 'equalpower' : 'HRTF';
+  $('st-fast').textContent = on ? 'on' : 'off · 12 ms slower';
+  $('st-fast').classList.toggle('off', !on);
+}
+function setReverb(on) {
+  reverb = on;
+  A.reverbOut.gain.setTargetAtTime(on ? REVERB_LEVEL : 0, ctx.currentTime, 0.05);
+  $('st-rev').textContent = on ? 'on' : 'off';
+  $('st-rev').classList.toggle('off', !on);
+}
+function tryLock() {
+  if (!canvas.requestPointerLock) return;
+  try { const p = canvas.requestPointerLock(); if (p && p.catch) p.catch(() => {}); } catch (_) { /* drag-to-look still works */ }
+}
+async function start() {
+  if (started) return;
+  try {
+    initAudio();
+    await ctx.resume();
+  } catch (e) { $('err').textContent = 'Could not start audio: ' + e.message; return; }
+  started = true;
+  nextStep = 0; nextTime = ctx.currentTime + 0.2;
+  setInterval(tick, 25);
+  $('overlay').classList.add('hidden');
+  $('resume').classList.remove('hidden');
+  tryLock();
+}
+
+$('go').addEventListener('click', start);
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+canvas.addEventListener('mousedown', e => {
+  if (!started || e.button !== 0) return;
+  if (locked) grabOrDrop();
+  else { dragging = true; tryLock(); }
+});
+addEventListener('mouseup', () => { dragging = false; });
+addEventListener('mousemove', e => {
+  if (!started || !(locked || dragging)) return;
+  player.yaw -= e.movementX * 0.0022;
+  player.pitch = clamp(player.pitch - e.movementY * 0.0022, -1.45, 1.45);
+});
+document.addEventListener('pointerlockchange', () => {
+  locked = document.pointerLockElement === canvas;
+  if (locked) dragging = false;
+  $('resume').classList.toggle('hidden', locked || !started);
+});
+addEventListener('blur', () => { down.clear(); dragging = false; for (const code of [...held.keys()]) keyOff(code); });
+addEventListener('keydown', e => {
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  if (!started) { if (e.code === 'Enter') start(); return; }
+  if (e.code === 'Tab' || e.code === 'Space' || e.code.startsWith('Arrow')) e.preventDefault();
+  if (e.repeat) return;
+  down.add(e.code);
+  if (e.code === 'KeyB') return setHrtf(!hrtf);
+  if (e.code === 'KeyR') return setReverb(!reverb);
+  if (e.code === 'KeyM') return setFastKeys(!fastKeys);
+  if (playMode) {
+    if (e.code === 'KeyQ' || e.code === 'Escape') setPlayMode(false);
+    else if (e.code === 'KeyZ' || e.code === 'KeyX') { octave = clamp(octave + (e.code === 'KeyX' ? 1 : -1), -2, 2); $('oct').textContent = 'C' + (4 + octave); }
+    else if (e.code in KEYMAP) keyOn(e.code);
+    return;
+  }
+  if (e.code === 'KeyG') grabOrDrop();
+  else if (e.code === 'KeyF' && target) toggleMute(target);
+  else if (e.code === 'KeyE' && target && target.playable && target.dist < PLAY_REACH) setPlayMode(true);
+});
+addEventListener('keyup', e => { down.delete(e.code); if (started && e.code in KEYMAP) keyOff(e.code); });
+
+/* ─────────── HUD ─────────── */
+for (const inst of instruments) {
+  const el = document.createElement('div');
+  el.className = 'label'; el.textContent = inst.name;
+  el.style.setProperty('--c', `rgb(${inst.color.map(v => Math.round(v * 255)).join(',')})`);
+  $('labels').appendChild(el); inst.label = el;
+}
+const pianoEls = {};
+[['KeyA', 'A'], ['KeyS', 'S'], ['KeyD', 'D'], ['KeyF', 'F'], ['KeyG', 'G'], ['KeyH', 'H'], ['KeyJ', 'J'], ['KeyK', 'K'], ['KeyL', 'L'], ['Semicolon', ';']]
+  .forEach(([code, ch], i) => addPianoKey(code, ch, 'w', i * 44));
+[['KeyW', 'W', 0], ['KeyE', 'E', 1], ['KeyT', 'T', 3], ['KeyY', 'Y', 4], ['KeyU', 'U', 5], ['KeyO', 'O', 7], ['KeyP', 'P', 8]]
+  .forEach(([code, ch, after]) => addPianoKey(code, ch, 'k', (after + 1) * 44 - 15));
+function addPianoKey(code, ch, cls, left) {
+  const el = document.createElement('div');
+  el.className = cls; el.textContent = ch; el.style.left = left + 'px';
+  $('kb').appendChild(el); pianoEls[code] = el;
+}
+
+const map = $('map'), g2 = map.getContext('2d');
+function drawMap() {
+  const W = map.width, H = map.height, s = Math.min((W - 28) / (2 * ROOM.hx), (H - 28) / (2 * ROOM.hz));
+  const X = x => W / 2 + x * s, Z = z => H / 2 + z * s;
+  g2.clearRect(0, 0, W, H);
+  g2.strokeStyle = 'rgba(255,255,255,.3)'; g2.lineWidth = 2;
+  g2.strokeRect(X(-ROOM.hx), Z(-ROOM.hz), 2 * ROOM.hx * s, 2 * ROOM.hz * s);
+  g2.fillStyle = 'rgba(255,255,255,.4)';
+  g2.fillRect(X(WALL.x0), Z(WALL.z0), (WALL.x1 - WALL.x0) * s, (WALL.z1 - WALL.z0) * s);
+  for (const inst of instruments) {
+    const c = inst.color.map(v => Math.round(v * 255)).join(',');
+    if (!inst.muted) {
+      g2.fillStyle = `rgba(${c},${0.14 + 0.3 * inst.glow})`;
+      g2.beginPath(); g2.arc(X(inst.x), Z(inst.z), 9 + 18 * inst.glow, 0, 7); g2.fill();
+    }
+    g2.fillStyle = inst.muted ? 'rgba(255,255,255,.28)' : `rgb(${c})`;
+    g2.beginPath(); g2.arc(X(inst.x), Z(inst.z), 5.5, 0, 7); g2.fill();
+  }
+  const px = X(player.x), pz = Z(player.z), fx = -Math.sin(player.yaw), fz = -Math.cos(player.yaw);
+  g2.fillStyle = '#fff';
+  g2.beginPath();
+  g2.moveTo(px + fx * 13, pz + fz * 13);
+  g2.lineTo(px - fx * 7 + fz * 7, pz - fz * 7 - fx * 7);
+  g2.lineTo(px - fx * 7 - fz * 7, pz - fz * 7 + fx * 7);
+  g2.closePath(); g2.fill();
+}
+
+let lastHint = '', frameCount = 0;
+function updateHud(vp) {
+  for (const inst of instruments) {
+    const el = inst.label, x = inst.x, y = inst.y + inst.size[1] / 2 + 0.32, z = inst.z;
+    const w = vp[3] * x + vp[7] * y + vp[11] * z + vp[15];
+    if (w < 0.2) { el.style.opacity = 0; continue; }
+    const sx = ((vp[0] * x + vp[4] * y + vp[8] * z + vp[12]) / w * 0.5 + 0.5) * innerWidth;
+    const sy = (0.5 - (vp[1] * x + vp[5] * y + vp[9] * z + vp[13]) / w * 0.5) * innerHeight;
+    el.style.opacity = clamp(1.6 - w / 8, 0.5, 1);
+    el.style.transform = `translate(${sx.toFixed(1)}px, ${sy.toFixed(1)}px) translate(-50%, -100%)`;
+    el.classList.toggle('target', inst === target);
+  }
+  let hint = '';
+  if (carried) hint = `Carrying <b>${carried.name}</b> · <kbd>G</kbd> or click to put it down`;
+  else if (target && !playMode) {
+    const play = !target.playable ? '' : target.dist < PLAY_REACH ? '<kbd>E</kbd> play · ' : 'step closer to play · ';
+    hint = `<b>${target.name}</b> · ${play}<kbd>G</kbd> carry · <kbd>F</kbd> ${target.muted ? 'unmute' : 'mute'}`;
+  }
+  if (hint !== lastHint) { $('hint').innerHTML = hint; lastHint = hint; }
+  drawMap();
+  if (!started) return;
+  const pct = v => clamp((20 * Math.log10(v + 1e-6) + 54) / 54, 0, 1) * 100 + '%';
+  $('mL').style.width = pct(rms(A.meters[0], A.buf));
+  $('mR').style.width = pct(rms(A.meters[1], A.buf));
+  if (frameCount % 30 === 0) {
+    const ms = (ctx.baseLatency || 0) * 1000 + (ctx.outputLatency || 0) * 1000;
+    $('st-lat').textContent = ms ? '≈ ' + ms.toFixed(0) + ' ms' : 'not reported';
+    $('st-lat').classList.toggle('off', ms > 40);
+    $('st-warn').classList.toggle('hidden', !(ms > 40));
+  }
+}
+
+/* ─────────── Main loop ─────────── */
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000);
+  last = now; frameCount++;
+  const dpr = Math.min(2, devicePixelRatio || 1), w = Math.round(canvas.clientWidth * dpr), h = Math.round(canvas.clientHeight * dpr);
+  if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+
+  if (started) { move(dt); updateCarry(); }
+  const b = basis(player.yaw, player.pitch), eye = [player.x, EYE, player.z];
+  if (started) {
+    updateLevels(dt);
+    updateSpatial(b, dt);
+    target = carried ? null : pickTarget();
+    if (playMode && byId.keys.dist > PLAY_REACH + 0.6) setPlayMode(false);
+  }
+  const vp = mul(perspective(70 * Math.PI / 180, canvas.width / Math.max(1, canvas.height), 0.05, 80), viewMatrix(b, eye));
+  render(vp, eye);
+  updateHud(vp);
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+window.__room = { player, instruments, start, get ctx() { return ctx; }, get audio() { return A; } };
+})();
+</script>
+</body>
+</html>
