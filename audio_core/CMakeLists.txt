@@ -44,7 +44,11 @@ add_library(sr_core STATIC
 target_include_directories(sr_core PUBLIC src/core thirdparty/miniaudio)
 target_link_libraries(sr_core PUBLIC phonon)
 if(APPLE)
-    target_link_libraries(sr_core PUBLIC "-framework CoreAudio" "-framework AudioToolbox" "-framework CoreFoundation")
+    target_sources(sr_core PRIVATE src/core/midi_input_coremidi.cpp)
+    target_link_libraries(sr_core PUBLIC "-framework CoreAudio" "-framework AudioToolbox" "-framework CoreFoundation"
+                                         "-framework CoreMIDI")
+else()
+    target_sources(sr_core PRIVATE src/core/midi_input_stub.cpp)
 endif()
 if(NOT MSVC)
     target_compile_options(sr_core PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra>)

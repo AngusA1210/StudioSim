@@ -10,7 +10,7 @@ var playable := false
 var source_id := -1
 var muted := false
 var carried := false
-var visibility := 1.0
+var shadowed := false  # a wall is between it and the listener
 var glow := 0.0
 
 var _audio: SoundRoomAudio
@@ -22,8 +22,6 @@ var _foot: MeshInstance3D
 var _light: OmniLight3D
 var _label: Label3D
 var _collider: CollisionShape3D
-var _sent_position := Vector3.INF
-var _sent_visibility := -1.0
 
 
 func setup(spec: Dictionary, audio: SoundRoomAudio) -> void:
@@ -88,17 +86,12 @@ func _process(delta: float) -> void:
 	if _spin != 0.0:
 		_body.rotate_y(_spin * delta * (0.4 + 2.0 * glow))
 	_update_stand()
-	if not global_position.is_equal_approx(_sent_position):
-		_sent_position = global_position
-		_audio.set_source_position(source_id, global_position)
 
 
-func set_visibility(value: float) -> void:
-	# Smoothed in the audio core; only resend when it actually changes.
-	visibility = value
-	if absf(value - _sent_visibility) > 0.01:
-		_sent_visibility = value
-		_audio.set_source_visibility(source_id, value)
+## `path` comes from Acoustics.direct_path; it carries the instrument's position, so moving it needs nothing else.
+func set_direct_path(path: Dictionary) -> void:
+	shadowed = path.blocked
+	_audio.set_source_direct_path(source_id, path.via, path.extra, path.deltas, path.blocked)
 
 
 func set_muted(value: bool) -> void:

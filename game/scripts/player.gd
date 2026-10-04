@@ -30,6 +30,8 @@ var octave := 0
 var held := {}      # physical key → MIDI note currently sounding
 var binaural := true
 var reverb := true
+var live_input := false
+var live_input_error := ""
 
 var _room_half := Vector2.ZERO
 var _partition_min := Vector3.ZERO
@@ -66,6 +68,16 @@ func place(at: Vector3, facing_yaw: float) -> void:
 	yaw = facing_yaw
 	pitch = 0.0
 	_apply_look()
+
+
+## The microphone / audio interface stays closed until asked for. Its sound comes out of the Amp.
+func toggle_live_input() -> void:
+	if audio.set_live_input(not live_input):
+		live_input = not live_input
+		live_input_error = ""
+	else:
+		live_input = false
+		live_input_error = audio.get_error()
 
 
 func ear_position() -> Vector3:
@@ -110,6 +122,9 @@ func _handle_key(event: InputEventKey) -> void:
 	if key == KEY_R:
 		reverb = not reverb
 		audio.set_reverb(reverb)
+		return
+	if key == KEY_I:
+		toggle_live_input()
 		return
 	if playing != null:
 		if key == KEY_Q:

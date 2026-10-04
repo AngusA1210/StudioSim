@@ -4,19 +4,19 @@ extends Node3D
 ## Command-line options, passed after `--`:
 ##   --silent                 run the audio clock without opening a sound card
 ##   --pose=x,z,yaw_degrees   start the player somewhere else
+##   --live-input             switch the audio input on at start
 ##   --screenshot=path.png    save a screenshot after --frames frames (default 90), print stats, and quit
 ##   --quit-after=seconds     print stats and quit after this long
 
 const Instrument := preload("res://scripts/instrument.gd")
 const Player := preload("res://scripts/player.gd")
 const Hud := preload("res://scripts/hud.gd")
+const Acoustics := preload("res://scripts/acoustics.gd")
 
 const ROOM_SIZE := Vector3(14.0, 4.0, 10.0)
 const WALL_THICKNESS := 0.5
 const PARTITION_CENTER := Vector3(-2.5, 1.5, -1.9)
 const PARTITION_SIZE := Vector3(0.3, 3.0, 3.0)
-const OCCLUDER_LAYER := 2  # physics layer the occlusion rays test against
-const OCCLUSION_RAY_OFFSETS := [-0.45, -0.225, 0.0, 0.225, 0.45]
 
 const INSTRUMENTS := [
 	{"kind": "drums", "name": "Drums", "color": Color(1.0, 0.42, 0.26), "position": Vector3(0.5, 0.9, -3.6),
@@ -29,6 +29,9 @@ const INSTRUMENTS := [
 		"size": Vector3(0.42, 0.42, 0.42), "gain": 0.42, "send": 1.0, "spin": -0.6},
 	{"kind": "keys", "name": "Keys", "color": Color(1.0, 0.48, 0.82), "position": Vector3(3.0, 0.95, 1.8),
 		"size": Vector3(1.3, 0.12, 0.42), "gain": 0.20, "send": 0.9, "playable": true},
+	# Whatever is plugged into the audio input comes out of this amp once live input is switched on.
+	{"kind": "live", "name": "Amp", "color": Color(0.55, 0.78, 1.0), "position": Vector3(-2.0, 0.6, 1.6),
+		"size": Vector3(0.6, 0.7, 0.4), "gain": 1.5, "send": 0.7},
 ]
 
 const GRID_SHADER := """
@@ -55,7 +58,9 @@ var audio: SoundRoomAudio
 var player
 var hud
 var instruments: Array = []
+var walls: Array = []  # AABBs that sound has to bend around
 var options := {}
+var _midi_poll := 0.0
 var _frames := 0
 var _elapsed := 0.0
 
@@ -67,6 +72,7 @@ func _ready() -> void:
 	add_child(audio)
 	if not audio.start(options.has("silent")):
 		push_error("Audio core failed to start: %s" % audio.get_error())
+	audio.start_midi()
 
 	_build_environment()
 	_build_room()
@@ -84,6 +90,9 @@ func _ready() -> void:
 		var p: PackedStringArray = options.pose.split(",")
 		player.place(Vector3(float(p[0]), 0.0, float(p[1])), deg_to_rad(float(p[2])))
 
+	if options.has("live-input"):
+		player.toggle_live_input()
+
 	hud = Hud.new()
 	add_child(hud)
 	hud.setup(audio, player)
@@ -92,6 +101,10 @@ func _ready() -> void:
 func _process(delta: float) -> void:
 	_frames += 1
 	_elapsed += delta
+	_midi_poll += delta
+	if _midi_poll > 2.0:  # the system tells us about new controllers too; this is the fallback
+		_midi_poll = 0.0
+		audio.poll_midi()
 	if options.has("screenshot") and _frames == int(options.get("frames", "90")):
 		var image := get_viewport().get_texture().get_image()
 		image.save_png(options.screenshot)
@@ -102,27 +115,13 @@ func _process(delta: float) -> void:
 		get_tree().quit()
 
 
+## Tell the audio core how each instrument's sound reaches the listener: straight, or bent around a wall edge.
 func _physics_process(_delta: float) -> void:
-	_update_occlusion()
-
-
-## Each instrument is heard through the partition in proportion to how many of five parallel rays it blocks,
-## so walking past the wall's edge fades the muffling in and out instead of switching it.
-func _update_occlusion() -> void:
 	if player == null:
 		return
-	var space := get_world_3d().direct_space_state
 	var ear: Vector3 = player.ear_position()
 	for inst in instruments:
-		var to: Vector3 = inst.global_position
-		var flat := Vector3(to.x - ear.x, 0.0, to.z - ear.z)
-		var side := Vector3(-flat.z, 0.0, flat.x).normalized() if flat.length() > 0.001 else Vector3.RIGHT
-		var clear := 0
-		for offset in OCCLUSION_RAY_OFFSETS:
-			var query := PhysicsRayQueryParameters3D.create(ear + side * offset, to + side * offset, 1 << (OCCLUDER_LAYER - 1))
-			if space.intersect_ray(query).is_empty():
-				clear += 1
-		inst.set_visibility(float(clear) / OCCLUSION_RAY_OFFSETS.size())
+		inst.set_direct_path(Acoustics.direct_path(ear, inst.global_position, walls, ROOM_SIZE.y))
 
 
 func _parse_options() -> void:
@@ -143,8 +142,9 @@ func _print_stats() -> void:
 		100.0 * s.get("cpu_load", 0.0), s.get("blocks", 0)])
 	var levels := []
 	for inst in instruments:
-		levels.append("%s=%.3f vis=%.2f" % [inst.kind, audio.get_source_level(inst.source_id), inst.visibility])
+		levels.append("%s=%.3f%s" % [inst.kind, audio.get_source_level(inst.source_id), " (behind wall)" if inst.shadowed else ""])
 	print("SoundRoom sources: ", ", ".join(levels))
+	print("SoundRoom midi: ", audio.get_midi_devices(), " live_input=", s.get("live_input", false))
 
 
 func _build_environment() -> void:
@@ -184,8 +184,9 @@ func _build_room() -> void:
 	_add_block(Vector3(w / 2 + t / 2, h / 2, 0), Vector3(t, h, d), Color(0.06, 0.065, 0.085), 1)
 	_add_block(Vector3(0, h / 2, -d / 2 - t / 2), Vector3(w, h, t), Color(0.06, 0.065, 0.085), 1)
 	_add_block(Vector3(0, h / 2, d / 2 + t / 2), Vector3(w, h, t), Color(0.06, 0.065, 0.085), 1)
-	# The partition both blocks the player and occludes sound.
-	_add_block(PARTITION_CENTER, PARTITION_SIZE, Color(0.12, 0.13, 0.17), 1 | (1 << (OCCLUDER_LAYER - 1)))
+	# The partition blocks the player, and sound has to bend around it.
+	_add_block(PARTITION_CENTER, PARTITION_SIZE, Color(0.12, 0.13, 0.17), 1)
+	walls.append(AABB(PARTITION_CENTER - PARTITION_SIZE / 2, PARTITION_SIZE))
 
 
 func _add_block(center: Vector3, size: Vector3, color: Color, layers: int) -> void:

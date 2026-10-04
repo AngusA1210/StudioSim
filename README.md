@@ -31,6 +31,8 @@ Use **wired** headphones. Bluetooth headphones add 150–250 ms of delay that no
 | G or click | pick up the instrument you're facing, put it down |
 | F | mute or unmute the instrument you're facing |
 | E | play the Keys when you're next to them (A–; are white keys, W E T Y U O P black, Z/X octave, Q stops) |
+| MIDI keyboard | plays the Keys from anywhere, with velocity and sustain pedal; plug in any time |
+| I | live input on/off: your microphone or audio interface comes out of the Amp (macOS asks for permission once) |
 | B | binaural on/off (compare with plain stereo) |
 | R | room reverb on/off |
 
@@ -41,26 +43,30 @@ game/                      Godot project: the room, player, instruments and HUD 
 audio_core/
   src/core/                the audio engine, plain C++ with no Godot dependency
     engine.*               device, command queue, mixing, the shared clock
-    instruments.*          synthesized drums, bass, pad, bells and the playable keys
+    instruments.*          synthesized drums, bass, pad, bells, the playable keys, and live input
     sequencer.*            the groove, scheduled to the exact sample
-    spatializer.*          Steam Audio: distance, air absorption, occlusion, binaural (HRTF)
+    spatializer.*          Steam Audio: distance, air absorption, wall filtering, binaural (HRTF)
+    acoustics.h            how much each frequency band dims when sound bends around a wall edge
+    midi_input.*           MIDI controllers, read straight into the audio thread (CoreMIDI; other platforms to do)
     mix.*                  room reverb (feedback delay network) and output limiter
   src/godot/               the Godot extension wrapping the engine (SoundRoomAudio node)
-  tests/engine_tests.cpp   offline checks: levels, binaural direction, occlusion, note latency
+  tests/engine_tests.cpp   offline checks: levels, binaural direction, walls, note latency, MIDI, live input
 prototypes/sound-room/     the original browser prototype, for reference
 tools/                     build and dependency scripts
 ```
 
-Godot owns the world: rendering, input, physics and the occlusion rays against walls. It sends positions, wall
-visibility and note events to the audio core through a lock-free queue and never waits on it. The audio core runs
+Godot owns the world: rendering, input, physics and wall geometry. It sends positions, note events and each
+instrument's route around walls (`game/scripts/acoustics.gd`) to the audio core through a lock-free queue and never
+waits on it. MIDI controllers and the audio input bypass Godot entirely and go straight into the audio core. The audio core runs
 on its own real-time thread with 128-sample blocks, so a dropped game frame never glitches the sound.
 
 `audio_core/build/engine_tests --device` opens your output device silently and prints the latency it reports.
 
 ## Roadmap
 
-1. **Single-player spatial sandbox** (current): the native audio pipeline, placeable instruments, the playable Keys.
-   Next: MIDI controllers and audio-interface input straight into the audio core, sound bending around wall edges.
+1. **Single-player spatial sandbox** (current): the native audio pipeline, placeable instruments, the playable Keys,
+   MIDI controllers, live audio input, and sound bending around wall edges.
+   Next: choosing audio devices and input channels in-game, more instruments, saving a room's layout.
 2. **Multiplayer jam**: session server, a networked clock, note events and low-latency audio streams.
 3. **Recording and long-distance play**: multitrack session recording; interval and overdub modes.
 4. **Worlds as content**: saving, sharing and building spaces; more instruments.

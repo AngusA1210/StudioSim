@@ -16,6 +16,10 @@ var _binaural_value: Label
 var _reverb_value: Label
 var _latency_value: Label
 var _cpu_value: Label
+var _midi_value: Label
+var _input_value: Label
+var _midi_events := 0
+var _midi_flash := 0.0
 var _hint: Label
 var _hint_panel: PanelContainer
 var _capture: PanelContainer
@@ -43,6 +47,8 @@ func setup(audio_core: SoundRoomAudio, the_player) -> void:
 	status.add_child(grid)
 	_binaural_value = _row(grid, "Binaural (HRTF)", "B")
 	_reverb_value = _row(grid, "Room reverb", "R")
+	_midi_value = _row(grid, "MIDI", "")
+	_input_value = _row(grid, "Live input", "I")
 	_latency_value = _row(grid, "Output latency", "")
 	_cpu_value = _row(grid, "Audio CPU", "")
 
@@ -74,7 +80,7 @@ func setup(audio_core: SoundRoomAudio, the_player) -> void:
 	# Controls, bottom left
 	_help = _panel(root)
 	var help := Label.new()
-	help.text = "W A S D  move    Shift  run    mouse  look\nG or click  carry an instrument, put it down\nF  mute the one you're facing    E  play the Keys up close\nB  binaural on/off    R  reverb on/off    Esc  release mouse"
+	help.text = "W A S D  move    Shift  run    mouse  look\nG or click  carry an instrument, put it down\nF  mute the one you're facing    E  play the Keys up close\nA MIDI keyboard plays the Keys from anywhere\nI  microphone / audio input into the Amp\nB  binaural on/off    R  reverb on/off    Esc  release mouse"
 	help.add_theme_color_override("font_color", DIM)
 	help.add_theme_font_size_override("font_size", 13)
 	_help.add_child(help)
@@ -82,8 +88,14 @@ func setup(audio_core: SoundRoomAudio, the_player) -> void:
 	_build_piano(root)
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	_frame += 1
+	var events := audio.get_midi_event_count()
+	if events != _midi_events:
+		_midi_events = events
+		_midi_flash = 0.15
+	_midi_flash = maxf(_midi_flash - delta, 0.0)
+	_midi_value.add_theme_color_override("font_color", Color(1.0, 0.48, 0.82) if _midi_flash > 0.0 else Color.WHITE)
 	var vp := get_viewport().get_visible_rect().size
 	_binaural_value.text = "on" if player.binaural else "off (plain stereo)"
 	_binaural_value.add_theme_color_override("font_color", Color.WHITE if player.binaural else WARN)
@@ -99,6 +111,17 @@ func _process(_delta: float) -> void:
 			_latency_value.text = "%.1f ms" % ms
 			_latency_value.add_theme_color_override("font_color", WARN if ms > 40.0 else Color.WHITE)
 			_cpu_value.text = "%.0f %%" % (100.0 * float(s.cpu_load))
+		var devices := audio.get_midi_devices()
+		if devices.is_empty():
+			_midi_value.text = "no controller"
+		else:
+			_midi_value.text = devices[0] + ("" if devices.size() == 1 else "  +%d" % (devices.size() - 1))
+		if player.live_input:
+			_input_value.text = "on  (%s)" % s.get("input_device", "input")
+			_input_value.add_theme_color_override("font_color", Color.WHITE)
+		else:
+			_input_value.text = "off" if player.live_input_error == "" else "unavailable"
+			_input_value.add_theme_color_override("font_color", DIM if player.live_input_error == "" else WARN)
 
 	var hint := ""
 	if player.carried != null:

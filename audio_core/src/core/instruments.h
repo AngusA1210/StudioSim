@@ -11,7 +11,8 @@
 
 namespace sr {
 
-enum class InstrumentKind : uint8_t { Drums, Bass, Pad, Bells, Keys };
+enum class InstrumentKind : uint8_t { Drums, Bass, Pad, Bells, Keys, Live };
+constexpr int kInstrumentKinds = 6;
 
 class Instrument {
 public:
@@ -24,6 +25,7 @@ public:
     // Live playing. Instruments that only follow the sequencer ignore these.
     virtual void noteOn(int /*note*/, float /*velocity*/) {}
     virtual void noteOff(int /*note*/) {}
+    virtual void sustain(bool /*pedal_down*/) {}
     virtual void allNotesOff() {}
 
 protected:
@@ -89,7 +91,7 @@ struct BellVoice {
 
 // The playable keys: 1:1 FM electric piano, two slightly detuned carriers. Sustains while held.
 struct EPianoVoice {
-    bool active = false, released = false;
+    bool active = false, released = false, pedal_held = false;
     int note = -1, t = 0, attack_len = 0, index_len = 0;
     float sr = 48000, f = 0, ph_a = 0, ph_b = 0, mod_phase = 0, dev = 0, dev_mul = 1, dev_end = 0;
     float amp = 0, peak = 0, hold_coef = 1, release_coef = 1;
@@ -152,11 +154,28 @@ public:
     using Instrument::Instrument;
     void noteOn(int note, float velocity) override;
     void noteOff(int note) override;
+    void sustain(bool pedal_down) override;
     void allNotesOff() override;
     void render(float* out, int n) override;
 
 private:
-    std::array<voice::EPianoVoice, 16> voices_;
+    std::array<voice::EPianoVoice, 24> voices_;
+    bool pedal_ = false;
+};
+
+// Whatever is plugged into the audio input (a microphone, a guitar), placed in the room like any instrument.
+// The engine points it at the block of input samples it captured for the block being rendered.
+class LiveInput : public Instrument {
+public:
+    using Instrument::Instrument;
+    void setInput(const float* block) { input_ = block; }
+    void render(float* out, int n) override {
+        if (!input_) return;
+        for (int i = 0; i < n; ++i) out[i] += input_[i];
+    }
+
+private:
+    const float* input_ = nullptr;
 };
 
 }  // namespace sr

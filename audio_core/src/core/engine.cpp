@@ -7,6 +7,8 @@
 
 #include <miniaudio.h>
 
+#include "acoustics.h"
+
 #ifdef __APPLE__
 #include <CoreAudio/CoreAudio.h>
 #endif
@@ -26,17 +28,15 @@ Vec3 normalized(Vec3 v) {
 }
 
 #ifdef __APPLE__
-// Frames of latency CoreAudio reports for an output device: device latency + safety offset + stream latency.
-double coreAudioDeviceLatencyFrames(AudioObjectID device) {
-    auto get = [](AudioObjectID obj, AudioObjectPropertySelector sel, AudioObjectPropertyScope scope) -> UInt32 {
-        AudioObjectPropertyAddress addr{sel, scope, kAudioObjectPropertyElementMain};
+// Frames of latency CoreAudio reports for a device in one direction: device latency + safety offset + stream latency.
+double coreAudioDeviceLatencyFrames(AudioObjectID device, AudioObjectPropertyScope scope) {
+    auto get = [](AudioObjectID obj, AudioObjectPropertySelector sel, AudioObjectPropertyScope sc) -> UInt32 {
+        AudioObjectPropertyAddress addr{sel, sc, kAudioObjectPropertyElementMain};
         UInt32 value = 0, size = sizeof(value);
         return AudioObjectGetPropertyData(obj, &addr, 0, nullptr, &size, &value) == noErr ? value : 0;
     };
-    double frames = get(device, kAudioDevicePropertyLatency, kAudioObjectPropertyScopeOutput) +
-                    get(device, kAudioDevicePropertySafetyOffset, kAudioObjectPropertyScopeOutput);
-    AudioObjectPropertyAddress streams{kAudioDevicePropertyStreams, kAudioObjectPropertyScopeOutput,
-                                       kAudioObjectPropertyElementMain};
+    double frames = get(device, kAudioDevicePropertyLatency, scope) + get(device, kAudioDevicePropertySafetyOffset, scope);
+    AudioObjectPropertyAddress streams{kAudioDevicePropertyStreams, scope, kAudioObjectPropertyElementMain};
     UInt32 size = 0;
     if (AudioObjectGetPropertyDataSize(device, &streams, 0, nullptr, &size) == noErr && size >= sizeof(AudioStreamID)) {
         std::vector<AudioStreamID> ids(size / sizeof(AudioStreamID));
@@ -55,10 +55,13 @@ struct AudioEngine::Source {
     std::unique_ptr<Instrument> instrument;
     SourceSpatializer spatializer;
     std::vector<float> mono;
-    Vec3 pos, target_pos;
     float gain = 1.0f, send = 1.0f;
     float mute_target = 1.0f, mute_gain = 1.0f;
-    float visible = 1.0f, visible_target = 1.0f;
+    // The direct path to the listener: where the sound arrives from, how far it still travels beyond that point,
+    // and what walls leave of each band. Each has a target the audio thread glides toward.
+    Vec3 via, via_target;
+    float extra = 0.0f, extra_target = 0.0f;
+    float band[3] = {1.0f, 1.0f, 1.0f}, band_target[3] = {1.0f, 1.0f, 1.0f};
 };
 
 struct AudioEngine::Device {
@@ -80,12 +83,15 @@ AudioEngine::AudioEngine(const EngineConfig& config)
     send_.assign(size_t(block_), 0.0f);
     rev_l_.assign(size_t(block_), 0.0f);
     rev_r_.assign(size_t(block_), 0.0f);
+    input_fifo_.assign(8192, 0.0f);
+    input_block_.assign(size_t(block_), 0.0f);
     sequencer_.setSampleRate(sr_);
     reverb_.init(float(sr_), 1.1f, 12.0f);
     limiter_.init(float(sr_));
 }
 
 AudioEngine::~AudioEngine() {
+    midi_.stop();  // no more events into the queue
     stopDevice();  // the callback must be gone before sources are destroyed
 }
 
@@ -114,12 +120,13 @@ bool AudioEngine::init(std::string* error) {
 }
 
 // ── Device ─────────────────────────────────────────────────────────────────────────────────────────────────
-bool AudioEngine::startDevice(DeviceMode mode, std::string* error) {
+bool AudioEngine::startDevice(DeviceMode mode, bool with_input, std::string* error) {
     if (!initialized_) {
         if (error) *error = "init() has not succeeded";
         return false;
     }
     if (device_) return true;
+    device_mode_ = mode;
     auto dev = std::make_unique<Device>();
 
     ma_context_config cc = ma_context_config_init();
@@ -131,20 +138,42 @@ bool AudioEngine::startDevice(DeviceMode mode, std::string* error) {
     }
     dev->context_ok = true;
 
-    ma_device_config dc = ma_device_config_init(ma_device_type_playback);
+    ma_device_config dc = ma_device_config_init(with_input ? ma_device_type_duplex : ma_device_type_playback);
     dc.playback.format = ma_format_f32;
     dc.playback.channels = 2;
+    dc.capture.format = ma_format_f32;
+    dc.capture.channels = 0;  // every input the device has; they are summed below
     dc.sampleRate = ma_uint32(sr_);
     dc.periodSizeInFrames = ma_uint32(block_);
     dc.performanceProfile = ma_performance_profile_low_latency;
     dc.noPreSilencedOutputBuffer = MA_TRUE;
     dc.noClip = MA_TRUE;
     dc.pUserData = this;
-    dc.dataCallback = [](ma_device* d, void* out, const void*, ma_uint32 frames) {
-        static_cast<AudioEngine*>(d->pUserData)->render(static_cast<float*>(out), int(frames));
+    dc.dataCallback = [](ma_device* d, void* out, const void* in, ma_uint32 frames) {
+        auto* self = static_cast<AudioEngine*>(d->pUserData);
+        const float* input = static_cast<const float*>(in);
+        float* output = static_cast<float*>(out);
+        const ma_uint32 channels = d->capture.channels;
+        if (!input || channels <= 1) {
+            self->render(input, output, int(frames));
+            return;
+        }
+        // An interface with several inputs: add them together (not average) so whichever one is in use comes
+        // through at full level.
+        float mono[512];
+        for (ma_uint32 done = 0; done < frames;) {
+            const ma_uint32 n = std::min<ma_uint32>(frames - done, 512);
+            for (ma_uint32 i = 0; i < n; ++i) {
+                float sum = 0.0f;
+                for (ma_uint32 c = 0; c < channels; ++c) sum += input[(done + i) * channels + c];
+                mono[i] = sum;
+            }
+            self->render(mono, output + done * 2, int(n));
+            done += n;
+        }
     };
     if (ma_device_init(&dev->context, &dc, &dev->device) != MA_SUCCESS) {
-        if (error) *error = "could not open the audio output device";
+        if (error) *error = with_input ? "could not open the audio input and output" : "could not open the audio output device";
         return false;
     }
     dev->device_ok = true;
@@ -155,16 +184,27 @@ bool AudioEngine::startDevice(DeviceMode mode, std::string* error) {
     s.block_size = block_;
     s.device_period = int(dev->device.playback.internalPeriodSizeInFrames);
     s.buffer_ms = 1000.0 * s.device_period / s.sample_rate;
+    s.live_input = with_input;
+    if (with_input) {
+        s.input_device = dev->device.capture.name;
+        s.input_latency_ms = 1000.0 * dev->device.capture.internalPeriodSizeInFrames / dev->device.capture.internalSampleRate;
+    }
 #ifdef __APPLE__
-    if (dev->context.backend == ma_backend_coreaudio)
-        s.device_ms = 1000.0 * coreAudioDeviceLatencyFrames(AudioObjectID(dev->device.coreaudio.deviceObjectIDPlayback)) /
-                      s.sample_rate;
+    if (dev->context.backend == ma_backend_coreaudio) {
+        s.device_ms = 1000.0 * coreAudioDeviceLatencyFrames(AudioObjectID(dev->device.coreaudio.deviceObjectIDPlayback),
+                                                             kAudioObjectPropertyScopeOutput) / s.sample_rate;
+        if (with_input)
+            s.input_latency_ms += 1000.0 * coreAudioDeviceLatencyFrames(AudioObjectID(dev->device.coreaudio.deviceObjectIDCapture),
+                                                                        kAudioObjectPropertyScopeInput) /
+                                  dev->device.capture.internalSampleRate;
+    }
 #endif
     s.output_latency_ms = s.buffer_ms + s.device_ms;
     s.device_running = true;
 
+    input_read_ = input_count_ = 0;  // safe: no callback is running yet
     if (ma_device_start(&dev->device) != MA_SUCCESS) {
-        if (error) *error = "could not start the audio output device";
+        if (error) *error = "could not start the audio device";
         return false;
     }
     device_stats_ = s;
@@ -175,11 +215,43 @@ bool AudioEngine::startDevice(DeviceMode mode, std::string* error) {
 void AudioEngine::stopDevice() {
     device_.reset();
     device_stats_.device_running = false;
+    device_stats_.live_input = false;
+}
+
+bool AudioEngine::setLiveInput(bool enabled, std::string* error) {
+    if (!device_) {
+        if (error) *error = "audio is not running";
+        return false;
+    }
+    if (device_stats_.live_input == enabled) return true;
+    stopDevice();
+    if (startDevice(device_mode_, enabled, error)) return true;
+    std::string ignored;
+    startDevice(device_mode_, false, &ignored);  // keep playing even though the input wouldn't open
+    return false;
+}
+
+// ── MIDI ───────────────────────────────────────────────────────────────────────────────────────────────────
+bool AudioEngine::startMidi(std::string* error) {
+    return midi_.start(
+        [this](const MidiEvent& e) {
+            midi_queue_.push(e);
+            midi_events_.fetch_add(1, std::memory_order_relaxed);
+        },
+        error);
+}
+
+void AudioEngine::pollMidi() { midi_.rescan(); }
+
+std::vector<std::string> AudioEngine::midiDevices() const { return midi_.deviceNames(); }
+
+void AudioEngine::setMidiTarget(int id) {
+    Command c; c.type = Command::MidiTarget; c.id = id; push(c);
 }
 
 // ── Game-thread API ────────────────────────────────────────────────────────────────────────────────────────
 void AudioEngine::push(const Command& c) {
-    commands_.push(c);  // if the queue is ever full the command is dropped; positions resend every frame anyway
+    commands_.push(c);  // if the queue is ever full the command is dropped; positions resend regularly anyway
 }
 
 int AudioEngine::addSource(InstrumentKind kind, Vec3 position, float gain, float reverb_send) {
@@ -193,10 +265,16 @@ int AudioEngine::addSource(InstrumentKind kind, Vec3 position, float gain, float
         case InstrumentKind::Pad:   src->instrument = std::make_unique<Pad>(float(sr_)); break;
         case InstrumentKind::Bells: src->instrument = std::make_unique<Bells>(float(sr_)); break;
         case InstrumentKind::Keys:  src->instrument = std::make_unique<Keys>(float(sr_)); break;
+        case InstrumentKind::Live: {
+            auto live = std::make_unique<LiveInput>(float(sr_));
+            live->setInput(input_block_.data());
+            src->instrument = std::move(live);
+            break;
+        }
     }
     if (!src->spatializer.init(steam_, nullptr)) return -1;
     src->mono.assign(size_t(block_), 0.0f);
-    src->pos = src->target_pos = position;
+    src->via = src->via_target = position;
     src->gain = gain;
     src->send = reverb_send;
 
@@ -212,11 +290,16 @@ int AudioEngine::addSource(InstrumentKind kind, Vec3 position, float gain, float
 void AudioEngine::setSourcePosition(int id, Vec3 p) {
     Command c; c.type = Command::SourcePosition; c.id = id; c.v[0] = p.x; c.v[1] = p.y; c.v[2] = p.z; push(c);
 }
+void AudioEngine::setSourceDirectPath(int id, Vec3 via, float extra_length, const float* path_differences, int count,
+                                      bool blocked) {
+    Command c; c.type = Command::SourceDirectPath; c.id = id;
+    c.v[0] = via.x; c.v[1] = via.y; c.v[2] = via.z;
+    c.v[3] = std::max(extra_length, 0.0f);
+    directPathGains(path_differences, count, blocked, &c.v[4]);
+    push(c);
+}
 void AudioEngine::setSourceMuted(int id, bool muted) {
     Command c; c.type = Command::SourceMuted; c.id = id; c.v[0] = muted ? 1.0f : 0.0f; push(c);
-}
-void AudioEngine::setSourceVisibility(int id, float visible) {
-    Command c; c.type = Command::SourceVisibility; c.id = id; c.v[0] = visible; push(c);
 }
 void AudioEngine::setListener(Vec3 p, Vec3 ahead, Vec3 up) {
     Command c; c.type = Command::Listener;
@@ -270,13 +353,21 @@ void AudioEngine::drainCommands() {
                 if (!roles_[size_t(c.source->kind)]) roles_[size_t(c.source->kind)] = c.source;
                 break;
             case Command::SourcePosition:
-                if (s) s->target_pos = {c.v[0], c.v[1], c.v[2]};
+                if (s) {
+                    s->via_target = {c.v[0], c.v[1], c.v[2]};
+                    s->extra_target = 0.0f;
+                    for (float& g : s->band_target) g = 1.0f;
+                }
+                break;
+            case Command::SourceDirectPath:
+                if (s) {
+                    s->via_target = {c.v[0], c.v[1], c.v[2]};
+                    s->extra_target = c.v[3];
+                    for (int b = 0; b < 3; ++b) s->band_target[b] = c.v[4 + b];
+                }
                 break;
             case Command::SourceMuted:
                 if (s) s->mute_target = c.v[0] > 0.5f ? 0.0f : 1.0f;
-                break;
-            case Command::SourceVisibility:
-                if (s) s->visible_target = std::clamp(c.v[0], 0.0f, 1.0f);
                 break;
             case Command::Listener:
                 target_pos_ = {c.v[0], c.v[1], c.v[2]};
@@ -301,6 +392,23 @@ void AudioEngine::drainCommands() {
             case Command::SequencerRunning:
                 sequencer_.setRunning(c.v[0] > 0.5f);
                 break;
+            case Command::MidiTarget:
+                midi_target_ = c.id;
+                break;
+        }
+    }
+}
+
+void AudioEngine::drainMidi() {
+    MidiEvent e;
+    while (midi_queue_.pop(e)) {
+        Source* s = (midi_target_ >= 0 && midi_target_ < kMaxSources) ? sources_[size_t(midi_target_)]
+                                                                       : role(InstrumentKind::Keys);
+        if (!s) continue;
+        switch (e.type) {
+            case MidiEvent::NoteOn:  s->instrument->noteOn(e.note, e.velocity); break;
+            case MidiEvent::NoteOff: s->instrument->noteOff(e.note); break;
+            case MidiEvent::Sustain: s->instrument->sustain(e.note != 0); break;
         }
     }
 }
@@ -330,7 +438,15 @@ void AudioEngine::bell(double at, int note, float v) {
     if (Source* s = role(InstrumentKind::Bells)) static_cast<Bells*>(s->instrument.get())->play(note, v, delayFor(at));
 }
 
-void AudioEngine::render(float* out, int frames) {
+void AudioEngine::render(const float* input, float* out, int frames) {
+    if (input) {  // queue what was captured; each rendered block takes its share
+        const size_t cap = input_fifo_.size();
+        for (int i = 0; i < frames; ++i) {
+            input_fifo_[(input_read_ + input_count_) % cap] = input[i];
+            if (input_count_ < cap) ++input_count_;
+            else input_read_ = (input_read_ + 1) % cap;  // full: drop the oldest sample
+        }
+    }
     int done = 0;
     while (done < frames) {
         if (block_pos_ >= block_) {
@@ -350,6 +466,16 @@ void AudioEngine::render(float* out, int frames) {
 void AudioEngine::renderBlock() {
     const auto t0 = std::chrono::steady_clock::now();
     drainCommands();
+    drainMidi();
+
+    if (input_count_ >= size_t(block_)) {
+        const size_t cap = input_fifo_.size();
+        for (int i = 0; i < block_; ++i) input_block_[size_t(i)] = input_fifo_[(input_read_ + size_t(i)) % cap];
+        input_read_ = (input_read_ + size_t(block_)) % cap;
+        input_count_ -= size_t(block_);
+    } else {
+        std::fill(input_block_.begin(), input_block_.end(), 0.0f);
+    }
 
     std::fill(mix_l_.begin(), mix_l_.end(), 0.0f);
     std::fill(mix_r_.begin(), mix_r_.end(), 0.0f);
@@ -361,7 +487,7 @@ void AudioEngine::renderBlock() {
     listener_pos_ = lerp(listener_pos_, target_pos_, glide);
     listener_ahead_ = normalized(lerp(listener_ahead_, target_ahead_, glide));
     listener_up_ = normalized(lerp(listener_up_, target_up_, glide));
-    const float wall_glide = 1.0f - std::exp(-float(block_) / (0.06f * float(sr_)));
+    const float wall_glide = 1.0f - std::exp(-float(block_) / (0.05f * float(sr_)));
     const float mute_coef = 1.0f - std::exp(-1.0f / (0.01f * float(sr_)));
 
     for (Source* s : sources_) {
@@ -379,12 +505,15 @@ void AudioEngine::renderBlock() {
         }
         levels_[size_t(s->id)].store(float(std::sqrt(energy / block_)), std::memory_order_relaxed);
 
-        s->pos = lerp(s->pos, s->target_pos, glide);
-        s->visible += (s->visible_target - s->visible) * wall_glide;
+        s->via = lerp(s->via, s->via_target, glide);
+        s->extra += (s->extra_target - s->extra) * wall_glide;
         SpatialParams p;
-        p.direction = steam_.relativeDirection(s->pos, listener_pos_, listener_ahead_, listener_up_);
-        p.distance = length(sub(s->pos, listener_pos_));
-        p.visible = s->visible;
+        for (int b = 0; b < 3; ++b) {
+            s->band[b] += (s->band_target[b] - s->band[b]) * wall_glide;
+            p.band_gain[b] = s->band[b];
+        }
+        p.direction = steam_.relativeDirection(s->via, listener_pos_, listener_ahead_, listener_up_);
+        p.distance = length(sub(s->via, listener_pos_)) + s->extra;
         p.binaural = binaural_;
         s->spatializer.process(mono, mix_l_.data(), mix_r_.data(), p);
     }

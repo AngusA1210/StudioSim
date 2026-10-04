@@ -13,10 +13,6 @@ IPLVector3 ipl(Vec3 v) { return IPLVector3{v.x, v.y, v.z}; }
 // (below 800 Hz, 800 Hz–8 kHz, above 8 kHz).
 constexpr float kAirAbsorption[3] = {0.0002f, 0.0017f, 0.0182f};
 
-// How much of each band reaches you when the line of sight is blocked. This stands in for sound bending
-// around and over the partition: lows mostly get through, highs mostly don't.
-constexpr float kBlockedTransmission[3] = {0.6f, 0.2f, 0.06f};
-
 }  // namespace
 
 SteamAudio::~SteamAudio() {
@@ -84,16 +80,11 @@ void SourceSpatializer::process(const float* mono, float* out_l, float* out_r, c
     IPLAudioBuffer direct{1, frame_, direct_ch};
 
     IPLDirectEffectParams dp{};
-    dp.flags = IPLDirectEffectFlags(IPL_DIRECTEFFECTFLAGS_APPLYDISTANCEATTENUATION | IPL_DIRECTEFFECTFLAGS_APPLYAIRABSORPTION |
-                                    IPL_DIRECTEFFECTFLAGS_APPLYOCCLUSION | IPL_DIRECTEFFECTFLAGS_APPLYTRANSMISSION);
-    dp.transmissionType = IPL_TRANSMISSIONTYPE_FREQDEPENDENT;
+    dp.flags = IPLDirectEffectFlags(IPL_DIRECTEFFECTFLAGS_APPLYDISTANCEATTENUATION | IPL_DIRECTEFFECTFLAGS_APPLYAIRABSORPTION);
     dp.distanceAttenuation = kRefDistance / std::max(kRefDistance, p.distance);
-    for (int b = 0; b < 3; ++b) {
-        dp.airAbsorption[b] = std::exp(-kAirAbsorption[b] * p.distance);
-        dp.transmission[b] = kBlockedTransmission[b];
-    }
-    dp.directivity = 1.0f;
-    dp.occlusion = std::clamp(p.visible, 0.0f, 1.0f);
+    // Steam Audio applies these three numbers as a three-band EQ, so air and walls share it.
+    for (int b = 0; b < 3; ++b)
+        dp.airAbsorption[b] = std::exp(-kAirAbsorption[b] * p.distance) * std::clamp(p.band_gain[b], 0.0f, 1.0f);
     iplDirectEffectApply(direct_, &dp, &in, &direct);
 
     if (p.binaural) {

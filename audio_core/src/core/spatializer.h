@@ -30,9 +30,9 @@ private:
 };
 
 struct SpatialParams {
-    Vec3 direction;          // unit vector from listener to source, in listener space (-z ahead, +x right)
-    float distance = 1.0f;   // metres
-    float visible = 1.0f;    // 1 = clear line of sight, 0 = fully behind a wall
+    Vec3 direction;          // unit vector from the listener toward where the sound arrives from, in listener space
+    float distance = 1.0f;   // metres travelled, including any detour around a wall
+    float band_gain[3] = {1.0f, 1.0f, 1.0f};  // what walls leave of the lows / mids / highs
     bool binaural = true;    // false = plain equal-power stereo panning (for A/B comparison)
 };
 

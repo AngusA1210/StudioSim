@@ -1,5 +1,7 @@
 #include "sound_room_audio.h"
 
+#include <algorithm>
+
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
 
@@ -25,7 +27,7 @@ bool SoundRoomAudio::start(bool silent) {
     auto engine = std::make_unique<sr::AudioEngine>(config);
     std::string err;
     if (!engine->init(&err) ||
-        !engine->startDevice(silent ? sr::DeviceMode::Null : sr::DeviceMode::Hardware, &err)) {
+        !engine->startDevice(silent ? sr::DeviceMode::Null : sr::DeviceMode::Hardware, false, &err)) {
         error_ = String(err.c_str());
         UtilityFunctions::push_error("SoundRoomAudio: ", error_);
         return false;
@@ -47,6 +49,7 @@ int SoundRoomAudio::add_source(const String& kind, const Vector3& position, floa
     else if (kind == "pad") k = sr::InstrumentKind::Pad;
     else if (kind == "bells") k = sr::InstrumentKind::Bells;
     else if (kind == "keys") k = sr::InstrumentKind::Keys;
+    else if (kind == "live") k = sr::InstrumentKind::Live;
     else {
         UtilityFunctions::push_error("SoundRoomAudio: unknown instrument kind ", kind);
         return -1;
@@ -56,7 +59,38 @@ int SoundRoomAudio::add_source(const String& kind, const Vector3& position, floa
 
 void SoundRoomAudio::set_source_position(int id, const Vector3& p) { if (engine_) engine_->setSourcePosition(id, vec(p)); }
 void SoundRoomAudio::set_source_muted(int id, bool muted) { if (engine_) engine_->setSourceMuted(id, muted); }
-void SoundRoomAudio::set_source_visibility(int id, float visible) { if (engine_) engine_->setSourceVisibility(id, visible); }
+void SoundRoomAudio::set_source_direct_path(int id, const Vector3& via, float extra_length,
+                                            const PackedFloat32Array& path_differences, bool blocked) {
+    if (!engine_) return;
+    float deltas[3] = {};
+    const int count = int(std::min<int64_t>(path_differences.size(), 3));
+    for (int i = 0; i < count; ++i) deltas[i] = path_differences[i];
+    engine_->setSourceDirectPath(id, vec(via), extra_length, deltas, count, blocked);
+}
+
+bool SoundRoomAudio::start_midi() {
+    if (!engine_) return false;
+    std::string err;
+    if (engine_->startMidi(&err)) return true;
+    error_ = String(err.c_str());
+    return false;
+}
+void SoundRoomAudio::poll_midi() { if (engine_) engine_->pollMidi(); }
+void SoundRoomAudio::set_midi_target(int id) { if (engine_) engine_->setMidiTarget(id); }
+PackedStringArray SoundRoomAudio::get_midi_devices() const {
+    PackedStringArray names;
+    if (engine_) for (const std::string& n : engine_->midiDevices()) names.push_back(String::utf8(n.c_str()));
+    return names;
+}
+int SoundRoomAudio::get_midi_event_count() const { return engine_ ? int(engine_->midiEventCount()) : 0; }
+
+bool SoundRoomAudio::set_live_input(bool enabled) {
+    if (!engine_) return false;
+    std::string err;
+    if (engine_->setLiveInput(enabled, &err)) return true;
+    error_ = String(err.c_str());
+    return false;
+}
 
 void SoundRoomAudio::set_listener(const Transform3D& t) {
     if (!engine_) return;
@@ -82,6 +116,9 @@ Dictionary SoundRoomAudio::get_stats() const {
     d["buffer_ms"] = s.buffer_ms;
     d["device_ms"] = s.device_ms;
     d["output_latency_ms"] = s.output_latency_ms;
+    d["live_input"] = s.live_input;
+    d["input_device"] = String::utf8(s.input_device.c_str());
+    d["input_latency_ms"] = s.input_latency_ms;
     d["cpu_load"] = s.cpu_load;
     d["blocks"] = int64_t(s.blocks);
     return d;
@@ -95,7 +132,14 @@ void SoundRoomAudio::_bind_methods() {
     ClassDB::bind_method(D_METHOD("add_source", "kind", "position", "gain", "reverb_send"), &SoundRoomAudio::add_source);
     ClassDB::bind_method(D_METHOD("set_source_position", "id", "position"), &SoundRoomAudio::set_source_position);
     ClassDB::bind_method(D_METHOD("set_source_muted", "id", "muted"), &SoundRoomAudio::set_source_muted);
-    ClassDB::bind_method(D_METHOD("set_source_visibility", "id", "visible"), &SoundRoomAudio::set_source_visibility);
+    ClassDB::bind_method(D_METHOD("set_source_direct_path", "id", "via", "extra_length", "path_differences", "blocked"),
+                         &SoundRoomAudio::set_source_direct_path);
+    ClassDB::bind_method(D_METHOD("start_midi"), &SoundRoomAudio::start_midi);
+    ClassDB::bind_method(D_METHOD("poll_midi"), &SoundRoomAudio::poll_midi);
+    ClassDB::bind_method(D_METHOD("set_midi_target", "id"), &SoundRoomAudio::set_midi_target);
+    ClassDB::bind_method(D_METHOD("get_midi_devices"), &SoundRoomAudio::get_midi_devices);
+    ClassDB::bind_method(D_METHOD("get_midi_event_count"), &SoundRoomAudio::get_midi_event_count);
+    ClassDB::bind_method(D_METHOD("set_live_input", "enabled"), &SoundRoomAudio::set_live_input);
     ClassDB::bind_method(D_METHOD("set_listener", "transform"), &SoundRoomAudio::set_listener);
     ClassDB::bind_method(D_METHOD("note_on", "id", "note", "velocity"), &SoundRoomAudio::note_on);
     ClassDB::bind_method(D_METHOD("note_off", "id", "note"), &SoundRoomAudio::note_off);

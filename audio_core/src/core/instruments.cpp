@@ -191,6 +191,7 @@ void EPianoVoice::start(float sample_rate, int midi_note, float velocity) {
     sr = sample_rate;
     active = true;
     released = false;
+    pedal_held = false;
     note = midi_note;
     t = 0;
     f = mtof(float(midi_note));
@@ -286,16 +287,28 @@ void Bells::render(float* out, int n) {
 }
 
 void Keys::noteOn(int note, float velocity) {
-    noteOff(note);  // retrigger rather than stack the same key
+    for (auto& v : voices_)  // retrigger rather than stack the same key
+        if (v.active && !v.released && v.note == note) v.release();
     pickVoice(voices_).start(sr_, note, velocity);
 }
 
 void Keys::noteOff(int note) {
+    for (auto& v : voices_) {
+        if (!v.active || v.released || v.note != note) continue;
+        if (pedal_) v.pedal_held = true;  // the sustain pedal keeps it ringing until it comes up
+        else v.release();
+    }
+}
+
+void Keys::sustain(bool pedal_down) {
+    pedal_ = pedal_down;
+    if (pedal_down) return;
     for (auto& v : voices_)
-        if (v.active && !v.released && v.note == note) v.release();
+        if (v.active && v.pedal_held) v.release();
 }
 
 void Keys::allNotesOff() {
+    pedal_ = false;
     for (auto& v : voices_)
         if (v.active) v.release();
 }
