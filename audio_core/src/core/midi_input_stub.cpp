@@ -15,6 +15,7 @@ bool MidiInput::start(Sink, std::string* error) {
 }
 void MidiInput::stop() {}
 void MidiInput::rescan() {}
-std::vector<std::string> MidiInput::deviceNames() const { return {}; }
+std::vector<MidiDeviceInfo> MidiInput::devices() const { return {}; }
+void MidiInput::setEnabled(const std::string&, bool) {}
 
 }  // namespace sr

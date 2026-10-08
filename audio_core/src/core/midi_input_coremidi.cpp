@@ -3,21 +3,42 @@
 #include "midi_input.h"
 
 #include <algorithm>
+#include <atomic>
 #include <mutex>
+#include <set>
 
 #include <CoreMIDI/CoreMIDI.h>
 
 namespace sr {
 
 struct MidiInput::Impl {
+    // One per source ever seen. Never freed while running: the MIDI thread holds a pointer to it.
+    struct Entry {
+        MIDIEndpointRef endpoint = 0;
+        std::string name;
+        bool present = true, enabled = true, connected = false;
+        std::atomic<uint32_t> events{0};
+    };
+
     MIDIClientRef client = 0;
     MIDIPortRef port = 0;
     Sink sink;
-    mutable std::mutex mutex;  // guards `connected`; never taken on the MIDI or audio threads
-    std::vector<MIDIEndpointRef> connected;
+    mutable std::mutex mutex;  // guards the lists below; never taken on the MIDI or audio threads
+    std::vector<std::unique_ptr<Entry>> entries;
+    std::set<std::string> disabled;
+
+    static std::string nameOf(MIDIEndpointRef src) {
+        CFStringRef name = nullptr;
+        char buf[256] = "MIDI device";
+        if (MIDIObjectGetStringProperty(src, kMIDIPropertyDisplayName, &name) == noErr && name) {
+            CFStringGetCString(name, buf, sizeof(buf), kCFStringEncodingUTF8);
+            CFRelease(name);
+        }
+        return buf;
+    }
 
     // MIDI 1.0 channel-voice messages arrive as 32-bit Universal MIDI Packets: 0x2G SS D1 D2.
-    void handle(const MIDIEventList* list) const {
+    void handle(const MIDIEventList* list, Entry* from) const {
         const MIDIEventPacket* packet = &list->packet[0];
         for (UInt32 p = 0; p < list->numPackets; ++p) {
             for (UInt32 w = 0; w < packet->wordCount; ++w) {
@@ -38,29 +59,41 @@ struct MidiInput::Impl {
                 } else {
                     continue;
                 }
+                if (from) from->events.fetch_add(1, std::memory_order_relaxed);
                 sink(e);
             }
             packet = MIDIEventPacketNext(packet);
         }
     }
 
+    void apply(Entry& e) {  // make the connection match `enabled`; call with the mutex held
+        if (e.present && e.enabled && !e.connected) {
+            e.connected = MIDIPortConnectSource(port, e.endpoint, &e) == noErr;
+        } else if (e.connected && (!e.enabled || !e.present)) {
+            if (e.present) MIDIPortDisconnectSource(port, e.endpoint);
+            e.connected = false;
+        }
+    }
+
     void rescan() {
         std::lock_guard<std::mutex> lock(mutex);
-        std::vector<MIDIEndpointRef> present;
+        for (auto& e : entries) e->present = false;
         const ItemCount n = MIDIGetNumberOfSources();
         for (ItemCount i = 0; i < n; ++i) {
             const MIDIEndpointRef src = MIDIGetSource(i);
             if (!src) continue;
-            present.push_back(src);
-            if (std::find(connected.begin(), connected.end(), src) == connected.end() &&
-                MIDIPortConnectSource(port, src, nullptr) == noErr)
-                connected.push_back(src);
+            auto it = std::find_if(entries.begin(), entries.end(), [&](const auto& e) { return e->endpoint == src; });
+            if (it == entries.end()) {
+                auto entry = std::make_unique<Entry>();
+                entry->endpoint = src;
+                entry->name = nameOf(src);
+                entry->enabled = disabled.count(entry->name) == 0;
+                entries.push_back(std::move(entry));
+                it = entries.end() - 1;
+            }
+            (*it)->present = true;
         }
-        connected.erase(std::remove_if(connected.begin(), connected.end(),
-                                       [&](MIDIEndpointRef e) {
-                                           return std::find(present.begin(), present.end(), e) == present.end();
-                                       }),
-                        connected.end());
+        for (auto& e : entries) apply(*e);
     }
 };
 
@@ -80,7 +113,9 @@ bool MidiInput::start(Sink sink, std::string* error) {
         return false;
     }
     if (MIDIInputPortCreateWithProtocol(impl->client, CFSTR("SoundRoom In"), kMIDIProtocol_1_0, &impl->port,
-                                        ^(const MIDIEventList* list, void*) { impl->handle(list); }) != noErr) {
+                                        ^(const MIDIEventList* list, void* source) {
+                                            impl->handle(list, static_cast<Impl::Entry*>(source));
+                                        }) != noErr) {
         if (error) *error = "could not open a MIDI input port";
         stop();
         return false;
@@ -95,26 +130,31 @@ void MidiInput::stop() {
     impl_->port = 0;
     impl_->client = 0;
     std::lock_guard<std::mutex> lock(impl_->mutex);
-    impl_->connected.clear();
+    impl_->entries.clear();  // safe now: the port is gone, so nothing can call back
 }
 
 void MidiInput::rescan() {
     if (impl_->port) impl_->rescan();
 }
 
-std::vector<std::string> MidiInput::deviceNames() const {
+std::vector<MidiDeviceInfo> MidiInput::devices() const {
     std::lock_guard<std::mutex> lock(impl_->mutex);
-    std::vector<std::string> names;
-    for (MIDIEndpointRef src : impl_->connected) {
-        CFStringRef name = nullptr;
-        char buf[256] = "MIDI device";
-        if (MIDIObjectGetStringProperty(src, kMIDIPropertyDisplayName, &name) == noErr && name) {
-            CFStringGetCString(name, buf, sizeof(buf), kCFStringEncodingUTF8);
-            CFRelease(name);
-        }
-        names.emplace_back(buf);
+    std::vector<MidiDeviceInfo> out;
+    for (const auto& e : impl_->entries)
+        if (e->present) out.push_back({e->name, e->enabled, e->events.load(std::memory_order_relaxed)});
+    return out;
+}
+
+void MidiInput::setEnabled(const std::string& name, bool enabled) {
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    if (enabled) impl_->disabled.erase(name);
+    else impl_->disabled.insert(name);
+    if (!impl_->port) return;
+    for (auto& e : impl_->entries) {
+        if (e->name != name) continue;
+        e->enabled = enabled;
+        impl_->apply(*e);
     }
-    return names;
 }
 
 }  // namespace sr

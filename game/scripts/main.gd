@@ -1,16 +1,21 @@
 extends Node3D
-## Builds the Sound Room (room, instruments, player, HUD) and starts the native audio core.
+## Builds the Sound Room (room, instruments, player, HUD, menu), starts the native audio core, and is the one
+## place that changes settings: the menu and the keyboard shortcuts both go through the functions below.
 ##
 ## Command-line options, passed after `--`:
-##   --silent                 run the audio clock without opening a sound card
+##   --silent                 run the audio clock without opening a sound card (also leaves saved settings alone)
 ##   --pose=x,z,yaw_degrees   start the player somewhere else
 ##   --live-input             switch the audio input on at start
+##   --menu=N                 open the menu on tab N at start
+##   --text-scale=F           override the text size
 ##   --screenshot=path.png    save a screenshot after --frames frames (default 90), print stats, and quit
 ##   --quit-after=seconds     print stats and quit after this long
 
 const Instrument := preload("res://scripts/instrument.gd")
 const Player := preload("res://scripts/player.gd")
 const Hud := preload("res://scripts/hud.gd")
+const Menu := preload("res://scripts/menu.gd")
+const Settings := preload("res://scripts/settings.gd")
 const Acoustics := preload("res://scripts/acoustics.gd")
 
 const ROOM_SIZE := Vector3(14.0, 4.0, 10.0)
@@ -55,23 +60,34 @@ void fragment() {
 """
 
 var audio: SoundRoomAudio
+var settings := Settings.new()
 var player
 var hud
+var menu
 var instruments: Array = []
+var amp  # the live-input instrument
 var walls: Array = []  # AABBs that sound has to bend around
 var options := {}
-var _midi_poll := 0.0
+var live_input := false   # never restored from settings: an open microphone next to speakers would feed back
+var audio_error := ""     # the last problem opening a device, shown in the menu
 var _frames := 0
 var _elapsed := 0.0
+var _midi_poll := 0.0
 
 
 func _ready() -> void:
 	_parse_options()
+	settings.persist = not options.has("silent")
+	settings.load_from_disk()
+	if options.has("text-scale"):
+		settings.text_scale = float(options["text-scale"])
+
 	audio = SoundRoomAudio.new()
 	audio.name = "AudioCore"
 	add_child(audio)
-	if not audio.start(options.has("silent")):
-		push_error("Audio core failed to start: %s" % audio.get_error())
+	open_audio()
+	for device_name in settings.midi_disabled:
+		audio.set_midi_device_enabled(device_name, false)
 	audio.start_midi()
 
 	_build_environment()
@@ -81,21 +97,33 @@ func _ready() -> void:
 		add_child(inst)
 		inst.setup(spec, audio)
 		instruments.append(inst)
+		if spec.kind == "live":
+			amp = inst
+	audio.set_source_input_channel(amp.source_id, settings.amp_input)
+	audio.set_binaural(settings.binaural)
+	audio.set_reverb(settings.reverb)
+	audio.set_master_volume(db_to_linear(settings.master_volume_db))
 
 	player = Player.new()
 	player.name = "Player"
 	add_child(player)
-	player.setup(audio, instruments, ROOM_SIZE, PARTITION_CENTER, PARTITION_SIZE)
+	player.setup(self, instruments, ROOM_SIZE, PARTITION_CENTER, PARTITION_SIZE)
 	if options.has("pose"):
 		var p: PackedStringArray = options.pose.split(",")
 		player.place(Vector3(float(p[0]), 0.0, float(p[1])), deg_to_rad(float(p[2])))
 
-	if options.has("live-input"):
-		player.toggle_live_input()
-
 	hud = Hud.new()
 	add_child(hud)
-	hud.setup(audio, player)
+	hud.setup(self)
+	menu = Menu.new()
+	add_child(menu)
+	menu.setup(self)
+	_apply_display()
+
+	if options.has("live-input"):
+		set_live_input(true)
+	if options.has("menu"):
+		menu.open(int(options.menu))
 
 
 func _process(delta: float) -> void:
@@ -124,6 +152,134 @@ func _physics_process(_delta: float) -> void:
 		inst.set_direct_path(Acoustics.direct_path(ear, inst.global_position, walls, ROOM_SIZE.y))
 
 
+# ── Playback engine and I/O ─────────────────────────────────────────────────────────────────────────────────
+
+## Opens the audio devices the settings ask for. If the chosen output isn't connected, falls back to the system
+## default (keeping the choice, so it comes back when the device does). Returns whether sound is running.
+func open_audio() -> bool:
+	audio_error = ""
+	var config := {
+		"silent": options.has("silent"),
+		"output_device": settings.output_device,
+		"buffer_size": settings.buffer_size,
+		"output_left": settings.output_left,
+		"output_right": settings.output_right,
+		"input_enabled": live_input,
+		"input_device": settings.input_device,
+	}
+	if audio.open_device(config):
+		return true
+	audio_error = audio.get_error()
+	if live_input:  # most likely the input: carry on without it
+		live_input = false
+		config.input_enabled = false
+		if audio.open_device(config):
+			return true
+	config.output_device = ""
+	if audio.open_device(config):
+		return true
+	audio_error = audio.get_error()
+	push_error("Audio could not start: %s" % audio_error)
+	return false
+
+
+func set_output_device(device_name: String) -> void:
+	settings.output_device = device_name
+	settings.output_left = 0
+	settings.output_right = 1
+	open_audio()
+	settings.save_to_disk()
+
+
+func set_buffer_size(samples: int) -> void:
+	settings.buffer_size = samples
+	open_audio()
+	settings.save_to_disk()
+
+
+func set_output_channels(left: int, right: int) -> void:
+	settings.output_left = left
+	settings.output_right = right
+	audio.set_output_channels(left, right)
+	settings.save_to_disk()
+
+
+func set_input_device(device_name: String) -> void:
+	settings.input_device = device_name
+	if live_input:
+		open_audio()
+	settings.save_to_disk()
+
+
+func set_live_input(on: bool) -> void:
+	live_input = on
+	open_audio()
+
+
+func set_amp_input(channel: int) -> void:
+	settings.amp_input = channel
+	audio.set_source_input_channel(amp.source_id, channel)
+	settings.save_to_disk()
+
+
+func set_midi_device_enabled(device_name: String, on: bool) -> void:
+	audio.set_midi_device_enabled(device_name, on)
+	settings.midi_disabled.erase(device_name)
+	if not on:
+		settings.midi_disabled.append(device_name)
+	settings.save_to_disk()
+
+
+# ── Sound, display, controls ────────────────────────────────────────────────────────────────────────────────
+
+func set_binaural(on: bool) -> void:
+	settings.binaural = on
+	audio.set_binaural(on)
+	settings.save_to_disk()
+
+
+func set_reverb(on: bool) -> void:
+	settings.reverb = on
+	audio.set_reverb(on)
+	settings.save_to_disk()
+
+
+func set_master_volume_db(db: float) -> void:
+	settings.master_volume_db = db
+	audio.set_master_volume(db_to_linear(db))
+	settings.save_to_disk()
+
+
+func set_text_scale(scale_factor: float) -> void:
+	settings.text_scale = scale_factor
+	_apply_display()
+	settings.save_to_disk()
+
+
+func set_fov(degrees: float) -> void:
+	settings.fov = degrees
+	_apply_display()
+	settings.save_to_disk()
+
+
+func set_mouse_sensitivity(multiplier: float) -> void:
+	settings.mouse_sensitivity = multiplier
+	settings.save_to_disk()
+
+
+func set_show_stats(on: bool) -> void:
+	settings.show_stats = on
+	settings.save_to_disk()
+
+
+func _apply_display() -> void:
+	get_window().content_scale_factor = settings.text_scale
+	if player:
+		player.camera.fov = settings.fov
+
+
+# ── Setup ───────────────────────────────────────────────────────────────────────────────────────────────────
+
 func _parse_options() -> void:
 	for arg in OS.get_cmdline_user_args():
 		var a: String = arg.trim_prefix("--")
@@ -136,9 +292,9 @@ func _parse_options() -> void:
 
 func _print_stats() -> void:
 	var s := audio.get_stats()
-	print("SoundRoom stats: backend=%s rate=%s block=%s device_period=%s buffer=%.2fms device=%.2fms output=%.2fms cpu=%.1f%% blocks=%s" % [
-		s.get("backend", "?"), s.get("sample_rate", 0), s.get("block_size", 0), s.get("device_period", 0),
-		s.get("buffer_ms", 0.0), s.get("device_ms", 0.0), s.get("output_latency_ms", 0.0),
+	print("SoundRoom stats: device=%s backend=%s rate=%s block=%s device_period=%s buffer=%.2fms device=%.2fms output=%.2fms cpu=%.1f%% blocks=%s" % [
+		s.get("output_device", "?"), s.get("backend", "?"), s.get("sample_rate", 0), s.get("block_size", 0),
+		s.get("device_period", 0), s.get("buffer_ms", 0.0), s.get("device_ms", 0.0), s.get("output_latency_ms", 0.0),
 		100.0 * s.get("cpu_load", 0.0), s.get("blocks", 0)])
 	var levels := []
 	for inst in instruments:
@@ -178,21 +334,20 @@ func _build_room() -> void:
 	var h := ROOM_SIZE.y
 	var d := ROOM_SIZE.z
 	var t := WALL_THICKNESS
-	_add_block(Vector3(0, -t / 2, 0), Vector3(w + 2 * t, t, d + 2 * t), Color(0.05, 0.055, 0.07), 1)  # floor
-	_add_block(Vector3(0, h + t / 2, 0), Vector3(w + 2 * t, t, d + 2 * t), Color(0.035, 0.04, 0.05), 1)  # ceiling
-	_add_block(Vector3(-w / 2 - t / 2, h / 2, 0), Vector3(t, h, d), Color(0.06, 0.065, 0.085), 1)
-	_add_block(Vector3(w / 2 + t / 2, h / 2, 0), Vector3(t, h, d), Color(0.06, 0.065, 0.085), 1)
-	_add_block(Vector3(0, h / 2, -d / 2 - t / 2), Vector3(w, h, t), Color(0.06, 0.065, 0.085), 1)
-	_add_block(Vector3(0, h / 2, d / 2 + t / 2), Vector3(w, h, t), Color(0.06, 0.065, 0.085), 1)
+	_add_block(Vector3(0, -t / 2, 0), Vector3(w + 2 * t, t, d + 2 * t), Color(0.05, 0.055, 0.07))  # floor
+	_add_block(Vector3(0, h + t / 2, 0), Vector3(w + 2 * t, t, d + 2 * t), Color(0.035, 0.04, 0.05))  # ceiling
+	_add_block(Vector3(-w / 2 - t / 2, h / 2, 0), Vector3(t, h, d), Color(0.06, 0.065, 0.085))
+	_add_block(Vector3(w / 2 + t / 2, h / 2, 0), Vector3(t, h, d), Color(0.06, 0.065, 0.085))
+	_add_block(Vector3(0, h / 2, -d / 2 - t / 2), Vector3(w, h, t), Color(0.06, 0.065, 0.085))
+	_add_block(Vector3(0, h / 2, d / 2 + t / 2), Vector3(w, h, t), Color(0.06, 0.065, 0.085))
 	# The partition blocks the player, and sound has to bend around it.
-	_add_block(PARTITION_CENTER, PARTITION_SIZE, Color(0.12, 0.13, 0.17), 1)
+	_add_block(PARTITION_CENTER, PARTITION_SIZE, Color(0.12, 0.13, 0.17))
 	walls.append(AABB(PARTITION_CENTER - PARTITION_SIZE / 2, PARTITION_SIZE))
 
 
-func _add_block(center: Vector3, size: Vector3, color: Color, layers: int) -> void:
+func _add_block(center: Vector3, size: Vector3, color: Color) -> void:
 	var body := StaticBody3D.new()
 	body.position = center
-	body.collision_layer = layers
 	var shape := CollisionShape3D.new()
 	var box := BoxShape3D.new()
 	box.size = size

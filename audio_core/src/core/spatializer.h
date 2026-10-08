@@ -17,7 +17,9 @@ struct Vec3 {
 class SteamAudio {
 public:
     ~SteamAudio();
+    // Can be called again to change the sample rate or frame size; every SourceSpatializer must then be re-inited.
     bool init(int sample_rate, int frame_size, std::string* error);
+    void release();
     IPLContext context() const { return context_; }
     IPLHRTF hrtf() const { return hrtf_; }
     IPLAudioSettings settings() const { return settings_; }
@@ -40,6 +42,7 @@ class SourceSpatializer {
 public:
     ~SourceSpatializer();
     bool init(const SteamAudio& steam, std::string* error);
+    void release();
     // Renders one frame of mono input and adds the stereo result into out_l / out_r.
     void process(const float* mono, float* out_l, float* out_r, const SpatialParams& params);
 

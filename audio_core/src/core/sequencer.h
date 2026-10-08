@@ -28,6 +28,8 @@ public:
     static constexpr double kSwing = 0.14;  // odd sixteenths land this fraction of a step late
 
     void setSampleRate(double sr);
+    // The sample rate changed while playing: keep the place in the music, continuing from sample `now`.
+    void retime(double sr, int64_t now);
     void setRunning(bool running) { running_ = running; }
     bool running() const { return running_; }
 

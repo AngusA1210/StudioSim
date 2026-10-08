@@ -1,6 +1,8 @@
 // Offline checks for the audio core: renders the prototype's room without a sound card and measures it.
 // Run: build/engine_tests            (exit code 0 = all checks passed)
-//      build/engine_tests --device   (opens the real output device silently and prints its latency)
+//      build/engine_tests --device ["name" [buffer [left right]]]
+//                                    (lists audio devices, opens one silently, prints its latency)
+//      build/engine_tests --midi     (lists MIDI devices and reports the notes they send for 15 seconds)
 
 #include <chrono>
 #include <cmath>
@@ -156,26 +158,73 @@ struct VirtualKeyboard {
 
 }  // namespace
 
-// Opens the real output device with no sources (so it plays silence) and reports what the OS says about latency.
-int deviceProbe() {
-    EngineConfig config;
-    config.sample_rate = AudioEngine::defaultOutputSampleRate();
-    AudioEngine engine(config);
+// Lists the audio devices, then opens the default output with no sources (so it plays silence) and reports what
+// the OS says about latency.
+int deviceProbe(const DeviceConfig& config) {
+    for (const auto& d : AudioEngine::outputDevices())
+        std::printf("output: %-32s %2d ch%s\n", d.name.c_str(), d.channels, d.is_default ? "  (default)" : "");
+    for (const auto& d : AudioEngine::inputDevices())
+        std::printf("input:  %-32s %2d ch%s\n", d.name.c_str(), d.channels, d.is_default ? "  (default)" : "");
+    AudioEngine engine;
     std::string err;
-    if (!engine.init(&err) || !engine.startDevice(DeviceMode::Hardware, false, &err)) {
+    if (!engine.init(&err) || !engine.openDevice(config, &err)) {
         std::printf("device probe failed: %s\n", err.c_str());
         return 1;
     }
     std::this_thread::sleep_for(std::chrono::seconds(1));
     const EngineStats s = engine.stats();
-    std::printf("backend %s, %d Hz, period %d frames\n", s.backend.c_str(), s.sample_rate, s.device_period);
+    std::printf("opened %s via %s: %d Hz, %d outputs, buffer %d frames\n", s.output_device.c_str(), s.backend.c_str(),
+                s.sample_rate, s.output_channels, s.device_period);
+    std::printf("mix on outputs %d and %d; engine block %d frames\n", engine.deviceConfig().output_left + 1,
+                engine.deviceConfig().output_right + 1, engine.blockSize());
     std::printf("buffer %.2f ms + device %.2f ms = output latency %.2f ms; %llu blocks rendered\n", s.buffer_ms,
                 s.device_ms, s.output_latency_ms, (unsigned long long)s.blocks);
     return s.blocks > 0 ? 0 : 1;
 }
 
+// Lists MIDI devices and reports whatever they send for a while. Play some notes while it runs.
+int midiProbe(int seconds) {
+    AudioEngine engine;
+    std::string err;
+    if (!engine.init(&err) || !engine.startMidi(&err)) {
+        std::printf("midi probe failed: %s\n", err.c_str());
+        return 1;
+    }
+    std::vector<uint32_t> seen;
+    std::printf("Listening for %d seconds. Play some notes.\n", seconds);
+    for (int tick = 0; tick < seconds * 10; ++tick) {
+#ifdef __APPLE__
+        CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.1, false);
+#else
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+#endif
+        if (tick % 10 == 0) engine.pollMidi();
+        const auto devices = engine.midiDevices();
+        if (devices.size() != seen.size()) {
+            seen.assign(devices.size(), 0);
+            std::printf("%zu MIDI device(s):\n", devices.size());
+            for (const auto& d : devices) std::printf("  %s\n", d.name.c_str());
+        }
+        for (size_t i = 0; i < devices.size(); ++i) {
+            if (devices[i].events != seen[i]) {
+                std::printf("  %s sent %u event(s)\n", devices[i].name.c_str(), devices[i].events - seen[i]);
+                seen[i] = devices[i].events;
+            }
+        }
+        std::fflush(stdout);
+    }
+    return 0;
+}
+
 int main(int argc, char** argv) {
-    if (argc > 1 && std::string(argv[1]) == "--device") return deviceProbe();
+    if (argc > 1 && std::string(argv[1]) == "--device") {  // --device ["name" [buffer [left right]]]
+        DeviceConfig config;
+        if (argc > 2) config.output_device = argv[2];
+        if (argc > 3) config.buffer_size = std::atoi(argv[3]);
+        if (argc > 5) { config.output_left = std::atoi(argv[4]) - 1; config.output_right = std::atoi(argv[5]) - 1; }
+        return deviceProbe(config);
+    }
+    if (argc > 1 && std::string(argv[1]) == "--midi") return midiProbe(argc > 2 ? std::atoi(argv[2]) : 15);
     std::printf("SoundRoom audio core: offline checks\n");
 
     {
@@ -282,9 +331,10 @@ int main(int argc, char** argv) {
             std::string err;
             const bool started = room.engine.startMidi(&err);
             auto names = room.engine.midiDevices();
-            bool found = false;
-            for (const auto& n : names) found = found || n.find("SoundRoom Test Keyboard") != std::string::npos;
-            check(started && found, "the engine finds the keyboard", fmt("%.0f MIDI source(s) connected", double(names.size())));
+            std::string keyboard_name;
+            for (const auto& d : names)
+                if (d.name.find("SoundRoom Test Keyboard") != std::string::npos) keyboard_name = d.name;
+            check(started && !keyboard_name.empty(), "the engine finds the keyboard", fmt("%.0f MIDI source(s) listed", double(names.size())));
 
             renderSeconds(room.engine, 0.3);
             keyboard.send(0x90, 60, 100);  // note on, middle C
@@ -300,6 +350,17 @@ int main(int argc, char** argv) {
             keyboard.send(0xB0, 64, 0);    // pedal up
             Render released = renderSeconds(room.engine, 1.0);
             check(tailPeak(released, 4800) < 1e-3, "lifting the pedal releases it", fmt("%.1f dBFS", db(tailPeak(released, 4800))));
+
+            room.engine.setMidiDeviceEnabled(keyboard_name, false);
+            keyboard.send(0x90, 64, 100);
+            Render ignored = renderSeconds(room.engine, 0.3);
+            keyboard.send(0x80, 64, 0);
+            room.engine.setMidiDeviceEnabled(keyboard_name, true);
+            keyboard.send(0x90, 67, 100);
+            Render heard = renderSeconds(room.engine, 0.3);
+            keyboard.send(0x80, 67, 0);
+            check(ignored.peak < 1e-4 && heard.peak > 1e-2, "a device can be switched off and back on",
+                  fmt("off: %.0f dBFS, on: %.0f dBFS", db(ignored.peak), db(heard.peak)));
 
             VirtualKeyboard second;  // plugged in while running
             second.open(CFSTR("SoundRoom Second Keyboard"));
@@ -333,7 +394,10 @@ int main(int argc, char** argv) {
 
         // Opening the device with an input, on the silent null backend.
         std::string err;
-        const bool opened = room.engine.startDevice(DeviceMode::Null, true, &err);
+        DeviceConfig duplex;
+        duplex.mode = DeviceMode::Null;
+        duplex.input_enabled = true;
+        const bool opened = room.engine.openDevice(duplex, &err);
         std::this_thread::sleep_for(std::chrono::milliseconds(300));
         EngineStats s = room.engine.stats();
         check(opened && s.live_input && s.blocks > 0, "the device opens with an input", fmt("%.0f blocks rendered", double(s.blocks)));
@@ -342,6 +406,76 @@ int main(int argc, char** argv) {
         s = room.engine.stats();
         check(closed && !s.live_input && s.device_running, "and switching the input off keeps playback running", s.backend);
         room.engine.stopDevice();
+    }
+
+    {
+        std::printf("\nPlayback engine and I/O\n");
+        double reference = 0;
+        bool all_ok = true;
+        std::string detail;
+        for (int block : {128, 32, 64, 256, 512, 1024}) {
+            Room room;
+            std::string err;
+            if (!room.engine.configure(48000, block, &err)) { all_ok = false; detail += " " + err; continue; }
+            Render r = renderSeconds(room.engine, 10.43);
+            const double level = db(std::sqrt((r.rms_l * r.rms_l + r.rms_r * r.rms_r) / 2));
+            if (block == 128) reference = level;
+            if (!r.finite || r.peak >= 1.0 || std::fabs(level - reference) > 1.0) all_ok = false;
+            detail += fmt(" %.0f:", block) + fmt("%.1f", level);
+        }
+        check(all_ok, "every buffer size from 32 to 1024 renders the same mix", "frames:dBFS" + detail);
+
+        Room room;
+        renderSeconds(room.engine, 2.0);
+        std::string err;
+        const bool reconfigured = room.engine.configure(44100, 64, &err);
+        Render after = renderSeconds(room.engine, 6.0);
+        check(reconfigured && after.finite && after.rms_l > 0.02, "changing sample rate and buffer size mid-song keeps the music going",
+              fmt("%.1f dBFS at 44.1 kHz / 64 frames", db(after.rms_l)));
+
+        // A four-output device with the mix sent to outputs 3-4.
+        Room routed;
+        routed.engine.setOutputChannels(2, 3);
+        std::vector<float> out(4 * 4800);
+        double energy[4] = {};
+        for (int pass = 0; pass < 20; ++pass) {
+            routed.engine.renderDevice(nullptr, 0, out.data(), 4, 4800);
+            for (int i = 0; i < 4800; ++i)
+                for (int c = 0; c < 4; ++c) energy[c] += double(out[size_t(4 * i + c)]) * out[size_t(4 * i + c)];
+        }
+        check(energy[0] == 0 && energy[1] == 0 && energy[2] > 1 && energy[3] > 1, "the mix goes to the chosen pair of outputs",
+              "outputs 1-2 silent, 3-4 carry the mix");
+
+        // A two-input device: a tone on input 2 only. The amp plays whichever input it is assigned.
+        Room inputs;
+        inputs.quietRoom(inputs.amp);
+        inputs.face(-1.5f, 4.2f, 0.0f);
+        auto two_in = [&](int assigned) {
+            inputs.engine.setSourceInputChannel(inputs.amp, assigned);
+            std::vector<float> in(2 * 128), stereo(2 * 128);
+            double e = 0;
+            for (int b = 0; b < 200; ++b) {
+                for (int i = 0; i < 128; ++i) {
+                    in[size_t(2 * i)] = 0.0f;
+                    in[size_t(2 * i + 1)] = 0.25f * float(std::sin(6.2831853 * 440.0 * double(b * 128 + i) / 48000.0));
+                }
+                inputs.engine.render(in.data(), 2, stereo.data(), 128);
+                if (b >= 100) for (float v : stereo) e += double(v) * v;
+            }
+            return e;
+        };
+        const double on_one = two_in(0), on_two = two_in(1), on_all = two_in(LiveInput::kAllInputs);
+        check(on_one < 1e-6 && on_two > 1 && on_all > 1, "the amp plays the input it is assigned",
+              "input 1: silent, input 2: tone, all inputs: tone");
+
+        const auto outputs = AudioEngine::outputDevices();
+        bool has_default = false;
+        for (const auto& d : outputs) has_default = has_default || d.is_default;
+        check(!outputs.empty() && has_default, "the system's output devices are listed", fmt("%.0f found", double(outputs.size())));
+        DeviceConfig missing;
+        missing.output_device = "A device that is not plugged in";
+        check(!routed.engine.openDevice(missing, &err) && !routed.engine.stats().device_running,
+              "asking for a device that is not connected fails cleanly", err);
     }
 
     {
@@ -357,6 +491,14 @@ int main(int argc, char** argv) {
         room.engine.setBinaural(false);
         Render plain = renderSeconds(room.engine, 2.0);
         check(plain.finite && plain.peak < 1.0, "plain stereo mode renders cleanly", fmt("peak %.1f dBFS", db(plain.peak)));
+        room.engine.setMasterVolume(0.5f);
+        renderSeconds(room.engine, 0.5);
+        Render half = renderSeconds(room.engine, 2.0);
+        room.engine.setMasterVolume(1.0f);
+        renderSeconds(room.engine, 0.5);
+        Render full = renderSeconds(room.engine, 2.0);
+        check(std::fabs((db(full.rms_l) - db(half.rms_l)) - 6.0) < 2.5, "the master volume scales the output",
+              fmt("half volume is %.1f dB quieter", db(full.rms_l) - db(half.rms_l)));
     }
 
     std::printf("\n%s\n", failures ? "SOME CHECKS FAILED" : "All checks passed");

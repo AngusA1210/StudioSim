@@ -35,6 +35,12 @@ void Sequencer::setSampleRate(double sr) {
     next_step_time_ = 0.2 * sr;  // a short breath before the first downbeat
 }
 
+void Sequencer::retime(double sr, int64_t now) {
+    sr_ = sr;
+    step_samples_ = 60.0 / kBpm / 4.0 * sr;
+    next_step_time_ = double(now) + 0.05 * sr;
+}
+
 void Sequencer::process(int64_t block_end, SequencerSink& sink) {
     if (!running_) return;
     while (next_step_time_ < double(block_end)) {

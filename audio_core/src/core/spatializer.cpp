@@ -15,12 +15,17 @@ constexpr float kAirAbsorption[3] = {0.0002f, 0.0017f, 0.0182f};
 
 }  // namespace
 
-SteamAudio::~SteamAudio() {
+SteamAudio::~SteamAudio() { release(); }
+
+void SteamAudio::release() {
     if (hrtf_) iplHRTFRelease(&hrtf_);
     if (context_) iplContextRelease(&context_);
+    hrtf_ = nullptr;
+    context_ = nullptr;
 }
 
 bool SteamAudio::init(int sample_rate, int frame_size, std::string* error) {
+    release();
     IPLContextSettings cs{};
     cs.version = STEAMAUDIO_VERSION;
     cs.simdLevel = IPL_SIMDLEVEL_AVX2;  // an upper bound; Steam Audio picks NEON on Apple silicon
@@ -47,12 +52,17 @@ Vec3 SteamAudio::relativeDirection(Vec3 source, Vec3 listener, Vec3 ahead, Vec3 
     return Vec3{d.x, d.y, d.z};
 }
 
-SourceSpatializer::~SourceSpatializer() {
+SourceSpatializer::~SourceSpatializer() { release(); }
+
+void SourceSpatializer::release() {
     if (binaural_) iplBinauralEffectRelease(&binaural_);
     if (direct_) iplDirectEffectRelease(&direct_);
+    binaural_ = nullptr;
+    direct_ = nullptr;
 }
 
 bool SourceSpatializer::init(const SteamAudio& steam, std::string* error) {
+    release();
     steam_ = &steam;
     IPLAudioSettings settings = steam.settings();
     frame_ = settings.frameSize;

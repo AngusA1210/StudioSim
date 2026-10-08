@@ -32,14 +32,27 @@ Use **wired** headphones. Bluetooth headphones add 150–250 ms of delay that no
 | F | mute or unmute the instrument you're facing |
 | E | play the Keys when you're next to them (A–; are white keys, W E T Y U O P black, Z/X octave, Q stops) |
 | MIDI keyboard | plays the Keys from anywhere, with velocity and sustain pedal; plug in any time |
+| Esc | the menu (see below); the music keeps playing while it's open |
 | I | live input on/off: your microphone or audio interface comes out of the Amp (macOS asks for permission once) |
 | B | binaural on/off (compare with plain stereo) |
 | R | room reverb on/off |
 
+## The menu
+
+- **Playback Engine**: which output device the audio engine runs on, and the hardware buffer size (32–1024 samples).
+  The sample rate follows the device. Shows the resulting latency and CPU use.
+- **I/O**: which of the device's outputs carry the mix, the input device, and which hardware input the Amp plays.
+  Live input always starts switched off, so an open microphone never meets a pair of speakers by surprise.
+- **MIDI**: every MIDI device the system sees, with a tick box each and a light that flashes when it sends notes.
+- **Settings**: master volume, binaural, reverb, text size, field of view, mouse sensitivity, on-screen audio readout.
+
+Choices are saved (Godot's user data folder, `settings.cfg`) and restored at the next start. If a saved device
+isn't connected, the system default is used until it is.
+
 ## How it's put together
 
 ```
-game/                      Godot project: the room, player, instruments and HUD (GDScript)
+game/                      Godot project: the room, player, instruments, HUD and menu (GDScript)
 audio_core/
   src/core/                the audio engine, plain C++ with no Godot dependency
     engine.*               device, command queue, mixing, the shared clock
@@ -60,13 +73,17 @@ instrument's route around walls (`game/scripts/acoustics.gd`) to the audio core 
 waits on it. MIDI controllers and the audio input bypass Godot entirely and go straight into the audio core. The audio core runs
 on its own real-time thread with 128-sample blocks, so a dropped game frame never glitches the sound.
 
-`audio_core/build/engine_tests --device` opens your output device silently and prints the latency it reports.
+Two diagnostics that don't need the game:
+
+- `audio_core/build/engine_tests --device` lists the audio devices, opens the default output silently and prints the
+  latency it reports. Add a device name and buffer size to try another: `--device "Volt 476" 64`.
+- `audio_core/build/engine_tests --midi` lists MIDI devices and reports what they send for 15 seconds.
 
 ## Roadmap
 
 1. **Single-player spatial sandbox** (current): the native audio pipeline, placeable instruments, the playable Keys,
    MIDI controllers, live audio input, and sound bending around wall edges.
-   Next: choosing audio devices and input channels in-game, more instruments, saving a room's layout.
+   Next: more instruments, saving a room's layout, MIDI on Windows and Linux.
 2. **Multiplayer jam**: session server, a networked clock, note events and low-latency audio streams.
 3. **Recording and long-distance play**: multitrack session recording; interval and overdub modes.
 4. **Worlds as content**: saving, sharing and building spaces; more instruments.

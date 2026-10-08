@@ -6,7 +6,7 @@ const EYE_HEIGHT := 1.65
 const WALK_SPEED := 2.8
 const RUN_SPEED := 5.5
 const TURN_SPEED := 1.9  # arrow keys, radians per second
-const MOUSE_SENSITIVITY := 0.0022
+const MOUSE_SENSITIVITY := 0.0022  # multiplied by the setting
 const REACH := 4.2
 const PLAY_REACH := 2.8
 const AIM_COS := 0.955  # within about 17° of where you're facing
@@ -18,6 +18,7 @@ const KEYMAP := {
 	KEY_H: 9, KEY_U: 10, KEY_J: 11, KEY_K: 12, KEY_O: 13, KEY_L: 14, KEY_P: 15, KEY_SEMICOLON: 16,
 }
 
+var app  # main.gd: settings and the audio core
 var audio: SoundRoomAudio
 var instruments: Array = []
 var camera: Camera3D
@@ -28,19 +29,15 @@ var carried = null  # instrument you're carrying
 var playing = null  # instrument you're playing
 var octave := 0
 var held := {}      # physical key → MIDI note currently sounding
-var binaural := true
-var reverb := true
-var live_input := false
-var live_input_error := ""
 
 var _room_half := Vector2.ZERO
 var _partition_min := Vector3.ZERO
 var _partition_max := Vector3.ZERO
 
 
-func setup(audio_core: SoundRoomAudio, room_instruments: Array, room_size: Vector3, partition_center: Vector3,
-		partition_size: Vector3) -> void:
-	audio = audio_core
+func setup(the_app, room_instruments: Array, room_size: Vector3, partition_center: Vector3, partition_size: Vector3) -> void:
+	app = the_app
+	audio = app.audio
 	instruments = room_instruments
 	_room_half = Vector2(room_size.x / 2, room_size.z / 2)
 	_partition_min = partition_center - partition_size / 2
@@ -56,7 +53,7 @@ func setup(audio_core: SoundRoomAudio, room_instruments: Array, room_size: Vecto
 
 	camera = Camera3D.new()
 	camera.position.y = EYE_HEIGHT
-	camera.fov = 75.0
+	camera.fov = app.settings.fov
 	camera.near = 0.05
 	add_child(camera)
 	camera.make_current()
@@ -70,16 +67,6 @@ func place(at: Vector3, facing_yaw: float) -> void:
 	_apply_look()
 
 
-## The microphone / audio interface stays closed until asked for. Its sound comes out of the Amp.
-func toggle_live_input() -> void:
-	if audio.set_live_input(not live_input):
-		live_input = not live_input
-		live_input_error = ""
-	else:
-		live_input = false
-		live_input_error = audio.get_error()
-
-
 func ear_position() -> Vector3:
 	return camera.global_position
 
@@ -88,10 +75,17 @@ func can_play_target() -> bool:
 	return target != null and target.playable and _distance_to(target) < PLAY_REACH
 
 
+func _menu_open() -> bool:
+	return app.menu != null and app.menu.is_open()
+
+
 func _unhandled_input(event: InputEvent) -> void:
+	if _menu_open():
+		return
 	if event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
-		yaw -= event.relative.x * MOUSE_SENSITIVITY
-		pitch = clampf(pitch - event.relative.y * MOUSE_SENSITIVITY, -1.45, 1.45)
+		var sensitivity: float = MOUSE_SENSITIVITY * app.settings.mouse_sensitivity
+		yaw -= event.relative.x * sensitivity
+		pitch = clampf(pitch - event.relative.y * sensitivity, -1.45, 1.45)
 		_apply_look()
 	elif event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
 		if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
@@ -113,18 +107,16 @@ func _handle_key(event: InputEventKey) -> void:
 		if playing != null:
 			_stop_playing()
 		else:
-			Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+			app.menu.open()
 		return
 	if key == KEY_B:
-		binaural = not binaural
-		audio.set_binaural(binaural)
+		app.set_binaural(not app.settings.binaural)
 		return
 	if key == KEY_R:
-		reverb = not reverb
-		audio.set_reverb(reverb)
+		app.set_reverb(not app.settings.reverb)
 		return
 	if key == KEY_I:
-		toggle_live_input()
+		app.set_live_input(not app.live_input)
 		return
 	if playing != null:
 		if key == KEY_Q:
@@ -151,11 +143,12 @@ func _physics_process(delta: float) -> void:
 	var forward := 0.0
 	var strafe := 0.0
 	var turn := 0.0
-	if playing == null:  # while playing, these keys are notes
-		forward += float(Input.is_physical_key_pressed(KEY_W)) - float(Input.is_physical_key_pressed(KEY_S))
-		strafe += float(Input.is_physical_key_pressed(KEY_D)) - float(Input.is_physical_key_pressed(KEY_A))
-	forward += float(Input.is_physical_key_pressed(KEY_UP)) - float(Input.is_physical_key_pressed(KEY_DOWN))
-	turn += float(Input.is_physical_key_pressed(KEY_LEFT)) - float(Input.is_physical_key_pressed(KEY_RIGHT))
+	if not _menu_open():
+		if playing == null:  # while playing, these keys are notes
+			forward += float(Input.is_physical_key_pressed(KEY_W)) - float(Input.is_physical_key_pressed(KEY_S))
+			strafe += float(Input.is_physical_key_pressed(KEY_D)) - float(Input.is_physical_key_pressed(KEY_A))
+		forward += float(Input.is_physical_key_pressed(KEY_UP)) - float(Input.is_physical_key_pressed(KEY_DOWN))
+		turn += float(Input.is_physical_key_pressed(KEY_LEFT)) - float(Input.is_physical_key_pressed(KEY_RIGHT))
 	if turn != 0.0:
 		yaw += turn * TURN_SPEED * delta
 		_apply_look()
@@ -184,6 +177,14 @@ func _process(_delta: float) -> void:
 		if aimed != null:
 			aimed.set_highlighted(true)
 		target = aimed
+
+
+## Called when the menu opens: let go of any notes held on the computer keyboard.
+func release_keys() -> void:
+	if playing != null:
+		for key in held:
+			audio.note_off(playing.source_id, held[key])
+	held.clear()
 
 
 func _apply_look() -> void:

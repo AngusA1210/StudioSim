@@ -6,6 +6,7 @@
 
 #include <array>
 #include <cstdint>
+#include <vector>
 
 #include "dsp.h"
 
@@ -27,6 +28,7 @@ public:
     virtual void noteOff(int /*note*/) {}
     virtual void sustain(bool /*pedal_down*/) {}
     virtual void allNotesOff() {}
+    virtual void setInputChannel(int /*channel*/) {}  // live input only
 
 protected:
     float sr_;
@@ -163,19 +165,32 @@ private:
     bool pedal_ = false;
 };
 
+// The audio captured for the block being rendered, one buffer per hardware input. Owned by the engine.
+struct InputBus {
+    static constexpr int kMaxChannels = 8;
+    std::array<std::vector<float>, kMaxChannels> channel;
+    int active = 0;  // how many inputs the open device delivers
+};
+
 // Whatever is plugged into the audio input (a microphone, a guitar), placed in the room like any instrument.
-// The engine points it at the block of input samples it captured for the block being rendered.
+// It plays one hardware input, or all of them added together.
 class LiveInput : public Instrument {
 public:
-    using Instrument::Instrument;
-    void setInput(const float* block) { input_ = block; }
+    static constexpr int kAllInputs = -1;
+    LiveInput(float sample_rate, const InputBus* bus) : Instrument(sample_rate), bus_(bus) {}
+    void setInputChannel(int channel) override { channel_ = channel; }
     void render(float* out, int n) override {
-        if (!input_) return;
-        for (int i = 0; i < n; ++i) out[i] += input_[i];
+        if (!bus_) return;
+        const int first = channel_ < 0 ? 0 : channel_, last = channel_ < 0 ? bus_->active : channel_ + 1;
+        for (int c = first; c < last && c < bus_->active; ++c) {
+            const float* in = bus_->channel[size_t(c)].data();
+            for (int i = 0; i < n; ++i) out[i] += in[i];
+        }
     }
 
 private:
-    const float* input_ = nullptr;
+    const InputBus* bus_;
+    int channel_ = kAllInputs;
 };
 
 }  // namespace sr

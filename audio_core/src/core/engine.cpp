@@ -18,6 +18,7 @@ namespace {
 
 constexpr float kMasterGain = 1.9f;  // measured: about -21 dBFS RMS at the spawn point, like the prototype
 constexpr float kReverbLevel = 0.16f;
+constexpr size_t kFifoFrames = 4096;
 
 Vec3 sub(Vec3 a, Vec3 b) { return {a.x - b.x, a.y - b.y, a.z - b.z}; }
 float length(Vec3 v) { return std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z); }
@@ -25,6 +26,68 @@ Vec3 lerp(Vec3 a, Vec3 b, float t) { return {a.x + (b.x - a.x) * t, a.y + (b.y -
 Vec3 normalized(Vec3 v) {
     const float l = length(v);
     return l > 1e-6f ? Vec3{v.x / l, v.y / l, v.z / l} : Vec3{0, 0, -1};
+}
+
+// Fills in how many channels the device has.
+void describe(ma_context& context, ma_device_type type, const ma_device_id* id, AudioDeviceInfo& out) {
+    ma_device_info detail;
+    if (ma_context_get_device_info(&context, type, id, &detail) != MA_SUCCESS) return;
+    for (ma_uint32 i = 0; i < detail.nativeDataFormatCount; ++i)
+        out.channels = std::max(out.channels, int(detail.nativeDataFormats[i].channels));
+}
+
+// The sample rate an output device is running at right now. The list of rates a device supports doesn't say
+// which one is current, so the reliable way is to open it briefly without asking for a rate.
+int currentOutputRate(ma_context& context, const ma_device_id* id) {
+    ma_device_config dc = ma_device_config_init(ma_device_type_playback);
+    dc.playback.pDeviceID = id;
+    dc.playback.format = ma_format_f32;
+    dc.dataCallback = [](ma_device*, void*, const void*, ma_uint32) {};
+    ma_device probe;
+    if (ma_device_init(&context, &dc, &probe) != MA_SUCCESS) return 0;
+    const int rate = int(probe.playback.internalSampleRate);
+    ma_device_uninit(&probe);
+    return rate;
+}
+
+std::vector<AudioDeviceInfo> listDevices(ma_device_type type) {
+    std::vector<AudioDeviceInfo> out;
+    ma_context context;
+    if (ma_context_init(nullptr, 0, nullptr, &context) != MA_SUCCESS) return out;
+    ma_device_info *playback = nullptr, *capture = nullptr;
+    ma_uint32 playback_count = 0, capture_count = 0;
+    if (ma_context_get_devices(&context, &playback, &playback_count, &capture, &capture_count) == MA_SUCCESS) {
+        const std::vector<ma_device_info> list = type == ma_device_type_playback
+            ? std::vector<ma_device_info>(playback, playback + playback_count)
+            : std::vector<ma_device_info>(capture, capture + capture_count);
+        for (const ma_device_info& info : list) {
+            AudioDeviceInfo d;
+            d.name = info.name;
+            d.is_default = info.isDefault;
+            describe(context, type, &info.id, d);
+            out.push_back(d);
+        }
+    }
+    ma_context_uninit(&context);
+    return out;
+}
+
+// Looks a device up by name. Returns false if a name was given and nothing matches.
+bool findDevice(ma_context& context, ma_device_type type, const std::string& name, ma_device_id& id, bool& use_default) {
+    use_default = name.empty();
+    if (use_default) return true;
+    ma_device_info *playback = nullptr, *capture = nullptr;
+    ma_uint32 playback_count = 0, capture_count = 0;
+    if (ma_context_get_devices(&context, &playback, &playback_count, &capture, &capture_count) != MA_SUCCESS) return false;
+    const ma_device_info* list = type == ma_device_type_playback ? playback : capture;
+    const ma_uint32 count = type == ma_device_type_playback ? playback_count : capture_count;
+    for (ma_uint32 i = 0; i < count; ++i) {
+        if (name == list[i].name) {
+            id = list[i].id;
+            return true;
+        }
+    }
+    return false;
 }
 
 #ifdef __APPLE__
@@ -57,6 +120,7 @@ struct AudioEngine::Source {
     std::vector<float> mono;
     float gain = 1.0f, send = 1.0f;
     float mute_target = 1.0f, mute_gain = 1.0f;
+    int input_channel = LiveInput::kAllInputs;
     // The direct path to the listener: where the sound arrives from, how far it still travels beyond that point,
     // and what walls leave of each band. Each has a target the audio thread glides toward.
     Vec3 via, via_target;
@@ -78,13 +142,7 @@ struct AudioEngine::Device {
 AudioEngine::AudioEngine(const EngineConfig& config)
     : sr_(config.sample_rate), block_(config.block_size), block_pos_(config.block_size) {
     for (auto& l : levels_) l.store(0.0f);
-    mix_l_.assign(size_t(block_), 0.0f);
-    mix_r_.assign(size_t(block_), 0.0f);
-    send_.assign(size_t(block_), 0.0f);
-    rev_l_.assign(size_t(block_), 0.0f);
-    rev_r_.assign(size_t(block_), 0.0f);
-    input_fifo_.assign(8192, 0.0f);
-    input_block_.assign(size_t(block_), 0.0f);
+    allocateBuffers();
     sequencer_.setSampleRate(sr_);
     reverb_.init(float(sr_), 1.1f, 12.0f);
     limiter_.init(float(sr_));
@@ -95,23 +153,29 @@ AudioEngine::~AudioEngine() {
     stopDevice();  // the callback must be gone before sources are destroyed
 }
 
-int AudioEngine::defaultOutputSampleRate() {
-    int rate = 48000;
-    ma_context context;
-    if (ma_context_init(nullptr, 0, nullptr, &context) != MA_SUCCESS) return rate;
-    ma_device_info info;
-    if (ma_context_get_device_info(&context, ma_device_type_playback, nullptr, &info) == MA_SUCCESS) {
-        for (ma_uint32 i = 0; i < info.nativeDataFormatCount; ++i) {
-            const ma_uint32 r = info.nativeDataFormats[i].sampleRate;
-            if (r >= 44100 && r <= 96000) {
-                rate = int(r);
-                break;
-            }
-        }
-    }
-    ma_context_uninit(&context);
-    return rate;
+void AudioEngine::allocateBuffers() {
+    for (auto* buf : {&mix_l_, &mix_r_, &send_, &rev_l_, &rev_r_}) buf->assign(size_t(block_), 0.0f);
+    for (auto& ch : input_bus_.channel) ch.assign(size_t(block_), 0.0f);
+    input_fifo_.assign(kFifoFrames * InputBus::kMaxChannels, 0.0f);
+    input_read_ = input_count_ = 0;
+    block_pos_ = block_;  // nothing rendered yet
 }
+
+std::unique_ptr<Instrument> AudioEngine::makeInstrument(InstrumentKind kind) const {
+    const float sr = float(sr_);
+    switch (kind) {
+        case InstrumentKind::Drums: return std::make_unique<Drums>(sr);
+        case InstrumentKind::Bass:  return std::make_unique<Bass>(sr);
+        case InstrumentKind::Pad:   return std::make_unique<Pad>(sr);
+        case InstrumentKind::Bells: return std::make_unique<Bells>(sr);
+        case InstrumentKind::Keys:  return std::make_unique<Keys>(sr);
+        case InstrumentKind::Live:  return std::make_unique<LiveInput>(sr, &input_bus_);
+    }
+    return nullptr;
+}
+
+std::vector<AudioDeviceInfo> AudioEngine::outputDevices() { return listDevices(ma_device_type_playback); }
+std::vector<AudioDeviceInfo> AudioEngine::inputDevices() { return listDevices(ma_device_type_capture); }
 
 bool AudioEngine::init(std::string* error) {
     if (initialized_) return true;
@@ -119,81 +183,116 @@ bool AudioEngine::init(std::string* error) {
     return initialized_;
 }
 
+bool AudioEngine::configure(int sample_rate, int block_size, std::string* error) {
+    if (device_) {
+        if (error) *error = "close the audio device before changing its settings";
+        return false;
+    }
+    if (sample_rate == sr_ && block_size == block_) return true;
+    const double ratio = double(sample_rate) / sr_;
+    sr_ = sample_rate;
+    block_ = block_size;
+    allocateBuffers();
+    clock_ = int64_t(double(clock_) * ratio);
+    sequencer_.retime(sr_, clock_);  // keep our place in the music
+    reverb_.init(float(sr_), 1.1f, 12.0f);
+    limiter_.init(float(sr_));
+    if (!initialized_) return true;
+    if (!steam_.init(sr_, block_, error)) {
+        initialized_ = false;
+        return false;
+    }
+    for (auto& s : owned_) {
+        s->instrument = makeInstrument(s->kind);
+        s->instrument->setInputChannel(s->input_channel);
+        s->mono.assign(size_t(block_), 0.0f);
+        if (!s->spatializer.init(steam_, error)) return false;
+    }
+    return true;
+}
+
 // ── Device ─────────────────────────────────────────────────────────────────────────────────────────────────
-bool AudioEngine::startDevice(DeviceMode mode, bool with_input, std::string* error) {
+bool AudioEngine::openDevice(const DeviceConfig& config, std::string* error) {
     if (!initialized_) {
         if (error) *error = "init() has not succeeded";
         return false;
     }
-    if (device_) return true;
-    device_mode_ = mode;
+    stopDevice();
     auto dev = std::make_unique<Device>();
+    const bool null_mode = config.mode == DeviceMode::Null;
 
     ma_context_config cc = ma_context_config_init();
     ma_backend null_backend[] = {ma_backend_null};
-    if (ma_context_init(mode == DeviceMode::Null ? null_backend : nullptr, mode == DeviceMode::Null ? 1 : 0, &cc,
-                        &dev->context) != MA_SUCCESS) {
+    if (ma_context_init(null_mode ? null_backend : nullptr, null_mode ? 1 : 0, &cc, &dev->context) != MA_SUCCESS) {
         if (error) *error = "could not initialise the audio system";
         return false;
     }
     dev->context_ok = true;
 
-    ma_device_config dc = ma_device_config_init(with_input ? ma_device_type_duplex : ma_device_type_playback);
+    ma_device_id output_id{}, input_id{};
+    bool default_output = true, default_input = true;
+    if (!null_mode) {
+        if (!findDevice(dev->context, ma_device_type_playback, config.output_device, output_id, default_output)) {
+            if (error) *error = "output device \"" + config.output_device + "\" is not connected";
+            return false;
+        }
+        if (config.input_enabled &&
+            !findDevice(dev->context, ma_device_type_capture, config.input_device, input_id, default_input)) {
+            if (error) *error = "input device \"" + config.input_device + "\" is not connected";
+            return false;
+        }
+    }
+
+    // Run at the output device's own sample rate so nothing has to be resampled on the way out.
+    const int device_rate = null_mode ? 48000 : currentOutputRate(dev->context, default_output ? nullptr : &output_id);
+    if (device_rate <= 0) {
+        if (error) *error = "could not open the audio output device";
+        return false;
+    }
+    if (!configure(std::clamp(device_rate, 22050, 192000), std::clamp(config.buffer_size, 16, 4096), error)) return false;
+
+    ma_device_config dc = ma_device_config_init(config.input_enabled ? ma_device_type_duplex : ma_device_type_playback);
     dc.playback.format = ma_format_f32;
-    dc.playback.channels = 2;
+    dc.playback.channels = 0;  // every output the device has; the mix goes to the chosen pair
+    dc.playback.pDeviceID = default_output ? nullptr : &output_id;
     dc.capture.format = ma_format_f32;
-    dc.capture.channels = 0;  // every input the device has; they are summed below
+    dc.capture.channels = 0;   // every input the device has
+    dc.capture.pDeviceID = default_input ? nullptr : &input_id;
     dc.sampleRate = ma_uint32(sr_);
     dc.periodSizeInFrames = ma_uint32(block_);
     dc.performanceProfile = ma_performance_profile_low_latency;
-    dc.noPreSilencedOutputBuffer = MA_TRUE;
     dc.noClip = MA_TRUE;
     dc.pUserData = this;
     dc.dataCallback = [](ma_device* d, void* out, const void* in, ma_uint32 frames) {
-        auto* self = static_cast<AudioEngine*>(d->pUserData);
-        const float* input = static_cast<const float*>(in);
-        float* output = static_cast<float*>(out);
-        const ma_uint32 channels = d->capture.channels;
-        if (!input || channels <= 1) {
-            self->render(input, output, int(frames));
-            return;
-        }
-        // An interface with several inputs: add them together (not average) so whichever one is in use comes
-        // through at full level.
-        float mono[512];
-        for (ma_uint32 done = 0; done < frames;) {
-            const ma_uint32 n = std::min<ma_uint32>(frames - done, 512);
-            for (ma_uint32 i = 0; i < n; ++i) {
-                float sum = 0.0f;
-                for (ma_uint32 c = 0; c < channels; ++c) sum += input[(done + i) * channels + c];
-                mono[i] = sum;
-            }
-            self->render(mono, output + done * 2, int(n));
-            done += n;
-        }
+        const int inputs = d->type == ma_device_type_duplex ? int(d->capture.channels) : 0;
+        static_cast<AudioEngine*>(d->pUserData)->renderDevice(static_cast<const float*>(in), inputs, static_cast<float*>(out),
+                                                             int(d->playback.channels), int(frames));
     };
     if (ma_device_init(&dev->context, &dc, &dev->device) != MA_SUCCESS) {
-        if (error) *error = with_input ? "could not open the audio input and output" : "could not open the audio output device";
+        if (error) *error = config.input_enabled ? "could not open the audio input and output" : "could not open the audio output device";
         return false;
     }
     dev->device_ok = true;
 
     EngineStats s;
     s.backend = ma_get_backend_name(dev->context.backend);
+    s.output_device = dev->device.playback.name;
+    s.output_channels = int(dev->device.playback.channels);
     s.sample_rate = int(dev->device.playback.internalSampleRate);
     s.block_size = block_;
     s.device_period = int(dev->device.playback.internalPeriodSizeInFrames);
     s.buffer_ms = 1000.0 * s.device_period / s.sample_rate;
-    s.live_input = with_input;
-    if (with_input) {
+    s.live_input = config.input_enabled;
+    if (config.input_enabled) {
         s.input_device = dev->device.capture.name;
+        s.input_channels = int(dev->device.capture.channels);
         s.input_latency_ms = 1000.0 * dev->device.capture.internalPeriodSizeInFrames / dev->device.capture.internalSampleRate;
     }
 #ifdef __APPLE__
     if (dev->context.backend == ma_backend_coreaudio) {
         s.device_ms = 1000.0 * coreAudioDeviceLatencyFrames(AudioObjectID(dev->device.coreaudio.deviceObjectIDPlayback),
                                                              kAudioObjectPropertyScopeOutput) / s.sample_rate;
-        if (with_input)
+        if (config.input_enabled)
             s.input_latency_ms += 1000.0 * coreAudioDeviceLatencyFrames(AudioObjectID(dev->device.coreaudio.deviceObjectIDCapture),
                                                                         kAudioObjectPropertyScopeInput) /
                                   dev->device.capture.internalSampleRate;
@@ -202,7 +301,14 @@ bool AudioEngine::startDevice(DeviceMode mode, bool with_input, std::string* err
     s.output_latency_ms = s.buffer_ms + s.device_ms;
     s.device_running = true;
 
-    input_read_ = input_count_ = 0;  // safe: no callback is running yet
+    device_config_ = config;
+    device_config_.buffer_size = block_;
+    // Keep the mix on outputs the device actually has.
+    const int last = std::max(s.output_channels - 1, 0);
+    device_config_.output_left = std::clamp(config.output_left, 0, last);
+    device_config_.output_right = std::clamp(config.output_right, 0, last);
+    setOutputChannels(device_config_.output_left, device_config_.output_right);
+
     if (ma_device_start(&dev->device) != MA_SUCCESS) {
         if (error) *error = "could not start the audio device";
         return false;
@@ -223,12 +329,21 @@ bool AudioEngine::setLiveInput(bool enabled, std::string* error) {
         if (error) *error = "audio is not running";
         return false;
     }
-    if (device_stats_.live_input == enabled) return true;
-    stopDevice();
-    if (startDevice(device_mode_, enabled, error)) return true;
+    if (device_config_.input_enabled == enabled) return true;
+    DeviceConfig config = device_config_;
+    config.input_enabled = enabled;
+    if (openDevice(config, error)) return true;
+    config.input_enabled = false;  // keep playing even though the input wouldn't open
     std::string ignored;
-    startDevice(device_mode_, false, &ignored);  // keep playing even though the input wouldn't open
+    openDevice(config, &ignored);
     return false;
+}
+
+void AudioEngine::setOutputChannels(int left, int right) {
+    out_left_.store(std::max(left, 0), std::memory_order_relaxed);
+    out_right_.store(std::max(right, 0), std::memory_order_relaxed);
+    device_config_.output_left = std::max(left, 0);
+    device_config_.output_right = std::max(right, 0);
 }
 
 // ── MIDI ───────────────────────────────────────────────────────────────────────────────────────────────────
@@ -242,8 +357,6 @@ bool AudioEngine::startMidi(std::string* error) {
 }
 
 void AudioEngine::pollMidi() { midi_.rescan(); }
-
-std::vector<std::string> AudioEngine::midiDevices() const { return midi_.deviceNames(); }
 
 void AudioEngine::setMidiTarget(int id) {
     Command c; c.type = Command::MidiTarget; c.id = id; push(c);
@@ -259,19 +372,7 @@ int AudioEngine::addSource(InstrumentKind kind, Vec3 position, float gain, float
     auto src = std::make_unique<Source>();
     src->id = int(owned_.size());
     src->kind = kind;
-    switch (kind) {
-        case InstrumentKind::Drums: src->instrument = std::make_unique<Drums>(float(sr_)); break;
-        case InstrumentKind::Bass:  src->instrument = std::make_unique<Bass>(float(sr_)); break;
-        case InstrumentKind::Pad:   src->instrument = std::make_unique<Pad>(float(sr_)); break;
-        case InstrumentKind::Bells: src->instrument = std::make_unique<Bells>(float(sr_)); break;
-        case InstrumentKind::Keys:  src->instrument = std::make_unique<Keys>(float(sr_)); break;
-        case InstrumentKind::Live: {
-            auto live = std::make_unique<LiveInput>(float(sr_));
-            live->setInput(input_block_.data());
-            src->instrument = std::move(live);
-            break;
-        }
-    }
+    src->instrument = makeInstrument(kind);
     if (!src->spatializer.init(steam_, nullptr)) return -1;
     src->mono.assign(size_t(block_), 0.0f);
     src->via = src->via_target = position;
@@ -301,6 +402,10 @@ void AudioEngine::setSourceDirectPath(int id, Vec3 via, float extra_length, cons
 void AudioEngine::setSourceMuted(int id, bool muted) {
     Command c; c.type = Command::SourceMuted; c.id = id; c.v[0] = muted ? 1.0f : 0.0f; push(c);
 }
+void AudioEngine::setSourceInputChannel(int id, int channel) {
+    if (id >= 0 && id < int(owned_.size())) owned_[size_t(id)]->input_channel = channel;  // remembered across reconfigures
+    Command c; c.type = Command::SourceInputChannel; c.id = id; c.v[0] = float(channel); push(c);
+}
 void AudioEngine::setListener(Vec3 p, Vec3 ahead, Vec3 up) {
     Command c; c.type = Command::Listener;
     c.v[0] = p.x; c.v[1] = p.y; c.v[2] = p.z;
@@ -322,6 +427,9 @@ void AudioEngine::setBinaural(bool on) {
 }
 void AudioEngine::setReverb(bool on) {
     Command c; c.type = Command::Reverb; c.v[0] = on ? 1.0f : 0.0f; push(c);
+}
+void AudioEngine::setMasterVolume(float gain) {
+    Command c; c.type = Command::MasterVolume; c.v[0] = std::clamp(gain, 0.0f, 4.0f); push(c);
 }
 void AudioEngine::setSequencerRunning(bool on) {
     Command c; c.type = Command::SequencerRunning; c.v[0] = on ? 1.0f : 0.0f; push(c);
@@ -369,6 +477,9 @@ void AudioEngine::drainCommands() {
             case Command::SourceMuted:
                 if (s) s->mute_target = c.v[0] > 0.5f ? 0.0f : 1.0f;
                 break;
+            case Command::SourceInputChannel:
+                if (s) s->instrument->setInputChannel(int(c.v[0]));
+                break;
             case Command::Listener:
                 target_pos_ = {c.v[0], c.v[1], c.v[2]};
                 target_ahead_ = {c.v[3], c.v[4], c.v[5]};
@@ -388,6 +499,9 @@ void AudioEngine::drainCommands() {
                 break;
             case Command::Reverb:
                 reverb_target_ = c.v[0] > 0.5f ? 1.0f : 0.0f;
+                break;
+            case Command::MasterVolume:
+                master_target_ = c.v[0];
                 break;
             case Command::SequencerRunning:
                 sequencer_.setRunning(c.v[0] > 0.5f);
@@ -438,13 +552,45 @@ void AudioEngine::bell(double at, int note, float v) {
     if (Source* s = role(InstrumentKind::Bells)) static_cast<Bells*>(s->instrument.get())->play(note, v, delayFor(at));
 }
 
-void AudioEngine::render(const float* input, float* out, int frames) {
-    if (input) {  // queue what was captured; each rendered block takes its share
-        const size_t cap = input_fifo_.size();
+void AudioEngine::renderDevice(const float* input, int input_channels, float* output, int output_channels, int frames) {
+    const int left = std::min(out_left_.load(std::memory_order_relaxed), output_channels - 1);
+    const int right = std::min(out_right_.load(std::memory_order_relaxed), output_channels - 1);
+    if (output_channels == 2 && left == 0 && right == 1) {
+        render(input, input_channels, output, frames);
+        return;
+    }
+    // Any other layout: render stereo in chunks, then place it on the chosen outputs and silence the rest.
+    float stereo[2 * 256];
+    std::memset(output, 0, sizeof(float) * size_t(frames) * size_t(output_channels));
+    for (int done = 0; done < frames;) {
+        const int n = std::min(frames - done, 256);
+        render(input ? input + size_t(done) * size_t(input_channels) : nullptr, input_channels, stereo, n);
+        for (int i = 0; i < n; ++i) {
+            float* frame = output + size_t(done + i) * size_t(output_channels);
+            if (left == right) {
+                frame[left] = 0.5f * (stereo[2 * i] + stereo[2 * i + 1]);  // a one-channel device gets a mono fold-down
+            } else {
+                frame[left] = stereo[2 * i];
+                frame[right] = stereo[2 * i + 1];
+            }
+        }
+        done += n;
+    }
+}
+
+void AudioEngine::render(const float* input, int input_channels, float* out, int frames) {
+    const int channels = input ? std::min(input_channels, int(InputBus::kMaxChannels)) : 0;
+    if (channels != fifo_channels_) {  // the input layout changed (device reopened): start the queue afresh
+        fifo_channels_ = channels;
+        input_read_ = input_count_ = 0;
+    }
+    if (channels > 0) {  // queue what was captured; each rendered block takes its share
         for (int i = 0; i < frames; ++i) {
-            input_fifo_[(input_read_ + input_count_) % cap] = input[i];
-            if (input_count_ < cap) ++input_count_;
-            else input_read_ = (input_read_ + 1) % cap;  // full: drop the oldest sample
+            const size_t slot = (input_read_ + input_count_) % kFifoFrames;
+            for (int c = 0; c < channels; ++c)
+                input_fifo_[slot * size_t(channels) + size_t(c)] = input[size_t(i) * size_t(input_channels) + size_t(c)];
+            if (input_count_ < kFifoFrames) ++input_count_;
+            else input_read_ = (input_read_ + 1) % kFifoFrames;  // full: drop the oldest frame
         }
     }
     int done = 0;
@@ -468,13 +614,17 @@ void AudioEngine::renderBlock() {
     drainCommands();
     drainMidi();
 
-    if (input_count_ >= size_t(block_)) {
-        const size_t cap = input_fifo_.size();
-        for (int i = 0; i < block_; ++i) input_block_[size_t(i)] = input_fifo_[(input_read_ + size_t(i)) % cap];
-        input_read_ = (input_read_ + size_t(block_)) % cap;
+    // This block's share of the captured audio, split into one buffer per hardware input.
+    input_bus_.active = fifo_channels_;
+    const bool have_input = fifo_channels_ > 0 && input_count_ >= size_t(block_);
+    for (int c = 0; c < fifo_channels_; ++c) {
+        float* dst = input_bus_.channel[size_t(c)].data();
+        for (int i = 0; i < block_; ++i)
+            dst[i] = have_input ? input_fifo_[((input_read_ + size_t(i)) % kFifoFrames) * size_t(fifo_channels_) + size_t(c)] : 0.0f;
+    }
+    if (have_input) {
+        input_read_ = (input_read_ + size_t(block_)) % kFifoFrames;
         input_count_ -= size_t(block_);
-    } else {
-        std::fill(input_block_.begin(), input_block_.end(), 0.0f);
     }
 
     std::fill(mix_l_.begin(), mix_l_.end(), 0.0f);
@@ -519,12 +669,13 @@ void AudioEngine::renderBlock() {
     }
 
     reverb_.process(send_.data(), rev_l_.data(), rev_r_.data(), block_);
-    const float rev_coef = 1.0f - std::exp(-1.0f / (0.05f * float(sr_)));
+    const float slow = 1.0f - std::exp(-1.0f / (0.05f * float(sr_)));
     for (int i = 0; i < block_; ++i) {
-        reverb_gain_ += (reverb_target_ - reverb_gain_) * rev_coef;
-        const float wet = kReverbLevel * reverb_gain_;
-        mix_l_[size_t(i)] = (mix_l_[size_t(i)] + rev_l_[size_t(i)] * wet) * kMasterGain;
-        mix_r_[size_t(i)] = (mix_r_[size_t(i)] + rev_r_[size_t(i)] * wet) * kMasterGain;
+        reverb_gain_ += (reverb_target_ - reverb_gain_) * slow;
+        master_gain_ += (master_target_ - master_gain_) * slow;
+        const float wet = kReverbLevel * reverb_gain_, out = kMasterGain * master_gain_;
+        mix_l_[size_t(i)] = (mix_l_[size_t(i)] + rev_l_[size_t(i)] * wet) * out;
+        mix_r_[size_t(i)] = (mix_r_[size_t(i)] + rev_r_[size_t(i)] * wet) * out;
     }
     limiter_.process(mix_l_.data(), mix_r_.data(), block_);
     clock_ += block_;

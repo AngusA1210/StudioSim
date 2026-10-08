@@ -1,5 +1,6 @@
 extends CanvasLayer
-## On-screen status, crosshair, context hints, controls, and the piano shown while playing the Keys.
+## What stays on screen while playing: the crosshair, a hint about what you're facing, the piano while you play
+## the Keys, and (if switched on in the menu) a small audio readout. Everything else lives in the menu.
 
 const PANEL_BG := Color(0.05, 0.06, 0.09, 0.82)
 const DIM := Color(0.62, 0.65, 0.74)
@@ -9,50 +10,39 @@ const WHITE_KEYS := [[KEY_A, "A"], [KEY_S, "S"], [KEY_D, "D"], [KEY_F, "F"], [KE
 const BLACK_KEYS := [[KEY_W, "W", 0], [KEY_E, "E", 1], [KEY_T, "T", 3], [KEY_Y, "Y", 4], [KEY_U, "U", 5],
 	[KEY_O, "O", 7], [KEY_P, "P", 8]]
 
+var app
 var audio: SoundRoomAudio
 var player
 
-var _binaural_value: Label
-var _reverb_value: Label
-var _latency_value: Label
-var _cpu_value: Label
-var _midi_value: Label
-var _input_value: Label
-var _midi_events := 0
-var _midi_flash := 0.0
+var _root: Control
+var _stats_panel: PanelContainer
+var _stats: Label
 var _hint: Label
 var _hint_panel: PanelContainer
-var _capture: PanelContainer
-var _help: PanelContainer
+var _prompt_panel: PanelContainer
+var _prompt: Label
 var _piano: PanelContainer
 var _piano_title: Label
 var _piano_keys := {}  # physical key → [ColorRect, idle colour]
 var _frame := 0
 
 
-func setup(audio_core: SoundRoomAudio, the_player) -> void:
-	audio = audio_core
-	player = the_player
-	var root := Control.new()
-	root.set_anchors_preset(Control.PRESET_FULL_RECT)
-	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(root)
+func setup(the_app) -> void:
+	app = the_app
+	audio = app.audio
+	player = app.player
+	_root = Control.new()
+	_root.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_root)
 
-	# Status, top left
-	var status := _panel(root)
-	status.position = Vector2(14, 14)
-	var grid := GridContainer.new()
-	grid.columns = 3
-	grid.add_theme_constant_override("h_separation", 14)
-	status.add_child(grid)
-	_binaural_value = _row(grid, "Binaural (HRTF)", "B")
-	_reverb_value = _row(grid, "Room reverb", "R")
-	_midi_value = _row(grid, "MIDI", "")
-	_input_value = _row(grid, "Live input", "I")
-	_latency_value = _row(grid, "Output latency", "")
-	_cpu_value = _row(grid, "Audio CPU", "")
+	_stats_panel = _panel(_root)
+	_stats_panel.position = Vector2(14, 14)
+	_stats = Label.new()
+	_stats.add_theme_color_override("font_color", DIM)
+	_stats.add_theme_font_size_override("font_size", 13)
+	_stats_panel.add_child(_stats)
 
-	# Crosshair and hint, centre
 	var cross := Panel.new()
 	var ring := StyleBoxFlat.new()
 	ring.bg_color = Color(0, 0, 0, 0)
@@ -64,64 +54,36 @@ func setup(audio_core: SoundRoomAudio, the_player) -> void:
 	cross.set_anchors_preset(Control.PRESET_CENTER)
 	cross.position -= cross.size / 2
 	cross.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	root.add_child(cross)
+	_root.add_child(cross)
 
-	_hint_panel = _panel(root)
-	_hint_panel.set_anchors_preset(Control.PRESET_CENTER_TOP)
+	_hint_panel = _panel(_root)
 	_hint = Label.new()
 	_hint_panel.add_child(_hint)
 
-	_capture = _panel(root)
-	var capture_text := Label.new()
-	capture_text.text = "Click to capture the mouse"
-	capture_text.add_theme_color_override("font_color", DIM)
-	_capture.add_child(capture_text)
+	_prompt_panel = _panel(_root)
+	_prompt = Label.new()
+	_prompt.add_theme_color_override("font_color", DIM)
+	_prompt_panel.add_child(_prompt)
 
-	# Controls, bottom left
-	_help = _panel(root)
-	var help := Label.new()
-	help.text = "W A S D  move    Shift  run    mouse  look\nG or click  carry an instrument, put it down\nF  mute the one you're facing    E  play the Keys up close\nA MIDI keyboard plays the Keys from anywhere\nI  microphone / audio input into the Amp\nB  binaural on/off    R  reverb on/off    Esc  release mouse"
-	help.add_theme_color_override("font_color", DIM)
-	help.add_theme_font_size_override("font_size", 13)
-	_help.add_child(help)
-
-	_build_piano(root)
+	_build_piano(_root)
 
 
-func _process(delta: float) -> void:
+func _process(_delta: float) -> void:
 	_frame += 1
-	var events := audio.get_midi_event_count()
-	if events != _midi_events:
-		_midi_events = events
-		_midi_flash = 0.15
-	_midi_flash = maxf(_midi_flash - delta, 0.0)
-	_midi_value.add_theme_color_override("font_color", Color(1.0, 0.48, 0.82) if _midi_flash > 0.0 else Color.WHITE)
+	var menu_open: bool = app.menu != null and app.menu.is_open()
+	_root.visible = not menu_open
+	if menu_open:
+		return
 	var vp := get_viewport().get_visible_rect().size
-	_binaural_value.text = "on" if player.binaural else "off (plain stereo)"
-	_binaural_value.add_theme_color_override("font_color", Color.WHITE if player.binaural else WARN)
-	_reverb_value.text = "on" if player.reverb else "off"
-	_reverb_value.add_theme_color_override("font_color", Color.WHITE if player.reverb else WARN)
-	if _frame % 20 == 1:
+
+	_stats_panel.visible = app.settings.show_stats
+	if app.settings.show_stats and _frame % 20 == 1:
 		var s := audio.get_stats()
-		if s.is_empty():
-			_latency_value.text = "audio not running"
-			_cpu_value.text = "-"
+		if s.is_empty() or not s.get("device_running", false):
+			_stats.text = "Audio is not running"
 		else:
-			var ms: float = s.output_latency_ms
-			_latency_value.text = "%.1f ms" % ms
-			_latency_value.add_theme_color_override("font_color", WARN if ms > 40.0 else Color.WHITE)
-			_cpu_value.text = "%.0f %%" % (100.0 * float(s.cpu_load))
-		var devices := audio.get_midi_devices()
-		if devices.is_empty():
-			_midi_value.text = "no controller"
-		else:
-			_midi_value.text = devices[0] + ("" if devices.size() == 1 else "  +%d" % (devices.size() - 1))
-		if player.live_input:
-			_input_value.text = "on  (%s)" % s.get("input_device", "input")
-			_input_value.add_theme_color_override("font_color", Color.WHITE)
-		else:
-			_input_value.text = "off" if player.live_input_error == "" else "unavailable"
-			_input_value.add_theme_color_override("font_color", DIM if player.live_input_error == "" else WARN)
+			_stats.text = "%s\n%d Hz  ·  %d samples  ·  %.1f ms out  ·  CPU %.0f %%" % [
+				s.output_device, s.sample_rate, s.block_size, s.output_latency_ms, 100.0 * float(s.cpu_load)]
 
 	var hint := ""
 	if player.carried != null:
@@ -134,17 +96,22 @@ func _process(delta: float) -> void:
 		hint = "%s  ·  %sG carry  ·  F %s" % [t.display_name, play, "unmute" if t.muted else "mute"]
 	_hint.text = hint
 	_hint_panel.visible = hint != ""
-	_hint_panel.position = Vector2((vp.x - _hint_panel.size.x) / 2, vp.y / 2 + 24)
 	_hint_panel.reset_size()
+	_hint_panel.position = Vector2((vp.x - _hint_panel.size.x) / 2, vp.y / 2 + 24)
 
-	_capture.visible = Input.mouse_mode != Input.MOUSE_MODE_CAPTURED
-	_capture.position = Vector2((vp.x - _capture.size.x) / 2, 14)
-
+	# One line of guidance: how to start, or where the menu is.
 	var playing: bool = player.playing != null
+	_prompt.text = "Click to look around  ·  Esc  menu and settings" if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED else "Esc  menu"
+	_prompt_panel.visible = not playing
+	_prompt_panel.reset_size()
+	if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
+		_prompt_panel.position = Vector2((vp.x - _prompt_panel.size.x) / 2, 14)
+	else:
+		_prompt_panel.position = Vector2(14, vp.y - _prompt_panel.size.y - 14)
+
 	_piano.visible = playing
-	_help.visible = not playing
-	_help.position = Vector2(14, vp.y - _help.size.y - 14)
 	if playing:
+		_piano.reset_size()
 		_piano.position = Vector2((vp.x - _piano.size.x) / 2, vp.y - _piano.size.y - 18)
 		_piano_title.text = "Q  stop playing    Z X  octave (lowest key C%d)" % (4 + player.octave)
 		for key in _piano_keys:
@@ -187,21 +154,6 @@ func _piano_key(parent: Control, key: int, letter: String, pos: Vector2, size: V
 	label.position = Vector2(0, size.y - 22)
 	rect.add_child(label)
 	_piano_keys[key] = [rect, idle]
-
-
-func _row(grid: GridContainer, name: String, key: String) -> Label:
-	var label := Label.new()
-	label.text = name
-	label.add_theme_color_override("font_color", DIM)
-	grid.add_child(label)
-	var value := Label.new()
-	value.text = "-"
-	grid.add_child(value)
-	var key_label := Label.new()
-	key_label.text = key
-	key_label.add_theme_color_override("font_color", DIM)
-	grid.add_child(key_label)
-	return value
 
 
 func _panel(parent: Control) -> PanelContainer:
