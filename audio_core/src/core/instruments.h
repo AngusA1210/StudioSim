@@ -1,8 +1,9 @@
 #pragma once
 
 // Synthesized instruments, ported from the browser prototype. Every voice is pre-allocated, so nothing here
-// allocates on the audio thread. A voice can start partway into a block (`delay` samples), which is what makes
-// the sequencer sample-accurate.
+// allocates on the audio thread. Each instrument can be played two ways: live (noteOn/noteOff, from the computer
+// keyboard or a MIDI controller) and by the sequencer (play), where a note has a set length and can start partway
+// into a block (`delay` samples), which is what makes the sequencer sample-accurate.
 
 #include <array>
 #include <cstdint>
@@ -23,11 +24,18 @@ public:
     // Adds the next `n` samples of this instrument into `out` (mono).
     virtual void render(float* out, int n) = 0;
 
-    // Live playing. Instruments that only follow the sequencer ignore these.
+    // Played live. The note sounds from the start of the next block.
     virtual void noteOn(int /*note*/, float /*velocity*/) {}
     virtual void noteOff(int /*note*/) {}
     virtual void sustain(bool /*pedal_down*/) {}
-    virtual void allNotesOff() {}
+    virtual void allNotesOff() {}  // releases everything that is being played live
+
+    // Played by the sequencer: a note `dur_sec` long that starts `delay` samples into the coming block.
+    virtual void play(int /*note*/, float /*dur_sec*/, float /*velocity*/, int /*delay*/) {}
+    virtual void stopSequenced() {}  // fades out whatever the sequencer started
+    // How much the loudness of each sequenced note varies, so a repeated note doesn't sound mechanical.
+    virtual float velocityJitter() const { return 0.0f; }
+
     virtual void setInputChannel(int /*channel*/) {}  // live input only
 
 protected:
@@ -58,26 +66,31 @@ struct NoiseHit {
 };
 
 struct BassVoice {
-    bool active = false;
-    int delay = 0, t = 0, attack_len = 0, hold_len = 0, release_len = 0, cutoff_len = 0;
+    bool active = false, live = false;
+    int note = -1, delay = 0, t = 0, attack_len = 0, hold_len = 0, release_len = 0, cutoff_len = 0;
     float sr = 48000, v = 0, amp = 0, decay_mul = 1, release_step = 0, cutoff = 0, cutoff_mul = 1;
     float sine_phase = 0, sine_inc = 0;
     SawOsc saw;
     Biquad lp;
 
-    void start(float sample_rate, int delay_samples, float freq, float dur_sec, float velocity);
+    // dur_sec < 0: played live, so it holds (slowly dying away) until release().
+    void start(float sample_rate, int delay_samples, int midi_note, float dur_sec, float velocity);
+    void release();
     float next();
 };
 
+// One note of the pad: a detuned pair of saws through a low-pass that opens slowly and closes again.
 struct PadVoice {
-    static constexpr int kMaxOscs = 8;
-    bool active = false;
-    int delay = 0, t = 0, attack_len = 0, hold_len = 0, release_len = 0, rise_len = 0, fall_len = 0, osc_count = 0;
-    float sr = 48000, v = 0, cutoff = 0;
-    std::array<SawOsc, kMaxOscs> oscs;
+    bool active = false, live = false, released = false;
+    int note = -1, delay = 0, t = 0, attack_len = 0, hold_len = 0, release_len = 0;
+    int rise_len = 0, fall_start = -1, fall_len = 1, release_start = 0, release_span = 1;
+    float sr = 48000, v = 0, amp = 0, release_from = 0, cutoff = 600, fall_from = 1900;
+    std::array<SawOsc, 2> oscs;
     Biquad lp;
 
-    void start(float sample_rate, int delay_samples, const int* notes, int count, float dur_sec, float velocity, Rng& rng);
+    // dur_sec < 0: played live, so it holds until release().
+    void start(float sample_rate, int delay_samples, int midi_note, float dur_sec, float velocity, Rng& rng);
+    void release();
     float next();
 };
 
@@ -91,25 +104,34 @@ struct BellVoice {
     float next();
 };
 
-// The playable keys: 1:1 FM electric piano, two slightly detuned carriers. Sustains while held.
+// The keys: 1:1 FM electric piano, two slightly detuned carriers. Sustains while held.
 struct EPianoVoice {
-    bool active = false, released = false, pedal_held = false;
-    int note = -1, t = 0, attack_len = 0, index_len = 0;
+    bool active = false, released = false, pedal_held = false, live = true;
+    int note = -1, delay = 0, t = 0, attack_len = 0, index_len = 0, release_at = -1;
     float sr = 48000, f = 0, ph_a = 0, ph_b = 0, mod_phase = 0, dev = 0, dev_mul = 1, dev_end = 0;
     float amp = 0, peak = 0, hold_coef = 1, release_coef = 1;
 
-    void start(float sample_rate, int midi_note, float velocity);
+    // release_after < 0: played live, so it holds until release().
+    void start(float sample_rate, int midi_note, float velocity, int delay_samples = 0, int release_after = -1);
     void release() { released = true; }
     float next();
 };
 
 }  // namespace voice
 
+// A drum machine. Every note plays one of its pieces, laid out like the General MIDI drum map and repeated in
+// every octave, so any key on a controller does something.
 class Drums : public Instrument {
 public:
-    enum Piece { Kick, Snare, HatClosed, HatOpen };
+    enum Piece { Kick, Snare, HatClosed, HatOpen, TomLow, TomHigh, Clap, Crash, kPieces };
+    static Piece pieceFor(int note);
+    static int noteFor(Piece piece);  // the note a piece is written as in a pattern
+    static const char* pieceName(Piece piece);
+
     using Instrument::Instrument;
     void hit(Piece piece, float velocity, int delay);
+    void noteOn(int note, float velocity) override { hit(pieceFor(note), velocity, 0); }
+    void play(int note, float /*dur_sec*/, float velocity, int delay) override { hit(pieceFor(note), velocity, delay); }
     void render(float* out, int n) override;
 
 private:
@@ -123,31 +145,42 @@ private:
 class Bass : public Instrument {
 public:
     using Instrument::Instrument;
-    void play(int note, float dur_sec, float velocity, int delay);
+    void noteOn(int note, float velocity) override;
+    void noteOff(int note) override;
+    void allNotesOff() override;
+    void play(int note, float dur_sec, float velocity, int delay) override;
+    void stopSequenced() override;
     void render(float* out, int n) override;
 
 private:
-    std::array<voice::BassVoice, 4> voices_;
+    std::array<voice::BassVoice, 6> voices_;
 };
 
 class Pad : public Instrument {
 public:
     using Instrument::Instrument;
-    void play(const int* notes, int count, float dur_sec, float velocity, int delay);
+    void noteOn(int note, float velocity) override;
+    void noteOff(int note) override;
+    void allNotesOff() override;
+    void play(int note, float dur_sec, float velocity, int delay) override;
+    void stopSequenced() override;
     void render(float* out, int n) override;
 
 private:
-    std::array<voice::PadVoice, 3> voices_;
+    std::array<voice::PadVoice, 20> voices_;
     Rng rng_{0x2545F491u};
 };
 
 class Bells : public Instrument {
 public:
     using Instrument::Instrument;
-    void play(int note, float velocity, int delay);
+    void noteOn(int note, float velocity) override { strike(note, velocity, 0); }
+    void play(int note, float /*dur_sec*/, float velocity, int delay) override { strike(note, velocity, delay); }
+    float velocityJitter() const override { return 0.1f; }
     void render(float* out, int n) override;
 
 private:
+    void strike(int note, float velocity, int delay);
     std::array<voice::BellVoice, 12> voices_;
 };
 
@@ -158,6 +191,8 @@ public:
     void noteOff(int note) override;
     void sustain(bool pedal_down) override;
     void allNotesOff() override;
+    void play(int note, float dur_sec, float velocity, int delay) override;
+    void stopSequenced() override;
     void render(float* out, int n) override;
 
 private:

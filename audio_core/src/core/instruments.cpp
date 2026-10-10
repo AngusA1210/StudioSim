@@ -15,6 +15,17 @@ V& pickVoice(std::array<V, N>& pool) {
 }
 
 constexpr float kLowpassQ = 1.08f;  // the prototype's default Web Audio Q (1 dB) as a linear Q
+constexpr int kHeld = 1 << 30;      // a note length that never arrives: the note lasts until it is released
+constexpr float kPadLevel = 0.0875f;  // a velocity of 0.8 gives each pad note the prototype's level
+constexpr float kMinVelocity = 0.01f;
+
+// Lets go of a sequenced voice: one that hasn't started yet is dropped, one that is sounding is released.
+template <typename V>
+void stopVoice(V& v) {
+    if (!v.active || v.live) return;
+    if (v.delay > 0) v.active = false;
+    else v.release();
+}
 
 }  // namespace
 
@@ -75,17 +86,26 @@ float NoiseHit::next(Rng& rng) {
 }
 
 // ── BassVoice: saw through a resonant low-pass that closes, plus a sine for weight ─────────────────────────
-void BassVoice::start(float sample_rate, int delay_samples, float freq, float dur_sec, float velocity) {
+void BassVoice::start(float sample_rate, int delay_samples, int midi_note, float dur_sec, float velocity) {
+    const float freq = mtof(float(midi_note));
     sr = sample_rate;
     active = true;
+    live = dur_sec < 0.0f;
+    note = midi_note;
     delay = delay_samples;
     t = 0;
-    v = velocity;
+    v = std::max(velocity, kMinVelocity);
     amp = 0;
+    release_step = 0;
     attack_len = std::max(1, int(0.006f * sr));
-    hold_len = std::max(attack_len + 1, int(dur_sec * sr));
     release_len = int(0.06f * sr);
-    decay_mul = expStep(v, 0.6f * v, float(hold_len - attack_len));
+    if (live) {  // dies away like a held string: down to 60 % after two seconds
+        hold_len = kHeld;
+        decay_mul = expStep(v, 0.6f * v, 2.0f * sr);
+    } else {
+        hold_len = std::max(attack_len + 1, int(dur_sec * sr));
+        decay_mul = expStep(v, 0.6f * v, float(hold_len - attack_len));
+    }
     cutoff = 1500.0f;
     cutoff_len = int(0.2f * sr);
     cutoff_mul = expStep(1500.0f, 360.0f, float(cutoff_len));
@@ -94,6 +114,10 @@ void BassVoice::start(float sample_rate, int delay_samples, float freq, float du
     sine_phase = 0;
     sine_inc = freq / sr;
     lp.reset();
+}
+
+void BassVoice::release() {
+    if (t < hold_len) hold_len = std::max(t, attack_len + 1);  // the release starts at the next sample
 }
 
 float BassVoice::next() {
@@ -112,46 +136,75 @@ float BassVoice::next() {
     return s * std::max(amp, 0.0f);
 }
 
-// ── PadVoice: detuned saw pairs through a slowly opening low-pass ──────────────────────────────────────────
-void PadVoice::start(float sample_rate, int delay_samples, const int* notes, int count, float dur_sec, float velocity,
-                     Rng& rng) {
+// ── PadVoice: a detuned saw pair through a slowly opening low-pass ─────────────────────────────────────────
+void PadVoice::start(float sample_rate, int delay_samples, int midi_note, float dur_sec, float velocity, Rng& rng) {
     sr = sample_rate;
     active = true;
+    live = dur_sec < 0.0f;
+    released = false;
+    note = midi_note;
     delay = delay_samples;
     t = 0;
-    v = velocity;
-    attack_len = int(0.5f * sr);
-    hold_len = std::max(attack_len, int(dur_sec * sr));
+    v = std::max(velocity, kMinVelocity) * kPadLevel;
+    amp = 0;
     release_len = int(1.2f * sr);
-    rise_len = std::max(1, int(0.55f * dur_sec * sr));
-    fall_len = std::max(1, hold_len + release_len - rise_len);
-    osc_count = 0;
-    for (int i = 0; i < count && osc_count + 2 <= kMaxOscs; ++i) {
-        for (float cents : {-8.0f, 8.0f}) {
-            SawOsc& o = oscs[osc_count++];
-            o.setFreq(mtof(float(notes[i])) * centsToRatio(cents), sr);
-            o.phase = rng.uniform();
-        }
+    if (live) {  // speaks sooner than the sequenced chords, and the filter stays open while the key is down
+        attack_len = int(0.12f * sr);
+        hold_len = -1;
+        rise_len = int(0.8f * sr);
+        fall_start = -1;
+        fall_len = release_len;
+    } else {
+        attack_len = int(0.5f * sr);
+        hold_len = std::max(attack_len, int(dur_sec * sr));
+        rise_len = std::max(1, int(0.55f * dur_sec * sr));
+        fall_start = rise_len;
+        fall_len = std::max(1, hold_len + release_len - rise_len);
+    }
+    fall_from = 1900.0f;
+    for (float cents : {-8.0f, 8.0f}) {
+        SawOsc& o = oscs[cents < 0.0f ? 0 : 1];
+        o.setFreq(mtof(float(midi_note)) * centsToRatio(cents), sr);
+        o.phase = rng.uniform();
     }
     cutoff = 600.0f;
     lp.reset();
 }
 
+void PadVoice::release() {
+    if (released) return;
+    released = true;
+    // A sequenced note that is cut short (the sequence was stopped) fades quickly; otherwise the usual long tail.
+    const bool cut_short = !live && t < hold_len;
+    release_from = amp;
+    release_start = t;
+    release_span = cut_short ? std::max(1, int(0.12f * sr)) : release_len;
+    if (amp <= 0.0f) active = false;  // let go before it made a sound
+    if (live) {  // close the filter from wherever it has got to
+        rise_len = std::min(rise_len, t);
+        fall_start = t;
+        fall_from = cutoff;
+    }
+}
+
 float PadVoice::next() {
     if (delay > 0) { --delay; return 0.0f; }
     if ((t & 31) == 0) {
-        cutoff = t < rise_len ? 600.0f + 1300.0f * float(t) / float(rise_len)
-                              : 1900.0f - 1200.0f * float(t - rise_len) / float(fall_len);
+        if (t < rise_len) cutoff = 600.0f + 1300.0f * float(t) / float(rise_len);
+        else if (fall_start < 0) cutoff = 1900.0f;
+        else cutoff = std::max(700.0f, fall_from - (fall_from - 700.0f) * float(t - fall_start) / float(fall_len));
         lp.set(Biquad::Lowpass, sr, cutoff, kLowpassQ);
     }
-    float amp;
-    if (t < attack_len) amp = v * float(t) / float(attack_len);
-    else if (t < hold_len) amp = v;
-    else amp = v * (1.0f - float(t - hold_len) / float(release_len));
-    float s = 0;
-    for (int i = 0; i < osc_count; ++i) s += oscs[i].next();
-    if (++t >= hold_len + release_len) active = false;
-    return lp.process(s) * std::max(amp, 0.0f);
+    if (!released) {
+        amp = t < attack_len ? v * float(t) / float(attack_len) : v;
+        if (hold_len >= 0 && t >= hold_len) release();
+    } else {
+        if (t - release_start >= release_span) { active = false; return 0.0f; }
+        amp = release_from * (1.0f - float(t - release_start) / float(release_span));
+    }
+    const float s = oscs[0].next() + oscs[1].next();
+    ++t;
+    return lp.process(s) * amp;
 }
 
 // ── BellVoice ──────────────────────────────────────────────────────────────────────────────────────────────
@@ -166,7 +219,7 @@ void BellVoice::start(float sample_rate, int delay_samples, float freq, float ve
     dev_end = 0.2f * f;
     index_len = int(0.3f * sr);
     dev_mul = expStep(dev, dev_end, float(index_len));
-    v = velocity;
+    v = std::max(velocity, kMinVelocity);
     amp = 0;
     attack_len = std::max(1, int(0.003f * sr));
     decay_mul = expStep(v, 0.0001f, (1.2f - 0.003f) * sr);
@@ -187,12 +240,15 @@ float BellVoice::next() {
 }
 
 // ── EPianoVoice ────────────────────────────────────────────────────────────────────────────────────────────
-void EPianoVoice::start(float sample_rate, int midi_note, float velocity) {
+void EPianoVoice::start(float sample_rate, int midi_note, float velocity, int delay_samples, int release_after) {
     sr = sample_rate;
     active = true;
     released = false;
     pedal_held = false;
+    live = release_after < 0;
     note = midi_note;
+    delay = delay_samples;
+    release_at = release_after;
     t = 0;
     f = mtof(float(midi_note));
     ph_a = ph_b = mod_phase = 0;
@@ -208,6 +264,8 @@ void EPianoVoice::start(float sample_rate, int midi_note, float velocity) {
 }
 
 float EPianoVoice::next() {
+    if (delay > 0) { --delay; return 0.0f; }
+    if (release_at >= 0 && t >= release_at) released = true;
     if (released) {
         amp *= release_coef;
         if (amp < 1e-4f) { active = false; return 0.0f; }
@@ -231,6 +289,22 @@ float EPianoVoice::next() {
 }  // namespace voice
 
 // ── Instruments ────────────────────────────────────────────────────────────────────────────────────────────
+Drums::Piece Drums::pieceFor(int note) {
+    // C kick, D and E snare, F and G low tom, A and B high tom; C# crash, D# clap, F# and G# closed hat, A# open hat.
+    static const Piece kMap[12] = {Kick, Crash, Snare, Clap, Snare, TomLow, HatClosed, TomLow, HatClosed, TomHigh, HatOpen, TomHigh};
+    return kMap[((note % 12) + 12) % 12];
+}
+
+int Drums::noteFor(Piece piece) {
+    static const int kNote[kPieces] = {36, 38, 42, 46, 41, 45, 39, 49};
+    return kNote[piece];
+}
+
+const char* Drums::pieceName(Piece piece) {
+    static const char* const kName[kPieces] = {"Kick", "Snare", "Closed hat", "Open hat", "Low tom", "High tom", "Clap", "Crash"};
+    return kName[piece];
+}
+
 voice::ToneHit& Drums::toneSlot() { return pickVoice(tones_); }
 voice::NoiseHit& Drums::noiseSlot() { return pickVoice(noises_); }
 
@@ -249,6 +323,24 @@ void Drums::hit(Piece piece, float v, int delay) {
         case HatOpen:
             noiseSlot().start(sr_, delay, Biquad::Highpass, 8000.0f, kLowpassQ, v * 0.34f, piece == HatOpen ? 0.3f : 0.07f);
             break;
+        case TomLow:
+        case TomHigh: {
+            const bool low = piece == TomLow;
+            toneSlot().start(sr_, delay, false, low ? 130.0f : 205.0f, low ? 84.0f : 140.0f, 0.11f, v * 0.75f, low ? 0.34f : 0.26f);
+            noiseSlot().start(sr_, delay, Biquad::Lowpass, low ? 1400.0f : 2200.0f, kLowpassQ, v * 0.16f, 0.025f);
+            break;
+        }
+        case Clap:  // three quick bursts, then the tail
+            for (int i = 0; i < 3; ++i)
+                noiseSlot().start(sr_, delay + int(0.011f * float(i) * sr_), Biquad::Bandpass, 1500.0f, 1.2f, v * 0.5f, 0.012f);
+            noiseSlot().start(sr_, delay + int(0.033f * sr_), Biquad::Bandpass, 1500.0f, 1.2f, v * 0.55f, 0.16f);
+            break;
+        case Crash:
+            noiseSlot().start(sr_, delay, Biquad::Highpass, 5200.0f, kLowpassQ, v * 0.3f, 1.1f);
+            noiseSlot().start(sr_, delay, Biquad::Bandpass, 9500.0f, 2.0f, v * 0.25f, 0.35f);
+            break;
+        case kPieces:
+            break;
     }
 }
 
@@ -259,8 +351,28 @@ void Drums::render(float* out, int n) {
         if (v.active) for (int i = 0; i < n && v.active; ++i) out[i] += v.next(rng_);
 }
 
+void Bass::noteOn(int note, float velocity) {
+    for (auto& v : voices_)  // retrigger rather than stack the same key
+        if (v.active && v.live && v.note == note) v.release();
+    pickVoice(voices_).start(sr_, 0, note, -1.0f, velocity);
+}
+
+void Bass::noteOff(int note) {
+    for (auto& v : voices_)
+        if (v.active && v.live && v.note == note) v.release();
+}
+
+void Bass::allNotesOff() {
+    for (auto& v : voices_)
+        if (v.active && v.live) v.release();
+}
+
 void Bass::play(int note, float dur_sec, float velocity, int delay) {
-    pickVoice(voices_).start(sr_, delay, mtof(float(note)), dur_sec, velocity);
+    pickVoice(voices_).start(sr_, delay, note, std::max(dur_sec, 0.0f), velocity);
+}
+
+void Bass::stopSequenced() {
+    for (auto& v : voices_) stopVoice(v);
 }
 
 void Bass::render(float* out, int n) {
@@ -268,8 +380,28 @@ void Bass::render(float* out, int n) {
         if (v.active) for (int i = 0; i < n && v.active; ++i) out[i] += v.next();
 }
 
-void Pad::play(const int* notes, int count, float dur_sec, float velocity, int delay) {
-    pickVoice(voices_).start(sr_, delay, notes, count, dur_sec, velocity, rng_);
+void Pad::noteOn(int note, float velocity) {
+    for (auto& v : voices_)
+        if (v.active && v.live && v.note == note) v.release();
+    pickVoice(voices_).start(sr_, 0, note, -1.0f, velocity, rng_);
+}
+
+void Pad::noteOff(int note) {
+    for (auto& v : voices_)
+        if (v.active && v.live && v.note == note) v.release();
+}
+
+void Pad::allNotesOff() {
+    for (auto& v : voices_)
+        if (v.active && v.live) v.release();
+}
+
+void Pad::play(int note, float dur_sec, float velocity, int delay) {
+    pickVoice(voices_).start(sr_, delay, note, std::max(dur_sec, 0.0f), velocity, rng_);
+}
+
+void Pad::stopSequenced() {
+    for (auto& v : voices_) stopVoice(v);
 }
 
 void Pad::render(float* out, int n) {
@@ -277,7 +409,7 @@ void Pad::render(float* out, int n) {
         if (v.active) for (int i = 0; i < n && v.active; ++i) out[i] += v.next();
 }
 
-void Bells::play(int note, float velocity, int delay) {
+void Bells::strike(int note, float velocity, int delay) {
     pickVoice(voices_).start(sr_, delay, mtof(float(note)), velocity);
 }
 
@@ -288,13 +420,13 @@ void Bells::render(float* out, int n) {
 
 void Keys::noteOn(int note, float velocity) {
     for (auto& v : voices_)  // retrigger rather than stack the same key
-        if (v.active && !v.released && v.note == note) v.release();
+        if (v.active && v.live && !v.released && v.note == note) v.release();
     pickVoice(voices_).start(sr_, note, velocity);
 }
 
 void Keys::noteOff(int note) {
     for (auto& v : voices_) {
-        if (!v.active || v.released || v.note != note) continue;
+        if (!v.active || !v.live || v.released || v.note != note) continue;
         if (pedal_) v.pedal_held = true;  // the sustain pedal keeps it ringing until it comes up
         else v.release();
     }
@@ -310,7 +442,15 @@ void Keys::sustain(bool pedal_down) {
 void Keys::allNotesOff() {
     pedal_ = false;
     for (auto& v : voices_)
-        if (v.active) v.release();
+        if (v.active && v.live) v.release();
+}
+
+void Keys::play(int note, float dur_sec, float velocity, int delay) {
+    pickVoice(voices_).start(sr_, note, velocity, delay, std::max(1, int(dur_sec * sr_)));
+}
+
+void Keys::stopSequenced() {
+    for (auto& v : voices_) stopVoice(v);
 }
 
 void Keys::render(float* out, int n) {

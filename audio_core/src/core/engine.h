@@ -63,7 +63,17 @@ struct EngineStats {
     uint64_t blocks = 0;
 };
 
-class AudioEngine : private SequencerSink {
+// Where the music is: the tempo everything follows, and the step the clock last reached.
+struct TransportState {
+    bool running = true;
+    double bpm = Sequencer::kDefaultBpm;
+    double swing = Sequencer::kDefaultSwing;
+    bool click = false;         // the metronome click
+    float click_volume = 1.0f;
+    int64_t step = -1;          // sixteenths since the sequence started; -1 while it is stopped
+};
+
+class AudioEngine : private StepSink {
 public:
     static constexpr int kMaxSources = 32;
 
@@ -107,9 +117,26 @@ public:
     void setBinaural(bool on);
     void setReverb(bool on);
     void setMasterVolume(float gain);  // 1 = normal
-    void setSequencerRunning(bool on);
 
-    // MIDI controllers play `setMidiTarget`'s source; by default the first Keys in the room.
+    // ── The sequencer ────────────────────────────────────────────────────────────────────────────────────
+    // Every source has a pattern (empty to begin with) that the clock plays round and round.
+    void loadDefaultPattern(int id);  // the built-in groove's part for this kind of instrument
+    void setPattern(int id, const std::vector<PatternNote>& notes);
+    // Adds a note, or replaces the one already at that step and pitch. False if the pattern is full.
+    bool setPatternNote(int id, const PatternNote& note);
+    void removePatternNote(int id, int step, int note);
+    void setPatternSteps(int id, int steps);  // how long the pattern is before it repeats: 16, 32 or 64
+    std::vector<PatternNote> pattern(int id) const;
+    int patternSteps(int id) const;
+    void setSourceLoop(int id, bool on);  // whether the sequencer plays this source's pattern
+    void setSequencerRunning(bool on);    // stopping silences the patterns; starting begins again from the top
+    void setTempo(double bpm);
+    void setSwing(double amount);         // 0 = straight; off-beat sixteenths land this fraction of a step late
+    void setClick(bool on);               // a metronome click on every beat, heard directly rather than in the room
+    void setClickVolume(float gain);
+    TransportState transport() const;
+
+    // MIDI controllers play `setMidiTarget`'s source: the instrument the player is at. -1 = nothing.
     bool startMidi(std::string* error);
     void pollMidi();  // picks up controllers plugged in since the last call
     void setMidiTarget(int id);
@@ -136,7 +163,9 @@ private:
     struct Command {
         enum Type : uint8_t {
             AddSource, SourcePosition, SourceDirectPath, SourceMuted, SourceInputChannel, Listener,
-            NoteOn, NoteOff, AllNotesOff, Binaural, Reverb, MasterVolume, SequencerRunning, MidiTarget,
+            NoteOn, NoteOff, AllNotesOff, Binaural, Reverb, MasterVolume, MidiTarget,
+            PatternNoteSet, PatternNoteRemove, PatternClear, PatternSteps, SourceLoop,
+            SequencerRunning, Tempo, Swing, Click, ClickVolume,
         } type = AddSource;
         int id = 0;
         float v[9] = {};
@@ -149,16 +178,11 @@ private:
     void renderBlock();
     void allocateBuffers();
     std::unique_ptr<Instrument> makeInstrument(InstrumentKind kind) const;
-    Source* role(InstrumentKind kind) const { return roles_[size_t(kind)]; }
+    Source* owned(int id) const;
     int delayFor(double at) const;
 
-    // SequencerSink: the groove plays on whichever source has the matching instrument
-    void kick(double at, float velocity) override;
-    void snare(double at, float velocity) override;
-    void hat(double at, float velocity, bool open) override;
-    void bass(double at, int note, float dur_sec, float velocity) override;
-    void pad(double at, const int* notes, int count, float dur_sec, float velocity) override;
-    void bell(double at, int note, float velocity) override;
+    // StepSink: plays every source's pattern notes for this step, and the click.
+    void step(int64_t index, double at, double step_samples) override;
 
     int sr_, block_;
     SteamAudio steam_;
@@ -171,6 +195,7 @@ private:
     EngineStats device_stats_;
     DeviceConfig device_config_;
     MidiInput midi_;
+    TransportState transport_;  // what the game asked for; the audio thread follows
 
     // MIDI thread → audio thread
     SpscQueue<MidiEvent> midi_queue_{1024};
@@ -178,7 +203,6 @@ private:
 
     // Audio-thread state
     std::array<Source*, kMaxSources> sources_{};
-    std::array<Source*, kInstrumentKinds> roles_{};
     int midi_target_ = -1;
     Vec3 listener_pos_{0, 1.65f, 0}, listener_ahead_{0, 0, -1}, listener_up_{0, 1, 0};
     Vec3 target_pos_{0, 1.65f, 0}, target_ahead_{0, 0, -1}, target_up_{0, 1, 0};
@@ -186,9 +210,13 @@ private:
     float reverb_target_ = 1.0f, reverb_gain_ = 1.0f;
     float master_target_ = 1.0f, master_gain_ = 1.0f;
     Sequencer sequencer_;
+    Rng rng_{0x6C078965u};  // for notes that only play some of the time
+    std::array<voice::ToneHit, 4> clicks_;
+    bool click_on_ = false;
+    float click_volume_ = 1.0f;
     FdnReverb reverb_;
     Limiter limiter_;
-    std::vector<float> mix_l_, mix_r_, send_, rev_l_, rev_r_;
+    std::vector<float> mix_l_, mix_r_, send_, rev_l_, rev_r_, click_;
     InputBus input_bus_;               // this block's captured audio, per hardware input
     std::vector<float> input_fifo_;    // captured frames (interleaved) waiting to be rendered
     int fifo_channels_ = 0;
@@ -201,6 +229,7 @@ private:
     std::atomic<float> cpu_load_{0.0f};
     std::atomic<uint64_t> blocks_{0};
     std::atomic<int> out_left_{0}, out_right_{1};
+    std::atomic<int64_t> step_{-1};
 };
 
 }  // namespace sr

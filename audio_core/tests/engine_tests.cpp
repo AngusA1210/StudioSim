@@ -1,5 +1,6 @@
 // Offline checks for the audio core: renders the prototype's room without a sound card and measures it.
 // Run: build/engine_tests            (exit code 0 = all checks passed)
+//      build/engine_tests --dump file  (writes what the default room plays, to compare before and after a change)
 //      build/engine_tests --device ["name" [buffer [left right]]]
 //                                    (lists audio devices, opens one silently, prints its latency)
 //      build/engine_tests --midi     (lists MIDI devices and reports the notes they send for 15 seconds)
@@ -87,10 +88,45 @@ double tailPeak(const Render& r, size_t samples) {
     return peak;
 }
 
-// The prototype's room: same instruments, positions, levels and reverb sends, plus an amp for live input.
+// Sample positions where a sound starts: the level passes a tenth of the peak after `quiet` samples below it.
+std::vector<int> onsets(const Render& r, int quiet) {
+    std::vector<int> out;
+    const double threshold = 0.1 * r.peak;
+    int below = quiet;
+    for (size_t i = 0; i < r.l.size(); ++i) {
+        const bool loud = std::max(std::fabs(r.l[i]), std::fabs(r.r[i])) > threshold;
+        if (loud && below >= quiet) out.push_back(int(i));
+        below = loud ? 0 : below + 1;
+    }
+    return out;
+}
+
+// Whether every gap between onsets (from the `from`th on) is `expected` samples, give or take a millisecond.
+bool spaced(const std::vector<int>& on, size_t from, int expected, std::string& detail) {
+    bool ok = on.size() >= from + 3;
+    detail = fmt("%.0f onsets, gaps in samples:", double(on.size()));
+    for (size_t i = from + 1; i < on.size(); ++i) {
+        const int gap = on[i] - on[i - 1];
+        if (std::abs(gap - expected) > 48) ok = false;
+        if (i < from + 5) detail += fmt(" %.0f", gap);
+    }
+    return ok;
+}
+
+double level(const Render& r) { return db(std::sqrt((r.rms_l * r.rms_l + r.rms_r * r.rms_r) / 2)); }
+
+int crossings(const Render& r, int from, int count) {
+    int n = 0;
+    for (int i = from + 1; i < from + count && i < int(r.l.size()); ++i)
+        if ((r.l[size_t(i)] >= 0) != (r.l[size_t(i - 1)] >= 0)) ++n;
+    return n;
+}
+
+// The prototype's room: same instruments, positions, levels and reverb sends, plus a speaker for live input.
+// Every instrument starts with its part of the default groove.
 struct Room {
     AudioEngine engine;
-    int drums, bass, pad, bells, keys, amp;
+    int drums, bass, pad, bells, keys, speaker;
     Room() {
         std::string err;
         if (!engine.init(&err)) {
@@ -102,7 +138,8 @@ struct Room {
         pad = engine.addSource(InstrumentKind::Pad, {4.8f, 1.6f, -1.6f}, 1.00f, 1.0f);
         bells = engine.addSource(InstrumentKind::Bells, {-4.6f, 1.6f, 2.4f}, 0.42f, 1.0f);
         keys = engine.addSource(InstrumentKind::Keys, {3.0f, 0.95f, 1.8f}, 0.20f, 0.9f);
-        amp = engine.addSource(InstrumentKind::Live, {-1.5f, 0.8f, 2.6f}, 1.0f, 0.7f);
+        speaker = engine.addSource(InstrumentKind::Live, {-1.5f, 0.8f, 2.6f}, 1.0f, 0.7f);
+        for (int s : {drums, bass, pad, bells, keys}) engine.loadDefaultPattern(s);
         face(0.0f, 3.6f, 0.0f);
     }
     // yaw 0 faces -z (north); positive yaw turns left
@@ -110,7 +147,7 @@ struct Room {
         engine.setListener({x, 1.65f, z}, {-std::sin(yaw), 0, -std::cos(yaw)}, {0, 1, 0});
     }
     void soloOnly(int id) {
-        for (int s : {drums, bass, pad, bells, keys, amp}) engine.setSourceMuted(s, s != id);
+        for (int s : {drums, bass, pad, bells, keys, speaker}) engine.setSourceMuted(s, s != id);
     }
     void quietRoom(int solo) {  // one source, no groove, no reverb
         soloOnly(solo);
@@ -216,7 +253,38 @@ int midiProbe(int seconds) {
     return 0;
 }
 
+// Writes what the default room plays to a file of raw 32-bit floats (interleaved stereo): two loops of the full
+// mix, then one loop of each sequenced instrument alone with the reverb off. Comparing two dumps shows whether a
+// change to the engine altered the sound.
+int dumpGroove(const char* path) {
+    std::FILE* file = std::fopen(path, "wb");
+    if (!file) {
+        std::printf("could not write %s\n", path);
+        return 1;
+    }
+    auto write = [&](const Render& r) {
+        for (size_t i = 0; i < r.l.size(); ++i) {
+            const float frame[2] = {r.l[i], r.r[i]};
+            std::fwrite(frame, sizeof(float), 2, file);
+        }
+    };
+    {
+        Room room;
+        write(renderSeconds(room.engine, 20.86));
+    }
+    for (int which = 0; which < 4; ++which) {
+        Room room;
+        const int ids[4] = {room.drums, room.bass, room.pad, room.bells};
+        room.soloOnly(ids[which]);
+        room.engine.setReverb(false);
+        write(renderSeconds(room.engine, 10.43));
+    }
+    std::fclose(file);
+    return 0;
+}
+
 int main(int argc, char** argv) {
+    if (argc > 2 && std::string(argv[1]) == "--dump") return dumpGroove(argv[2]);
     if (argc > 1 && std::string(argv[1]) == "--device") {  // --device ["name" [buffer [left right]]]
         DeviceConfig config;
         if (argc > 2) config.output_device = argv[2];
@@ -337,6 +405,12 @@ int main(int argc, char** argv) {
             check(started && !keyboard_name.empty(), "the engine finds the keyboard", fmt("%.0f MIDI source(s) listed", double(names.size())));
 
             renderSeconds(room.engine, 0.3);
+            keyboard.send(0x90, 62, 100);
+            Render nobody = renderSeconds(room.engine, 0.3);
+            keyboard.send(0x80, 62, 0);
+            check(nobody.peak < 1e-5, "with nobody at an instrument, the controller plays nothing", fmt("peak %.0f dBFS", db(nobody.peak)));
+
+            room.engine.setMidiTarget(room.keys);  // the player sits down at the Keys
             keyboard.send(0x90, 60, 100);  // note on, middle C
             Render on = renderSeconds(room.engine, 0.3);
             check(firstSound(on) >= 0 && firstSound(on) < room.engine.blockSize(), "a key press sounds in the next block",
@@ -362,6 +436,28 @@ int main(int argc, char** argv) {
             check(ignored.peak < 1e-4 && heard.peak > 1e-2, "a device can be switched off and back on",
                   fmt("off: %.0f dBFS, on: %.0f dBFS", db(ignored.peak), db(heard.peak)));
 
+            // The controller plays whichever instrument the player is at.
+            renderSeconds(room.engine, 1.0);
+            room.engine.setSourceMuted(room.drums, false);
+            room.engine.setSourceMuted(room.bass, false);
+            room.engine.setMidiTarget(room.drums);
+            keyboard.send(0x90, 36, 110);  // the kick on a General MIDI drum map
+            renderSeconds(room.engine, 0.02);
+            const double drums_level = room.engine.sourceLevel(room.drums), keys_level = room.engine.sourceLevel(room.keys);
+            keyboard.send(0x80, 36, 0);
+            check(drums_level > 1e-3 && keys_level < 1e-5, "at the drums, the controller plays the drums and not the Keys",
+                  fmt("drums %.0f dBFS, keys %.0f dBFS", db(drums_level), db(keys_level)));
+            room.engine.setMidiTarget(room.bass);
+            keyboard.send(0x90, 40, 100);
+            renderSeconds(room.engine, 0.5);
+            const double held_bass = room.engine.sourceLevel(room.bass);
+            room.engine.setMidiTarget(room.keys);  // walking away with the key still down
+            renderSeconds(room.engine, 0.3);
+            const double left_bass = room.engine.sourceLevel(room.bass);
+            keyboard.send(0x80, 40, 0);
+            check(held_bass > 1e-3 && left_bass < 1e-4, "a held bass note sustains, and moving to another instrument lets it go",
+                  fmt("held %.0f dBFS, after leaving %.0f dBFS", db(held_bass), db(left_bass)));
+
             VirtualKeyboard second;  // plugged in while running
             second.open(CFSTR("SoundRoom Second Keyboard"));
             CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.2, false);
@@ -375,17 +471,17 @@ int main(int argc, char** argv) {
     {
         std::printf("\nLive input (a test tone standing in for a microphone)\n");
         Room room;
-        room.quietRoom(room.amp);
-        room.face(-1.5f, 4.2f, 0.0f);  // facing the amp from 1.6 m
+        room.quietRoom(room.speaker);
+        room.face(-1.5f, 4.2f, 0.0f);  // facing the speaker from 1.6 m
         Render silent = renderSeconds(room.engine, 0.3);
-        check(silent.peak < 1e-5, "with nothing coming in, the amp is silent", fmt("peak %.1f dBFS", db(silent.peak)));
+        check(silent.peak < 1e-5, "with nothing coming in, the speaker is silent", fmt("peak %.1f dBFS", db(silent.peak)));
         auto tone = [](int64_t n) { return 0.25f * float(std::sin(6.2831853 * 440.0 * double(n) / 48000.0)); };
         Render live = renderSeconds(room.engine, 1.0, tone);
-        check(live.finite && live.rms_l > 0.02, "input is heard from the amp", fmt("%.1f dBFS RMS", db(live.rms_l)));
+        check(live.finite && live.rms_l > 0.02, "input is heard from the speaker", fmt("%.1f dBFS RMS", db(live.rms_l)));
         check(std::fabs(db(live.rms_l) - db(live.rms_r)) < 2.0, "and placed in the room (straight ahead here)",
               fmt("L-R %+.1f dB", db(live.rms_l) - db(live.rms_r)));
         Room click;
-        click.quietRoom(click.amp);
+        click.quietRoom(click.speaker);
         click.face(-1.5f, 4.2f, 0.0f);
         renderSeconds(click.engine, 0.3);
         Render hit = renderSeconds(click.engine, 0.05, [](int64_t n) { return n == 0 ? 1.0f : 0.0f; });
@@ -446,12 +542,12 @@ int main(int argc, char** argv) {
         check(energy[0] == 0 && energy[1] == 0 && energy[2] > 1 && energy[3] > 1, "the mix goes to the chosen pair of outputs",
               "outputs 1-2 silent, 3-4 carry the mix");
 
-        // A two-input device: a tone on input 2 only. The amp plays whichever input it is assigned.
+        // A two-input device: a tone on input 2 only. The speaker plays whichever input it is assigned.
         Room inputs;
-        inputs.quietRoom(inputs.amp);
+        inputs.quietRoom(inputs.speaker);
         inputs.face(-1.5f, 4.2f, 0.0f);
         auto two_in = [&](int assigned) {
-            inputs.engine.setSourceInputChannel(inputs.amp, assigned);
+            inputs.engine.setSourceInputChannel(inputs.speaker, assigned);
             std::vector<float> in(2 * 128), stereo(2 * 128);
             double e = 0;
             for (int b = 0; b < 200; ++b) {
@@ -465,7 +561,7 @@ int main(int argc, char** argv) {
             return e;
         };
         const double on_one = two_in(0), on_two = two_in(1), on_all = two_in(LiveInput::kAllInputs);
-        check(on_one < 1e-6 && on_two > 1 && on_all > 1, "the amp plays the input it is assigned",
+        check(on_one < 1e-6 && on_two > 1 && on_all > 1, "the speaker plays the input it is assigned",
               "input 1: silent, input 2: tone, all inputs: tone");
 
         const auto outputs = AudioEngine::outputDevices();
@@ -476,6 +572,209 @@ int main(int argc, char** argv) {
         missing.output_device = "A device that is not plugged in";
         check(!routed.engine.openDevice(missing, &err) && !routed.engine.stats().device_running,
               "asking for a device that is not connected fails cleanly", err);
+    }
+
+    {
+        std::printf("\nPlaying each instrument by hand (its own loop switched off)\n");
+        struct Case { const char* name; int note; bool sustains; };
+        Room ids;
+        const std::pair<int, Case> cases[] = {{ids.drums, {"drums", 36, false}}, {ids.bass, {"bass", 40, true}},
+                                              {ids.pad, {"pad", 60, true}},      {ids.bells, {"bells", 79, false}}};
+        for (const auto& [id, c] : cases) {
+            Room room;
+            room.soloOnly(id);
+            room.engine.setReverb(false);
+            room.engine.setSourceLoop(id, false);
+            Render quiet = renderSeconds(room.engine, 0.5);
+            room.engine.noteOn(id, c.note, 0.8f);
+            Render played = renderSeconds(room.engine, 1.0);
+            const int first = firstSound(played);
+            const double held = tailPeak(played, 4800);
+            room.engine.noteOff(id, c.note);
+            Render after = renderSeconds(room.engine, 2.5);
+            const bool ok = quiet.peak < 1e-5 && first >= 0 && first < room.engine.blockSize() && played.peak > 3e-3 &&
+                            played.peak < 0.9 && (c.sustains ? held > 1e-3 : true) && tailPeak(after, 4800) < 1e-3;
+            check(ok, std::string("the ") + c.name + (c.sustains ? " sound at once, hold while the key is down, and let go" : " sound at once"),
+                  fmt("silent before; first sample after %.2f ms, peak %.0f dBFS", first * 1000.0 / 48000.0, db(played.peak)) +
+                      fmt(", after a second %.0f dBFS, released %.0f dBFS", db(held), db(tailPeak(after, 4800))));
+        }
+
+        // The drum machine: every piece makes a sound, and they are laid out like a General MIDI kit.
+        std::string pieces;
+        bool all_sound = true;
+        double low[Drums::kPieces], high[Drums::kPieces];
+        for (int piece = 0; piece < Drums::kPieces; ++piece) {
+            Room room;
+            room.soloOnly(room.drums);
+            room.engine.setReverb(false);
+            room.engine.setSourceLoop(room.drums, false);
+            room.face(0.5f, -2.0f, 0.0f);  // 1.6 m in front of the drums
+            renderSeconds(room.engine, 0.1);
+            room.engine.noteOn(room.drums, Drums::noteFor(Drums::Piece(piece)), 0.9f);
+            Render r = renderSeconds(room.engine, 1.5);
+            bandEnergy(r.l, 48000.0f, low[piece], high[piece]);
+            if (r.peak < 0.02 || r.peak > 0.9 || !r.finite) all_sound = false;
+            pieces += std::string(piece ? ", " : "") + Drums::pieceName(Drums::Piece(piece)) + fmt(" %.0f", db(r.peak));
+        }
+        check(all_sound, "all eight drum pieces sound at a sensible level", "peak dBFS: " + pieces);
+        check(low[Drums::Kick] > 10 * high[Drums::Kick] && high[Drums::HatClosed] > 10 * low[Drums::HatClosed] &&
+                  low[Drums::TomLow] > high[Drums::TomLow] && high[Drums::Crash] > 10 * low[Drums::Crash],
+              "kick and toms are low, hats and crash are high", "energy below 300 Hz against above 4 kHz");
+        check(Drums::pieceFor(36) == Drums::Kick && Drums::pieceFor(38) == Drums::Snare && Drums::pieceFor(42) == Drums::HatClosed &&
+                  Drums::pieceFor(46) == Drums::HatOpen && Drums::pieceFor(49) == Drums::Crash && Drums::pieceFor(60) == Drums::Kick,
+              "notes follow the General MIDI drum map, repeated in every octave", "36 kick, 38 snare, 42 and 46 hats, 49 crash");
+    }
+
+    {
+        std::printf("\nThe sequencer\n");
+        // Each instrument's part of the default groove, against levels measured before patterns became editable.
+        const double reference[4] = {-34.57, -33.60, -26.03, -24.89};
+        const char* names[4] = {"drums", "bass", "pad", "bells"};
+        std::string levels;
+        bool same = true;
+        for (int which = 0; which < 4; ++which) {
+            Room room;
+            const int ids[4] = {room.drums, room.bass, room.pad, room.bells};
+            room.soloOnly(ids[which]);
+            room.engine.setReverb(false);
+            const double measured = level(renderSeconds(room.engine, 10.43));
+            if (std::fabs(measured - reference[which]) > 0.1) same = false;
+            levels += std::string(which ? ", " : "") + names[which] + fmt(" %.2f", measured);
+        }
+        check(same, "the default patterns play the original groove", "dBFS: " + levels);
+        Room defaults;
+        check(defaults.engine.pattern(defaults.drums).size() == 86 && defaults.engine.pattern(defaults.pad).size() == 16 &&
+                  defaults.engine.pattern(defaults.keys).empty() && defaults.engine.patternSteps(defaults.drums) == 64,
+              "the patterns can be read back", fmt("drums %.0f notes, bass %.0f, bells %.0f", double(defaults.engine.pattern(defaults.drums).size()),
+                                                   double(defaults.engine.pattern(defaults.bass).size()),
+                                                   double(defaults.engine.pattern(defaults.bells).size())));
+
+        // A kick on every beat, to measure the clock.
+        Room room;
+        room.soloOnly(room.drums);
+        room.engine.setReverb(false);
+        room.engine.setSwing(0.0);
+        room.engine.setTempo(120.0);
+        const int kick = Drums::noteFor(Drums::Kick), hat = Drums::noteFor(Drums::HatClosed);
+        room.engine.setPatternSteps(room.drums, 16);
+        room.engine.setPattern(room.drums, {{0, kick, 1, 1.0f, 1.0f}, {4, kick, 1, 1.0f, 1.0f}, {8, kick, 1, 1.0f, 1.0f}, {12, kick, 1, 1.0f, 1.0f}});
+        std::string detail;
+        Render fast = renderSeconds(room.engine, 4.1);
+        check(spaced(onsets(fast, 4000), 0, 24000, detail), "at 120 BPM the beats are exactly half a second apart", detail);
+        room.engine.setTempo(60.0);
+        Render slow = renderSeconds(room.engine, 6.0);
+        check(spaced(onsets(slow, 4000), 1, 48000, detail), "changing the tempo while it plays takes effect on the next step", detail);
+
+        // Two hats a sixteenth apart: straight, then swung.
+        room.engine.setTempo(120.0);
+        room.engine.setPattern(room.drums, {{0, hat, 1, 0.8f, 1.0f}, {1, hat, 1, 0.8f, 1.0f}});
+        renderSeconds(room.engine, 2.2);
+        auto pairGap = [&]() {
+            const auto on = onsets(renderSeconds(room.engine, 4.0), 1200);
+            int smallest = 1 << 30;
+            for (size_t i = 1; i < on.size(); ++i) smallest = std::min(smallest, on[i] - on[i - 1]);
+            return smallest;
+        };
+        const int straight = pairGap();
+        room.engine.setSwing(0.5);
+        renderSeconds(room.engine, 2.0);
+        const int swung = pairGap();
+        check(std::abs(straight - 6000) <= 48 && std::abs(swung - 9000) <= 48, "swing delays the off-beat sixteenths",
+              fmt("straight: %.0f samples apart, swing 50 %%: %.0f", straight, swung));
+
+        // One kick at the start of a one-bar pattern, then the same pattern stretched to two bars.
+        room.engine.setSwing(0.0);
+        room.engine.setPattern(room.drums, {{0, kick, 1, 1.0f, 1.0f}});
+        renderSeconds(room.engine, 2.0);
+        const bool one_bar = spaced(onsets(renderSeconds(room.engine, 8.5), 4000), 0, 96000, detail);
+        room.engine.setPatternSteps(room.drums, 32);
+        renderSeconds(room.engine, 4.0);
+        std::string detail_two;
+        const bool two_bars = spaced(onsets(renderSeconds(room.engine, 16.5), 4000), 0, 192000, detail_two);
+        check(one_bar && two_bars, "a pattern repeats after its own length (one bar, then two)", detail + "; " + detail_two);
+
+        const bool replaced = room.engine.setPatternNote(room.drums, {0, kick, 1, 0.4f, 1.0f});
+        const size_t after_replace = room.engine.pattern(room.drums).size();
+        room.engine.removePatternNote(room.drums, 0, kick);
+        renderSeconds(room.engine, 1.0);
+        Render emptied = renderSeconds(room.engine, 4.5);
+        check(replaced && after_replace == 1 && room.engine.pattern(room.drums).empty() && emptied.peak < 1e-4,
+              "writing a note twice replaces it, and removing it leaves silence", fmt("peak %.0f dBFS", db(emptied.peak)));
+        bool fits = true;
+        for (int i = 0; i < kMaxPatternNotes; ++i) fits = room.engine.setPatternNote(room.drums, {i % 64, 30 + i / 64, 1, 0.5f, 1.0f}) && fits;
+        check(fits && !room.engine.setPatternNote(room.drums, {0, 90, 1, 0.5f, 1.0f}), "a full pattern refuses another note",
+              fmt("%.0f notes", double(room.engine.pattern(room.drums).size())));
+
+        // A note that only plays some of the time.
+        Room maybe;
+        maybe.soloOnly(maybe.drums);
+        maybe.engine.setReverb(false);
+        maybe.engine.setTempo(240.0);
+        maybe.engine.setPatternSteps(maybe.drums, 16);
+        maybe.engine.setPattern(maybe.drums, {{0, hat, 1, 0.8f, 0.25f}, {8, hat, 1, 0.8f, 0.25f}});
+        const size_t played = onsets(renderSeconds(maybe.engine, 100.0), 1200).size();  // 200 chances
+        check(played > 25 && played < 80, "a note with a one-in-four chance plays about a quarter of the time", fmt("%.0f of 200", double(played)));
+
+        // The Keys follow a pattern too, holding each note for its length.
+        Room keys;
+        keys.soloOnly(keys.keys);
+        keys.engine.setReverb(false);
+        keys.engine.setTempo(120.0);
+        keys.engine.setPattern(keys.keys, {{0, 60, 2.0f, 0.8f, 1.0f}});
+        Render phrase = renderSeconds(keys.engine, 2.0);
+        double during = 0;
+        for (size_t i = 12000; i < 20000; ++i) during = std::max(during, double(std::fabs(phrase.l[i])));
+        check(during > 3e-3 && tailPeak(phrase, 24000) < 1e-3, "a sequenced Keys note sounds for its length and then stops",
+              fmt("%.0f dBFS during, %.0f dBFS a second later", db(during), db(tailPeak(phrase, 24000))));
+
+        // Switching one instrument's loop off, and the whole sequence off and on.
+        Room loops;
+        loops.engine.setReverb(false);
+        renderSeconds(loops.engine, 1.0);
+        loops.engine.setSourceLoop(loops.pad, false);
+        renderSeconds(loops.engine, 0.5);
+        const double pad_off = loops.engine.sourceLevel(loops.pad);
+        renderSeconds(loops.engine, 3.0);
+        loops.engine.setSourceLoop(loops.pad, true);
+        renderSeconds(loops.engine, 4.0);
+        check(pad_off < 1e-5 && loops.engine.sourceLevel(loops.pad) > 1e-3, "an instrument's loop can be switched off and back on",
+              fmt("off %.0f dBFS, on again %.0f dBFS", db(pad_off), db(loops.engine.sourceLevel(loops.pad))));
+        loops.engine.setSequencerRunning(false);
+        renderSeconds(loops.engine, 3.0);
+        Render stopped = renderSeconds(loops.engine, 1.0);
+        const TransportState halted = loops.engine.transport();
+        loops.engine.setSequencerRunning(true);
+        Render restarted = renderSeconds(loops.engine, 0.5);
+        check(stopped.peak < 1e-4 && !halted.running && halted.step == -1 && firstSound(restarted) >= 0 && firstSound(restarted) < 2400 &&
+                  loops.engine.transport().step >= 0,
+              "stopping the sequence leaves silence, and starting it begins again from the first beat",
+              fmt("stopped %.0f dBFS; first sound %.0f ms after starting", db(stopped.peak), firstSound(restarted) * 1000.0 / 48000.0));
+    }
+
+    {
+        std::printf("\nThe metronome\n");
+        Room room;
+        for (int s : {room.drums, room.bass, room.pad, room.bells, room.keys, room.speaker}) room.engine.setSourceMuted(s, true);
+        room.engine.setTempo(120.0);
+        Render off = renderSeconds(room.engine, 1.0);
+        room.engine.setClick(true);
+        Render clicks = renderSeconds(room.engine, 4.0);
+        const auto on = onsets(clicks, 2000);
+        std::string detail;
+        check(off.peak < 1e-5 && spaced(on, 0, 24000, detail), "the click sounds on every beat, and only when switched on", detail);
+        double apart = 0;
+        for (size_t i = 0; i < clicks.l.size(); ++i) apart = std::max(apart, double(std::fabs(clicks.l[i] - clicks.r[i])));
+        check(apart < 1e-6 && clicks.peak > 0.15 && clicks.peak < 0.35, "it is heard directly, the same in both ears, clear above the mix",
+              fmt("peak %.1f dBFS, ears differ by %.0f dBFS", db(clicks.peak), db(apart)));
+        // Clicks land on steps 4, 8, 12, 16...: the first bar line reached in this render is a higher pitch.
+        int high_pitch = 0, low_pitch = 0;
+        for (int at : on) (crossings(clicks, at, 480) > 30 ? high_pitch : low_pitch)++;
+        check(high_pitch >= 1 && low_pitch >= 3 * high_pitch - 3 && low_pitch > high_pitch, "the first beat of each bar is a higher pitch",
+              fmt("%.0f high, %.0f low", high_pitch, low_pitch));
+        room.engine.setClickVolume(0.5f);
+        Render quieter = renderSeconds(room.engine, 2.0);
+        check(std::fabs(db(clicks.peak) - db(quieter.peak) - 6.0) < 1.0, "the click has its own volume",
+              fmt("half volume is %.1f dB quieter", db(clicks.peak) - db(quieter.peak)));
     }
 
     {

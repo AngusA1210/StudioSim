@@ -1,5 +1,6 @@
 extends CharacterBody3D
-## First-person player: walks the room, aims at instruments, carries and mutes them, and plays the Keys.
+## First-person player: walks the room, aims at instruments, carries them, and sits down at one to play it.
+## While you are at an instrument the computer keyboard and any MIDI controller play that instrument.
 ## The camera is also the listener, so the audio core hears the room from here.
 
 const EYE_HEIGHT := 1.65
@@ -12,7 +13,8 @@ const PLAY_REACH := 2.8
 const AIM_COS := 0.955  # within about 17° of where you're facing
 const CARRY_DISTANCE := 1.5
 
-# Computer keyboard as a piano, the usual DAW layout. Values are semitones above the base C.
+# Computer keyboard as a piano, the usual DAW layout. Values are semitones above the base C. The shortcuts that
+# have to work while playing (Q, Z, X, Tab, M, C, Space, B, R, I) are deliberately not among these keys.
 const KEYMAP := {
 	KEY_A: 0, KEY_W: 1, KEY_S: 2, KEY_E: 3, KEY_D: 4, KEY_F: 5, KEY_T: 6, KEY_G: 7, KEY_Y: 8,
 	KEY_H: 9, KEY_U: 10, KEY_J: 11, KEY_K: 12, KEY_O: 13, KEY_L: 14, KEY_P: 15, KEY_SEMICOLON: 16,
@@ -75,12 +77,31 @@ func can_play_target() -> bool:
 	return target != null and target.playable and _distance_to(target) < PLAY_REACH
 
 
-func _menu_open() -> bool:
-	return app.menu != null and app.menu.is_open()
+## Sit down at an instrument: the computer keyboard and MIDI controllers now play it.
+func start_playing(inst) -> void:
+	if playing == inst:
+		return
+	stop_playing()
+	playing = inst
+	octave = inst.default_octave
+	audio.set_midi_target(inst.source_id)
+
+
+func stop_playing() -> void:
+	if playing != null:
+		audio.all_notes_off(playing.source_id)
+	audio.set_midi_target(-1)
+	held.clear()
+	playing = null
+
+
+## The menu or the pattern editor is up: the keyboard and mouse belong to it.
+func _ui_open() -> bool:
+	return (app.menu != null and app.menu.is_open()) or (app.sequencer != null and app.sequencer.is_open())
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	if _menu_open():
+	if _ui_open():
 		return
 	if event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
 		var sensitivity: float = MOUSE_SENSITIVITY * app.settings.mouse_sensitivity
@@ -103,26 +124,43 @@ func _handle_key(event: InputEventKey) -> void:
 			audio.note_off(playing.source_id, held[key])
 			held.erase(key)
 		return
-	if key == KEY_ESCAPE:
-		if playing != null:
-			_stop_playing()
-		else:
-			app.menu.open()
-		return
-	if key == KEY_B:
-		app.set_binaural(not app.settings.binaural)
-		return
-	if key == KEY_R:
-		app.set_reverb(not app.settings.reverb)
-		return
-	if key == KEY_I:
-		app.set_live_input(not app.live_input)
-		return
+	# The instrument these keys act on: the one you are playing, or else the one you are facing.
+	var at = playing if playing != null else target
+	match key:
+		KEY_ESCAPE:
+			if playing != null:
+				stop_playing()
+			else:
+				app.menu.open()
+			return
+		KEY_TAB:
+			if playing != null or can_play_target():
+				app.sequencer.open(at)
+			return
+		KEY_M:
+			if at != null:
+				at.toggle_quiet()
+			return
+		KEY_SPACE:
+			app.set_sequence_running(not app.sequence_running)
+			return
+		KEY_C:
+			app.set_click(not app.settings.click)
+			return
+		KEY_B:
+			app.set_binaural(not app.settings.binaural)
+			return
+		KEY_R:
+			app.set_reverb(not app.settings.reverb)
+			return
+		KEY_I:
+			app.set_live_input(not app.live_input)
+			return
 	if playing != null:
 		if key == KEY_Q:
-			_stop_playing()
+			stop_playing()
 		elif key == KEY_Z or key == KEY_X:
-			octave = clampi(octave + (1 if key == KEY_X else -1), -2, 2)
+			octave = clampi(octave + (1 if key == KEY_X else -1), -3, 3)
 		elif KEYMAP.has(key):
 			var note := 60 + 12 * octave + int(KEYMAP[key])
 			audio.note_on(playing.source_id, note, 0.8)
@@ -131,19 +169,16 @@ func _handle_key(event: InputEventKey) -> void:
 	match key:
 		KEY_E:
 			if can_play_target():
-				playing = target
+				start_playing(target)
 		KEY_G:
 			_grab_or_drop()
-		KEY_F:
-			if target != null:
-				target.set_muted(not target.muted)
 
 
 func _physics_process(delta: float) -> void:
 	var forward := 0.0
 	var strafe := 0.0
 	var turn := 0.0
-	if not _menu_open():
+	if not _ui_open():
 		if playing == null:  # while playing, these keys are notes
 			forward += float(Input.is_physical_key_pressed(KEY_W)) - float(Input.is_physical_key_pressed(KEY_S))
 			strafe += float(Input.is_physical_key_pressed(KEY_D)) - float(Input.is_physical_key_pressed(KEY_A))
@@ -164,7 +199,7 @@ func _physics_process(delta: float) -> void:
 	move_and_slide()
 
 	if playing != null and _distance_to(playing) > PLAY_REACH + 0.6:
-		_stop_playing()
+		stop_playing()
 	_update_carry()
 
 
@@ -179,7 +214,7 @@ func _process(_delta: float) -> void:
 		target = aimed
 
 
-## Called when the menu opens: let go of any notes held on the computer keyboard.
+## Called when the menu or the pattern editor opens: let go of any notes held on the computer keyboard.
 func release_keys() -> void:
 	if playing != null:
 		for key in held:
@@ -237,13 +272,6 @@ func _update_carry() -> void:
 		p.x = _partition_min.x - margin if global_position.x < (_partition_min.x + _partition_max.x) / 2 else _partition_max.x + margin
 	p.y = clampf(EYE_HEIGHT - 0.35 + sin(pitch) * 1.4, carried.size.y / 2 + 0.25, 2.8)
 	carried.global_position = p
-
-
-func _stop_playing() -> void:
-	if playing != null:
-		audio.all_notes_off(playing.source_id)
-	held.clear()
-	playing = null
 
 
 func _distance_to(inst) -> float:

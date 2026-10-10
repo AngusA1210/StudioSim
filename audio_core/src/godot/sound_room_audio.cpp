@@ -172,6 +172,75 @@ Dictionary SoundRoomAudio::get_stats() const {
     return d;
 }
 
+// ── The sequencer ──────────────────────────────────────────────────────────────────────────────────────────
+void SoundRoomAudio::load_default_pattern(int id) { if (engine_) engine_->loadDefaultPattern(id); }
+
+Array SoundRoomAudio::get_pattern(int id) const {
+    Array out;
+    if (!engine_) return out;
+    for (const sr::PatternNote& n : engine_->pattern(id)) {
+        Dictionary note;
+        note["step"] = n.step;
+        note["note"] = n.note;
+        note["length"] = n.length;
+        note["velocity"] = n.velocity;
+        note["chance"] = n.chance;
+        out.push_back(note);
+    }
+    return out;
+}
+
+void SoundRoomAudio::set_pattern(int id, const Array& notes) {
+    if (!engine_) return;
+    std::vector<sr::PatternNote> pattern;
+    for (int64_t i = 0; i < notes.size(); ++i) {
+        const Dictionary note = notes[i];
+        pattern.push_back({int(note.get("step", 0)), int(note.get("note", 60)), float(note.get("length", 1.0)),
+                           float(note.get("velocity", 0.8)), float(note.get("chance", 1.0))});
+    }
+    engine_->setPattern(id, pattern);
+}
+
+bool SoundRoomAudio::set_pattern_note(int id, int step, int note, float length, float velocity, float chance) {
+    return engine_ && engine_->setPatternNote(id, {step, note, length, velocity, chance});
+}
+
+void SoundRoomAudio::remove_pattern_note(int id, int step, int note) { if (engine_) engine_->removePatternNote(id, step, note); }
+void SoundRoomAudio::set_pattern_steps(int id, int steps) { if (engine_) engine_->setPatternSteps(id, steps); }
+int SoundRoomAudio::get_pattern_steps(int id) const { return engine_ ? engine_->patternSteps(id) : 0; }
+void SoundRoomAudio::set_source_loop(int id, bool on) { if (engine_) engine_->setSourceLoop(id, on); }
+void SoundRoomAudio::set_sequencer_running(bool on) { if (engine_) engine_->setSequencerRunning(on); }
+void SoundRoomAudio::set_tempo(float bpm) { if (engine_) engine_->setTempo(bpm); }
+void SoundRoomAudio::set_swing(float amount) { if (engine_) engine_->setSwing(amount); }
+void SoundRoomAudio::set_click(bool on) { if (engine_) engine_->setClick(on); }
+void SoundRoomAudio::set_click_volume(float gain) { if (engine_) engine_->setClickVolume(gain); }
+
+Dictionary SoundRoomAudio::get_transport() const {
+    Dictionary d;
+    if (!engine_) return d;
+    const sr::TransportState t = engine_->transport();
+    d["running"] = t.running;
+    d["bpm"] = t.bpm;
+    d["swing"] = t.swing;
+    d["click"] = t.click;
+    d["click_volume"] = t.click_volume;
+    d["step"] = t.step;
+    return d;
+}
+
+Array SoundRoomAudio::get_drum_pieces() const {
+    Array out;
+    for (int piece = 0; piece < sr::Drums::kPieces; ++piece) {
+        Dictionary entry;
+        entry["name"] = String(sr::Drums::pieceName(sr::Drums::Piece(piece)));
+        entry["note"] = sr::Drums::noteFor(sr::Drums::Piece(piece));
+        out.push_back(entry);
+    }
+    return out;
+}
+
+String SoundRoomAudio::get_drum_piece_name(int note) const { return String(sr::Drums::pieceName(sr::Drums::pieceFor(note))); }
+
 // ── MIDI ───────────────────────────────────────────────────────────────────────────────────────────────────
 bool SoundRoomAudio::start_midi() {
     if (!ensureEngine()) return false;
@@ -230,6 +299,24 @@ void SoundRoomAudio::_bind_methods() {
     ClassDB::bind_method(D_METHOD("set_master_volume", "gain"), &SoundRoomAudio::set_master_volume);
     ClassDB::bind_method(D_METHOD("get_source_level", "id"), &SoundRoomAudio::get_source_level);
     ClassDB::bind_method(D_METHOD("get_stats"), &SoundRoomAudio::get_stats);
+
+    ClassDB::bind_method(D_METHOD("load_default_pattern", "id"), &SoundRoomAudio::load_default_pattern);
+    ClassDB::bind_method(D_METHOD("get_pattern", "id"), &SoundRoomAudio::get_pattern);
+    ClassDB::bind_method(D_METHOD("set_pattern", "id", "notes"), &SoundRoomAudio::set_pattern);
+    ClassDB::bind_method(D_METHOD("set_pattern_note", "id", "step", "note", "length", "velocity", "chance"),
+                         &SoundRoomAudio::set_pattern_note);
+    ClassDB::bind_method(D_METHOD("remove_pattern_note", "id", "step", "note"), &SoundRoomAudio::remove_pattern_note);
+    ClassDB::bind_method(D_METHOD("set_pattern_steps", "id", "steps"), &SoundRoomAudio::set_pattern_steps);
+    ClassDB::bind_method(D_METHOD("get_pattern_steps", "id"), &SoundRoomAudio::get_pattern_steps);
+    ClassDB::bind_method(D_METHOD("set_source_loop", "id", "on"), &SoundRoomAudio::set_source_loop);
+    ClassDB::bind_method(D_METHOD("set_sequencer_running", "on"), &SoundRoomAudio::set_sequencer_running);
+    ClassDB::bind_method(D_METHOD("set_tempo", "bpm"), &SoundRoomAudio::set_tempo);
+    ClassDB::bind_method(D_METHOD("set_swing", "amount"), &SoundRoomAudio::set_swing);
+    ClassDB::bind_method(D_METHOD("set_click", "on"), &SoundRoomAudio::set_click);
+    ClassDB::bind_method(D_METHOD("set_click_volume", "gain"), &SoundRoomAudio::set_click_volume);
+    ClassDB::bind_method(D_METHOD("get_transport"), &SoundRoomAudio::get_transport);
+    ClassDB::bind_method(D_METHOD("get_drum_pieces"), &SoundRoomAudio::get_drum_pieces);
+    ClassDB::bind_method(D_METHOD("get_drum_piece_name", "note"), &SoundRoomAudio::get_drum_piece_name);
 
     ClassDB::bind_method(D_METHOD("start_midi"), &SoundRoomAudio::start_midi);
     ClassDB::bind_method(D_METHOD("poll_midi"), &SoundRoomAudio::poll_midi);

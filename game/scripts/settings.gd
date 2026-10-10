@@ -9,13 +9,15 @@ var buffer_size := 128    # samples
 var output_left := 0      # which hardware outputs carry the mix (0-based)
 var output_right := 1
 var input_device := ""    # remembered, but live input itself always starts switched off (see main.gd)
-var amp_input := -1       # hardware input the Amp plays; -1 = all of them
+var speaker_input := -1   # hardware input the Speaker plays; -1 = all of them
 var midi_disabled: Array = []  # names of MIDI devices to ignore
 
 # Sound
 var master_volume_db := 0.0
 var binaural := true
 var reverb := true
+var click := false        # the metronome click (the tempo itself belongs to the room, not to these settings)
+var click_volume_db := 0.0
 
 # Display and controls
 var text_scale := 1.0
@@ -40,11 +42,13 @@ func load_from_disk() -> void:
 	output_left = file.get_value("io", "output_left", output_left)
 	output_right = file.get_value("io", "output_right", output_right)
 	input_device = file.get_value("io", "input_device", input_device)
-	amp_input = file.get_value("io", "amp_input", amp_input)
+	speaker_input = file.get_value("io", "speaker_input", file.get_value("io", "amp_input", speaker_input))  # its old name
 	midi_disabled = file.get_value("midi", "disabled", midi_disabled)
 	master_volume_db = file.get_value("sound", "master_volume_db", master_volume_db)
 	binaural = file.get_value("sound", "binaural", binaural)
 	reverb = file.get_value("sound", "reverb", reverb)
+	click = file.get_value("sound", "click", click)
+	click_volume_db = clampf(file.get_value("sound", "click_volume_db", click_volume_db), -24.0, 6.0)
 	text_scale = clampf(file.get_value("display", "text_scale", text_scale), 0.75, 2.0)
 	fov = clampf(file.get_value("display", "fov", fov), 50.0, 110.0)
 	mouse_sensitivity = clampf(file.get_value("display", "mouse_sensitivity", mouse_sensitivity), 0.2, 3.0)
@@ -60,11 +64,13 @@ func save_to_disk() -> void:
 	file.set_value("io", "output_left", output_left)
 	file.set_value("io", "output_right", output_right)
 	file.set_value("io", "input_device", input_device)
-	file.set_value("io", "amp_input", amp_input)
+	file.set_value("io", "speaker_input", speaker_input)
 	file.set_value("midi", "disabled", midi_disabled)
 	file.set_value("sound", "master_volume_db", master_volume_db)
 	file.set_value("sound", "binaural", binaural)
 	file.set_value("sound", "reverb", reverb)
+	file.set_value("sound", "click", click)
+	file.set_value("sound", "click_volume_db", click_volume_db)
 	file.set_value("display", "text_scale", text_scale)
 	file.set_value("display", "fov", fov)
 	file.set_value("display", "mouse_sensitivity", mouse_sensitivity)

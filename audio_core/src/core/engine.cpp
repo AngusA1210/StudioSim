@@ -18,6 +18,7 @@ namespace {
 
 constexpr float kMasterGain = 1.9f;  // measured: about -21 dBFS RMS at the spawn point, like the prototype
 constexpr float kReverbLevel = 0.16f;
+constexpr float kClickLevel = 0.13f;  // the metronome peaks around -12 dBFS, clear above the room's mix
 constexpr size_t kFifoFrames = 4096;
 
 Vec3 sub(Vec3 a, Vec3 b) { return {a.x - b.x, a.y - b.y, a.z - b.z}; }
@@ -121,6 +122,13 @@ struct AudioEngine::Source {
     float gain = 1.0f, send = 1.0f;
     float mute_target = 1.0f, mute_gain = 1.0f;
     int input_channel = LiveInput::kAllInputs;
+    // The pattern the sequencer plays on this source. These belong to the audio thread...
+    std::array<PatternNote, kMaxPatternNotes> notes;
+    int note_count = 0, steps = kMaxPatternSteps;
+    bool loop = true;
+    // ...and this is the game thread's own copy, to hand back to whoever is editing it.
+    std::vector<PatternNote> pattern;
+    int pattern_steps = kMaxPatternSteps;
     // The direct path to the listener: where the sound arrives from, how far it still travels beyond that point,
     // and what walls leave of each band. Each has a target the audio thread glides toward.
     Vec3 via, via_target;
@@ -154,7 +162,7 @@ AudioEngine::~AudioEngine() {
 }
 
 void AudioEngine::allocateBuffers() {
-    for (auto* buf : {&mix_l_, &mix_r_, &send_, &rev_l_, &rev_r_}) buf->assign(size_t(block_), 0.0f);
+    for (auto* buf : {&mix_l_, &mix_r_, &send_, &rev_l_, &rev_r_, &click_}) buf->assign(size_t(block_), 0.0f);
     for (auto& ch : input_bus_.channel) ch.assign(size_t(block_), 0.0f);
     input_fifo_.assign(kFifoFrames * InputBus::kMaxChannels, 0.0f);
     input_read_ = input_count_ = 0;
@@ -195,6 +203,7 @@ bool AudioEngine::configure(int sample_rate, int block_size, std::string* error)
     allocateBuffers();
     clock_ = int64_t(double(clock_) * ratio);
     sequencer_.retime(sr_, clock_);  // keep our place in the music
+    for (auto& c : clicks_) c.active = false;
     reverb_.init(float(sr_), 1.1f, 12.0f);
     limiter_.init(float(sr_));
     if (!initialized_) return true;
@@ -431,8 +440,101 @@ void AudioEngine::setReverb(bool on) {
 void AudioEngine::setMasterVolume(float gain) {
     Command c; c.type = Command::MasterVolume; c.v[0] = std::clamp(gain, 0.0f, 4.0f); push(c);
 }
+
+// ── The sequencer (game thread) ────────────────────────────────────────────────────────────────────────────
+AudioEngine::Source* AudioEngine::owned(int id) const {
+    return id >= 0 && id < int(owned_.size()) ? owned_[size_t(id)].get() : nullptr;
+}
+
+void AudioEngine::loadDefaultPattern(int id) {
+    if (Source* s = owned(id)) {
+        setPatternSteps(id, kMaxPatternSteps);
+        setPattern(id, defaultPattern(s->kind));
+    }
+}
+
+void AudioEngine::setPattern(int id, const std::vector<PatternNote>& notes) {
+    Source* s = owned(id);
+    if (!s) return;
+    s->pattern.clear();
+    Command c; c.type = Command::PatternClear; c.id = id; push(c);
+    for (const PatternNote& n : notes) setPatternNote(id, n);
+}
+
+bool AudioEngine::setPatternNote(int id, const PatternNote& note) {
+    Source* s = owned(id);
+    if (!s) return false;
+    PatternNote n = note;
+    n.step = std::clamp(n.step, 0, kMaxPatternSteps - 1);
+    n.note = std::clamp(n.note, 0, 127);
+    n.length = std::clamp(n.length, 0.05f, float(kMaxPatternSteps));
+    n.velocity = std::clamp(n.velocity, 0.0f, 1.0f);
+    n.chance = std::clamp(n.chance, 0.0f, 1.0f);
+    auto existing = std::find_if(s->pattern.begin(), s->pattern.end(),
+                                 [&](const PatternNote& p) { return p.step == n.step && p.note == n.note; });
+    if (existing != s->pattern.end()) *existing = n;
+    else if (int(s->pattern.size()) >= kMaxPatternNotes) return false;
+    else s->pattern.push_back(n);
+    Command c; c.type = Command::PatternNoteSet; c.id = id;
+    c.v[0] = float(n.step); c.v[1] = float(n.note); c.v[2] = n.length; c.v[3] = n.velocity; c.v[4] = n.chance;
+    push(c);
+    return true;
+}
+
+void AudioEngine::removePatternNote(int id, int step, int note) {
+    Source* s = owned(id);
+    if (!s) return;
+    s->pattern.erase(std::remove_if(s->pattern.begin(), s->pattern.end(),
+                                    [&](const PatternNote& p) { return p.step == step && p.note == note; }),
+                     s->pattern.end());
+    Command c; c.type = Command::PatternNoteRemove; c.id = id; c.v[0] = float(step); c.v[1] = float(note); push(c);
+}
+
+void AudioEngine::setPatternSteps(int id, int steps) {
+    Source* s = owned(id);
+    if (!s) return;
+    s->pattern_steps = std::clamp(steps, 1, kMaxPatternSteps);
+    Command c; c.type = Command::PatternSteps; c.id = id; c.v[0] = float(s->pattern_steps); push(c);
+}
+
+std::vector<PatternNote> AudioEngine::pattern(int id) const {
+    const Source* s = owned(id);
+    return s ? s->pattern : std::vector<PatternNote>{};
+}
+
+int AudioEngine::patternSteps(int id) const {
+    const Source* s = owned(id);
+    return s ? s->pattern_steps : 0;
+}
+
+void AudioEngine::setSourceLoop(int id, bool on) {
+    Command c; c.type = Command::SourceLoop; c.id = id; c.v[0] = on ? 1.0f : 0.0f; push(c);
+}
 void AudioEngine::setSequencerRunning(bool on) {
+    transport_.running = on;
     Command c; c.type = Command::SequencerRunning; c.v[0] = on ? 1.0f : 0.0f; push(c);
+}
+void AudioEngine::setTempo(double bpm) {
+    transport_.bpm = std::clamp(bpm, Sequencer::kMinBpm, Sequencer::kMaxBpm);
+    Command c; c.type = Command::Tempo; c.v[0] = float(transport_.bpm); push(c);
+}
+void AudioEngine::setSwing(double amount) {
+    transport_.swing = std::clamp(amount, 0.0, 0.6);
+    Command c; c.type = Command::Swing; c.v[0] = float(transport_.swing); push(c);
+}
+void AudioEngine::setClick(bool on) {
+    transport_.click = on;
+    Command c; c.type = Command::Click; c.v[0] = on ? 1.0f : 0.0f; push(c);
+}
+void AudioEngine::setClickVolume(float gain) {
+    transport_.click_volume = std::clamp(gain, 0.0f, 4.0f);
+    Command c; c.type = Command::ClickVolume; c.v[0] = transport_.click_volume; push(c);
+}
+
+TransportState AudioEngine::transport() const {
+    TransportState t = transport_;
+    t.step = step_.load(std::memory_order_relaxed);
+    return t;
 }
 
 float AudioEngine::sourceLevel(int id) const {
@@ -458,7 +560,6 @@ void AudioEngine::drainCommands() {
         switch (c.type) {
             case Command::AddSource:
                 sources_[size_t(c.id)] = c.source;
-                if (!roles_[size_t(c.source->kind)]) roles_[size_t(c.source->kind)] = c.source;
                 break;
             case Command::SourcePosition:
                 if (s) {
@@ -503,11 +604,66 @@ void AudioEngine::drainCommands() {
             case Command::MasterVolume:
                 master_target_ = c.v[0];
                 break;
-            case Command::SequencerRunning:
-                sequencer_.setRunning(c.v[0] > 0.5f);
-                break;
             case Command::MidiTarget:
+                // Whatever was held on the previous instrument would never get its note-off: let it go now.
+                if (c.id != midi_target_ && midi_target_ >= 0 && midi_target_ < kMaxSources && sources_[size_t(midi_target_)])
+                    sources_[size_t(midi_target_)]->instrument->allNotesOff();
                 midi_target_ = c.id;
+                break;
+            case Command::PatternNoteSet:
+                if (s) {
+                    const PatternNote n{int(c.v[0]), int(c.v[1]), c.v[2], c.v[3], c.v[4]};
+                    int at = 0;
+                    while (at < s->note_count && (s->notes[size_t(at)].step != n.step || s->notes[size_t(at)].note != n.note)) ++at;
+                    if (at < kMaxPatternNotes) {
+                        s->notes[size_t(at)] = n;
+                        s->note_count = std::max(s->note_count, at + 1);
+                    }
+                }
+                break;
+            case Command::PatternNoteRemove:
+                if (s) {
+                    int kept = 0;  // keeps the remaining notes in order, so they still play in the order they were written
+                    for (int i = 0; i < s->note_count; ++i) {
+                        const PatternNote& n = s->notes[size_t(i)];
+                        if (n.step != int(c.v[0]) || n.note != int(c.v[1])) s->notes[size_t(kept++)] = n;
+                    }
+                    s->note_count = kept;
+                }
+                break;
+            case Command::PatternClear:
+                if (s) s->note_count = 0;
+                break;
+            case Command::PatternSteps:
+                if (s) s->steps = std::clamp(int(c.v[0]), 1, kMaxPatternSteps);
+                break;
+            case Command::SourceLoop:
+                if (s) {
+                    s->loop = c.v[0] > 0.5f;
+                    if (!s->loop) s->instrument->stopSequenced();
+                }
+                break;
+            case Command::SequencerRunning:
+                if (c.v[0] > 0.5f) {
+                    if (!sequencer_.running()) sequencer_.start(clock_);
+                } else {
+                    sequencer_.stop();
+                    step_.store(-1, std::memory_order_relaxed);
+                    for (Source* each : sources_)
+                        if (each) each->instrument->stopSequenced();
+                }
+                break;
+            case Command::Tempo:
+                sequencer_.setTempo(c.v[0]);
+                break;
+            case Command::Swing:
+                sequencer_.setSwing(c.v[0]);
+                break;
+            case Command::Click:
+                click_on_ = c.v[0] > 0.5f;
+                break;
+            case Command::ClickVolume:
+                click_volume_ = c.v[0];
                 break;
         }
     }
@@ -516,9 +672,8 @@ void AudioEngine::drainCommands() {
 void AudioEngine::drainMidi() {
     MidiEvent e;
     while (midi_queue_.pop(e)) {
-        Source* s = (midi_target_ >= 0 && midi_target_ < kMaxSources) ? sources_[size_t(midi_target_)]
-                                                                       : role(InstrumentKind::Keys);
-        if (!s) continue;
+        Source* s = (midi_target_ >= 0 && midi_target_ < kMaxSources) ? sources_[size_t(midi_target_)] : nullptr;
+        if (!s) continue;  // nobody is at an instrument
         switch (e.type) {
             case MidiEvent::NoteOn:  s->instrument->noteOn(e.note, e.velocity); break;
             case MidiEvent::NoteOff: s->instrument->noteOff(e.note); break;
@@ -531,25 +686,29 @@ int AudioEngine::delayFor(double at) const {
     return std::max(0, int(std::llround(at) - clock_));
 }
 
-void AudioEngine::kick(double at, float v) {
-    if (Source* s = role(InstrumentKind::Drums)) static_cast<Drums*>(s->instrument.get())->hit(Drums::Kick, v, delayFor(at));
-}
-void AudioEngine::snare(double at, float v) {
-    if (Source* s = role(InstrumentKind::Drums)) static_cast<Drums*>(s->instrument.get())->hit(Drums::Snare, v, delayFor(at));
-}
-void AudioEngine::hat(double at, float v, bool open) {
-    if (Source* s = role(InstrumentKind::Drums))
-        static_cast<Drums*>(s->instrument.get())->hit(open ? Drums::HatOpen : Drums::HatClosed, v, delayFor(at));
-}
-void AudioEngine::bass(double at, int note, float dur_sec, float v) {
-    if (Source* s = role(InstrumentKind::Bass)) static_cast<Bass*>(s->instrument.get())->play(note, dur_sec, v, delayFor(at));
-}
-void AudioEngine::pad(double at, const int* notes, int count, float dur_sec, float v) {
-    if (Source* s = role(InstrumentKind::Pad))
-        static_cast<Pad*>(s->instrument.get())->play(notes, count, dur_sec, v, delayFor(at));
-}
-void AudioEngine::bell(double at, int note, float v) {
-    if (Source* s = role(InstrumentKind::Bells)) static_cast<Bells*>(s->instrument.get())->play(note, v, delayFor(at));
+void AudioEngine::step(int64_t index, double at, double step_samples) {
+    step_.store(index, std::memory_order_relaxed);
+    const int delay = delayFor(at);
+    const float step_sec = float(step_samples / sr_);
+    for (Source* s : sources_) {
+        if (!s || !s->loop) continue;
+        const int local = int(index % s->steps);
+        const float jitter = s->instrument->velocityJitter();
+        for (int i = 0; i < s->note_count; ++i) {
+            const PatternNote& n = s->notes[size_t(i)];
+            if (n.step != local) continue;
+            if (n.chance < 1.0f && rng_.uniform() >= n.chance) continue;
+            const float velocity = jitter > 0.0f ? n.velocity + rng_.uniform() * jitter : n.velocity;
+            s->instrument->play(n.note, n.length * step_sec, velocity, delay);
+        }
+    }
+    if (click_on_ && index % 4 == 0) {  // on the beat; beats are never swung
+        voice::ToneHit* free_click = &clicks_[0];
+        for (auto& c : clicks_)
+            if (!c.active) free_click = &c;
+        const float pitch = index % kStepsPerBar == 0 ? 2000.0f : 1000.0f;  // the first beat of the bar is higher
+        free_click->start(float(sr_), delay, false, pitch, pitch, 0.01f, kClickLevel * click_volume_, 0.05f);
+    }
 }
 
 void AudioEngine::renderDevice(const float* input, int input_channels, float* output, int output_channels, int frames) {
@@ -630,7 +789,10 @@ void AudioEngine::renderBlock() {
     std::fill(mix_l_.begin(), mix_l_.end(), 0.0f);
     std::fill(mix_r_.begin(), mix_r_.end(), 0.0f);
     std::fill(send_.begin(), send_.end(), 0.0f);
+    std::fill(click_.begin(), click_.end(), 0.0f);
     sequencer_.process(clock_ + block_, *this);
+    for (auto& c : clicks_)
+        if (c.active) for (int i = 0; i < block_ && c.active; ++i) click_[size_t(i)] += c.next();
 
     // Game updates arrive at frame rate; glide toward them so movement doesn't step (time constant ~15 ms).
     const float glide = 1.0f - std::exp(-float(block_) / (0.015f * float(sr_)));
@@ -674,8 +836,9 @@ void AudioEngine::renderBlock() {
         reverb_gain_ += (reverb_target_ - reverb_gain_) * slow;
         master_gain_ += (master_target_ - master_gain_) * slow;
         const float wet = kReverbLevel * reverb_gain_, out = kMasterGain * master_gain_;
-        mix_l_[size_t(i)] = (mix_l_[size_t(i)] + rev_l_[size_t(i)] * wet) * out;
-        mix_r_[size_t(i)] = (mix_r_[size_t(i)] + rev_r_[size_t(i)] * wet) * out;
+        // The click goes straight to both ears: it is for the player, not part of the room.
+        mix_l_[size_t(i)] = (mix_l_[size_t(i)] + rev_l_[size_t(i)] * wet + click_[size_t(i)]) * out;
+        mix_r_[size_t(i)] = (mix_r_[size_t(i)] + rev_r_[size_t(i)] * wet + click_[size_t(i)]) * out;
     }
     limiter_.process(mix_l_.data(), mix_r_.data(), block_);
     clock_ += block_;

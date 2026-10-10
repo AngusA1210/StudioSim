@@ -1,12 +1,16 @@
 extends Node3D
-## Builds the Sound Room (room, instruments, player, HUD, menu), starts the native audio core, and is the one
-## place that changes settings: the menu and the keyboard shortcuts both go through the functions below.
+## Builds the Sound Room (room, instruments, player, HUD, menu, pattern editor), starts the native audio core, and
+## is the one place that changes settings and the tempo: the menus and the keyboard shortcuts all go through the
+## functions below.
 ##
 ## Command-line options, passed after `--`:
 ##   --silent                 run the audio clock without opening a sound card (also leaves saved settings alone)
 ##   --pose=x,z,yaw_degrees   start the player somewhere else
 ##   --live-input             switch the audio input on at start
 ##   --menu=N                 open the menu on tab N at start
+##   --play=kind              sit down at an instrument at start (drums, bass, pad, bells, keys)
+##   --sequencer=kind[,bar]   open that instrument's pattern editor at start
+##   --tempo=BPM              start at another tempo
 ##   --text-scale=F           override the text size
 ##   --screenshot=path.png    save a screenshot after --frames frames (default 90), print stats, and quit
 ##   --quit-after=seconds     print stats and quit after this long
@@ -15,6 +19,7 @@ const Instrument := preload("res://scripts/instrument.gd")
 const Player := preload("res://scripts/player.gd")
 const Hud := preload("res://scripts/hud.gd")
 const Menu := preload("res://scripts/menu.gd")
+const Sequencer := preload("res://scripts/sequencer.gd")
 const Settings := preload("res://scripts/settings.gd")
 const Acoustics := preload("res://scripts/acoustics.gd")
 
@@ -23,21 +28,25 @@ const WALL_THICKNESS := 0.5
 const PARTITION_CENTER := Vector3(-2.5, 1.5, -1.9)
 const PARTITION_SIZE := Vector3(0.3, 3.0, 3.0)
 
+# The default room. Every kind but "live" can be played by hand and has a pattern; "octave" is where the computer
+# keyboard starts when you sit down at it.
 const INSTRUMENTS := [
 	{"kind": "drums", "name": "Drums", "color": Color(1.0, 0.42, 0.26), "position": Vector3(0.5, 0.9, -3.6),
 		"size": Vector3(0.9, 0.6, 0.9), "gain": 0.50, "send": 0.6},
 	{"kind": "bass", "name": "Bass", "color": Color(0.58, 0.44, 1.0), "position": Vector3(-5.0, 1.0, -2.0),
-		"size": Vector3(0.7, 1.2, 0.5), "gain": 0.38, "send": 0.4},
+		"size": Vector3(0.7, 1.2, 0.5), "gain": 0.38, "send": 0.4, "octave": -2},
 	{"kind": "pad", "name": "Pad", "color": Color(0.25, 0.84, 0.75), "position": Vector3(4.8, 1.6, -1.6),
 		"size": Vector3(0.6, 0.6, 0.6), "gain": 1.0, "send": 1.0, "spin": 0.25},
 	{"kind": "bells", "name": "Bells", "color": Color(1.0, 0.82, 0.29), "position": Vector3(-4.6, 1.6, 2.4),
-		"size": Vector3(0.42, 0.42, 0.42), "gain": 0.42, "send": 1.0, "spin": -0.6},
+		"size": Vector3(0.42, 0.42, 0.42), "gain": 0.42, "send": 1.0, "spin": -0.6, "octave": 1},
 	{"kind": "keys", "name": "Keys", "color": Color(1.0, 0.48, 0.82), "position": Vector3(3.0, 0.95, 1.8),
-		"size": Vector3(1.3, 0.12, 0.42), "gain": 0.20, "send": 0.9, "playable": true},
-	# Whatever is plugged into the audio input comes out of this amp once live input is switched on.
-	{"kind": "live", "name": "Amp", "color": Color(0.55, 0.78, 1.0), "position": Vector3(-2.0, 0.6, 1.6),
+		"size": Vector3(1.3, 0.12, 0.42), "gain": 0.20, "send": 0.9},
+	# Whatever is plugged into the audio input comes out of this speaker once live input is switched on.
+	{"kind": "live", "name": "Speaker", "color": Color(0.55, 0.78, 1.0), "position": Vector3(-2.0, 0.6, 1.6),
 		"size": Vector3(0.6, 0.7, 0.4), "gain": 1.5, "send": 0.7},
 ]
+const DEFAULT_TEMPO := 92.0
+const DEFAULT_SWING := 0.14
 
 const GRID_SHADER := """
 shader_type spatial;
@@ -64,8 +73,13 @@ var settings := Settings.new()
 var player
 var hud
 var menu
+var sequencer  # the pattern editor
 var instruments: Array = []
-var amp  # the live-input instrument
+var speaker  # the live-input instrument
+# The room's clock. These belong to the room rather than the player's settings, so they start from the defaults.
+var tempo := DEFAULT_TEMPO
+var swing := DEFAULT_SWING
+var sequence_running := true  # whether the sequencer is playing the patterns
 var walls: Array = []  # AABBs that sound has to bend around
 var options := {}
 var live_input := false   # never restored from settings: an open microphone next to speakers would feed back
@@ -98,11 +112,17 @@ func _ready() -> void:
 		inst.setup(spec, audio)
 		instruments.append(inst)
 		if spec.kind == "live":
-			amp = inst
-	audio.set_source_input_channel(amp.source_id, settings.amp_input)
+			speaker = inst
+		else:
+			audio.load_default_pattern(inst.source_id)  # the room starts with the default groove
+	audio.set_source_input_channel(speaker.source_id, settings.speaker_input)
 	audio.set_binaural(settings.binaural)
 	audio.set_reverb(settings.reverb)
 	audio.set_master_volume(db_to_linear(settings.master_volume_db))
+	audio.set_click(settings.click)
+	audio.set_click_volume(db_to_linear(settings.click_volume_db))
+	if options.has("tempo"):
+		set_tempo(float(options.tempo))
 
 	player = Player.new()
 	player.name = "Player"
@@ -118,12 +138,22 @@ func _ready() -> void:
 	menu = Menu.new()
 	add_child(menu)
 	menu.setup(self)
+	sequencer = Sequencer.new()
+	add_child(sequencer)
+	sequencer.setup(self)
 	_apply_display()
 
 	if options.has("live-input"):
 		set_live_input(true)
 	if options.has("menu"):
 		menu.open(int(options.menu))
+	if options.has("play"):
+		_sit_at(options.play)
+		player.start_playing(find_instrument(options.play))
+	if options.has("sequencer"):
+		var parts: PackedStringArray = options.sequencer.split(",")
+		_sit_at(parts[0])
+		sequencer.open(find_instrument(parts[0]), int(parts[1]) - 1 if parts.size() > 1 else -1)
 
 
 func _process(delta: float) -> void:
@@ -216,9 +246,9 @@ func set_live_input(on: bool) -> void:
 	open_audio()
 
 
-func set_amp_input(channel: int) -> void:
-	settings.amp_input = channel
-	audio.set_source_input_channel(amp.source_id, channel)
+func set_speaker_input(channel: int) -> void:
+	settings.speaker_input = channel
+	audio.set_source_input_channel(speaker.source_id, channel)
 	settings.save_to_disk()
 
 
@@ -228,6 +258,43 @@ func set_midi_device_enabled(device_name: String, on: bool) -> void:
 	if not on:
 		settings.midi_disabled.append(device_name)
 	settings.save_to_disk()
+
+
+# ── Tempo and the metronome ─────────────────────────────────────────────────────────────────────────────────
+
+func set_tempo(bpm: float) -> void:
+	tempo = clampf(bpm, 40.0, 240.0)
+	audio.set_tempo(tempo)
+
+
+func set_swing(amount: float) -> void:
+	swing = clampf(amount, 0.0, 0.6)
+	audio.set_swing(swing)
+
+
+## Starts or stops every instrument's pattern. Starting begins again from the first beat.
+func set_sequence_running(on: bool) -> void:
+	sequence_running = on
+	audio.set_sequencer_running(on)
+
+
+func set_click(on: bool) -> void:
+	settings.click = on
+	audio.set_click(on)
+	settings.save_to_disk()
+
+
+func set_click_volume_db(db: float) -> void:
+	settings.click_volume_db = db
+	audio.set_click_volume(db_to_linear(db))
+	settings.save_to_disk()
+
+
+func find_instrument(kind: String):
+	for inst in instruments:
+		if inst.kind == kind:
+			return inst
+	return null
 
 
 # ── Sound, display, controls ────────────────────────────────────────────────────────────────────────────────
@@ -290,6 +357,13 @@ func _parse_options() -> void:
 			options[a] = ""
 
 
+## Stands the player in front of an instrument, facing it (for the --play and --sequencer options).
+func _sit_at(kind: String) -> void:
+	var inst = find_instrument(kind)
+	var from: Vector3 = inst.position + Vector3(0.0, 0.0, 1.8)
+	player.place(Vector3(from.x, 0.0, from.z), 0.0)
+
+
 func _print_stats() -> void:
 	var s := audio.get_stats()
 	print("SoundRoom stats: device=%s backend=%s rate=%s block=%s device_period=%s buffer=%.2fms device=%.2fms output=%.2fms cpu=%.1f%% blocks=%s" % [
@@ -301,6 +375,13 @@ func _print_stats() -> void:
 		levels.append("%s=%.3f%s" % [inst.kind, audio.get_source_level(inst.source_id), " (behind wall)" if inst.shadowed else ""])
 	print("SoundRoom sources: ", ", ".join(levels))
 	print("SoundRoom midi: ", audio.get_midi_devices(), " live_input=", s.get("live_input", false))
+	var patterns := []
+	for inst in instruments:
+		if inst.playable:
+			patterns.append("%s=%d notes/%d steps%s" % [inst.kind, audio.get_pattern(inst.source_id).size(),
+				audio.get_pattern_steps(inst.source_id), "" if inst.loop_on else " (loop off)"])
+	print("SoundRoom transport: ", audio.get_transport(), " playing=",
+		player.playing.kind if player.playing != null else "nothing", " patterns: ", ", ".join(patterns))
 
 
 func _build_environment() -> void:

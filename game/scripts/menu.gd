@@ -1,24 +1,28 @@
 extends CanvasLayer
-## The menu (Esc). Laid out the way a DAW does it: a Playback Engine page for the device and buffer size, an I/O
-## page that maps hardware channels to what they carry, a MIDI page for enabling controllers, and general
-## settings. The music keeps playing while it's open, so changes can be heard straight away.
+## The menu (Esc). A Metronome page for the tempo and click, then the audio setup laid out the way a DAW does it:
+## a Playback Engine page for the device and buffer size, an I/O page that maps hardware channels to what they
+## carry, a MIDI page for enabling controllers, and general settings. The music keeps playing while it's open, so
+## changes can be heard straight away.
 
 const ACCENT := Color(0.49, 0.89, 0.82)
 const DIM := Color(0.62, 0.65, 0.74)
 const WARN := Color(1.0, 0.61, 0.48)
 const MAX_GRID_CHANNELS := 16
-const CONTROLS := """Move                  W A S D   (Shift to run)
-Look                  mouse   (click to capture it)
-Carry an instrument   G or click, again to put it down
-Mute an instrument    F while facing it
-Play the Keys         E when next to them, Q to stop
-                      A S D F G H J K L ;  white keys
-                      W E T Y U O P  black keys,  Z X  octave
-MIDI keyboard         plays the Keys from anywhere
-Binaural on / off     B
-Reverb on / off       R
-Live input on / off   I
-Menu                  Esc"""
+const CONTROLS := """Move                    W A S D   (Shift to run)
+Look                    mouse   (click to capture it)
+Carry an instrument     G or click, again to put it down
+Play an instrument      E when next to it, Q to stop
+                        A S D F G H J K L ;  white keys
+                        W E T Y U O P  black keys,  Z X  octave
+MIDI keyboard           plays the instrument you are playing
+Edit its pattern        Tab when next to it or playing it
+Its loop on / off       M   (for the Speaker: mute)
+Start / stop patterns   Space
+Metronome click         C
+Binaural on / off       B
+Reverb on / off         R
+Live input on / off     I
+Menu                    Esc"""
 
 var app
 var audio: SoundRoomAudio
@@ -28,6 +32,16 @@ var _panel: PanelContainer
 var _tabs: TabContainer
 var _fast := 0.0
 var _slow := 0.0
+
+# Metronome
+var _playing_toggle: CheckButton
+var _tempo_slider: HSlider
+var _tempo_value: Label
+var _swing_slider: HSlider
+var _swing_value: Label
+var _click_toggle: CheckButton
+var _click_slider: HSlider
+var _click_value: Label
 
 # Playback Engine
 var _engine_option: OptionButton
@@ -49,8 +63,8 @@ var _input_option: OptionButton
 var _input_names: Array = []
 var _input_signature := ""
 var _input_channels := 0
-var _amp_grid: HBoxContainer
-var _amp_signature := ""
+var _speaker_grid: HBoxContainer
+var _speaker_signature := ""
 var _input_note: Label
 
 # MIDI
@@ -176,9 +190,10 @@ func _build() -> void:
 	_tabs = TabContainer.new()
 	_tabs.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	box.add_child(_tabs)
+	_build_metronome_page(_page("Metronome"))
 	_build_engine_page(_page("Playback Engine"))
 	_build_io_page(_page("I-O"))
-	_tabs.set_tab_title(1, "I/O")
+	_tabs.set_tab_title(2, "I/O")
 	_build_midi_page(_page("MIDI"))
 	_build_settings_page(_page("Settings"))
 	var controls := Label.new()
@@ -186,6 +201,31 @@ func _build() -> void:
 	controls.add_theme_font_override("font", _mono())
 	controls.add_theme_font_size_override("font_size", 14)
 	_page("Controls").add_child(controls)
+
+
+func _build_metronome_page(page: VBoxContainer) -> void:
+	_heading(page, "Tempo")
+	_playing_toggle = CheckButton.new()
+	_playing_toggle.toggled.connect(_on_playing_toggled)
+	_field(page, "Patterns").add_child(_playing_toggle)
+	_tempo_value = Label.new()
+	_tempo_slider = _slider(page, "Tempo", 40.0, 240.0, 1.0, _tempo_value)
+	_tempo_slider.value_changed.connect(_on_tempo_changed)
+	_swing_value = Label.new()
+	_swing_slider = _slider(page, "Swing", 0.0, 60.0, 1.0, _swing_value)
+	_swing_slider.value_changed.connect(_on_swing_changed)
+	_note(page, "Every instrument's pattern follows this tempo. Swing makes the off-beat sixteenths late: 0 % is straight, the room starts at 14 %.")
+
+	page.add_child(HSeparator.new())
+	_heading(page, "Click")
+	_click_toggle = CheckButton.new()
+	_click_toggle.toggled.connect(_on_click_toggled)
+	_field(page, "Metronome click").add_child(_click_toggle)
+	_click_value = Label.new()
+	_click_slider = _slider(page, "Click volume", -24.0, 6.0, 0.5, _click_value)
+	_click_slider.value_changed.connect(_on_click_volume_changed)
+	_note(page, "The click is on every beat, higher on the first beat of the bar. It plays straight into your ears rather than from somewhere in the room.")
+	_note(page, "Space starts and stops the patterns and C switches the click, without opening this menu. To change what an instrument plays, walk up to it and press Tab. The tempo and the patterns go back to the defaults each time SoundRoom starts, until rooms can be saved.")
 
 
 func _build_engine_page(page: VBoxContainer) -> void:
@@ -230,15 +270,15 @@ func _build_io_page(page: VBoxContainer) -> void:
 	_input_option.custom_minimum_size.x = 380
 	_input_option.item_selected.connect(_on_input_selected)
 	_field(page, "Device").add_child(_input_option)
-	_amp_grid = HBoxContainer.new()
-	_amp_grid.add_theme_constant_override("separation", 4)
-	_field(page, "Amp plays input").add_child(_amp_grid)
+	_speaker_grid = HBoxContainer.new()
+	_speaker_grid.add_theme_constant_override("separation", 4)
+	_field(page, "Speaker plays input").add_child(_speaker_grid)
 	_input_note = _note(page, "")
 
 
 func _build_midi_page(page: VBoxContainer) -> void:
 	_heading(page, "MIDI Input Devices")
-	_note(page, "Ticked devices play the Keys from anywhere in the room. A USB keyboard plugged straight into the computer shows up here under its own name. The light flashes when a device sends notes.")
+	_note(page, "Ticked devices play whichever instrument you are playing: walk up to one and press E. At the drums each key is a drum, laid out like a General MIDI kit. A USB keyboard plugged straight into the computer shows up here under its own name. The light flashes when a device sends notes.")
 	_midi_list = VBoxContainer.new()
 	_midi_list.add_theme_constant_override("separation", 6)
 	page.add_child(_midi_list)
@@ -295,7 +335,7 @@ func _refresh_devices() -> void:
 		_input_names = _fill_devices(_input_option, inputs, "ch in")
 	_select(_input_option, _input_names, app.settings.input_device)
 
-	# How many inputs the amp can choose from: what is open, or what the chosen device says it has.
+	# How many inputs the speaker can choose from: what is open, or what the chosen device says it has.
 	_input_channels = int(s.get("input_channels", 0)) if app.live_input else 0
 	if _input_channels == 0:
 		for device in inputs:
@@ -308,6 +348,18 @@ func _refresh_live() -> void:
 	var settings = app.settings
 	var s: Dictionary = audio.get_stats()
 	var running: bool = s.get("device_running", false)
+
+	# Metronome
+	_playing_toggle.set_pressed_no_signal(app.sequence_running)
+	_playing_toggle.text = "Playing" if app.sequence_running else "Stopped"
+	_tempo_slider.set_value_no_signal(app.tempo)
+	_tempo_value.text = "%d BPM" % roundi(app.tempo)
+	_swing_slider.set_value_no_signal(app.swing * 100.0)
+	_swing_value.text = "%d %%" % roundi(app.swing * 100.0)
+	_click_toggle.set_pressed_no_signal(settings.click)
+	_click_toggle.text = "On" if settings.click else "Off"
+	_click_slider.set_value_no_signal(settings.click_volume_db)
+	_click_value.text = "%+.1f dB" % settings.click_volume_db
 
 	# Playback Engine
 	_buffer_option.select(settings.BUFFER_SIZES.find(settings.buffer_size))
@@ -341,15 +393,15 @@ func _refresh_live() -> void:
 		_fill_grid(_output_grid, outputs, false, _output_label, _on_output_clicked)
 	_input_toggle.set_pressed_no_signal(app.live_input)
 	_input_toggle.text = "On" if app.live_input else "Off"
-	signature = "%d:%d" % [_input_channels, settings.amp_input]
-	if signature != _amp_signature:
-		_amp_signature = signature
-		_fill_grid(_amp_grid, _input_channels, true, _amp_label, _on_amp_clicked)
+	signature = "%d:%d" % [_input_channels, settings.speaker_input]
+	if signature != _speaker_signature:
+		_speaker_signature = signature
+		_fill_grid(_speaker_grid, _input_channels, true, _speaker_label, _on_speaker_clicked)
 	if app.live_input and running:
 		_input_note.text = "%s is live: %.1f ms in, %.1f ms out. Wear headphones, or the microphone will pick up the speakers and feed back." % [
 			s.input_device, s.input_latency_ms, s.output_latency_ms]
 	else:
-		_input_note.text = "Switch live input on to hear a microphone or instrument through the Amp in the room. It always starts switched off. Wear headphones, or it will feed back."
+		_input_note.text = "Switch live input on to hear a microphone or instrument through the Speaker in the room. It always starts switched off. Wear headphones, or it will feed back."
 	_input_note.add_theme_color_override("font_color", DIM)
 
 	# MIDI
@@ -386,6 +438,31 @@ func _refresh_live() -> void:
 
 
 # ── Handlers ────────────────────────────────────────────────────────────────────────────────────────────────
+
+func _on_playing_toggled(on: bool) -> void:
+	app.set_sequence_running(on)
+	_refresh_live()
+
+
+func _on_tempo_changed(bpm: float) -> void:
+	app.set_tempo(bpm)
+	_refresh_live()
+
+
+func _on_swing_changed(percent: float) -> void:
+	app.set_swing(percent / 100.0)
+	_refresh_live()
+
+
+func _on_click_toggled(on: bool) -> void:
+	app.set_click(on)
+	_refresh_live()
+
+
+func _on_click_volume_changed(db: float) -> void:
+	app.set_click_volume_db(db)
+	_refresh_live()
+
 
 func _on_engine_selected(index: int) -> void:
 	app.set_output_device(_engine_names[index])
@@ -426,12 +503,12 @@ func _on_output_clicked(channel: int) -> void:
 	_refresh_live()
 
 
-func _amp_label(channel: int) -> String:
-	return "●" if channel == app.settings.amp_input else ""
+func _speaker_label(channel: int) -> String:
+	return "●" if channel == app.settings.speaker_input else ""
 
 
-func _on_amp_clicked(channel: int) -> void:
-	app.set_amp_input(channel)
+func _on_speaker_clicked(channel: int) -> void:
+	app.set_speaker_input(channel)
 	_refresh_live()
 
 

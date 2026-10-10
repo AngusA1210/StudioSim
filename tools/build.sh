@@ -14,6 +14,8 @@ cmake --build "$ROOT/audio_core/build" --target engine_tests soundroom_audio -j 
 
 if command -v godot >/dev/null; then
   godot --headless --path "$ROOT/game" --import >/dev/null 2>&1 || true
+  # Drive the game itself with pretend keys and clicks (silent, and it leaves saved settings alone).
+  godot --headless --path "$ROOT/game" --script tests/ui_check.gd -- --silent
   echo "Built. Run the game with:  godot --path \"$ROOT/game\""
 else
   echo "Built. Install Godot 4.5+ (brew install --cask godot) to run the game."

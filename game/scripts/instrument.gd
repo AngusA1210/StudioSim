@@ -6,9 +6,11 @@ var kind := ""
 var display_name := ""
 var color := Color.WHITE
 var size := Vector3.ONE
-var playable := false
+var playable := false  # can be played by hand, and has a pattern the sequencer plays
+var default_octave := 0  # where the computer keyboard starts when you sit down at it
 var source_id := -1
-var muted := false
+var muted := false     # the Speaker: silenced altogether
+var loop_on := true    # playable instruments: whether the sequencer plays their pattern
 var carried := false
 var shadowed := false  # a wall is between it and the listener
 var glow := 0.0
@@ -30,7 +32,8 @@ func setup(spec: Dictionary, audio: SoundRoomAudio) -> void:
 	display_name = spec.name
 	color = spec.color
 	size = spec.size
-	playable = spec.get("playable", false)
+	playable = kind != "live"
+	default_octave = spec.get("octave", 0)
 	_spin = spec.get("spin", 0.0)
 	name = display_name
 	position = spec.position
@@ -99,6 +102,26 @@ func set_muted(value: bool) -> void:
 	_audio.set_source_muted(source_id, value)
 	_label.text = display_name + ("  (muted)" if value else "")
 	_label.modulate.a = 0.55 if value else 1.0
+
+
+## Stops or restarts the sequencer playing this instrument's pattern. It can still be played by hand.
+func set_loop(on: bool) -> void:
+	loop_on = on
+	_audio.set_source_loop(source_id, on)
+	_label.text = display_name + ("" if on else "  (loop off)")
+	_label.modulate.a = 1.0 if on else 0.55
+
+
+## What M does: for an instrument, its loop on or off; for the Speaker, mute.
+func toggle_quiet() -> void:
+	if playable:
+		set_loop(not loop_on)
+	else:
+		set_muted(not muted)
+
+
+func is_quiet() -> bool:
+	return not loop_on if playable else muted
 
 
 func set_carried(value: bool) -> void:

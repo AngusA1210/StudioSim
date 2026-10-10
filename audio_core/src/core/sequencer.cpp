@@ -1,5 +1,7 @@
 #include "sequencer.h"
 
+#include <algorithm>
+
 namespace sr {
 namespace {
 
@@ -9,7 +11,7 @@ struct Chord {
     int tones[6];
 };
 
-// Am7 · Fmaj7 · Cmaj7 · G6: all white keys, so anything played on the Keys fits.
+// Am7 · Fmaj7 · Cmaj7 · G6, one bar each.
 constexpr Chord kChords[4] = {
     {45, {55, 57, 60, 64}, {69, 72, 76, 79, 81, 84}},
     {41, {53, 57, 60, 64}, {69, 72, 76, 77, 81, 84}},
@@ -21,6 +23,7 @@ constexpr Chord kChords[4] = {
 constexpr float kBass[16][2] = {{0, 3}, {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 1.5f}, {0, 0},
                                 {12, 1}, {0, 0}, {0, 2.5f}, {0, 0}, {0, 0}, {0, 0}, {7, 1.5f}, {0, 0}};
 
+// step → which chord tone the bells play (-1 = rest); the two bars alternate
 constexpr int kBells[2][16] = {
     {0, -1, 2, -1, 3, -1, 2, 1, -1, 4, -1, 2, -1, 3, -1, -1},
     {1, -1, 3, -1, 2, -1, 4, -1, 5, -1, 3, -1, 2, -1, 1, -1},
@@ -28,45 +31,77 @@ constexpr int kBells[2][16] = {
 
 }  // namespace
 
+std::vector<PatternNote> defaultPattern(InstrumentKind kind) {
+    std::vector<PatternNote> out;
+    auto add = [&](int step, int note, float length, float velocity, float chance = 1.0f) {
+        out.push_back({step, note, length, velocity, chance});
+    };
+    const int kick = Drums::noteFor(Drums::Kick), snare = Drums::noteFor(Drums::Snare);
+    const int hat = Drums::noteFor(Drums::HatClosed), open_hat = Drums::noteFor(Drums::HatOpen);
+    for (int bar = 0; bar < 4; ++bar) {
+        const Chord& chord = kChords[bar];
+        for (int s = 0; s < kStepsPerBar; ++s) {
+            const int step = bar * kStepsPerBar + s;
+            switch (kind) {
+                case InstrumentKind::Drums:
+                    if (s == 0 || s == 6 || s == 10 || (bar == 3 && s == 13)) add(step, kick, 1, s == 0 ? 1.0f : 0.8f);
+                    if (s == 4 || s == 12) add(step, snare, 1, 0.9f);
+                    if (bar == 3 && s == 15) add(step, snare, 1, 0.3f);
+                    if (s % 2 == 0) add(step, bar % 2 == 1 && s == 14 ? open_hat : hat, 1, s % 4 == 0 ? 0.6f : 0.4f);
+                    else add(step, hat, 1, 0.2f, 0.25f);  // a ghost note, one time in four
+                    break;
+                case InstrumentKind::Bass:
+                    if (kBass[s][1] > 0) add(step, chord.root + int(kBass[s][0]), kBass[s][1], 0.8f);
+                    break;
+                case InstrumentKind::Pad:
+                    if (s == 0)
+                        for (int note : chord.pad) add(step, note, float(kStepsPerBar), 0.8f);
+                    break;
+                case InstrumentKind::Bells:
+                    if (kBells[bar % 2][s] >= 0) add(step, chord.tones[kBells[bar % 2][s]], 1, 0.45f + (s % 4 == 0 ? 0.2f : 0.0f));
+                    break;
+                case InstrumentKind::Keys:
+                case InstrumentKind::Live:
+                    break;
+            }
+        }
+    }
+    return out;
+}
+
 void Sequencer::setSampleRate(double sr) {
     sr_ = sr;
-    step_samples_ = 60.0 / kBpm / 4.0 * sr;
+    step_samples_ = 60.0 / bpm_ / 4.0 * sr;
     next_step_ = 0;
     next_step_time_ = 0.2 * sr;  // a short breath before the first downbeat
 }
 
 void Sequencer::retime(double sr, int64_t now) {
     sr_ = sr;
-    step_samples_ = 60.0 / kBpm / 4.0 * sr;
+    step_samples_ = 60.0 / bpm_ / 4.0 * sr;
     next_step_time_ = double(now) + 0.05 * sr;
 }
 
-void Sequencer::process(int64_t block_end, SequencerSink& sink) {
+void Sequencer::setTempo(double bpm) {
+    bpm_ = std::clamp(bpm, kMinBpm, kMaxBpm);
+    step_samples_ = 60.0 / bpm_ / 4.0 * sr_;  // takes effect from the next step
+}
+
+void Sequencer::setSwing(double swing) { swing_ = std::clamp(swing, 0.0, 0.6); }
+
+void Sequencer::start(int64_t now) {
+    running_ = true;
+    next_step_ = 0;
+    next_step_time_ = double(now) + 0.02 * sr_;
+}
+
+void Sequencer::process(int64_t block_end, StepSink& sink) {
     if (!running_) return;
     while (next_step_time_ < double(block_end)) {
-        scheduleStep(next_step_, next_step_time_, sink);
+        sink.step(next_step_, next_step_time_ + (next_step_ % 2 ? step_samples_ * swing_ : 0.0), step_samples_);
         ++next_step_;
         next_step_time_ += step_samples_;
     }
-}
-
-void Sequencer::scheduleStep(int64_t n, double t0, SequencerSink& sink) {
-    const int s = int(n % 16), bar = int((n / 16) % 4);
-    const Chord& chord = kChords[bar];
-    const double t = t0 + (s % 2 ? step_samples_ * kSwing : 0.0);
-    const float step_sec = float(step_samples_ / sr_);
-
-    if (s == 0 || s == 6 || s == 10 || (bar == 3 && s == 13)) sink.kick(t, s == 0 ? 1.0f : 0.8f);
-    if (s == 4 || s == 12) sink.snare(t, 0.9f);
-    if (bar == 3 && s == 15) sink.snare(t, 0.3f);
-    if (s % 2 == 0) sink.hat(t, s % 4 == 0 ? 0.6f : 0.4f, bar % 2 == 1 && s == 14);
-    else if (rng_.uniform() < 0.25f) sink.hat(t, 0.2f, false);
-
-    if (kBass[s][1] > 0) sink.bass(t, chord.root + int(kBass[s][0]), kBass[s][1] * step_sec, 0.8f);
-    if (s == 0) sink.pad(t0, chord.pad, 4, 16 * step_sec, 0.07f);
-
-    const int b = kBells[bar % 2][s];
-    if (b >= 0) sink.bell(t, chord.tones[b], 0.45f + (s % 4 == 0 ? 0.2f : 0.0f) + rng_.uniform() * 0.1f);
 }
 
 }  // namespace sr

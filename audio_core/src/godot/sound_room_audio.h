@@ -44,6 +44,7 @@ public:
 
     // ── The room ─────────────────────────────────────────────────────────────────────────────────────────
     // kind: "drums", "bass", "pad", "bells", "keys" or "live" (the audio input). Returns a source id, or -1.
+    // Every kind but "live" can be played with note_on/note_off and given a pattern for the sequencer.
     int add_source(const String& kind, const Vector3& position, float gain, float reverb_send);
     void set_source_position(int id, const Vector3& position);
     // See AudioEngine::setSourceDirectPath: where the sound arrives from when walls are in the way.
@@ -61,8 +62,30 @@ public:
     float get_source_level(int id) const;
     Dictionary get_stats() const;
 
+    // ── The sequencer ────────────────────────────────────────────────────────────────────────────────────
+    // Each source has a pattern of notes on a grid of sixteenths, which the clock plays round and round.
+    // A note is {step, note, length (in steps), velocity (0-1), chance (0-1)}.
+    void load_default_pattern(int id);  // the built-in groove's part for this kind of instrument
+    Array get_pattern(int id) const;
+    void set_pattern(int id, const Array& notes);
+    // Adds a note, or replaces the one already at that step and pitch. False if the pattern is full.
+    bool set_pattern_note(int id, int step, int note, float length, float velocity, float chance);
+    void remove_pattern_note(int id, int step, int note);
+    void set_pattern_steps(int id, int steps);  // 16, 32 or 64: how long before the pattern repeats
+    int get_pattern_steps(int id) const;
+    void set_source_loop(int id, bool on);      // whether the sequencer plays this source's pattern
+    void set_sequencer_running(bool on);
+    void set_tempo(float bpm);
+    void set_swing(float amount);
+    void set_click(bool on);                    // the metronome click
+    void set_click_volume(float gain);
+    Dictionary get_transport() const;           // {running, bpm, swing, click, click_volume, step}
+    Array get_drum_pieces() const;              // [{name, note}]: the drum machine's pieces
+    String get_drum_piece_name(int note) const; // which piece a note plays
+
     // ── MIDI ─────────────────────────────────────────────────────────────────────────────────────────────
-    // Controllers go straight into the audio core and play `set_midi_target`'s source (default: the Keys).
+    // Controllers go straight into the audio core and play `set_midi_target`'s source: the instrument the player
+    // is at. With no target (-1) they play nothing.
     bool start_midi();
     void poll_midi();
     void set_midi_target(int id);
