@@ -12,9 +12,10 @@ const REACH := 4.2
 const PLAY_REACH := 2.8
 const AIM_COS := 0.955  # within about 17° of where you're facing
 const CARRY_DISTANCE := 1.5
+const REMOVE_WINDOW_MS := 3000  # how long the second Backspace has to follow the first
 
 # Computer keyboard as a piano, the usual DAW layout. Values are semitones above the base C. The shortcuts that
-# have to work while playing (Q, Z, X, Tab, M, C, Space, B, R, I) are deliberately not among these keys.
+# have to work while playing (Q, Z, X, Tab, M, N, C, Space, Backspace, B, R, I) are deliberately not among these keys.
 const KEYMAP := {
 	KEY_A: 0, KEY_W: 1, KEY_S: 2, KEY_E: 3, KEY_D: 4, KEY_F: 5, KEY_T: 6, KEY_G: 7, KEY_Y: 8,
 	KEY_H: 9, KEY_U: 10, KEY_J: 11, KEY_K: 12, KEY_O: 13, KEY_L: 14, KEY_P: 15, KEY_SEMICOLON: 16,
@@ -31,6 +32,9 @@ var carried = null  # instrument you're carrying
 var playing = null  # instrument you're playing
 var octave := 0
 var held := {}      # physical key → MIDI note currently sounding
+var remove_pending = null  # instrument that Backspace was pressed on once; a second press removes it
+
+var _remove_deadline := 0
 
 var _room_half := Vector2.ZERO
 var _partition_min := Vector3.ZERO
@@ -95,9 +99,36 @@ func stop_playing() -> void:
 	playing = null
 
 
-## The menu or the pattern editor is up: the keyboard and mouse belong to it.
+## Take an instrument in hand, as G does: it follows you until you put it down.
+func carry(inst) -> void:
+	stop_playing()
+	if carried != null:
+		carried.set_carried(false)
+	if target != null:
+		target.set_highlighted(false)
+		target = null
+	carried = inst
+	carried.set_carried(true)
+
+
+## An instrument is leaving the room: let go of it.
+func forget(inst) -> void:
+	if playing == inst:
+		stop_playing()
+	if carried == inst:
+		carried = null
+	if target == inst:
+		target = null
+	if remove_pending == inst:
+		remove_pending = null
+
+
+## One of the menus or the pattern editor is up: the keyboard and mouse belong to it.
 func _ui_open() -> bool:
-	return (app.menu != null and app.menu.is_open()) or (app.sequencer != null and app.sequencer.is_open())
+	for panel in [app.menu, app.sequencer, app.instrument_menu]:
+		if panel != null and panel.is_open():
+			return true
+	return false
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -134,8 +165,16 @@ func _handle_key(event: InputEventKey) -> void:
 				app.menu.open()
 			return
 		KEY_TAB:
-			if playing != null or can_play_target():
+			if at != null and not at.playable:
+				app.menu.open(app.menu.IO_TAB)  # a live input: where its hardware input is chosen
+			elif playing != null or can_play_target():
 				app.sequencer.open(at)
+			return
+		KEY_N:
+			app.instrument_menu.open()
+			return
+		KEY_BACKSPACE, KEY_DELETE:
+			_ask_to_remove(carried if carried != null else at)
 			return
 		KEY_M:
 			if at != null:
@@ -205,6 +244,9 @@ func _physics_process(delta: float) -> void:
 
 func _process(_delta: float) -> void:
 	audio.set_listener(camera.global_transform)
+	if remove_pending != null and (Time.get_ticks_msec() >= _remove_deadline
+			or (remove_pending != carried and remove_pending != target and remove_pending != playing)):
+		remove_pending = null  # too slow, or looking at something else now
 	var aimed = null if carried != null else _pick_target()
 	if aimed != target:
 		if target != null:
@@ -212,6 +254,17 @@ func _process(_delta: float) -> void:
 		if aimed != null:
 			aimed.set_highlighted(true)
 		target = aimed
+
+
+## Removing takes two presses, so a slip of the finger doesn't cost an instrument and its pattern.
+func _ask_to_remove(inst) -> void:
+	if inst == null:
+		return
+	if remove_pending == inst and Time.get_ticks_msec() < _remove_deadline:
+		app.remove_instrument(inst)
+	else:
+		remove_pending = inst
+		_remove_deadline = Time.get_ticks_msec() + REMOVE_WINDOW_MS
 
 
 ## Called when the menu or the pattern editor opens: let go of any notes held on the computer keyboard.

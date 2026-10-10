@@ -75,7 +75,10 @@ struct TransportState {
 
 class AudioEngine : private StepSink {
 public:
-    static constexpr int kMaxSources = 32;
+    static constexpr int kMaxSources = 32;  // how many instruments the room holds
+    // Ids to go round. The spare ones cover sources that have been removed but are still fading out, so that
+    // swapping a roomful of instruments for another never has to wait.
+    static constexpr int kSourceSlots = 2 * kMaxSources;
 
     explicit AudioEngine(const EngineConfig& config = {});
     ~AudioEngine() override;
@@ -99,7 +102,12 @@ public:
     bool configure(int sample_rate, int block_size, std::string* error);
 
     // ── Game-thread API ──────────────────────────────────────────────────────────────────────────────────
-    int addSource(InstrumentKind kind, Vec3 position, float gain, float reverb_send);  // returns an id, or -1
+    // Returns an id, or -1 if the room already holds kMaxSources. A new source has an empty pattern.
+    int addSource(InstrumentKind kind, Vec3 position, float gain, float reverb_send);
+    // Takes a source out of the room. It fades out over a few blocks, and its id is reused once the audio thread
+    // has let go of it; it stops counting towards kMaxSources at once. False if there is no such source.
+    bool removeSource(int id);
+    int sourceCount() const;  // how many are in the room
     // Places a source with a clear line of sight to the listener.
     void setSourcePosition(int id, Vec3 position);
     // How the source's sound reaches the listener when walls are involved. `via` is the point the sound arrives
@@ -162,7 +170,7 @@ private:
     struct Device;
     struct Command {
         enum Type : uint8_t {
-            AddSource, SourcePosition, SourceDirectPath, SourceMuted, SourceInputChannel, Listener,
+            AddSource, RemoveSource, SourcePosition, SourceDirectPath, SourceMuted, SourceInputChannel, Listener,
             NoteOn, NoteOff, AllNotesOff, Binaural, Reverb, MasterVolume, MidiTarget,
             PatternNoteSet, PatternNoteRemove, PatternClear, PatternSteps, SourceLoop,
             SequencerRunning, Tempo, Swing, Click, ClickVolume,
@@ -178,7 +186,8 @@ private:
     void renderBlock();
     void allocateBuffers();
     std::unique_ptr<Instrument> makeInstrument(InstrumentKind kind) const;
-    Source* owned(int id) const;
+    Source* owned(int id) const;  // the source with this id, unless it is on its way out
+    void reap();                  // frees removed sources the audio thread has finished with
     int delayFor(double at) const;
 
     // StepSink: plays every source's pattern notes for this step, and the click.
@@ -189,7 +198,7 @@ private:
     bool initialized_ = false;
 
     // Game-thread state
-    std::vector<std::unique_ptr<Source>> owned_;
+    std::vector<std::unique_ptr<Source>> owned_;  // indexed by id; a removed source leaves an empty slot
     SpscQueue<Command> commands_{8192};
     std::unique_ptr<Device> device_;
     EngineStats device_stats_;
@@ -202,7 +211,7 @@ private:
     std::atomic<uint32_t> midi_events_{0};
 
     // Audio-thread state
-    std::array<Source*, kMaxSources> sources_{};
+    std::array<Source*, kSourceSlots> sources_{};
     int midi_target_ = -1;
     Vec3 listener_pos_{0, 1.65f, 0}, listener_ahead_{0, 0, -1}, listener_up_{0, 1, 0};
     Vec3 target_pos_{0, 1.65f, 0}, target_ahead_{0, 0, -1}, target_up_{0, 1, 0};
@@ -225,7 +234,7 @@ private:
     int64_t clock_ = 0;  // samples rendered since start: the engine's shared musical clock
 
     // Shared between threads
-    std::array<std::atomic<float>, kMaxSources> levels_{};
+    std::array<std::atomic<float>, kSourceSlots> levels_{};
     std::atomic<float> cpu_load_{0.0f};
     std::atomic<uint64_t> blocks_{0};
     std::atomic<int> out_left_{0}, out_right_{1};

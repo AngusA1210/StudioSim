@@ -8,15 +8,19 @@ const ACCENT := Color(0.49, 0.89, 0.82)
 const DIM := Color(0.62, 0.65, 0.74)
 const WARN := Color(1.0, 0.61, 0.48)
 const MAX_GRID_CHANNELS := 16
+const IO_TAB := 2
 const CONTROLS := """Move                    W A S D   (Shift to run)
 Look                    mouse   (click to capture it)
 Carry an instrument     G or click, again to put it down
+Add an instrument       N
+Remove an instrument    Backspace twice, facing or carrying it
 Play an instrument      E when next to it, Q to stop
                         A S D F G H J K L ;  white keys
                         W E T Y U O P  black keys,  Z X  octave
 MIDI keyboard           plays the instrument you are playing
 Edit its pattern        Tab when next to it or playing it
-Its loop on / off       M   (for the Speaker: mute)
+Its loop on / off       M   (for a Speaker: mute)
+A Speaker's input       Tab when facing it
 Start / stop patterns   Space
 Metronome click         C
 Binaural on / off       B
@@ -63,8 +67,8 @@ var _input_option: OptionButton
 var _input_names: Array = []
 var _input_signature := ""
 var _input_channels := 0
-var _speaker_grid: HBoxContainer
-var _speaker_signature := ""
+var _live_rows: VBoxContainer  # a row of input buttons for each live-input instrument in the room
+var _live_signature := ""
 var _input_note: Label
 
 # MIDI
@@ -270,9 +274,9 @@ func _build_io_page(page: VBoxContainer) -> void:
 	_input_option.custom_minimum_size.x = 380
 	_input_option.item_selected.connect(_on_input_selected)
 	_field(page, "Device").add_child(_input_option)
-	_speaker_grid = HBoxContainer.new()
-	_speaker_grid.add_theme_constant_override("separation", 4)
-	_field(page, "Speaker plays input").add_child(_speaker_grid)
+	_live_rows = VBoxContainer.new()
+	_live_rows.add_theme_constant_override("separation", 12)
+	page.add_child(_live_rows)
 	_input_note = _note(page, "")
 
 
@@ -393,15 +397,18 @@ func _refresh_live() -> void:
 		_fill_grid(_output_grid, outputs, false, _output_label, _on_output_clicked)
 	_input_toggle.set_pressed_no_signal(app.live_input)
 	_input_toggle.text = "On" if app.live_input else "Off"
-	signature = "%d:%d" % [_input_channels, settings.speaker_input]
-	if signature != _speaker_signature:
-		_speaker_signature = signature
-		_fill_grid(_speaker_grid, _input_channels, true, _speaker_label, _on_speaker_clicked)
+	var live_instruments: Array = app.instruments.filter(func(inst): return not inst.playable)
+	signature = str(_input_channels)
+	for inst in live_instruments:
+		signature += "|%s:%d" % [inst.display_name, inst.input_channel]
+	if signature != _live_signature:
+		_live_signature = signature
+		_fill_live_rows(live_instruments)
 	if app.live_input and running:
 		_input_note.text = "%s is live: %.1f ms in, %.1f ms out. Wear headphones, or the microphone will pick up the speakers and feed back." % [
 			s.input_device, s.input_latency_ms, s.output_latency_ms]
 	else:
-		_input_note.text = "Switch live input on to hear a microphone or instrument through the Speaker in the room. It always starts switched off. Wear headphones, or it will feed back."
+		_input_note.text = "Switch live input on to hear a microphone or instrument through a Speaker in the room. It always starts switched off. Wear headphones, or it will feed back."
 	_input_note.add_theme_color_override("font_color", DIM)
 
 	# MIDI
@@ -503,12 +510,25 @@ func _on_output_clicked(channel: int) -> void:
 	_refresh_live()
 
 
-func _speaker_label(channel: int) -> String:
-	return "●" if channel == app.settings.speaker_input else ""
+## One row for each live-input instrument: which hardware input it plays.
+func _fill_live_rows(live_instruments: Array) -> void:
+	for child in _live_rows.get_children():
+		child.queue_free()
+	for inst in live_instruments:
+		var grid := HBoxContainer.new()
+		grid.add_theme_constant_override("separation", 4)
+		_field(_live_rows, "%s plays input" % inst.display_name).add_child(grid)
+		_fill_grid(grid, _input_channels, true, _live_label.bind(inst), _on_live_clicked.bind(inst))
+	if live_instruments.is_empty():
+		_note(_live_rows, "There is no Speaker in the room to play an input. Add one from the instrument menu (N).")
 
 
-func _on_speaker_clicked(channel: int) -> void:
-	app.set_speaker_input(channel)
+func _live_label(channel: int, inst) -> String:
+	return "●" if channel == inst.input_channel else ""
+
+
+func _on_live_clicked(channel: int, inst) -> void:
+	app.set_instrument_input(inst, channel)
 	_refresh_live()
 
 
@@ -659,7 +679,7 @@ func _page(title: String) -> VBoxContainer:
 	return page
 
 
-func _field(page: VBoxContainer, title: String) -> HBoxContainer:
+func _field(page: Control, title: String) -> HBoxContainer:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 14)
 	var label := Label.new()
@@ -678,7 +698,7 @@ func _heading(page: VBoxContainer, title: String) -> void:
 	page.add_child(label)
 
 
-func _note(page: VBoxContainer, text: String) -> Label:
+func _note(page: Control, text: String) -> Label:
 	var label := Label.new()
 	label.text = text
 	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART

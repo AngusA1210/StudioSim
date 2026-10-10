@@ -10,6 +10,8 @@ extends Node3D
 ##   --menu=N                 open the menu on tab N at start
 ##   --play=kind              sit down at an instrument at start (drums, bass, pad, bells, keys)
 ##   --sequencer=kind[,bar]   open that instrument's pattern editor at start
+##   --add=kind               make a new instrument at start, in the player's hands
+##   --instruments            open the instrument menu at start
 ##   --tempo=BPM              start at another tempo
 ##   --text-scale=F           override the text size
 ##   --screenshot=path.png    save a screenshot after --frames frames (default 90), print stats, and quit
@@ -20,6 +22,8 @@ const Player := preload("res://scripts/player.gd")
 const Hud := preload("res://scripts/hud.gd")
 const Menu := preload("res://scripts/menu.gd")
 const Sequencer := preload("res://scripts/sequencer.gd")
+const InstrumentMenu := preload("res://scripts/instrument_menu.gd")
+const Catalog := preload("res://scripts/catalog.gd")
 const Settings := preload("res://scripts/settings.gd")
 const Acoustics := preload("res://scripts/acoustics.gd")
 
@@ -28,22 +32,16 @@ const WALL_THICKNESS := 0.5
 const PARTITION_CENTER := Vector3(-2.5, 1.5, -1.9)
 const PARTITION_SIZE := Vector3(0.3, 3.0, 3.0)
 
-# The default room. Every kind but "live" can be played by hand and has a pattern; "octave" is where the computer
-# keyboard starts when you sit down at it.
-const INSTRUMENTS := [
-	{"kind": "drums", "name": "Drums", "color": Color(1.0, 0.42, 0.26), "position": Vector3(0.5, 0.9, -3.6),
-		"size": Vector3(0.9, 0.6, 0.9), "gain": 0.50, "send": 0.6},
-	{"kind": "bass", "name": "Bass", "color": Color(0.58, 0.44, 1.0), "position": Vector3(-5.0, 1.0, -2.0),
-		"size": Vector3(0.7, 1.2, 0.5), "gain": 0.38, "send": 0.4, "octave": -2},
-	{"kind": "pad", "name": "Pad", "color": Color(0.25, 0.84, 0.75), "position": Vector3(4.8, 1.6, -1.6),
-		"size": Vector3(0.6, 0.6, 0.6), "gain": 1.0, "send": 1.0, "spin": 0.25},
-	{"kind": "bells", "name": "Bells", "color": Color(1.0, 0.82, 0.29), "position": Vector3(-4.6, 1.6, 2.4),
-		"size": Vector3(0.42, 0.42, 0.42), "gain": 0.42, "send": 1.0, "spin": -0.6, "octave": 1},
-	{"kind": "keys", "name": "Keys", "color": Color(1.0, 0.48, 0.82), "position": Vector3(3.0, 0.95, 1.8),
-		"size": Vector3(1.3, 0.12, 0.42), "gain": 0.20, "send": 0.9},
+# What the room starts with, each playing its part of the default groove. More can be added from the
+# instrument menu; scripts/catalog.gd describes each kind.
+const DEFAULT_ROOM := [
+	{"kind": "drums", "position": Vector3(0.5, 0.9, -3.6)},
+	{"kind": "bass", "position": Vector3(-5.0, 1.0, -2.0)},
+	{"kind": "pad", "position": Vector3(4.8, 1.6, -1.6)},
+	{"kind": "bells", "position": Vector3(-4.6, 1.6, 2.4)},
+	{"kind": "keys", "position": Vector3(3.0, 0.95, 1.8)},
 	# Whatever is plugged into the audio input comes out of this speaker once live input is switched on.
-	{"kind": "live", "name": "Speaker", "color": Color(0.55, 0.78, 1.0), "position": Vector3(-2.0, 0.6, 1.6),
-		"size": Vector3(0.6, 0.7, 0.4), "gain": 1.5, "send": 0.7},
+	{"kind": "live", "position": Vector3(-2.0, 0.6, 1.6)},
 ]
 const DEFAULT_TEMPO := 92.0
 const DEFAULT_SWING := 0.14
@@ -74,8 +72,9 @@ var player
 var hud
 var menu
 var sequencer  # the pattern editor
+var instrument_menu
 var instruments: Array = []
-var speaker  # the live-input instrument
+var speaker  # the Speaker the room starts with: the one whose input choice is remembered between runs
 # The room's clock. These belong to the room rather than the player's settings, so they start from the defaults.
 var tempo := DEFAULT_TEMPO
 var swing := DEFAULT_SWING
@@ -106,16 +105,15 @@ func _ready() -> void:
 
 	_build_environment()
 	_build_room()
-	for spec in INSTRUMENTS:
-		var inst := Instrument.new()
-		add_child(inst)
-		inst.setup(spec, audio)
-		instruments.append(inst)
-		if spec.kind == "live":
+	for entry in DEFAULT_ROOM:
+		var inst = add_instrument(entry.kind, entry.position, true)  # with its part of the default groove
+		if entry.kind == "live":
 			speaker = inst
-		else:
-			audio.load_default_pattern(inst.source_id)  # the room starts with the default groove
-	audio.set_source_input_channel(speaker.source_id, settings.speaker_input)
+			inst.set_input_channel(settings.speaker_input)
+	# The clock has been running since the audio opened: begin again, so the music starts on the first beat with
+	# every pattern in place.
+	audio.set_sequencer_running(false)
+	audio.set_sequencer_running(true)
 	audio.set_binaural(settings.binaural)
 	audio.set_reverb(settings.reverb)
 	audio.set_master_volume(db_to_linear(settings.master_volume_db))
@@ -141,6 +139,9 @@ func _ready() -> void:
 	sequencer = Sequencer.new()
 	add_child(sequencer)
 	sequencer.setup(self)
+	instrument_menu = InstrumentMenu.new()
+	add_child(instrument_menu)
+	instrument_menu.setup(self)
 	_apply_display()
 
 	if options.has("live-input"):
@@ -154,6 +155,10 @@ func _ready() -> void:
 		var parts: PackedStringArray = options.sequencer.split(",")
 		_sit_at(parts[0])
 		sequencer.open(find_instrument(parts[0]), int(parts[1]) - 1 if parts.size() > 1 else -1)
+	if options.has("add"):
+		instrument_menu.create(options.add)
+	if options.has("instruments"):
+		instrument_menu.open()
 
 
 func _process(delta: float) -> void:
@@ -246,10 +251,24 @@ func set_live_input(on: bool) -> void:
 	open_audio()
 
 
-func set_speaker_input(channel: int) -> void:
-	settings.speaker_input = channel
-	audio.set_source_input_channel(speaker.source_id, channel)
-	settings.save_to_disk()
+## Which hardware input a live-input instrument plays (-1 = all of them).
+func set_instrument_input(inst, channel: int) -> void:
+	inst.set_input_channel(channel)
+	if inst == speaker:
+		settings.speaker_input = channel
+		settings.save_to_disk()
+
+
+## How many inputs there are to choose from: what is open, or what the chosen input device says it has.
+func input_channel_count() -> int:
+	if live_input:
+		var open_inputs := int(audio.get_stats().get("input_channels", 0))
+		if open_inputs > 0:
+			return open_inputs
+	for device in audio.get_input_devices():
+		if device.name == settings.input_device or (settings.input_device == "" and device.is_default):
+			return device.channels
+	return 0
 
 
 func set_midi_device_enabled(device_name: String, on: bool) -> void:
@@ -288,6 +307,51 @@ func set_click_volume_db(db: float) -> void:
 	settings.click_volume_db = db
 	audio.set_click_volume(db_to_linear(db))
 	settings.save_to_disk()
+
+
+# ── Instruments ─────────────────────────────────────────────────────────────────────────────────────────────
+
+## Puts a new instrument of this kind in the room and returns it, or null if the room is full. Unless
+## `with_default_pattern`, a MIDI instrument starts with nothing to loop.
+func add_instrument(kind: String, at: Vector3, with_default_pattern := false):
+	var spec: Dictionary = Catalog.KINDS[kind].duplicate()
+	var same_kind := 0
+	var names := []
+	for other in instruments:
+		names.append(other.display_name)
+		if other.kind == kind:
+			same_kind += 1
+	var base_name: String = spec.name
+	var number := 2
+	while names.has(spec.name):  # Drums, Drums 2, Drums 3...
+		spec.name = "%s %d" % [base_name, number]
+		number += 1
+	spec.color = spec.color.lightened(minf(0.2 * same_kind, 0.5))  # each further one a paler tint, to tell them apart
+	spec.kind = kind
+	spec.position = at
+	var inst := Instrument.new()
+	add_child(inst)
+	inst.setup(spec, audio)
+	if inst.source_id < 0:
+		inst.queue_free()
+		return null
+	instruments.append(inst)
+	if with_default_pattern and inst.playable:
+		audio.load_default_pattern(inst.source_id)
+	return inst
+
+
+func remove_instrument(inst) -> void:
+	if not instruments.has(inst):
+		return
+	if sequencer.is_open() and sequencer.inst == inst:
+		sequencer.close()
+	player.forget(inst)
+	instruments.erase(inst)
+	if inst == speaker:
+		speaker = null
+	audio.remove_source(inst.source_id)  # fades out over a few milliseconds
+	inst.queue_free()
 
 
 func find_instrument(kind: String):

@@ -121,6 +121,10 @@ int SoundRoomAudio::add_source(const String& kind, const Vector3& position, floa
     return engine_->addSource(k, vec(position), gain, reverb_send);
 }
 
+bool SoundRoomAudio::remove_source(int id) { return engine_ && engine_->removeSource(id); }
+int SoundRoomAudio::get_source_count() const { return engine_ ? engine_->sourceCount() : 0; }
+int SoundRoomAudio::get_max_sources() const { return sr::AudioEngine::kMaxSources; }
+
 void SoundRoomAudio::set_source_position(int id, const Vector3& p) { if (engine_) engine_->setSourcePosition(id, vec(p)); }
 
 void SoundRoomAudio::set_source_direct_path(int id, const Vector3& via, float extra_length,
@@ -285,6 +289,9 @@ void SoundRoomAudio::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_error"), &SoundRoomAudio::get_error);
 
     ClassDB::bind_method(D_METHOD("add_source", "kind", "position", "gain", "reverb_send"), &SoundRoomAudio::add_source);
+    ClassDB::bind_method(D_METHOD("remove_source", "id"), &SoundRoomAudio::remove_source);
+    ClassDB::bind_method(D_METHOD("get_source_count"), &SoundRoomAudio::get_source_count);
+    ClassDB::bind_method(D_METHOD("get_max_sources"), &SoundRoomAudio::get_max_sources);
     ClassDB::bind_method(D_METHOD("set_source_position", "id", "position"), &SoundRoomAudio::set_source_position);
     ClassDB::bind_method(D_METHOD("set_source_direct_path", "id", "via", "extra_length", "path_differences", "blocked"),
                          &SoundRoomAudio::set_source_direct_path);

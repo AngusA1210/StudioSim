@@ -84,7 +84,9 @@ func setup(the_app) -> void:
 
 func _process(_delta: float) -> void:
 	_frame += 1
-	var covered: bool = (app.menu != null and app.menu.is_open()) or (app.sequencer != null and app.sequencer.is_open())
+	var covered := false
+	for panel in [app.menu, app.sequencer, app.instrument_menu]:
+		covered = covered or (panel != null and panel.is_open())
 	_root.visible = not covered
 	if covered:
 		return
@@ -110,23 +112,26 @@ func _process(_delta: float) -> void:
 	_beat_panel.position = Vector2(vp.x - _beat_panel.size.x - 14, 14)
 
 	var hint := ""
-	if player.carried != null:
-		hint = "Carrying %s  ·  G or click to put it down" % player.carried.display_name
+	if player.remove_pending != null:
+		hint = "Remove %s?  ·  Backspace again to remove it" % player.remove_pending.display_name
+	elif player.carried != null:
+		hint = "Carrying %s  ·  G or click to put it down  ·  Backspace remove" % player.carried.display_name
 	elif player.target != null and player.playing == null:
 		var t = player.target
 		if t.playable:
 			var play := "E play  ·  Tab pattern" if player.can_play_target() else "step closer to play"
 			hint = "%s  ·  %s  ·  G carry  ·  M loop %s" % [t.display_name, play, "on" if t.is_quiet() else "off"]
 		else:
-			hint = "%s  ·  G carry  ·  M %s" % [t.display_name, "unmute" if t.is_quiet() else "mute"]
+			hint = "%s  ·  Tab input  ·  G carry  ·  M %s" % [t.display_name, "unmute" if t.is_quiet() else "mute"]
 	_hint.text = hint
+	_hint.add_theme_color_override("font_color", WARN if player.remove_pending != null else Color.WHITE)
 	_hint_panel.visible = hint != ""
 	_hint_panel.reset_size()
 	_hint_panel.position = Vector2((vp.x - _hint_panel.size.x) / 2, vp.y / 2 + 24)
 
 	# One line of guidance: how to start, or where the menu is.
 	var playing: bool = player.playing != null
-	_prompt.text = "Click to look around  ·  Esc  menu and settings" if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED else "Esc  menu"
+	_prompt.text = "Click to look around  ·  Esc  menu and settings" if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED else "Esc  menu  ·  N  add an instrument"
 	_prompt_panel.visible = not playing
 	_prompt_panel.reset_size()
 	if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:

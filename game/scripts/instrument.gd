@@ -11,6 +11,7 @@ var default_octave := 0  # where the computer keyboard starts when you sit down 
 var source_id := -1
 var muted := false     # the Speaker: silenced altogether
 var loop_on := true    # playable instruments: whether the sequencer plays their pattern
+var input_channel := -1  # live-input instruments: the hardware input they play (0-based), or -1 for all of them
 var carried := false
 var shadowed := false  # a wall is between it and the listener
 var glow := 0.0
@@ -32,11 +33,15 @@ func setup(spec: Dictionary, audio: SoundRoomAudio) -> void:
 	display_name = spec.name
 	color = spec.color
 	size = spec.size
-	playable = kind != "live"
+	playable = not spec.get("live_input", false)
 	default_octave = spec.get("octave", 0)
 	_spin = spec.get("spin", 0.0)
 	name = display_name
 	position = spec.position
+
+	source_id = audio.add_source(kind, position, spec.gain, spec.send)
+	if source_id < 0:
+		return  # the room is full; whoever asked for this instrument gives up on it
 
 	_body_material = StandardMaterial3D.new()
 	_body_material.albedo_color = color.darkened(0.7)
@@ -76,10 +81,10 @@ func setup(spec: Dictionary, audio: SoundRoomAudio) -> void:
 	body.add_child(_collider)
 	add_child(body)
 
-	source_id = audio.add_source(kind, position, spec.gain, spec.send)
-
 
 func _process(delta: float) -> void:
+	if source_id < 0:
+		return
 	var target := minf(1.0, sqrt(_audio.get_source_level(source_id)) * 1.6)
 	glow = lerpf(glow, target, minf(1.0, delta * (40.0 if target > glow else 7.0)))
 	var on := 0.0 if muted else 1.0
@@ -102,6 +107,11 @@ func set_muted(value: bool) -> void:
 	_audio.set_source_muted(source_id, value)
 	_label.text = display_name + ("  (muted)" if value else "")
 	_label.modulate.a = 0.55 if value else 1.0
+
+
+func set_input_channel(channel: int) -> void:
+	input_channel = channel
+	_audio.set_source_input_channel(source_id, channel)
 
 
 ## Stops or restarts the sequencer playing this instrument's pattern. It can still be played by hand.

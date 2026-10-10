@@ -778,6 +778,76 @@ int main(int argc, char** argv) {
     }
 
     {
+        std::printf("\nAdding and removing instruments\n");
+        Room room;
+        room.soloOnly(-1);  // the six that are already there keep quiet
+        room.engine.setReverb(false);
+        const int drums = room.engine.addSource(InstrumentKind::Drums, {1.0f, 0.9f, 2.0f}, 0.5f, 0.6f);
+        Render untouched = renderSeconds(room.engine, 3.0);
+        room.engine.noteOn(drums, 36, 0.9f);
+        Render hit = renderSeconds(room.engine, 0.5);
+        check(drums == 6 && room.engine.sourceCount() == 7 && room.engine.pattern(drums).empty() && untouched.peak < 1e-5 && hit.peak > 0.01,
+              "a new instrument has an empty pattern: silent until it is played", fmt("id %.0f; untouched %.0f dBFS, played %.0f dBFS", drums, db(untouched.peak), db(hit.peak)));
+
+        // Take a bass out of the room while it is holding a note.
+        const int bass = room.engine.addSource(InstrumentKind::Bass, {0.0f, 1.0f, 2.0f}, 0.38f, 0.4f);
+        room.engine.noteOn(bass, 40, 0.8f);
+        Render sounding = renderSeconds(room.engine, 0.5);
+        const bool removed = room.engine.removeSource(bass);
+        const int count_after = room.engine.sourceCount();
+        Render leaving = renderSeconds(room.engine, 0.3);
+        auto steepest = [](const Render& r) {
+            double step = 0;
+            for (size_t i = 1; i < r.l.size(); ++i) step = std::max(step, double(std::fabs(r.l[i] - r.l[i - 1])));
+            return step;
+        };
+        check(removed && count_after == 7 && sounding.peak > 0.01 && tailPeak(leaving, 4800) < 1e-5 && steepest(leaving) <= 1.5 * steepest(sounding),
+              "removing an instrument fades it out without a click", fmt("gone to %.0f dBFS; steepest step %.4f while leaving, %.4f while playing",
+                                                                      db(tailPeak(leaving, 4800)), steepest(leaving), steepest(sounding)));
+        room.engine.noteOn(bass, 40, 0.8f);  // what is sent to an instrument that has gone is ignored
+        room.engine.setMidiTarget(bass);
+        const bool refused = !room.engine.setPatternNote(bass, {0, 40, 1, 0.8f, 1.0f}) && !room.engine.removeSource(bass);
+        Render ghost = renderSeconds(room.engine, 0.3);
+        const int reused = room.engine.addSource(InstrumentKind::Pad, {0.0f, 1.6f, 2.0f}, 1.0f, 1.0f);
+        check(refused && ghost.peak < 1e-5 && reused == bass && room.engine.pattern(reused).empty(),
+              "its place in the room can be used again, and nothing reaches the one that left", fmt("the new pad took id %.0f", reused));
+
+        int added = 0;
+        while (room.engine.addSource(InstrumentKind::Bells, {0.0f, 1.6f, 0.0f}, 0.42f, 1.0f) >= 0) ++added;
+        const int full = room.engine.sourceCount();
+        room.engine.removeSource(drums);  // no waiting for it to fade: there is room for another straight away
+        const int again = room.engine.addSource(InstrumentKind::Keys, {0.0f, 1.0f, 0.0f}, 0.2f, 0.9f);
+        const bool refused_again = room.engine.addSource(InstrumentKind::Keys, {0.0f, 1.0f, 0.0f}, 0.2f, 0.9f) < 0;
+        Render crowded = renderSeconds(room.engine, 1.0);
+        check(full == AudioEngine::kMaxSources && again >= 0 && refused_again && crowded.finite,
+              "the room holds 32 instruments and refuses a 33rd until one leaves", fmt("%.0f more fitted; full at %.0f", added, full));
+
+        // A whole roomful swapped for another in one go, as loading a saved room will do.
+        Room swap;
+        int swapped = 0;
+        for (int round = 0; round < 3; ++round) {
+            std::vector<int> ids;
+            int id;
+            while ((id = swap.engine.addSource(InstrumentKind::Bells, {0.0f, 1.6f, 0.0f}, 0.42f, 1.0f)) >= 0) ids.push_back(id);
+            if (swap.engine.sourceCount() == AudioEngine::kMaxSources) ++swapped;
+            for (int each : ids) swap.engine.removeSource(each);
+            for (int each : {swap.drums, swap.bass, swap.pad, swap.bells, swap.keys, swap.speaker}) swap.engine.removeSource(each);
+            // ...and straight back in, before a single block has been rendered:
+            swap.drums = swap.engine.addSource(InstrumentKind::Drums, {0.5f, 0.9f, -3.6f}, 0.50f, 0.6f);
+            swap.bass = swap.engine.addSource(InstrumentKind::Bass, {-5.0f, 1.0f, -2.0f}, 0.38f, 0.4f);
+            swap.pad = swap.engine.addSource(InstrumentKind::Pad, {4.8f, 1.6f, -1.6f}, 1.00f, 1.0f);
+            swap.bells = swap.engine.addSource(InstrumentKind::Bells, {-4.6f, 1.6f, 2.4f}, 0.42f, 1.0f);
+            swap.keys = swap.engine.addSource(InstrumentKind::Keys, {3.0f, 0.95f, 1.8f}, 0.20f, 0.9f);
+            swap.speaker = swap.engine.addSource(InstrumentKind::Live, {-1.5f, 0.8f, 2.6f}, 1.0f, 0.7f);
+            for (int each : {swap.drums, swap.bass, swap.pad, swap.bells, swap.keys}) swap.engine.loadDefaultPattern(each);
+            renderSeconds(swap.engine, 0.5);
+        }
+        Render after_swaps = renderSeconds(swap.engine, 10.43);
+        check(swapped == 3 && swap.speaker >= 0 && swap.engine.sourceCount() == 6 && after_swaps.finite && level(after_swaps) > -24.0 && level(after_swaps) < -19.0,
+              "a full room can be emptied and refilled at once, three times over", fmt("the groove afterwards: %.1f dBFS", level(after_swaps)));
+    }
+
+    {
         std::printf("\nToggles\n");
         Room room;
         renderSeconds(room.engine, 1.0);

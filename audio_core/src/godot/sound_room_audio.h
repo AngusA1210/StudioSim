@@ -46,6 +46,9 @@ public:
     // kind: "drums", "bass", "pad", "bells", "keys" or "live" (the audio input). Returns a source id, or -1.
     // Every kind but "live" can be played with note_on/note_off and given a pattern for the sequencer.
     int add_source(const String& kind, const Vector3& position, float gain, float reverb_send);
+    bool remove_source(int id);    // fades it out and frees its id for reuse
+    int get_source_count() const;
+    int get_max_sources() const;
     void set_source_position(int id, const Vector3& position);
     // See AudioEngine::setSourceDirectPath: where the sound arrives from when walls are in the way.
     void set_source_direct_path(int id, const Vector3& via, float extra_length, const PackedFloat32Array& path_differences,

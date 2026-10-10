@@ -1,6 +1,7 @@
 extends SceneTree
 ## Drives the real game with pretend key presses and mouse clicks and checks what happens: walking up to an
-## instrument, playing it, editing its pattern, the tempo and click, the Speaker, the menu.
+## instrument, playing it, editing its pattern, the tempo and click, adding and removing instruments, the
+## Speaker, the menu.
 ## Run: godot --headless --path game --script tests/ui_check.gd -- --silent
 ## (--silent keeps it from making a sound or touching saved settings; the exit code is the number of failures)
 
@@ -226,6 +227,86 @@ func _run() -> void:
 	await tap(KEY_ESCAPE)
 	check(not seq.is_open() and player.playing == null and not main.menu.is_open(), "Esc closes the editor, and you are standing again")
 
+	print("Adding and removing instruments")
+	var im = main.instrument_menu
+	player.place(Vector3(0.0, 0.0, 3.6), 0.0)  # the middle of the room, facing nothing in particular
+	await frames(5)
+	var count_before: int = main.instruments.size()
+	await tap(KEY_BACKSPACE)
+	check(player.target == null and player.remove_pending == null, "Backspace does nothing when you aren't facing an instrument")
+	await tap(KEY_N)
+	check(im.is_open() and im._cards.size() == 6 and not im._cards[0].disabled, "N opens the instrument menu", im._footer.text)
+	await click(im._cards[1].get_global_rect().get_center())
+	var bass2 = player.carried
+	check(not im.is_open() and bass2 != null and bass2.display_name == "Bass 2" and bass2.kind == "bass" and main.instruments.size() == count_before + 1,
+		"picking Bass puts a second bass in your hands", main.hud._hint.text)
+	check(audio.get_pattern(bass2.source_id).is_empty() and bass2.loop_on and bass2.color != bass.color, "it has an empty pattern and a paler colour")
+	await seconds(0.3)
+	var ahead: Vector3 = bass2.global_position - player.global_position
+	check(ahead.z < -1.0 and absf(ahead.x) < 0.2, "it floats in front of you", str(ahead))
+	await tap(KEY_G)
+	await frames(5)
+	check(player.carried == null and player.target == bass2 and player.can_play_target(), "G puts it down, and it is what you're facing")
+	await seconds(0.3)
+	var silent_before: float = audio.get_source_level(bass2.source_id)
+	await tap(KEY_E)
+	key(KEY_A)
+	await frames(4)
+	var sounding: float = audio.get_source_level(bass2.source_id)
+	key(KEY_A, false)
+	check(player.playing == bass2 and silent_before < 0.0005 and sounding > 0.01, "it is silent until you play it", "before %.4f, playing %.3f" % [silent_before, sounding])
+	await tap(KEY_TAB)
+	check(seq.is_open() and seq._title.text == "Bass 2 pattern", "and it has its own pattern to edit", seq._title.text)
+	await tap(KEY_BACKSPACE)
+	check(main.instruments.has(bass2), "Backspace is ignored while the pattern editor is open")
+	await tap(KEY_TAB)
+	await tap(KEY_BACKSPACE)
+	check(player.remove_pending == bass2 and main.instruments.has(bass2) and main.hud._hint.text.begins_with("Remove Bass 2?"),
+		"one Backspace only asks", main.hud._hint.text)
+	await tap(KEY_BACKSPACE)
+	await frames(3)
+	check(not main.instruments.has(bass2) and main.instruments.size() == count_before and audio.get_source_count() == count_before
+		and player.playing == null and not is_instance_valid(bass2), "a second one removes it")
+
+	await tap(KEY_N)
+	im._input_option.select(im._input_option.item_count - 1)  # the last hardware input there is
+	im._on_input_selected(im._input_option.selected)
+	await click(im._cards[5].get_global_rect().get_center())
+	var speaker2 = player.carried
+	check(speaker2 != null and speaker2.display_name == "Speaker 2" and not speaker2.playable
+		and speaker2.input_channel == im._input_option.item_count - 2, "a second Speaker, set to the input chosen in the menu",
+		"input %d of %d" % [speaker2.input_channel + 1, im._input_option.item_count - 1])
+	await tap(KEY_G)
+	await frames(5)
+	await tap(KEY_TAB)
+	await frames(15)
+	check(main.menu.is_open() and main.menu._tabs.current_tab == main.menu.IO_TAB and main.menu._live_rows.get_child_count() == 2,
+		"Tab at a Speaker opens the I/O page, which has a row for each Speaker", "%d rows" % main.menu._live_rows.get_child_count())
+	main.menu._on_live_clicked(-1, speaker2)
+	check(speaker2.input_channel == -1 and speaker.input_channel == main.settings.speaker_input, "each Speaker's input is set on its own row")
+	await tap(KEY_ESCAPE)
+	await tap(KEY_BACKSPACE)
+	await tap(KEY_BACKSPACE)
+	check(not main.instruments.has(speaker2) and not main.menu.is_open(), "the second Speaker can be removed too")
+
+	var extras := []
+	while true:
+		var extra = main.add_instrument("bells", Vector3(0.0, 1.6, 0.0))
+		if extra == null:
+			break
+		extras.append(extra)
+	await tap(KEY_N)
+	check(main.instruments.size() == audio.get_max_sources() and im._cards[0].disabled and im._footer.text.begins_with("The room is full"),
+		"a full room says so and offers nothing more", "%d instruments, the last one is %s" % [main.instruments.size(), extras[-1].display_name])
+	await tap(KEY_N)
+	for extra in extras:
+		main.remove_instrument(extra)
+	await seconds(0.4)
+	var returned = main.add_instrument("pad", Vector3(0.0, 1.6, 0.0))
+	check(not im.is_open() and audio.get_source_count() == count_before + 1 and returned != null and returned.display_name == "Pad 2",
+		"N closes the menu again, and removing instruments makes space")
+	main.remove_instrument(returned)
+
 	print("The Speaker and the menu")
 	var from: Vector3 = speaker.position + Vector3(0.0, 0.0, 1.8)
 	player.place(Vector3(from.x, 0.0, from.z), 0.0)
@@ -234,8 +315,7 @@ func _run() -> void:
 	await tap(KEY_M)
 	check(speaker.muted, "M mutes it")
 	await tap(KEY_E)
-	await tap(KEY_TAB)
-	check(player.playing == null and not seq.is_open(), "E and Tab do nothing at the Speaker")
+	check(player.playing == null and not seq.is_open(), "E does nothing at the Speaker: it isn't played")
 	await tap(KEY_ESCAPE)
 	check(main.menu.is_open() and main.menu._tabs.get_tab_title(0) == "Metronome", "Esc opens the menu, Metronome page first", main.menu._tabs.get_tab_title(main.menu._tabs.current_tab))
 	main.menu._tempo_slider.value = 100

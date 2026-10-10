@@ -31,11 +31,13 @@ Use **wired** headphones. Bluetooth headphones add 150–250 ms of delay that no
 | W A S D, mouse | move, look (click to capture the mouse) |
 | Shift | run |
 | G or click | pick up the instrument you're facing, put it down |
+| N | the instrument menu: add an instrument to the room |
+| Backspace, twice | remove the instrument you're facing or carrying |
 | E | play the instrument you're next to; Q stops |
 | A S D F G H J K L ; | white keys while playing (W E T Y U O P are the black keys, Z/X change octave) |
 | MIDI keyboard | plays the instrument you are playing, with velocity (and the sustain pedal on the Keys); plug in any time |
-| Tab | open the pattern editor for the instrument you're next to or playing |
-| M | switch that instrument's loop off or on (for the Speaker: mute) |
+| Tab | open the pattern editor for the instrument you're next to or playing (at a Speaker: choose its input) |
+| M | switch that instrument's loop off or on (for a Speaker: mute) |
 | Space | start or stop every instrument's pattern |
 | C | metronome click on/off |
 | Esc | the menu (see below); the music keeps playing while it's open |
@@ -43,9 +45,24 @@ Use **wired** headphones. Bluetooth headphones add 150–250 ms of delay that no
 | B | binaural on/off (compare with plain stereo) |
 | R | room reverb on/off |
 
+## Instruments
+
+There are two families of instrument, and the instrument menu (N) adds either to the room, up to 32 in all:
+
+- **MIDI instruments** (drums, bass, pad, bells, keys) are played from the computer keyboard or a MIDI controller,
+  and each can loop a pattern on the sequencer.
+- **Live inputs** bring a microphone, or an instrument plugged into the audio interface, into the room. For now
+  that means the Speaker, which plays an input just as it comes in; guitar and bass amplifiers will join it.
+
+Pick one and it appears in your hands: walk it to where it should stand and click to put it down. A new MIDI
+instrument starts with an empty pattern, so it is silent until you play it or write it a pattern (the pattern editor
+can load the default one). A new Speaker plays the hardware input chosen in the menu, which can be changed later on
+the I/O page; several Speakers can each play a different input. A second instrument of a kind is numbered and a
+paler colour, to tell them apart. Like the tempo and the patterns, the instruments you add are not saved yet.
+
 ## Playing and sequencing
 
-Every instrument in the room (drums, bass, pad, bells, keys) can be played by hand. Walk up to one and press E: the
+Every MIDI instrument in the room can be played by hand. Walk up to one and press E: the
 computer keyboard becomes a small piano for it, and any MIDI controller plays it too. With nobody at an instrument a
 MIDI controller plays nothing. The drums are a drum machine: each key is a drum, laid out like a General MIDI kit
 (C kick, D snare, F# closed hat, A# open hat, F and A toms, D# clap, C# crash) and repeated in every octave.
@@ -67,7 +84,7 @@ patterns go back to the defaults at each start until rooms can be saved.
 - **Metronome**: start and stop the patterns, tempo, swing, the click and its volume.
 - **Playback Engine**: which output device the audio engine runs on, and the hardware buffer size (32–1024 samples).
   The sample rate follows the device. Shows the resulting latency and CPU use.
-- **I/O**: which of the device's outputs carry the mix, the input device, and which hardware input the Speaker plays.
+- **I/O**: which of the device's outputs carry the mix, the input device, and which hardware input each Speaker plays.
   Live input always starts switched off, so an open microphone never meets a pair of speakers by surprise.
 - **MIDI**: every MIDI device the system sees, with a tick box each and a light that flashes when it sends notes.
 - **Settings**: master volume, binaural, reverb, text size, field of view, mouse sensitivity, on-screen audio readout.
@@ -78,7 +95,8 @@ isn't connected, the system default is used until it is.
 ## How it's put together
 
 ```
-game/                      Godot project: the room, player, instruments, HUD, menu and pattern editor (GDScript)
+game/                      Godot project: the room, player, instruments, HUD, menus and pattern editor (GDScript)
+  scripts/catalog.gd       every kind of instrument and the two groups the instrument menu shows them in
 audio_core/
   src/core/                the audio engine, plain C++ with no Godot dependency
     engine.*               device, command queue, mixing, the shared clock
@@ -90,7 +108,7 @@ audio_core/
     mix.*                  room reverb (feedback delay network) and output limiter
   src/godot/               the Godot extension wrapping the engine (SoundRoomAudio node)
   tests/engine_tests.cpp   offline checks: levels, binaural direction, walls, latency, MIDI, live input, sequencer
-game/tests/ui_check.gd     the game driven by pretend keys and clicks: playing, the pattern editor, the menus
+game/tests/ui_check.gd     the game driven by pretend keys and clicks: playing, patterns, adding instruments, menus
 prototypes/sound-room/     the original browser prototype, for reference
 tools/                     build and dependency scripts
 ```
@@ -110,21 +128,21 @@ Diagnostics that don't need the game:
 
 ## Roadmap
 
-Done so far: the native audio pipeline, placeable instruments that can each be played from the keyboard or a MIDI
-controller, a pattern sequencer with tempo, swing and a metronome, live audio input through the Speaker, and sound
-bending around wall edges.
+Done so far: the native audio pipeline, instruments that can be added, placed and removed and each played from the
+keyboard or a MIDI controller, a pattern sequencer with tempo, swing and a metronome, live audio input through
+Speakers, and sound bending around wall edges.
 
 To do, roughly in this order:
 
-1. **Creating instruments**: a menu for making new instruments out of thin air and placing them in the room.
-2. **Title screen.**
-3. **Adjustable room dimensions.**
-4. **Templates**: save and load a room's dimensions, its instrument layout, and their sequences (and the tempo).
-5. **Guitar and bass amplifiers** with controls that work the way real amps do: combo amps, and heads with
-   separate cabinets. (The Speaker is the plain, uncoloured way to hear an input until then.)
-6. **Recording.**
-7. **Plug-in hosting**, if it proves practical.
-8. **Multiplayer**, the final goal: a session server, a networked clock, note events and low-latency audio streams.
+1. **Title screen.**
+2. **Adjustable room dimensions.**
+3. **Templates**: save and load a room's dimensions, its instrument layout, and their sequences (and the tempo).
+4. **Guitar and bass amplifiers** with controls that work the way real amps do: combo amps, and heads with
+   separate cabinets. They join the live-input group of the instrument menu. (The Speaker is the plain, uncoloured
+   way to hear an input until then.)
+5. **Recording.**
+6. **Plug-in hosting**, if it proves practical.
+7. **Multiplayer**, the final goal: a session server, a networked clock, note events and low-latency audio streams.
 
 Also wanted along the way: MIDI on Windows and Linux, and VR through OpenXR.
 

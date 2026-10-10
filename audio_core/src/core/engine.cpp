@@ -129,6 +129,11 @@ struct AudioEngine::Source {
     // ...and this is the game thread's own copy, to hand back to whoever is editing it.
     std::vector<PatternNote> pattern;
     int pattern_steps = kMaxPatternSteps;
+    // Leaving the room: the game thread marks it `removing`; the audio thread fades it out over `fade_blocks`,
+    // forgets it, and sets `released`, after which the game thread is free to delete it.
+    bool removing = false;
+    int fade_blocks = -1;
+    std::atomic<bool> released{false};
     // The direct path to the listener: where the sound arrives from, how far it still travels beyond that point,
     // and what walls leave of each band. Each has a target the audio thread glides toward.
     Vec3 via, via_target;
@@ -212,6 +217,7 @@ bool AudioEngine::configure(int sample_rate, int block_size, std::string* error)
         return false;
     }
     for (auto& s : owned_) {
+        if (!s) continue;
         s->instrument = makeInstrument(s->kind);
         s->instrument->setInputChannel(s->input_channel);
         s->mono.assign(size_t(block_), 0.0f);
@@ -377,9 +383,14 @@ void AudioEngine::push(const Command& c) {
 }
 
 int AudioEngine::addSource(InstrumentKind kind, Vec3 position, float gain, float reverb_send) {
-    if (!initialized_ || int(owned_.size()) >= kMaxSources) return -1;
+    if (!initialized_) return -1;
+    reap();
+    if (sourceCount() >= kMaxSources) return -1;
+    size_t slot = 0;  // the lowest id not in use
+    while (slot < owned_.size() && owned_[slot]) ++slot;
+    if (slot >= size_t(kSourceSlots)) return -1;
     auto src = std::make_unique<Source>();
-    src->id = int(owned_.size());
+    src->id = int(slot);
     src->kind = kind;
     src->instrument = makeInstrument(kind);
     if (!src->spatializer.init(steam_, nullptr)) return -1;
@@ -393,8 +404,31 @@ int AudioEngine::addSource(InstrumentKind kind, Vec3 position, float gain, float
     c.id = src->id;
     c.source = src.get();
     if (!commands_.push(c)) return -1;
-    owned_.push_back(std::move(src));
+    if (slot == owned_.size()) owned_.push_back(std::move(src));
+    else owned_[slot] = std::move(src);
     return c.id;
+}
+
+bool AudioEngine::removeSource(int id) {
+    Source* s = owned(id);
+    if (!s) return false;
+    Command c; c.type = Command::RemoveSource; c.id = id;
+    if (!commands_.push(c)) return false;
+    s->removing = true;
+    reap();
+    return true;
+}
+
+int AudioEngine::sourceCount() const {
+    int count = 0;
+    for (const auto& s : owned_)
+        if (s && !s->removing) ++count;
+    return count;
+}
+
+void AudioEngine::reap() {
+    for (auto& s : owned_)
+        if (s && s->removing && s->released.load(std::memory_order_acquire)) s.reset();
 }
 
 void AudioEngine::setSourcePosition(int id, Vec3 p) {
@@ -412,7 +446,7 @@ void AudioEngine::setSourceMuted(int id, bool muted) {
     Command c; c.type = Command::SourceMuted; c.id = id; c.v[0] = muted ? 1.0f : 0.0f; push(c);
 }
 void AudioEngine::setSourceInputChannel(int id, int channel) {
-    if (id >= 0 && id < int(owned_.size())) owned_[size_t(id)]->input_channel = channel;  // remembered across reconfigures
+    if (Source* s = owned(id)) s->input_channel = channel;  // remembered across reconfigures
     Command c; c.type = Command::SourceInputChannel; c.id = id; c.v[0] = float(channel); push(c);
 }
 void AudioEngine::setListener(Vec3 p, Vec3 ahead, Vec3 up) {
@@ -443,7 +477,8 @@ void AudioEngine::setMasterVolume(float gain) {
 
 // ── The sequencer (game thread) ────────────────────────────────────────────────────────────────────────────
 AudioEngine::Source* AudioEngine::owned(int id) const {
-    return id >= 0 && id < int(owned_.size()) ? owned_[size_t(id)].get() : nullptr;
+    Source* s = id >= 0 && id < int(owned_.size()) ? owned_[size_t(id)].get() : nullptr;
+    return s && !s->removing ? s : nullptr;
 }
 
 void AudioEngine::loadDefaultPattern(int id) {
@@ -538,7 +573,7 @@ TransportState AudioEngine::transport() const {
 }
 
 float AudioEngine::sourceLevel(int id) const {
-    return id >= 0 && id < kMaxSources ? levels_[size_t(id)].load(std::memory_order_relaxed) : 0.0f;
+    return id >= 0 && id < kSourceSlots ? levels_[size_t(id)].load(std::memory_order_relaxed) : 0.0f;
 }
 
 EngineStats AudioEngine::stats() const {
@@ -556,10 +591,18 @@ EngineStats AudioEngine::stats() const {
 void AudioEngine::drainCommands() {
     Command c;
     while (commands_.pop(c)) {
-        Source* s = (c.id >= 0 && c.id < kMaxSources) ? sources_[size_t(c.id)] : nullptr;
+        Source* s = (c.id >= 0 && c.id < kSourceSlots) ? sources_[size_t(c.id)] : nullptr;
         switch (c.type) {
             case Command::AddSource:
                 sources_[size_t(c.id)] = c.source;
+                break;
+            case Command::RemoveSource:
+                if (s) {  // fade it out first, so it doesn't leave with a click
+                    s->mute_target = 0.0f;
+                    s->loop = false;
+                    s->fade_blocks = int(0.06f * float(sr_) / float(block_)) + 1;
+                }
+                if (midi_target_ == c.id) midi_target_ = -1;
                 break;
             case Command::SourcePosition:
                 if (s) {
@@ -606,7 +649,7 @@ void AudioEngine::drainCommands() {
                 break;
             case Command::MidiTarget:
                 // Whatever was held on the previous instrument would never get its note-off: let it go now.
-                if (c.id != midi_target_ && midi_target_ >= 0 && midi_target_ < kMaxSources && sources_[size_t(midi_target_)])
+                if (c.id != midi_target_ && midi_target_ >= 0 && midi_target_ < kSourceSlots && sources_[size_t(midi_target_)])
                     sources_[size_t(midi_target_)]->instrument->allNotesOff();
                 midi_target_ = c.id;
                 break;
@@ -672,7 +715,7 @@ void AudioEngine::drainCommands() {
 void AudioEngine::drainMidi() {
     MidiEvent e;
     while (midi_queue_.pop(e)) {
-        Source* s = (midi_target_ >= 0 && midi_target_ < kMaxSources) ? sources_[size_t(midi_target_)] : nullptr;
+        Source* s = (midi_target_ >= 0 && midi_target_ < kSourceSlots) ? sources_[size_t(midi_target_)] : nullptr;
         if (!s) continue;  // nobody is at an instrument
         switch (e.type) {
             case MidiEvent::NoteOn:  s->instrument->noteOn(e.note, e.velocity); break;
@@ -802,7 +845,8 @@ void AudioEngine::renderBlock() {
     const float wall_glide = 1.0f - std::exp(-float(block_) / (0.05f * float(sr_)));
     const float mute_coef = 1.0f - std::exp(-1.0f / (0.01f * float(sr_)));
 
-    for (Source* s : sources_) {
+    for (size_t index = 0; index < sources_.size(); ++index) {
+        Source* s = sources_[index];
         if (!s) continue;
         float* mono = s->mono.data();
         std::fill(s->mono.begin(), s->mono.end(), 0.0f);
@@ -828,6 +872,12 @@ void AudioEngine::renderBlock() {
         p.distance = length(sub(s->via, listener_pos_)) + s->extra;
         p.binaural = binaural_;
         s->spatializer.process(mono, mix_l_.data(), mix_r_.data(), p);
+
+        if (s->fade_blocks >= 0 && --s->fade_blocks < 0) {  // removed and faded out: forget it and hand it back
+            sources_[index] = nullptr;
+            levels_[index].store(0.0f, std::memory_order_relaxed);
+            s->released.store(true, std::memory_order_release);  // must be the last thing this thread does with it
+        }
     }
 
     reverb_.process(send_.data(), rev_l_.data(), rev_r_.data(), block_);
