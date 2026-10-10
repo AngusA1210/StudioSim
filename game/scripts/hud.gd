@@ -85,7 +85,7 @@ func setup(the_app) -> void:
 func _process(_delta: float) -> void:
 	_frame += 1
 	var covered := false
-	for panel in [app.menu, app.sequencer, app.instrument_menu]:
+	for panel in [app.title, app.menu, app.sequencer, app.instrument_menu]:
 		covered = covered or (panel != null and panel.is_open())
 	_root.visible = not covered
 	if covered:

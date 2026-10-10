@@ -134,6 +134,11 @@ func is_quiet() -> bool:
 	return not loop_on if playable else muted
 
 
+## The name floating above it. The title screen hides these so they don't drift behind its words.
+func set_label_visible(on: bool) -> void:
+	_label.visible = on
+
+
 func set_carried(value: bool) -> void:
 	carried = value
 	_collider.disabled = value

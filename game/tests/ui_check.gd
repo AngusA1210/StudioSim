@@ -1,6 +1,6 @@
 extends SceneTree
-## Drives the real game with pretend key presses and mouse clicks and checks what happens: walking up to an
-## instrument, playing it, editing its pattern, the tempo and click, adding and removing instruments, the
+## Drives the real game with pretend key presses and mouse clicks and checks what happens: the title screen,
+## walking up to an instrument, playing it, editing its pattern, the tempo and click, adding and removing instruments, the
 ## Speaker, the menu.
 ## Run: godot --headless --path game --script tests/ui_check.gd -- --silent
 ## (--silent keeps it from making a sound or touching saved settings; the exit code is the number of failures)
@@ -97,6 +97,41 @@ func _run() -> void:
 	var drums = main.find_instrument("drums")
 	var bass = main.find_instrument("bass")
 	var speaker = main.speaker
+	var title = main.title
+
+	print("The title screen")
+	await seconds(0.6)
+	var heard := 0.0
+	for inst in main.instruments:
+		heard = maxf(heard, audio.get_source_level(inst.source_id))
+	check(title.is_open() and title.camera.current and not player.camera.current and not main.hud._root.visible,
+		"the game starts on the title screen, looking at the room from its own camera")
+	check(heard > 0.001 and audio.get_transport().running, "the room is already playing behind it", "loudest instrument %.3f" % heard)
+	check(title.buttons.enter.has_focus() and title._status.text.begins_with("Playing through"), "Enter the room is ready under the keyboard",
+		title._status.text.replace("\n", " / "))
+	var stood: Vector3 = player.global_position
+	for code in [KEY_E, KEY_TAB, KEY_N, KEY_M, KEY_SPACE]:
+		await tap(code)
+	check(player.playing == null and not seq.is_open() and not main.instrument_menu.is_open() and main.sequence_running
+		and player.global_position.is_equal_approx(stood), "the room's own keys do nothing here")
+	await click(title.buttons.audio.get_global_rect().get_center())
+	check(main.menu.is_open() and main.menu._tabs.get_tab_title(main.menu._tabs.current_tab) == "Playback Engine"
+		and main.menu._resume.text.begins_with("Back") and not main.menu._to_title.visible and not title._ui.visible,
+		"Audio setup opens the menu on the Playback Engine page", main.menu._resume.text)
+	await tap(KEY_ENTER)
+	check(title.is_open(), "Enter doesn't slip through the menu to the title's buttons")
+	await tap(KEY_ESCAPE)
+	await frames(3)
+	check(not main.menu.is_open() and title.is_open() and title._ui.visible and title.buttons.enter.has_focus(), "Esc comes back to the title")
+	await click(title.buttons.controls.get_global_rect().get_center())
+	check(main.menu.is_open() and main.menu._tabs.get_tab_title(main.menu._tabs.current_tab) == "Controls", "Controls opens the key list")
+	await tap(KEY_ESCAPE)
+	await frames(3)
+	await tap(KEY_ENTER)
+	await seconds(1.0)
+	check(not title.is_open() and not title.visible and player.camera.current and main.hud._root.visible, "Enter goes into the room, in the player's view",
+		"title open %s, title showing %s, player camera %s, hud %s" % [title.is_open(), title.visible, player.camera.current, main.hud._root.visible])
+
 	print("Walking up to an instrument")
 	check(speaker.display_name == "Speaker", "the live input is called the Speaker", speaker.display_name)
 	await tap(KEY_TAB)
@@ -324,5 +359,26 @@ func _run() -> void:
 	await frames(2)
 	check(is_equal_approx(audio.get_transport().bpm, 100.0) and is_equal_approx(audio.get_transport().swing, 0.0) and absf(audio.get_transport().click_volume - 0.501) < 0.01,
 		"its sliders set tempo, swing and click volume", str(audio.get_transport()))
+
+	print("Back to the title screen")
+	await tap(KEY_ESCAPE)  # close the menu left open above
+	main._sit_at("bass")
+	await frames(5)
+	await tap(KEY_E)
+	var notes_before: int = audio.get_pattern(drums.source_id).size()
+	await tap(KEY_Q)
+	await tap(KEY_G)
+	check(player.carried == bass, "carrying the bass")
+	await tap(KEY_ESCAPE)
+	check(main.menu.is_open() and main.menu._to_title.visible and main.menu._resume.text.begins_with("Resume"), "in the room the menu offers the title screen")
+	await click(main.menu._to_title.get_global_rect().get_center())
+	await frames(3)
+	check(title.is_open() and not main.menu.is_open() and title.camera.current and player.carried == null and not bass.carried,
+		"it goes back to the title, putting down what you were carrying")
+	await click(title.buttons.enter.get_global_rect().get_center())
+	await seconds(1.0)
+	check(not title.is_open() and player.camera.current and audio.get_pattern(drums.source_id).size() == notes_before
+		and is_equal_approx(audio.get_transport().bpm, 100.0), "and the room is as you left it when you come back in")
+
 	print("ALL PASSED" if failures == 0 else "%d FAILED" % failures)
 	quit(failures)

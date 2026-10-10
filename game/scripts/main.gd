@@ -1,10 +1,11 @@
 extends Node3D
-## Builds the Sound Room (room, instruments, player, HUD, menu, pattern editor), starts the native audio core, and
-## is the one place that changes settings and the tempo: the menus and the keyboard shortcuts all go through the
-## functions below.
+## Builds the Sound Room (room, instruments, player, HUD, title screen, menus, pattern editor), starts the native
+## audio core, and is the one place that changes settings and the tempo: the menus and the keyboard shortcuts all
+## go through the functions below.
 ##
 ## Command-line options, passed after `--`:
 ##   --silent                 run the audio clock without opening a sound card (also leaves saved settings alone)
+##   --skip-title             start in the room rather than on the title screen
 ##   --pose=x,z,yaw_degrees   start the player somewhere else
 ##   --live-input             switch the audio input on at start
 ##   --menu=N                 open the menu on tab N at start
@@ -23,6 +24,7 @@ const Hud := preload("res://scripts/hud.gd")
 const Menu := preload("res://scripts/menu.gd")
 const Sequencer := preload("res://scripts/sequencer.gd")
 const InstrumentMenu := preload("res://scripts/instrument_menu.gd")
+const Title := preload("res://scripts/title.gd")
 const Catalog := preload("res://scripts/catalog.gd")
 const Settings := preload("res://scripts/settings.gd")
 const Acoustics := preload("res://scripts/acoustics.gd")
@@ -73,6 +75,7 @@ var hud
 var menu
 var sequencer  # the pattern editor
 var instrument_menu
+var title  # the title screen
 var instruments: Array = []
 var speaker  # the Speaker the room starts with: the one whose input choice is remembered between runs
 # The room's clock. These belong to the room rather than the player's settings, so they start from the defaults.
@@ -83,6 +86,7 @@ var walls: Array = []  # AABBs that sound has to bend around
 var options := {}
 var live_input := false   # never restored from settings: an open microphone next to speakers would feed back
 var audio_error := ""     # the last problem opening a device, shown in the menu
+var _stage_gain := 1.0    # the title screen turns the music down a little; 1 in the room
 var _frames := 0
 var _elapsed := 0.0
 var _midi_poll := 0.0
@@ -116,7 +120,7 @@ func _ready() -> void:
 	audio.set_sequencer_running(true)
 	audio.set_binaural(settings.binaural)
 	audio.set_reverb(settings.reverb)
-	audio.set_master_volume(db_to_linear(settings.master_volume_db))
+	_apply_master_volume()
 	audio.set_click(settings.click)
 	audio.set_click_volume(db_to_linear(settings.click_volume_db))
 	if options.has("tempo"):
@@ -142,7 +146,12 @@ func _ready() -> void:
 	instrument_menu = InstrumentMenu.new()
 	add_child(instrument_menu)
 	instrument_menu.setup(self)
+	title = Title.new()
+	add_child(title)
+	title.setup(self)
 	_apply_display()
+	if not options.has("skip-title"):
+		title.open()
 
 	if options.has("live-input"):
 		set_live_input(true)
@@ -182,7 +191,7 @@ func _process(delta: float) -> void:
 func _physics_process(_delta: float) -> void:
 	if player == null:
 		return
-	var ear: Vector3 = player.ear_position()
+	var ear := listener_position()
 	for inst in instruments:
 		inst.set_direct_path(Acoustics.direct_path(ear, inst.global_position, walls, ROOM_SIZE.y))
 
@@ -309,6 +318,23 @@ func set_click_volume_db(db: float) -> void:
 	settings.save_to_disk()
 
 
+# ── The title screen ────────────────────────────────────────────────────────────────────────────────────────
+
+## Where the room is being heard from: the player's ears, or the title screen's camera.
+func listener_position() -> Vector3:
+	return title.camera.global_position if title != null and title.is_open() else player.ear_position()
+
+
+## Back to the title screen. The room carries on as it is.
+func show_title() -> void:
+	for panel in [menu, sequencer, instrument_menu]:
+		if panel.is_open():
+			panel.close()
+	player.stop_playing()
+	player.put_down()
+	title.open()
+
+
 # ── Instruments ─────────────────────────────────────────────────────────────────────────────────────────────
 
 ## Puts a new instrument of this kind in the room and returns it, or null if the room is full. Unless
@@ -377,8 +403,18 @@ func set_reverb(on: bool) -> void:
 
 func set_master_volume_db(db: float) -> void:
 	settings.master_volume_db = db
-	audio.set_master_volume(db_to_linear(db))
+	_apply_master_volume()
 	settings.save_to_disk()
+
+
+## A level on top of the master volume, for the title screen to hold the music back and bring it up on entering.
+func set_stage_gain(gain: float) -> void:
+	_stage_gain = gain
+	_apply_master_volume()
+
+
+func _apply_master_volume() -> void:
+	audio.set_master_volume(db_to_linear(settings.master_volume_db) * _stage_gain)
 
 
 func set_text_scale(scale_factor: float) -> void:

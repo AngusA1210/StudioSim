@@ -99,6 +99,11 @@ func stop_playing() -> void:
 	playing = null
 
 
+func put_down() -> void:
+	if carried != null:
+		_grab_or_drop()
+
+
 ## Take an instrument in hand, as G does: it follows you until you put it down.
 func carry(inst) -> void:
 	stop_playing()
@@ -123,9 +128,9 @@ func forget(inst) -> void:
 		remove_pending = null
 
 
-## One of the menus or the pattern editor is up: the keyboard and mouse belong to it.
+## The title screen, one of the menus or the pattern editor is up: the keyboard and mouse belong to it.
 func _ui_open() -> bool:
-	for panel in [app.menu, app.sequencer, app.instrument_menu]:
+	for panel in [app.title, app.menu, app.sequencer, app.instrument_menu]:
 		if panel != null and panel.is_open():
 			return true
 	return false
@@ -243,7 +248,8 @@ func _physics_process(delta: float) -> void:
 
 
 func _process(_delta: float) -> void:
-	audio.set_listener(camera.global_transform)
+	if app.title == null or not app.title.is_open():  # on the title screen its own camera does the listening
+		audio.set_listener(camera.global_transform)
 	if remove_pending != null and (Time.get_ticks_msec() >= _remove_deadline
 			or (remove_pending != carried and remove_pending != target and remove_pending != playing)):
 		remove_pending = null  # too slow, or looking at something else now

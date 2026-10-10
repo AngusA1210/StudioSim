@@ -24,6 +24,10 @@ Open `game/project.godot` in the Godot editor to work on the scene and scripts.
 Use **wired** headphones. Bluetooth headphones add 150–250 ms of delay that no software can remove; the
 "Output latency" readout shows what your current device adds.
 
+The game opens on a title screen with the room already playing behind it. From there you can check which device
+the sound is going to (and be warned if it is one that adds delay, such as Bluetooth), open the audio setup and
+settings, and enter the room. The menu inside the room has a button to come back to it.
+
 ## Controls
 
 | Key | Action |
@@ -108,7 +112,7 @@ audio_core/
     mix.*                  room reverb (feedback delay network) and output limiter
   src/godot/               the Godot extension wrapping the engine (SoundRoomAudio node)
   tests/engine_tests.cpp   offline checks: levels, binaural direction, walls, latency, MIDI, live input, sequencer
-game/tests/ui_check.gd     the game driven by pretend keys and clicks: playing, patterns, adding instruments, menus
+game/tests/ui_check.gd     the game driven by pretend keys and clicks: title screen, playing, patterns, instruments, menus
 prototypes/sound-room/     the original browser prototype, for reference
 tools/                     build and dependency scripts
 ```
@@ -130,19 +134,19 @@ Diagnostics that don't need the game:
 
 Done so far: the native audio pipeline, instruments that can be added, placed and removed and each played from the
 keyboard or a MIDI controller, a pattern sequencer with tempo, swing and a metronome, live audio input through
-Speakers, and sound bending around wall edges.
+Speakers, sound bending around wall edges, and a title screen.
 
 To do, roughly in this order:
 
-1. **Title screen.**
-2. **Adjustable room dimensions.**
-3. **Templates**: save and load a room's dimensions, its instrument layout, and their sequences (and the tempo).
-4. **Guitar and bass amplifiers** with controls that work the way real amps do: combo amps, and heads with
+1. **Adjustable room dimensions.**
+2. **Templates**: save and load a room's dimensions, its instrument layout, and their sequences (and the tempo).
+   Choosing one will go on the title screen.
+3. **Guitar and bass amplifiers** with controls that work the way real amps do: combo amps, and heads with
    separate cabinets. They join the live-input group of the instrument menu. (The Speaker is the plain, uncoloured
    way to hear an input until then.)
-5. **Recording.**
-6. **Plug-in hosting**, if it proves practical.
-7. **Multiplayer**, the final goal: a session server, a networked clock, note events and low-latency audio streams.
+4. **Recording.**
+5. **Plug-in hosting**, if it proves practical.
+6. **Multiplayer**, the final goal: a session server, a networked clock, note events and low-latency audio streams.
 
 Also wanted along the way: MIDI on Windows and Linux, and VR through OpenXR.
 

@@ -34,6 +34,8 @@ var audio: SoundRoomAudio
 var _root: Control
 var _panel: PanelContainer
 var _tabs: TabContainer
+var _resume: Button
+var _to_title: Button
 var _fast := 0.0
 var _slow := 0.0
 
@@ -110,6 +112,9 @@ func open(tab := -1) -> void:
 	_root.visible = true
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	app.player.release_keys()
+	var on_title: bool = app.title != null and app.title.is_open()
+	_resume.text = "Back  (Esc)" if on_title else "Resume  (Esc)"
+	_to_title.visible = not on_title
 	_engine_signature = ""  # force the device lists to rebuild
 	_input_signature = ""
 	_refresh_devices()
@@ -118,7 +123,8 @@ func open(tab := -1) -> void:
 
 func close() -> void:
 	_root.visible = false
-	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+	if app.title == null or not app.title.is_open():  # the title screen keeps the mouse
+		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 
 
 func _input(event: InputEvent) -> void:
@@ -182,10 +188,14 @@ func _build() -> void:
 	var spacer := Control.new()
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header.add_child(spacer)
-	var resume := Button.new()
-	resume.text = "Resume  (Esc)"
-	resume.pressed.connect(close)
-	header.add_child(resume)
+	_resume = Button.new()
+	_resume.text = "Resume  (Esc)"
+	_resume.pressed.connect(close)
+	header.add_child(_resume)
+	_to_title = Button.new()
+	_to_title.text = "Title screen"
+	_to_title.pressed.connect(_on_title_pressed)
+	header.add_child(_to_title)
 	var quit := Button.new()
 	quit.text = "Quit"
 	quit.pressed.connect(func(): get_tree().quit())
@@ -445,6 +455,10 @@ func _refresh_live() -> void:
 
 
 # ── Handlers ────────────────────────────────────────────────────────────────────────────────────────────────
+
+func _on_title_pressed() -> void:
+	app.show_title()
+
 
 func _on_playing_toggled(on: bool) -> void:
 	app.set_sequence_running(on)
