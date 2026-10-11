@@ -36,18 +36,12 @@ var remove_pending = null  # instrument that Backspace was pressed on once; a se
 
 var _remove_deadline := 0
 
-var _room_half := Vector2.ZERO
-var _partition_min := Vector3.ZERO
-var _partition_max := Vector3.ZERO
 
 
-func setup(the_app, room_instruments: Array, room_size: Vector3, partition_center: Vector3, partition_size: Vector3) -> void:
+func setup(the_app, room_instruments: Array) -> void:
 	app = the_app
 	audio = app.audio
 	instruments = room_instruments
-	_room_half = Vector2(room_size.x / 2, room_size.z / 2)
-	_partition_min = partition_center - partition_size / 2
-	_partition_max = partition_center + partition_size / 2
 
 	var shape := CollisionShape3D.new()
 	var capsule := CapsuleShape3D.new()
@@ -323,14 +317,9 @@ func _update_carry() -> void:
 		return
 	var ahead := Vector3(-sin(yaw), 0.0, -cos(yaw))
 	var p := global_position + ahead * CARRY_DISTANCE
-	p.x = clampf(p.x, -_room_half.x + 0.6, _room_half.x - 0.6)
-	p.z = clampf(p.z, -_room_half.y + 0.6, _room_half.y - 0.6)
-	var margin := 0.5
-	if p.x > _partition_min.x - margin and p.x < _partition_max.x + margin and p.z > _partition_min.z - margin \
-			and p.z < _partition_max.z + margin:
-		p.x = _partition_min.x - margin if global_position.x < (_partition_min.x + _partition_max.x) / 2 else _partition_max.x + margin
-	p.y = clampf(EYE_HEIGHT - 0.35 + sin(pitch) * 1.4, carried.size.y / 2 + 0.25, 2.8)
-	carried.global_position = p
+	p.y = clampf(EYE_HEIGHT - 0.35 + sin(pitch) * 1.4, carried.size.y / 2 + 0.25, minf(2.8, app.room.size.y - carried.size.y / 2 - 0.3))
+	# Inside the room, and on your side of any wall.
+	carried.global_position = app.room.settle(p, 0.6, 0.5, global_position)
 
 
 func _distance_to(inst) -> float:

@@ -13,7 +13,8 @@ namespace sr {
 // and the output is scaled to unit energy so the send level alone sets how wet the room is.
 class FdnReverb {
 public:
-    void init(float sr, float rt60, float predelay_ms);
+    // `size` stretches the spacing of the reflections: 1 is a room of ordinary size.
+    void init(float sr, float rt60, float predelay_ms, float size = 1.0f);
     // Mono in, stereo out. Overwrites out_l / out_r.
     void process(const float* in, float* out_l, float* out_r, int n);
     void reset();

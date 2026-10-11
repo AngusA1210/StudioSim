@@ -44,7 +44,7 @@ settings, and enter the room. The menu inside the room has a button to come back
 | M | switch that instrument's loop off or on (for a Speaker: mute) |
 | Space | start or stop every instrument's pattern |
 | C | metronome click on/off |
-| Esc | the menu (see below); the music keeps playing while it's open |
+| Esc | the menu (see below), including the room's size and walls; the music keeps playing while it's open |
 | I | live input on/off: your microphone or audio interface comes out of the Speaker (macOS asks for permission once) |
 | B | binaural on/off (compare with plain stereo) |
 | R | room reverb on/off |
@@ -63,6 +63,24 @@ instrument starts with an empty pattern, so it is silent until you play it or wr
 can load the default one). A new Speaker plays the hardware input chosen in the menu, which can be changed later on
 the I/O page; several Speakers can each play a different input. A second instrument of a kind is numbered and a
 paler colour, to tell them apart. Like the tempo and the patterns, the instruments you add are not saved yet.
+
+## The room
+
+The Room page of the menu changes the room itself, while the music plays:
+
+- **Size**: width and length from 4 to 40 m, height from 2.4 to 12 m. The reverb follows: a bigger room rings for
+  longer but more quietly, a small one is short and close. Instruments, walls and you are brought inside if the room
+  shrinks past them.
+- **Walls**: a floor plan of the room, seen from above with the instruments and yourself marked on it. Drag on the
+  floor to draw a wall, drag a wall to move it, drag the dot at either end to turn and stretch it. Walls can stand at
+  any angle and there can be up to 16. Each has its own height.
+
+Sound finds its way round the walls. Behind one, an instrument is duller and seems to come from the edge its sound
+bends round; the longer the detour, the duller it gets, highs first. A wall lower than the ceiling also lets sound
+over the top. Walls that meet close the gap between them, so four walls to the ceiling make a booth that all but
+shuts an instrument away, and a wall built out from the side of the room can only be passed at its free end.
+
+The room goes back to the default each time SoundRoom starts, until rooms can be saved.
 
 ## Playing and sequencing
 
@@ -86,6 +104,7 @@ patterns go back to the defaults at each start until rooms can be saved.
 ## The menu
 
 - **Metronome**: start and stop the patterns, tempo, swing, the click and its volume.
+- **Room**: the room's size and the walls inside it (see above).
 - **Playback Engine**: which output device the audio engine runs on, and the hardware buffer size (32–1024 samples).
   The sample rate follows the device. Shows the resulting latency and CPU use.
 - **I/O**: which of the device's outputs carry the mix, the input device, and which hardware input each Speaker plays.
@@ -101,25 +120,28 @@ isn't connected, the system default is used until it is.
 ```
 game/                      Godot project: the room, player, instruments, HUD, menus and pattern editor (GDScript)
   scripts/catalog.gd       every kind of instrument and the two groups the instrument menu shows them in
+  scripts/room.gd          the room's floor, ceiling and walls, built to whatever size and layout is set
 audio_core/
   src/core/                the audio engine, plain C++ with no Godot dependency
     engine.*               device, command queue, mixing, the shared clock
     instruments.*          synthesized drums, bass, pad, bells and keys (each playable live or by pattern), live input
     sequencer.*            the clock (tempo, swing), pattern notes, and the default groove, scheduled to the exact sample
     spatializer.*          Steam Audio: distance, air absorption, wall filtering, binaural (HRTF)
+    room_geometry.*        the walls: which way round them sound reaches the listener, and how much further that is
     acoustics.h            how much each frequency band dims when sound bends around a wall edge
     midi_input.*           MIDI controllers, read straight into the audio thread (CoreMIDI; other platforms to do)
-    mix.*                  room reverb (feedback delay network) and output limiter
+    mix.*                  room reverb (feedback delay network, sized to the room) and output limiter
   src/godot/               the Godot extension wrapping the engine (SoundRoomAudio node)
   tests/engine_tests.cpp   offline checks: levels, binaural direction, walls, latency, MIDI, live input, sequencer
-game/tests/ui_check.gd     the game driven by pretend keys and clicks: title screen, playing, patterns, instruments, menus
+game/tests/ui_check.gd     the game driven by pretend keys and clicks: title, playing, patterns, instruments, room, menus
 prototypes/sound-room/     the original browser prototype, for reference
 tools/                     build and dependency scripts
 ```
 
-Godot owns the world: rendering, input, physics and wall geometry. It sends positions, note events, pattern edits
-and each instrument's route around walls (`game/scripts/acoustics.gd`) to the audio core through a lock-free queue and never
-waits on it. MIDI controllers and the audio input bypass Godot entirely and go straight into the audio core. The audio core runs
+Godot owns the world: rendering, input, physics, and where the walls and instruments are. It tells the audio core
+the room's size and walls, where each instrument and the listener are, and the notes and pattern edits. The audio
+core works out how sound travels through that room: which way round the walls each instrument is heard, and how the
+room rings. Commands reach the audio thread through a lock-free queue, so the game never waits on it. MIDI controllers and the audio input bypass Godot entirely and go straight into the audio core. The audio core runs
 on its own real-time thread with 128-sample blocks, so a dropped game frame never glitches the sound.
 
 Diagnostics that don't need the game:
@@ -134,19 +156,19 @@ Diagnostics that don't need the game:
 
 Done so far: the native audio pipeline, instruments that can be added, placed and removed and each played from the
 keyboard or a MIDI controller, a pattern sequencer with tempo, swing and a metronome, live audio input through
-Speakers, sound bending around wall edges, and a title screen.
+Speakers, a title screen, and a room whose size and walls can be changed, with sound bending round the walls and a
+reverb that follows the size.
 
 To do, roughly in this order:
 
-1. **Adjustable room dimensions.**
-2. **Templates**: save and load a room's dimensions, its instrument layout, and their sequences (and the tempo).
-   Choosing one will go on the title screen.
-3. **Guitar and bass amplifiers** with controls that work the way real amps do: combo amps, and heads with
+1. **Templates**: save and load a room's dimensions and walls, its instrument layout, and their sequences (and the
+   tempo). Choosing one will go on the title screen.
+2. **Guitar and bass amplifiers** with controls that work the way real amps do: combo amps, and heads with
    separate cabinets. They join the live-input group of the instrument menu. (The Speaker is the plain, uncoloured
    way to hear an input until then.)
-4. **Recording.**
-5. **Plug-in hosting**, if it proves practical.
-6. **Multiplayer**, the final goal: a session server, a networked clock, note events and low-latency audio streams.
+3. **Recording.**
+4. **Plug-in hosting**, if it proves practical.
+5. **Multiplayer**, the final goal: a session server, a networked clock, note events and low-latency audio streams.
 
 Also wanted along the way: MIDI on Windows and Linux, and VR through OpenXR.
 

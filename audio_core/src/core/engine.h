@@ -17,6 +17,7 @@
 #include "instruments.h"
 #include "midi_input.h"
 #include "mix.h"
+#include "room_geometry.h"
 #include "sequencer.h"
 #include "spatializer.h"
 #include "spsc_queue.h"
@@ -108,12 +109,23 @@ public:
     // has let go of it; it stops counting towards kMaxSources at once. False if there is no such source.
     bool removeSource(int id);
     int sourceCount() const;  // how many are in the room
-    // Places a source with a clear line of sight to the listener.
     void setSourcePosition(int id, Vec3 position);
-    // How the source's sound reaches the listener when walls are involved. `via` is the point the sound arrives
-    // from (the source itself, or the wall edge it bends around), `extra_length` is the distance from `via` on to
-    // the source, and `path_differences` lists how much longer each route around the wall is than the straight
-    // line (one negative entry if the line of sight is clear: by how little it clears the nearest edge).
+    bool sourceBlocked(int id) const;  // a wall stands between it and the listener
+
+    // ── The room ─────────────────────────────────────────────────────────────────────────────────────────
+    // The room's inside dimensions in metres and the walls standing in it. The engine works out how each source's
+    // sound reaches the listener round the walls, again whenever a source, the listener or the room changes.
+    // The size also sets how long and how loudly the room rings: a bigger room rings longer but more quietly.
+    // The walls take effect at once. The reverb is rebuilt on the calling thread and faded in, one change at a
+    // time, so after a burst of changes it catches up over the following calls to setListener or roomSettled.
+    void setRoom(float width, float height, float depth, const std::vector<Wall>& walls);
+    bool roomSettled();  // false while the reverb has yet to catch up with the room's size
+    float roomDecaySeconds() const { return wanted_rt60_; }  // the reverb time (RT60) that goes with the size
+    // Overrides what the engine worked out for one source (used by the offline checks). `via` is the point the
+    // sound arrives from (the source itself, or the wall edge it bends around), `extra_length` is the distance from
+    // `via` on to the source, and `path_differences` lists how much longer each route around the wall is than the
+    // straight line (one negative entry if the line of sight is clear: by how little it clears the nearest edge).
+    // It holds until the source or the listener next moves.
     void setSourceDirectPath(int id, Vec3 via, float extra_length, const float* path_differences, int count, bool blocked);
     void setSourceMuted(int id, bool muted);
     // For live-input sources: which hardware input to play (0-based), or LiveInput::kAllInputs.
@@ -173,7 +185,7 @@ private:
             AddSource, RemoveSource, SourcePosition, SourceDirectPath, SourceMuted, SourceInputChannel, Listener,
             NoteOn, NoteOff, AllNotesOff, Binaural, Reverb, MasterVolume, MidiTarget,
             PatternNoteSet, PatternNoteRemove, PatternClear, PatternSteps, SourceLoop,
-            SequencerRunning, Tempo, Swing, Click, ClickVolume,
+            SequencerRunning, Tempo, Swing, Click, ClickVolume, Reverb2,
         } type = AddSource;
         int id = 0;
         float v[9] = {};
@@ -188,6 +200,8 @@ private:
     std::unique_ptr<Instrument> makeInstrument(InstrumentKind kind) const;
     Source* owned(int id) const;  // the source with this id, unless it is on its way out
     void reap();                  // frees removed sources the audio thread has finished with
+    void updatePath(Source& source);  // works out how its sound reaches the listener and tells the audio thread
+    void updatePaths();
     int delayFor(double at) const;
 
     // StepSink: plays every source's pattern notes for this step, and the click.
@@ -205,6 +219,12 @@ private:
     DeviceConfig device_config_;
     MidiInput midi_;
     TransportState transport_;  // what the game asked for; the audio thread follows
+    RoomGeometry geometry_;
+    Vec3 ear_{0, 1.65f, 0};     // where the listener was last put
+    // The reverb the room's size calls for, and the one that has been handed to the audio thread so far.
+    float wanted_rt60_, wanted_size_ = 1.0f, wanted_level_;
+    float room_rt60_, room_size_ = 1.0f, room_level_;
+    int reverb_spare_ = 1;      // which of the two reverbs the audio thread is not using
 
     // MIDI thread → audio thread
     SpscQueue<MidiEvent> midi_queue_{1024};
@@ -223,9 +243,12 @@ private:
     std::array<voice::ToneHit, 4> clicks_;
     bool click_on_ = false;
     float click_volume_ = 1.0f;
-    FdnReverb reverb_;
+    // Two reverbs, so the room can change without a click: the new one is built in the spare, then faded in.
+    std::array<FdnReverb, 2> reverbs_;
+    int reverb_active_ = 0, reverb_next_ = 0, reverb_fade_left_ = 0, reverb_fade_len_ = 1;
+    float reverb_level_, reverb_next_level_ = 0.0f;
     Limiter limiter_;
-    std::vector<float> mix_l_, mix_r_, send_, rev_l_, rev_r_, click_;
+    std::vector<float> mix_l_, mix_r_, send_, rev_l_, rev_r_, rev2_l_, rev2_r_, click_;
     InputBus input_bus_;               // this block's captured audio, per hardware input
     std::vector<float> input_fifo_;    // captured frames (interleaved) waiting to be rendered
     int fifo_channels_ = 0;
@@ -239,6 +262,7 @@ private:
     std::atomic<uint64_t> blocks_{0};
     std::atomic<int> out_left_{0}, out_right_{1};
     std::atomic<int64_t> step_{-1};
+    std::atomic<bool> reverb_changing_{false};  // set by the game thread with a new reverb, cleared when it has faded in
 };
 
 }  // namespace sr

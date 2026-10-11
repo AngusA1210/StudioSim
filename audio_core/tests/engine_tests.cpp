@@ -1,6 +1,7 @@
 // Offline checks for the audio core: renders the prototype's room without a sound card and measures it.
 // Run: build/engine_tests            (exit code 0 = all checks passed)
 //      build/engine_tests --dump file  (writes what the default room plays, to compare before and after a change)
+//      build/engine_tests --paths in out  (the wall model's answers for the listener and source positions in `in`)
 //      build/engine_tests --device ["name" [buffer [left right]]]
 //                                    (lists audio devices, opens one silently, prints its latency)
 //      build/engine_tests --midi     (lists MIDI devices and reports the notes they send for 15 seconds)
@@ -16,6 +17,7 @@
 
 #include "acoustics.h"
 #include "engine.h"
+#include "room_geometry.h"
 
 #ifdef __APPLE__
 #include <CoreFoundation/CoreFoundation.h>
@@ -283,8 +285,32 @@ int dumpGroove(const char* path) {
     return 0;
 }
 
+// Reads lines that begin with a listener and a source position and writes, for each, how the default room's one
+// wall changes the route between them. A way to compare the wall model before and after a change to it.
+int dumpPaths(const char* in_path, const char* out_path) {
+    std::FILE* in = std::fopen(in_path, "r");
+    std::FILE* out = std::fopen(out_path, "w");
+    if (!in || !out) return 1;
+    RoomGeometry geometry;
+    geometry.setRoom(14.0f, 10.0f, 4.0f, {{-2.5f, -3.25f, -2.5f, -0.55f, 0.3f, 3.0f}});
+    char line[512];
+    while (std::fgets(line, sizeof(line), in)) {
+        float e[3], s[3];
+        if (std::sscanf(line, "%f %f %f %f %f %f", &e[0], &e[1], &e[2], &s[0], &s[1], &s[2]) != 6) continue;
+        const DirectPath p = geometry.directPath({e[0], e[1], e[2]}, {s[0], s[1], s[2]});
+        std::fprintf(out, "%.4f %.4f %.4f %.4f %.4f %.4f %d %.5f %.5f %.5f %.5f %d", e[0], e[1], e[2], s[0], s[1], s[2], p.blocked ? 1 : 0,
+                     p.via.x, p.via.y, p.via.z, p.extra, p.count);
+        for (int i = 0; i < p.count; ++i) std::fprintf(out, " %.5f", p.differences[i]);
+        std::fprintf(out, "\n");
+    }
+    std::fclose(in);
+    std::fclose(out);
+    return 0;
+}
+
 int main(int argc, char** argv) {
     if (argc > 2 && std::string(argv[1]) == "--dump") return dumpGroove(argv[2]);
+    if (argc > 3 && std::string(argv[1]) == "--paths") return dumpPaths(argv[2], argv[3]);
     if (argc > 1 && std::string(argv[1]) == "--device") {  // --device ["name" [buffer [left right]]]
         DeviceConfig config;
         if (argc > 2) config.output_device = argv[2];
@@ -775,6 +801,175 @@ int main(int argc, char** argv) {
         Render quieter = renderSeconds(room.engine, 2.0);
         check(std::fabs(db(clicks.peak) - db(quieter.peak) - 6.0) < 1.0, "the click has its own volume",
               fmt("half volume is %.1f dB quieter", db(clicks.peak) - db(quieter.peak)));
+    }
+
+    {
+        std::printf("\nWalls\n");
+        const float kCeiling = 4.0f;
+        auto path = [&](const std::vector<Wall>& walls, Vec3 ear, Vec3 source, float width = 14.0f, float depth = 10.0f) {
+            RoomGeometry geometry;
+            geometry.setRoom(width, depth, kCeiling, walls);
+            return geometry.directPath(ear, source);
+        };
+        const Vec3 ear{-4.5f, 1.65f, -2.0f}, source{0.5f, 0.9f, -2.2f};
+        const Wall partition{-2.5f, -3.25f, -2.5f, -0.55f, 0.3f, 3.0f};  // the default room's wall
+        const DirectPath one = path({partition}, ear, source);
+        check(one.blocked && one.count == 3 && one.differences[0] > 0.3f && one.differences[0] < one.differences[1] &&
+                  std::fabs(one.via.x + 2.5f) < 0.2f && std::fabs(one.via.z + 3.4f) < 0.05f,
+              "a wall in the way: three routes (round each end and over the top), arriving from the nearer end",
+              fmt("%.2f, %.2f and %.2f m longer than the straight line", one.differences[0], one.differences[1], one.differences[2]));
+        const DirectPath none = path({}, ear, source);
+        const DirectPath beside = path({partition}, {-4.5f, 1.65f, 1.0f}, {0.5f, 0.9f, 0.5f});
+        check(!none.blocked && none.differences[0] < -50.0f && !beside.blocked && beside.differences[0] < 0.0f && beside.differences[0] > -2.0f,
+              "no wall in the way: clear, and the model knows how narrowly a nearby wall is missed", fmt("clears its end by a %.2f m detour", -beside.differences[0]));
+
+        // The same scene turned through 37 degrees gives the same answer: walls can stand at any angle.
+        const float c = std::cos(0.6458f), sn = std::sin(0.6458f);
+        auto turn = [&](float x, float z) { return std::pair<float, float>{x * c - z * sn, x * sn + z * c}; };
+        const auto [ax, az] = turn(partition.ax, partition.az);
+        const auto [bx, bz] = turn(partition.bx, partition.bz);
+        const auto [ex, ez] = turn(ear.x, ear.z);
+        const auto [sx, sz] = turn(source.x, source.z);
+        const auto [vx, vz] = turn(one.via.x, one.via.z);
+        const DirectPath turned = path({{ax, az, bx, bz, 0.3f, 3.0f}}, {ex, ear.y, ez}, {sx, source.y, sz}, 30.0f, 30.0f);
+        check(turned.blocked && turned.count == 3 && std::fabs(turned.differences[0] - one.differences[0]) < 1e-3f &&
+                  std::fabs(turned.differences[2] - one.differences[2]) < 1e-3f && std::fabs(turned.via.x - vx) < 1e-3f && std::fabs(turned.via.z - vz) < 1e-3f,
+              "a wall at an angle behaves like a straight one", fmt("%.3f m against %.3f m", turned.differences[0], one.differences[0]));
+
+        // A second wall behind the first makes the way round longer.
+        const DirectPath two = path({partition, {-1.0f, -4.0f, -1.0f, 0.5f, 0.3f, 3.0f}}, ear, source);
+        check(two.blocked && two.differences[0] > one.differences[0] + 0.2f, "a second wall behind the first lengthens the way round",
+              fmt("%.2f m with one wall, %.2f m with two", one.differences[0], two.differences[0]));
+
+        // Two walls meeting in a corner: nothing gets through the join.
+        const Wall south{-3.0f, 0.0f, 1.0f, 0.0f, 0.3f, kCeiling}, east{1.0f, 0.0f, 1.0f, -3.0f, 0.3f, kCeiling};
+        const Vec3 inside{0.2f, 1.0f, -0.8f}, outside{2.0f, 1.65f, 1.5f};
+        const DirectPath corner = path({south, east}, outside, inside);
+        const DirectPath just_south = path({south}, outside, inside);
+        check(corner.blocked && corner.count >= 1 && corner.differences[0] > just_south.differences[0] + 1.0f &&
+                  !(std::fabs(corner.via.x - 1.0f) < 0.4f && std::fabs(corner.via.z) < 0.4f),
+              "where two walls meet, sound has to go round the far ends, not through the join",
+              fmt("%.2f m longer than the straight line, against %.2f m if the second wall weren't there", corner.differences[0], just_south.differences[0]));
+
+        // A booth: four walls round the source.
+        auto booth = [&](float height) {
+            return std::vector<Wall>{{-1.0f, -1.0f, 1.0f, -1.0f, 0.3f, height}, {1.0f, -1.0f, 1.0f, 1.0f, 0.3f, height},
+                                     {1.0f, 1.0f, -1.0f, 1.0f, 0.3f, height}, {-1.0f, 1.0f, -1.0f, -1.0f, 0.3f, height}};
+        };
+        const Vec3 in_booth{0.0f, 1.0f, 0.0f}, listener{4.0f, 1.65f, 0.5f};
+        const DirectPath sealed = path(booth(kCeiling), listener, in_booth);
+        const DirectPath open_top = path(booth(2.5f), listener, in_booth);
+        check(sealed.blocked && sealed.count == 1 && sealed.differences[0] >= 10.0f, "a booth with walls to the ceiling seals its instrument in",
+              "only what leaks through the wall is heard");
+        check(open_top.blocked && open_top.count == 1 && open_top.differences[0] < 3.0f && std::fabs(open_top.via.y - 2.5f) < 1e-3f,
+              "lower the booth's walls and the sound comes over the top", fmt("%.2f m longer, arriving from %.1f m up", open_top.differences[0], open_top.via.y));
+
+        // A wall that runs into the room's own wall can't be passed at that end.
+        const Wall to_edge{-7.0f, 0.0f, 0.0f, 0.0f, 0.3f, kCeiling};
+        const DirectPath edge = path({to_edge}, {-3.0f, 1.65f, 2.0f}, {-3.0f, 1.0f, -2.0f});
+        const DirectPath free_standing = path({{-6.0f, 0.0f, 0.0f, 0.0f, 0.3f, kCeiling}}, {-3.0f, 1.65f, 2.0f}, {-3.0f, 1.0f, -2.0f});
+        check(edge.blocked && edge.count == 1 && edge.via.x > -0.5f && free_standing.count == 2,
+              "a wall built out from the side of the room can only be passed at its free end", fmt("one route, round the end at x = %.2f", edge.via.x));
+
+        // A low wall: you hear over it when you can see over it.
+        const Wall low{0.0f, -2.0f, 0.0f, 2.0f, 0.3f, 1.2f};
+        const DirectPath seen = path({low}, {-2.0f, 1.65f, 0.0f}, {2.0f, 1.6f, 0.0f});
+        const DirectPath hidden = path({low}, {-2.0f, 1.65f, 0.0f}, {0.6f, 0.3f, 0.0f});
+        check(!seen.blocked && seen.differences[0] < 0.0f && hidden.blocked && hidden.differences[0] < 0.6f && std::fabs(hidden.via.y - 1.2f) < 1e-3f,
+              "a low wall hides only what is tucked behind it", fmt("seen over the top with %.2f m to spare; tucked behind, %.2f m longer",
+                                                                    -seen.differences[0], hidden.differences[0]));
+
+        // In the engine: the same booth, heard.
+        Room room;
+        room.soloOnly(room.drums);
+        room.engine.setReverb(false);
+        room.face(0.5f, -1.0f, 0.0f);
+        renderSeconds(room.engine, 0.5);
+        const double before = level(renderSeconds(room.engine, 10.43));
+        std::vector<Wall> walls;
+        for (Wall w : booth(kCeiling)) {  // moved over the drums
+            w.ax += 0.5f; w.bx += 0.5f; w.az -= 3.6f; w.bz -= 3.6f;
+            walls.push_back(w);
+        }
+        room.engine.setRoom(14.0f, 4.0f, 10.0f, walls);
+        const bool hidden_now = room.engine.sourceBlocked(room.drums) && !room.engine.sourceBlocked(room.keys);
+        renderSeconds(room.engine, 0.5);
+        const double boxed = level(renderSeconds(room.engine, 10.43));
+        room.engine.setRoom(14.0f, 4.0f, 10.0f, {});
+        renderSeconds(room.engine, 0.5);
+        const double after = level(renderSeconds(room.engine, 10.43));
+        check(hidden_now && before - boxed > 15.0 && std::fabs(after - before) < 0.1 && !room.engine.sourceBlocked(room.drums),
+              "building a booth round the drums shuts them away, and taking it down brings them back",
+              fmt("%.1f dBFS open, %.1f dBFS boxed in, %.1f dBFS open again", before, boxed, after));
+        room.engine.setRoom(14.0f, 4.0f, 10.0f, walls);
+        room.face(0.5f, -3.6f, 0.0f);  // step inside the booth
+        renderSeconds(room.engine, 0.5);
+        check(!room.engine.sourceBlocked(room.drums) && room.engine.sourceBlocked(room.keys), "walking into the booth, the drums are clear and the rest is shut out",
+              "the routes follow the listener");
+    }
+
+    {
+        std::printf("\nThe size of the room\n");
+        // How long the room takes to die away by 60 dB, judged from the tail of one snare hit.
+        auto decay = [](Room& room) {
+            while (!room.engine.roomSettled()) renderSeconds(room.engine, 0.1);
+            renderSeconds(room.engine, 6.0);
+            room.engine.noteOn(room.drums, 38, 1.0f);
+            const Render r = renderSeconds(room.engine, 1.2);
+            auto window = [&](double from, double to) {
+                double e = 0;
+                for (size_t i = size_t(from * 48000); i < size_t(to * 48000); ++i) e += double(r.l[i]) * r.l[i] + double(r.r[i]) * r.r[i];
+                return 10.0 * std::log10(e + 1e-30);
+            };
+            return 60.0 * 0.4 / (window(0.35, 0.55) - window(0.75, 0.95));
+        };
+        Room room;
+        room.soloOnly(room.drums);
+        room.engine.setSourceLoop(room.drums, false);
+        room.engine.setRoom(14.0f, 4.0f, 10.0f, {});
+        const bool unchanged = room.engine.roomSettled() && std::fabs(room.engine.roomDecaySeconds() - 1.1f) < 1e-6f;
+        const double normal = decay(room);
+        room.engine.setRoom(30.0f, 8.0f, 20.0f, {});
+        const float hall_says = room.engine.roomDecaySeconds();
+        const bool busy = !room.engine.roomSettled();
+        const double hall = decay(room);
+        room.engine.setRoom(5.0f, 2.6f, 4.0f, {});
+        const float booth_says = room.engine.roomDecaySeconds();
+        const double small = decay(room);
+        check(unchanged, "the default room keeps the reverb it has always had", "1.1 s, nothing rebuilt");
+        check(busy && hall > 1.6 * normal && small < 0.7 * normal && std::fabs(hall_says - 2.22f) < 0.02f && std::fabs(booth_says - 0.555f) < 0.01f,
+              "a bigger room rings longer and a smaller one shorter", fmt("snare tail: %.2f s in a 30 x 20 m hall, %.2f s by default, %.2f s in a 5 x 4 m room",
+                                                                         hall, normal, small) +
+                                                                         fmt(" (the engine reckons %.2f and %.2f s)", hall_says, booth_says));
+
+        // Changing the room while a pad is sounding. Two identical rooms play the same thing and one of them changes
+        // size: the difference between them is the reverb changing over, which should swell smoothly, not jump.
+        Room changing, same;
+        for (Room* each : {&changing, &same}) {
+            each->soloOnly(each->pad);
+            renderSeconds(each->engine, 2.0);
+        }
+        changing.engine.setRoom(6.0f, 3.0f, 5.0f, {});
+        changing.engine.setRoom(9.0f, 3.0f, 7.0f, {});    // a burst of changes, as when a slider is dragged:
+        changing.engine.setRoom(25.0f, 7.0f, 18.0f, {});  // the reverb takes them one at a time and ends at the last
+        const Render with = renderSeconds(changing.engine, 1.0), without = renderSeconds(same.engine, 1.0);
+        double biggest = 0, steepest = 0;
+        for (size_t i = 1; i < with.l.size(); ++i) {
+            const double now = double(with.l[i]) - without.l[i], last = double(with.l[i - 1]) - without.l[i - 1];
+            biggest = std::max(biggest, std::fabs(now));
+            steepest = std::max(steepest, std::fabs(now - last));
+        }
+        const bool mid_change = !changing.engine.roomSettled();
+        for (int frame = 0; frame < 40 && !changing.engine.roomSettled(); ++frame) {
+            changing.face(0.0f, 3.6f, 0.01f * float(frame));  // the game moves the listener every frame
+            renderSeconds(changing.engine, 0.1);
+        }
+        const bool settled = changing.engine.roomSettled();
+        std::string err;
+        const bool reconfigured = changing.engine.configure(44100, 256, &err);
+        const Render later = renderSeconds(changing.engine, 2.0);
+        check(biggest > 1e-3 && steepest < 0.4 * biggest && mid_change && settled && reconfigured && later.finite && changing.engine.roomSettled(),
+              "the room can change while music plays, without a click", fmt("the changeover peaks at %.4f and never steps by more than %.4f", biggest, steepest));
     }
 
     {

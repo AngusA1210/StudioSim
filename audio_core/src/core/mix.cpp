@@ -14,9 +14,9 @@ inline float softClip(float x) {
 
 }  // namespace
 
-void FdnReverb::init(float sr, float rt60, float predelay_ms) {
+void FdnReverb::init(float sr, float rt60, float predelay_ms, float size) {
     for (int k = 0; k < kLines; ++k) {
-        len_[k] = std::max(1, int(kLineMs[k] * 0.001f * sr + 0.5f));
+        len_[k] = std::max(1, int(kLineMs[k] * size * 0.001f * sr + 0.5f));
         lines_[k].assign(size_t(len_[k]), 0.0f);
         // Loop gain for the target decay, and a one-pole low-pass whose Nyquist gain makes highs decay twice as fast.
         gain_[k] = std::pow(10.0f, -3.0f * float(len_[k]) / (rt60 * sr));

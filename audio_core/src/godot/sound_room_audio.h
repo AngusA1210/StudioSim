@@ -9,7 +9,7 @@
 #include <godot_cpp/classes/node.hpp>
 #include <godot_cpp/variant/array.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
-#include <godot_cpp/variant/packed_float32_array.hpp>
+#include <godot_cpp/variant/vector2.hpp>
 #include <godot_cpp/variant/string.hpp>
 #include <godot_cpp/variant/transform3d.hpp>
 #include <godot_cpp/variant/vector3.hpp>
@@ -50,9 +50,13 @@ public:
     int get_source_count() const;
     int get_max_sources() const;
     void set_source_position(int id, const Vector3& position);
-    // See AudioEngine::setSourceDirectPath: where the sound arrives from when walls are in the way.
-    void set_source_direct_path(int id, const Vector3& via, float extra_length, const PackedFloat32Array& path_differences,
-                                bool blocked);
+    bool is_source_blocked(int id) const;  // a wall stands between it and the listener
+    // The room's inside size (width, height, depth) in metres and the walls standing in it, each
+    // {a: Vector2, b: Vector2, thickness: float, height: float} with a and b on the floor plan (x, z).
+    // The audio core works out how sound gets round the walls, and how long and loudly a room that size rings.
+    void set_room(const Vector3& size, const Array& walls);
+    bool is_room_settled();          // false while the reverb is still changing over to a new size
+    float get_room_decay() const;    // the reverb time (RT60) that goes with the room's size, in seconds
     void set_source_muted(int id, bool muted);
     void set_source_input_channel(int id, int channel);  // live sources: 0-based hardware input, or -1 for all
     void set_listener(const Transform3D& transform);

@@ -13,10 +13,10 @@ var muted := false     # the Speaker: silenced altogether
 var loop_on := true    # playable instruments: whether the sequencer plays their pattern
 var input_channel := -1  # live-input instruments: the hardware input they play (0-based), or -1 for all of them
 var carried := false
-var shadowed := false  # a wall is between it and the listener
 var glow := 0.0
 
 var _audio: SoundRoomAudio
+var _sent_position := Vector3.INF  # where the audio core last heard this instrument was
 var _spin := 0.0
 var _body: MeshInstance3D
 var _body_material: StandardMaterial3D
@@ -96,10 +96,11 @@ func _process(delta: float) -> void:
 	_update_stand()
 
 
-## `path` comes from Acoustics.direct_path; it carries the instrument's position, so moving it needs nothing else.
-func set_direct_path(path: Dictionary) -> void:
-	shadowed = path.blocked
-	_audio.set_source_direct_path(source_id, path.via, path.extra, path.deltas, path.blocked)
+## Tells the audio core where this instrument is, if it has moved.
+func sync_position() -> void:
+	if not global_position.is_equal_approx(_sent_position):
+		_sent_position = global_position
+		_audio.set_source_position(source_id, global_position)
 
 
 func set_muted(value: bool) -> void:

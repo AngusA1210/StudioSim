@@ -19,6 +19,19 @@ namespace {
 constexpr float kMasterGain = 1.9f;  // measured: about -21 dBFS RMS at the spawn point, like the prototype
 constexpr float kReverbLevel = 0.16f;
 constexpr float kClickLevel = 0.13f;  // the metronome peaks around -12 dBFS, clear above the room's mix
+// The room the reverb was tuned in. Other sizes are worked out from it, keeping the same wall surfaces.
+constexpr float kReferenceRoom[3] = {14.0f, 4.0f, 10.0f};  // width, height, depth in metres
+constexpr float kReferenceDecay = 1.1f;                    // its reverb time (RT60) in seconds
+constexpr float kPredelayMs = 12.0f;
+constexpr float kReverbFadeSeconds = 0.3f;
+
+float volumeOf(const float r[3]) { return r[0] * r[1] * r[2]; }
+float surfaceOf(const float r[3]) { return 2.0f * (r[0] * r[1] + r[1] * r[2] + r[0] * r[2]); }
+
+// The delay lines and pre-delay stretch with the room, within what still sounds like a room rather than echoes.
+void buildReverb(FdnReverb& reverb, float sr, float rt60, float size) {
+    reverb.init(sr, rt60, kPredelayMs * std::clamp(size, 0.3f, 3.5f), std::clamp(size, 0.5f, 1.8f));
+}
 constexpr size_t kFifoFrames = 4096;
 
 Vec3 sub(Vec3 a, Vec3 b) { return {a.x - b.x, a.y - b.y, a.z - b.z}; }
@@ -129,6 +142,9 @@ struct AudioEngine::Source {
     // ...and this is the game thread's own copy, to hand back to whoever is editing it.
     std::vector<PatternNote> pattern;
     int pattern_steps = kMaxPatternSteps;
+    // Where the game put it, and whether a wall hides it from the listener (game thread).
+    Vec3 position;
+    bool blocked = false;
     // Leaving the room: the game thread marks it `removing`; the audio thread fades it out over `fade_blocks`,
     // forgets it, and sets `released`, after which the game thread is free to delete it.
     bool removing = false;
@@ -153,11 +169,12 @@ struct AudioEngine::Device {
 };
 
 AudioEngine::AudioEngine(const EngineConfig& config)
-    : sr_(config.sample_rate), block_(config.block_size), block_pos_(config.block_size) {
+    : sr_(config.sample_rate), block_(config.block_size), wanted_rt60_(kReferenceDecay), wanted_level_(kReverbLevel),
+      room_rt60_(kReferenceDecay), room_level_(kReverbLevel), reverb_level_(kReverbLevel), block_pos_(config.block_size) {
     for (auto& l : levels_) l.store(0.0f);
     allocateBuffers();
     sequencer_.setSampleRate(sr_);
-    reverb_.init(float(sr_), 1.1f, 12.0f);
+    for (auto& reverb : reverbs_) buildReverb(reverb, float(sr_), room_rt60_, room_size_);
     limiter_.init(float(sr_));
 }
 
@@ -167,7 +184,7 @@ AudioEngine::~AudioEngine() {
 }
 
 void AudioEngine::allocateBuffers() {
-    for (auto* buf : {&mix_l_, &mix_r_, &send_, &rev_l_, &rev_r_, &click_}) buf->assign(size_t(block_), 0.0f);
+    for (auto* buf : {&mix_l_, &mix_r_, &send_, &rev_l_, &rev_r_, &rev2_l_, &rev2_r_, &click_}) buf->assign(size_t(block_), 0.0f);
     for (auto& ch : input_bus_.channel) ch.assign(size_t(block_), 0.0f);
     input_fifo_.assign(kFifoFrames * InputBus::kMaxChannels, 0.0f);
     input_read_ = input_count_ = 0;
@@ -209,7 +226,13 @@ bool AudioEngine::configure(int sample_rate, int block_size, std::string* error)
     clock_ = int64_t(double(clock_) * ratio);
     sequencer_.retime(sr_, clock_);  // keep our place in the music
     for (auto& c : clicks_) c.active = false;
-    reverb_.init(float(sr_), 1.1f, 12.0f);
+    for (auto& reverb : reverbs_) buildReverb(reverb, float(sr_), room_rt60_, room_size_);
+    if (reverb_fade_left_ > 0) {  // a change of room was fading in: it has now simply happened
+        reverb_fade_left_ = 0;
+        reverb_active_ = reverb_next_;
+        reverb_level_ = reverb_next_level_;
+        reverb_changing_.store(false, std::memory_order_release);
+    }
     limiter_.init(float(sr_));
     if (!initialized_) return true;
     if (!steam_.init(sr_, block_, error)) {
@@ -395,7 +418,7 @@ int AudioEngine::addSource(InstrumentKind kind, Vec3 position, float gain, float
     src->instrument = makeInstrument(kind);
     if (!src->spatializer.init(steam_, nullptr)) return -1;
     src->mono.assign(size_t(block_), 0.0f);
-    src->via = src->via_target = position;
+    src->via = src->via_target = src->position = position;
     src->gain = gain;
     src->send = reverb_send;
 
@@ -406,6 +429,7 @@ int AudioEngine::addSource(InstrumentKind kind, Vec3 position, float gain, float
     if (!commands_.push(c)) return -1;
     if (slot == owned_.size()) owned_.push_back(std::move(src));
     else owned_[slot] = std::move(src);
+    updatePath(*owned_[slot]);
     return c.id;
 }
 
@@ -432,8 +456,67 @@ void AudioEngine::reap() {
 }
 
 void AudioEngine::setSourcePosition(int id, Vec3 p) {
-    Command c; c.type = Command::SourcePosition; c.id = id; c.v[0] = p.x; c.v[1] = p.y; c.v[2] = p.z; push(c);
+    Source* s = owned(id);
+    if (!s) return;
+    s->position = p;
+    updatePath(*s);
 }
+
+bool AudioEngine::sourceBlocked(int id) const {
+    const Source* s = owned(id);
+    return s && s->blocked;
+}
+
+// ── The room (game thread) ─────────────────────────────────────────────────────────────────────────────────
+void AudioEngine::updatePath(Source& s) {
+    if (geometry_.empty()) {  // no walls: straight from where it stands
+        s.blocked = false;
+        Command c; c.type = Command::SourcePosition; c.id = s.id;
+        c.v[0] = s.position.x; c.v[1] = s.position.y; c.v[2] = s.position.z;
+        push(c);
+        return;
+    }
+    const DirectPath path = geometry_.directPath(ear_, s.position);
+    s.blocked = path.blocked;
+    setSourceDirectPath(s.id, path.via, path.extra, path.differences, path.count, path.blocked);
+}
+
+void AudioEngine::updatePaths() {
+    for (auto& s : owned_)
+        if (s && !s->removing) updatePath(*s);
+}
+
+void AudioEngine::setRoom(float width, float height, float depth, const std::vector<Wall>& walls) {
+    const float room[3] = {std::clamp(width, 2.0f, 100.0f), std::clamp(height, 2.0f, 50.0f), std::clamp(depth, 2.0f, 100.0f)};
+    geometry_.setRoom(room[0], room[2], room[1], walls);
+    updatePaths();
+    // Sabine: the reverb time grows with volume over surface (the same surfaces as the reference room, so the same
+    // share of sound is absorbed at each bounce), and the reverberant level falls as the absorbing surface grows.
+    wanted_size_ = (volumeOf(room) / surfaceOf(room)) / (volumeOf(kReferenceRoom) / surfaceOf(kReferenceRoom));
+    wanted_rt60_ = std::clamp(kReferenceDecay * wanted_size_, 0.15f, 8.0f);
+    wanted_level_ = kReverbLevel * std::sqrt(surfaceOf(kReferenceRoom) / surfaceOf(room));
+    roomSettled();
+}
+
+bool AudioEngine::roomSettled() {
+    const bool fading = reverb_changing_.load(std::memory_order_acquire);
+    if (wanted_rt60_ == room_rt60_ && wanted_size_ == room_size_ && wanted_level_ == room_level_) return !fading;
+    if (fading) return false;  // the last change has to finish fading in before the next can start
+
+    buildReverb(reverbs_[size_t(reverb_spare_)], float(sr_), wanted_rt60_, wanted_size_);
+    reverb_changing_.store(true, std::memory_order_release);
+    Command c; c.type = Command::Reverb2; c.id = reverb_spare_; c.v[0] = wanted_level_;
+    if (!commands_.push(c)) {
+        reverb_changing_.store(false, std::memory_order_release);
+        return false;
+    }
+    room_rt60_ = wanted_rt60_;
+    room_size_ = wanted_size_;
+    room_level_ = wanted_level_;
+    reverb_spare_ = 1 - reverb_spare_;
+    return false;  // on its way: settled once it has faded in and nothing newer is wanted
+}
+
 void AudioEngine::setSourceDirectPath(int id, Vec3 via, float extra_length, const float* path_differences, int count,
                                       bool blocked) {
     Command c; c.type = Command::SourceDirectPath; c.id = id;
@@ -455,6 +538,11 @@ void AudioEngine::setListener(Vec3 p, Vec3 ahead, Vec3 up) {
     c.v[3] = ahead.x; c.v[4] = ahead.y; c.v[5] = ahead.z;
     c.v[6] = up.x; c.v[7] = up.y; c.v[8] = up.z;
     push(c);
+    if (p.x != ear_.x || p.y != ear_.y || p.z != ear_.z) {  // turning on the spot changes no route
+        ear_ = p;
+        updatePaths();
+    }
+    roomSettled();  // the game calls this every frame, which makes it the place to let the reverb catch up
 }
 void AudioEngine::noteOn(int id, int note, float velocity) {
     Command c; c.type = Command::NoteOn; c.id = id; c.v[0] = float(note); c.v[1] = velocity; push(c);
@@ -708,6 +796,11 @@ void AudioEngine::drainCommands() {
             case Command::ClickVolume:
                 click_volume_ = c.v[0];
                 break;
+            case Command::Reverb2:  // the spare reverb has been rebuilt for a new room: fade over to it
+                reverb_next_ = c.id;
+                reverb_next_level_ = c.v[0];
+                reverb_fade_len_ = reverb_fade_left_ = std::max(1, int(kReverbFadeSeconds * float(sr_)));
+                break;
         }
     }
 }
@@ -880,12 +973,30 @@ void AudioEngine::renderBlock() {
         }
     }
 
-    reverb_.process(send_.data(), rev_l_.data(), rev_r_.data(), block_);
+    reverbs_[size_t(reverb_active_)].process(send_.data(), rev_l_.data(), rev_r_.data(), block_);
+    float reverb_level = reverb_level_;
+    if (reverb_fade_left_ > 0) {  // changing rooms: the old reverb dies away as the new one comes up
+        reverbs_[size_t(reverb_next_)].process(send_.data(), rev2_l_.data(), rev2_r_.data(), block_);
+        for (int i = 0; i < block_; ++i) {
+            const float in = 1.0f - float(std::max(reverb_fade_left_ - i, 0)) / float(reverb_fade_len_);
+            const float old_gain = reverb_level_ * (1.0f - in), new_gain = reverb_next_level_ * in;
+            rev_l_[size_t(i)] = rev_l_[size_t(i)] * old_gain + rev2_l_[size_t(i)] * new_gain;
+            rev_r_[size_t(i)] = rev_r_[size_t(i)] * old_gain + rev2_r_[size_t(i)] * new_gain;
+        }
+        reverb_level = 1.0f;  // the levels are already in
+        reverb_fade_left_ -= block_;
+        if (reverb_fade_left_ <= 0) {
+            reverb_fade_left_ = 0;
+            reverb_active_ = reverb_next_;
+            reverb_level_ = reverb_next_level_;
+            reverb_changing_.store(false, std::memory_order_release);  // the game thread may now reuse the old one
+        }
+    }
     const float slow = 1.0f - std::exp(-1.0f / (0.05f * float(sr_)));
     for (int i = 0; i < block_; ++i) {
         reverb_gain_ += (reverb_target_ - reverb_gain_) * slow;
         master_gain_ += (master_target_ - master_gain_) * slow;
-        const float wet = kReverbLevel * reverb_gain_, out = kMasterGain * master_gain_;
+        const float wet = reverb_level * reverb_gain_, out = kMasterGain * master_gain_;
         // The click goes straight to both ears: it is for the player, not part of the room.
         mix_l_[size_t(i)] = (mix_l_[size_t(i)] + rev_l_[size_t(i)] * wet + click_[size_t(i)]) * out;
         mix_r_[size_t(i)] = (mix_r_[size_t(i)] + rev_r_[size_t(i)] * wet + click_[size_t(i)]) * out;

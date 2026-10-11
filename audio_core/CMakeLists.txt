@@ -37,6 +37,7 @@ add_library(sr_core STATIC
     src/core/engine.cpp
     src/core/instruments.cpp
     src/core/mix.cpp
+    src/core/room_geometry.cpp
     src/core/sequencer.cpp
     src/core/spatializer.cpp
     src/core/miniaudio_impl.c

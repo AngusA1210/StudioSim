@@ -13,6 +13,8 @@ extends Node3D
 ##   --sequencer=kind[,bar]   open that instrument's pattern editor at start
 ##   --add=kind               make a new instrument at start, in the player's hands
 ##   --instruments            open the instrument menu at start
+##   --room=W,H,L             start with a room this wide, high and long (metres)
+##   --walls=ax,az,bx,bz[,h];...   replace the room's walls: each runs from (ax, az) to (bx, bz), h high
 ##   --tempo=BPM              start at another tempo
 ##   --text-scale=F           override the text size
 ##   --screenshot=path.png    save a screenshot after --frames frames (default 90), print stats, and quit
@@ -27,14 +29,9 @@ const InstrumentMenu := preload("res://scripts/instrument_menu.gd")
 const Title := preload("res://scripts/title.gd")
 const Catalog := preload("res://scripts/catalog.gd")
 const Settings := preload("res://scripts/settings.gd")
-const Acoustics := preload("res://scripts/acoustics.gd")
+const Room := preload("res://scripts/room.gd")
 
-const ROOM_SIZE := Vector3(14.0, 4.0, 10.0)
-const WALL_THICKNESS := 0.5
-const PARTITION_CENTER := Vector3(-2.5, 1.5, -1.9)
-const PARTITION_SIZE := Vector3(0.3, 3.0, 3.0)
-
-# What the room starts with, each playing its part of the default groove. More can be added from the
+# The instruments the room starts with, each playing its part of the default groove. More can be added from the
 # instrument menu; scripts/catalog.gd describes each kind.
 const DEFAULT_ROOM := [
 	{"kind": "drums", "position": Vector3(0.5, 0.9, -3.6)},
@@ -48,26 +45,6 @@ const DEFAULT_ROOM := [
 const DEFAULT_TEMPO := 92.0
 const DEFAULT_SWING := 0.14
 
-const GRID_SHADER := """
-shader_type spatial;
-uniform vec3 base_color : source_color = vec3(0.1);
-uniform float line_strength = 0.035;
-varying vec3 world_pos;
-varying vec3 world_normal;
-void vertex() {
-	world_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
-	world_normal = normalize((MODEL_MATRIX * vec4(NORMAL, 0.0)).xyz);
-}
-void fragment() {
-	vec3 n = abs(world_normal);
-	vec2 p = n.y > 0.5 ? world_pos.xz : (n.x > 0.5 ? world_pos.zy : world_pos.xy);
-	vec2 g = abs(fract(p - 0.5) - 0.5) / fwidth(p);
-	float line = 1.0 - min(min(g.x, g.y), 1.0);
-	ALBEDO = base_color + vec3(line * line_strength);
-	ROUGHNESS = 0.92;
-}
-"""
-
 var audio: SoundRoomAudio
 var settings := Settings.new()
 var player
@@ -76,13 +53,13 @@ var menu
 var sequencer  # the pattern editor
 var instrument_menu
 var title  # the title screen
+var room  # its size and the walls inside it
 var instruments: Array = []
 var speaker  # the Speaker the room starts with: the one whose input choice is remembered between runs
 # The room's clock. These belong to the room rather than the player's settings, so they start from the defaults.
 var tempo := DEFAULT_TEMPO
 var swing := DEFAULT_SWING
 var sequence_running := true  # whether the sequencer is playing the patterns
-var walls: Array = []  # AABBs that sound has to bend around
 var options := {}
 var live_input := false   # never restored from settings: an open microphone next to speakers would feed back
 var audio_error := ""     # the last problem opening a device, shown in the menu
@@ -108,7 +85,19 @@ func _ready() -> void:
 	audio.start_midi()
 
 	_build_environment()
-	_build_room()
+	room = Room.new()
+	add_child(room)
+	room.changed.connect(_on_room_changed)
+	room.setup()
+	if options.has("room"):
+		var dims: PackedStringArray = options.room.split(",")
+		room.set_size(Vector3(float(dims[0]), float(dims[1]), float(dims[2])))
+	if options.has("walls"):
+		while not room.walls.is_empty():
+			room.remove_wall(0)
+		for text in options.walls.split(";", false):
+			var n: PackedStringArray = text.split(",")
+			room.add_wall(Vector2(float(n[0]), float(n[1])), Vector2(float(n[2]), float(n[3])), float(n[4]) if n.size() > 4 else Room.DEFAULT_WALL_HEIGHT)
 	for entry in DEFAULT_ROOM:
 		var inst = add_instrument(entry.kind, entry.position, true)  # with its part of the default groove
 		if entry.kind == "live":
@@ -129,7 +118,8 @@ func _ready() -> void:
 	player = Player.new()
 	player.name = "Player"
 	add_child(player)
-	player.setup(self, instruments, ROOM_SIZE, PARTITION_CENTER, PARTITION_SIZE)
+	player.setup(self, instruments)
+	_on_room_changed()  # now that there are instruments and a player to keep inside it
 	if options.has("pose"):
 		var p: PackedStringArray = options.pose.split(",")
 		player.place(Vector3(float(p[0]), 0.0, float(p[1])), deg_to_rad(float(p[2])))
@@ -187,13 +177,25 @@ func _process(delta: float) -> void:
 		get_tree().quit()
 
 
-## Tell the audio core how each instrument's sound reaches the listener: straight, or bent around a wall edge.
+## Tell the audio core where each instrument is. It works out how the sound gets from there to the listener.
 func _physics_process(_delta: float) -> void:
-	if player == null:
-		return
-	var ear := listener_position()
 	for inst in instruments:
-		inst.set_direct_path(Acoustics.direct_path(ear, inst.global_position, walls, ROOM_SIZE.y))
+		inst.sync_position()
+
+
+# ── The room ────────────────────────────────────────────────────────────────────────────────────────────────
+
+## The room's size or walls changed: tell the audio core, and bring in anything left outside or inside a wall.
+func _on_room_changed() -> void:
+	audio.set_room(room.size, room.audio_walls())
+	for inst in instruments:
+		var at: Vector3 = inst.global_position
+		at.y = minf(at.y, room.size.y - inst.size.y / 2 - 0.3)
+		inst.global_position = room.settle(at, 0.6, 0.5, at)
+	if player != null:
+		var stood: Vector3 = player.global_position
+		stood.y = 0.0
+		player.global_position = room.settle(stood, 0.5, 0.45, stood)
 
 
 # ── Playback engine and I/O ─────────────────────────────────────────────────────────────────────────────────
@@ -472,7 +474,8 @@ func _print_stats() -> void:
 		100.0 * s.get("cpu_load", 0.0), s.get("blocks", 0)])
 	var levels := []
 	for inst in instruments:
-		levels.append("%s=%.3f%s" % [inst.kind, audio.get_source_level(inst.source_id), " (behind wall)" if inst.shadowed else ""])
+		levels.append("%s=%.3f%s" % [inst.kind, audio.get_source_level(inst.source_id),
+			" (behind wall)" if audio.is_source_blocked(inst.source_id) else ""])
 	print("SoundRoom sources: ", ", ".join(levels))
 	print("SoundRoom midi: ", audio.get_midi_devices(), " live_input=", s.get("live_input", false))
 	var patterns := []
@@ -480,6 +483,7 @@ func _print_stats() -> void:
 		if inst.playable:
 			patterns.append("%s=%d notes/%d steps%s" % [inst.kind, audio.get_pattern(inst.source_id).size(),
 				audio.get_pattern_steps(inst.source_id), "" if inst.loop_on else " (loop off)"])
+	print("SoundRoom room: ", room.size, " walls=", room.walls.size(), " reverb=%.2fs" % audio.get_room_decay())
 	print("SoundRoom transport: ", audio.get_transport(), " playing=",
 		player.playing.kind if player.playing != null else "nothing", " patterns: ", ", ".join(patterns))
 
@@ -501,54 +505,3 @@ func _build_environment() -> void:
 	var world_env := WorldEnvironment.new()
 	world_env.environment = env
 	add_child(world_env)
-
-	var house_light := OmniLight3D.new()
-	house_light.position = Vector3(0.0, ROOM_SIZE.y - 0.3, 0.0)
-	house_light.light_color = Color(0.75, 0.8, 1.0)
-	house_light.light_energy = 0.35
-	house_light.omni_range = 14.0
-	add_child(house_light)
-
-
-func _build_room() -> void:
-	var w := ROOM_SIZE.x
-	var h := ROOM_SIZE.y
-	var d := ROOM_SIZE.z
-	var t := WALL_THICKNESS
-	_add_block(Vector3(0, -t / 2, 0), Vector3(w + 2 * t, t, d + 2 * t), Color(0.05, 0.055, 0.07))  # floor
-	_add_block(Vector3(0, h + t / 2, 0), Vector3(w + 2 * t, t, d + 2 * t), Color(0.035, 0.04, 0.05))  # ceiling
-	_add_block(Vector3(-w / 2 - t / 2, h / 2, 0), Vector3(t, h, d), Color(0.06, 0.065, 0.085))
-	_add_block(Vector3(w / 2 + t / 2, h / 2, 0), Vector3(t, h, d), Color(0.06, 0.065, 0.085))
-	_add_block(Vector3(0, h / 2, -d / 2 - t / 2), Vector3(w, h, t), Color(0.06, 0.065, 0.085))
-	_add_block(Vector3(0, h / 2, d / 2 + t / 2), Vector3(w, h, t), Color(0.06, 0.065, 0.085))
-	# The partition blocks the player, and sound has to bend around it.
-	_add_block(PARTITION_CENTER, PARTITION_SIZE, Color(0.12, 0.13, 0.17))
-	walls.append(AABB(PARTITION_CENTER - PARTITION_SIZE / 2, PARTITION_SIZE))
-
-
-func _add_block(center: Vector3, size: Vector3, color: Color) -> void:
-	var body := StaticBody3D.new()
-	body.position = center
-	var shape := CollisionShape3D.new()
-	var box := BoxShape3D.new()
-	box.size = size
-	shape.shape = box
-	body.add_child(shape)
-	var mesh := MeshInstance3D.new()
-	var box_mesh := BoxMesh.new()
-	box_mesh.size = size
-	mesh.mesh = box_mesh
-	var material := ShaderMaterial.new()
-	material.shader = _grid_shader()
-	material.set_shader_parameter("base_color", color)
-	mesh.material_override = material
-	body.add_child(mesh)
-	add_child(body)
-
-
-var _shader: Shader
-func _grid_shader() -> Shader:
-	if _shader == null:
-		_shader = Shader.new()
-		_shader.code = GRID_SHADER
-	return _shader

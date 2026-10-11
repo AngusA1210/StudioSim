@@ -1,5 +1,6 @@
 extends CanvasLayer
-## The menu (Esc). A Metronome page for the tempo and click, then the audio setup laid out the way a DAW does it:
+## The menu (Esc). A Metronome page for the tempo and click, a Room page for its size and walls, then the audio
+## setup laid out the way a DAW does it:
 ## a Playback Engine page for the device and buffer size, an I/O page that maps hardware channels to what they
 ## carry, a MIDI page for enabling controllers, and general settings. The music keeps playing while it's open, so
 ## changes can be heard straight away.
@@ -8,12 +9,22 @@ const ACCENT := Color(0.49, 0.89, 0.82)
 const DIM := Color(0.62, 0.65, 0.74)
 const WARN := Color(1.0, 0.61, 0.48)
 const MAX_GRID_CHANNELS := 16
-const IO_TAB := 2
+const FloorPlan := preload("res://scripts/floor_plan.gd")
+const Room := preload("res://scripts/room.gd")
+# The pages, in order.
+const METRONOME_TAB := 0
+const ROOM_TAB := 1
+const ENGINE_TAB := 2
+const IO_TAB := 3
+const MIDI_TAB := 4
+const SETTINGS_TAB := 5
+const CONTROLS_TAB := 6
 const CONTROLS := """Move                    W A S D   (Shift to run)
 Look                    mouse   (click to capture it)
 Carry an instrument     G or click, again to put it down
 Add an instrument       N
 Remove an instrument    Backspace twice, facing or carrying it
+Room size and walls     Esc, then the Room page
 Play an instrument      E when next to it, Q to stop
                         A S D F G H J K L ;  white keys
                         W E T Y U O P  black keys,  Z X  octave
@@ -48,6 +59,19 @@ var _swing_value: Label
 var _click_toggle: CheckButton
 var _click_slider: HSlider
 var _click_value: Label
+
+# Room
+var _size_sliders := {}  # "x", "y", "z" → HSlider
+var _size_values := {}
+var _decay_label: Label
+var _plan
+var _wall_title: Label
+var _wall_height: HSlider
+var _wall_height_value: Label
+var _wall_note: Label
+var _wall_remove: Button
+var _wall_add: Button
+var _wall_count: Label
 
 # Playback Engine
 var _engine_option: OptionButton
@@ -205,9 +229,10 @@ func _build() -> void:
 	_tabs.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	box.add_child(_tabs)
 	_build_metronome_page(_page("Metronome"))
+	_build_room_page(_page("Room"))
 	_build_engine_page(_page("Playback Engine"))
 	_build_io_page(_page("I-O"))
-	_tabs.set_tab_title(2, "I/O")
+	_tabs.set_tab_title(IO_TAB, "I/O")
 	_build_midi_page(_page("MIDI"))
 	_build_settings_page(_page("Settings"))
 	var controls := Label.new()
@@ -240,6 +265,78 @@ func _build_metronome_page(page: VBoxContainer) -> void:
 	_click_slider.value_changed.connect(_on_click_volume_changed)
 	_note(page, "The click is on every beat, higher on the first beat of the bar. It plays straight into your ears rather than from somewhere in the room.")
 	_note(page, "Space starts and stops the patterns and C switches the click, without opening this menu. To change what an instrument plays, walk up to it and press Tab. The tempo and the patterns go back to the defaults each time SoundRoom starts, until rooms can be saved.")
+
+
+func _build_room_page(page: VBoxContainer) -> void:
+	page.get_parent().size_flags_vertical = Control.SIZE_EXPAND_FILL  # so the floor plan can take the page's height
+	_note(page, "The room from above, north (the way you first face) at the top. Drag on the floor to draw a wall. Drag a wall to move it, or the dot at either end to turn and stretch it.")
+	var columns := HBoxContainer.new()
+	columns.add_theme_constant_override("separation", 18)
+	columns.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	page.add_child(columns)
+	_plan = FloorPlan.new()
+	_plan.setup(app)
+	_plan.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_plan.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_plan.selection_changed.connect(_refresh_live)
+	columns.add_child(_plan)
+	var side := VBoxContainer.new()
+	side.custom_minimum_size.x = 270
+	side.add_theme_constant_override("separation", 7)
+	columns.add_child(side)
+
+	_heading(side, "Size")
+	for axis in [["x", "Width", Room.MIN_SIZE.x, Room.MAX_SIZE.x, 0.5], ["z", "Length", Room.MIN_SIZE.z, Room.MAX_SIZE.z, 0.5],
+			["y", "Height", Room.MIN_SIZE.y, Room.MAX_SIZE.y, 0.1]]:
+		_size_values[axis[0]] = Label.new()
+		_size_sliders[axis[0]] = _narrow_slider(side, axis[1], axis[2], axis[3], axis[4], _size_values[axis[0]])
+		_size_sliders[axis[0]].value_changed.connect(_on_size_changed)
+	_decay_label = Label.new()
+	_decay_label.add_theme_color_override("font_color", DIM)
+	_decay_label.add_theme_font_size_override("font_size", 13)
+	_decay_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	side.add_child(_decay_label)
+
+	side.add_child(HSeparator.new())
+	_heading(side, "Walls")
+	_wall_title = Label.new()
+	side.add_child(_wall_title)
+	_wall_height_value = Label.new()
+	_wall_height = _narrow_slider(side, "Height", Room.MIN_WALL_HEIGHT, Room.MAX_SIZE.y, 0.1, _wall_height_value)
+	_wall_height.value_changed.connect(_on_wall_height_changed)
+	_wall_note = Label.new()
+	_wall_note.add_theme_color_override("font_color", DIM)
+	_wall_note.add_theme_font_size_override("font_size", 13)
+	_wall_note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	side.add_child(_wall_note)
+	var buttons := HBoxContainer.new()
+	buttons.add_theme_constant_override("separation", 8)
+	side.add_child(buttons)
+	_wall_add = Button.new()
+	_wall_add.text = "Add a wall"
+	_wall_add.pressed.connect(_on_wall_add_pressed)
+	buttons.add_child(_wall_add)
+	_wall_remove = Button.new()
+	_wall_remove.text = "Remove"
+	_wall_remove.pressed.connect(_on_wall_remove_pressed)
+	buttons.add_child(_wall_remove)
+	_wall_count = Label.new()
+	_wall_count.add_theme_color_override("font_color", DIM)
+	_wall_count.add_theme_font_size_override("font_size", 13)
+	buttons.add_child(_wall_count)
+	var gap := Control.new()
+	gap.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	side.add_child(gap)
+	var reset := Button.new()
+	reset.text = "Back to the default room"
+	reset.pressed.connect(_on_room_reset_pressed)
+	side.add_child(reset)
+	var unsaved := Label.new()
+	unsaved.text = "Resets when SoundRoom restarts."
+	unsaved.add_theme_color_override("font_color", DIM)
+	unsaved.add_theme_font_size_override("font_size", 12)
+	unsaved.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	side.add_child(unsaved)
 
 
 func _build_engine_page(page: VBoxContainer) -> void:
@@ -375,6 +472,31 @@ func _refresh_live() -> void:
 	_click_slider.set_value_no_signal(settings.click_volume_db)
 	_click_value.text = "%+.1f dB" % settings.click_volume_db
 
+	# Room
+	var room = app.room
+	for axis in _size_sliders:
+		_size_sliders[axis].set_value_no_signal(room.size[axis])
+		_size_values[axis].text = "%.1f m" % room.size[axis]
+	_decay_label.text = "Rings for about %.1f s. Bigger rooms ring longer but more quietly." % audio.get_room_decay()
+	var chosen: int = _plan.selected
+	var has_wall: bool = chosen >= 0 and chosen < room.walls.size()
+	_wall_height.editable = has_wall
+	_wall_remove.disabled = not has_wall
+	if has_wall:
+		var wall: Dictionary = room.walls[chosen]
+		_wall_title.text = "Wall %d  ·  %.2f m long" % [chosen + 1, room.wall_length(wall)]
+		_wall_height.max_value = room.size.y
+		_wall_height.set_value_no_signal(room.wall_top(wall))
+		_wall_height_value.text = "%.1f m" % room.wall_top(wall)
+		_wall_note.text = "It reaches the ceiling: sound only gets round its ends." if room.wall_top(wall) >= room.size.y - 0.05 \
+			else "Sound comes over the top as well as round the ends."
+	else:
+		_wall_title.text = "No wall selected"
+		_wall_height_value.text = ""
+		_wall_note.text = "Click a wall on the plan to select it."
+	_wall_add.disabled = room.walls.size() >= Room.MAX_WALLS
+	_wall_count.text = "%d of %d" % [room.walls.size(), Room.MAX_WALLS]
+
 	# Playback Engine
 	_buffer_option.select(settings.BUFFER_SIZES.find(settings.buffer_size))
 	_rate_label.text = "%.1f kHz" % (float(s.get("sample_rate", 0)) / 1000.0) if running else "-"
@@ -482,6 +604,36 @@ func _on_click_toggled(on: bool) -> void:
 
 func _on_click_volume_changed(db: float) -> void:
 	app.set_click_volume_db(db)
+	_refresh_live()
+
+
+func _on_size_changed(_value: float) -> void:
+	app.room.set_size(Vector3(_size_sliders.x.value, _size_sliders.y.value, _size_sliders.z.value))
+	_refresh_live()
+
+
+func _on_wall_height_changed(metres: float) -> void:
+	app.room.set_wall_height(_plan.selected, metres)
+	_refresh_live()
+
+
+func _on_wall_remove_pressed() -> void:
+	app.room.remove_wall(_plan.selected)
+	_plan.select(-1)
+	_refresh_live()
+
+
+## A wall three metres long across the middle of the room, ready to be dragged into place.
+func _on_wall_add_pressed() -> void:
+	var made: int = app.room.add_wall(Vector2(-1.5, 0.0), Vector2(1.5, 0.0))
+	if made >= 0:
+		_plan.select(made)
+	_refresh_live()
+
+
+func _on_room_reset_pressed() -> void:
+	_plan.select(-1)
+	app.room.reset()
 	_refresh_live()
 
 
@@ -705,7 +857,7 @@ func _field(page: Control, title: String) -> HBoxContainer:
 	return row
 
 
-func _heading(page: VBoxContainer, title: String) -> void:
+func _heading(page: Control, title: String) -> void:
 	var label := Label.new()
 	label.text = title
 	label.add_theme_font_size_override("font_size", 17)
@@ -733,6 +885,29 @@ func _slider(page: VBoxContainer, title: String, low: float, high: float, step: 
 	row.add_child(slider)
 	value_label.custom_minimum_size.x = 80
 	row.add_child(value_label)
+	return slider
+
+
+## A slider for a narrow column: a short label, the slider, and its value.
+func _narrow_slider(parent: Control, title: String, low: float, high: float, step: float, value_label: Label) -> HSlider:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	var label := Label.new()
+	label.text = title
+	label.custom_minimum_size.x = 58
+	label.add_theme_color_override("font_color", DIM)
+	row.add_child(label)
+	var slider := HSlider.new()
+	slider.min_value = low
+	slider.max_value = high
+	slider.step = step
+	slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	slider.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	row.add_child(slider)
+	value_label.custom_minimum_size.x = 56
+	value_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	row.add_child(value_label)
+	parent.add_child(row)
 	return slider
 
 

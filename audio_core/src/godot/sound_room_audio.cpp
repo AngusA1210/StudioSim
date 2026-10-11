@@ -127,14 +127,21 @@ int SoundRoomAudio::get_max_sources() const { return sr::AudioEngine::kMaxSource
 
 void SoundRoomAudio::set_source_position(int id, const Vector3& p) { if (engine_) engine_->setSourcePosition(id, vec(p)); }
 
-void SoundRoomAudio::set_source_direct_path(int id, const Vector3& via, float extra_length,
-                                            const PackedFloat32Array& path_differences, bool blocked) {
-    if (!engine_) return;
-    float deltas[3] = {};
-    const int count = int(std::min<int64_t>(path_differences.size(), 3));
-    for (int i = 0; i < count; ++i) deltas[i] = path_differences[i];
-    engine_->setSourceDirectPath(id, vec(via), extra_length, deltas, count, blocked);
+bool SoundRoomAudio::is_source_blocked(int id) const { return engine_ && engine_->sourceBlocked(id); }
+
+void SoundRoomAudio::set_room(const Vector3& size, const Array& walls) {
+    if (!ensureEngine()) return;
+    std::vector<sr::Wall> list;
+    for (int64_t i = 0; i < walls.size(); ++i) {
+        const Dictionary wall = walls[i];
+        const Vector2 a = wall.get("a", Vector2()), b = wall.get("b", Vector2());
+        list.push_back({float(a.x), float(a.y), float(b.x), float(b.y), float(wall.get("thickness", 0.3)), float(wall.get("height", 3.0))});
+    }
+    engine_->setRoom(float(size.x), float(size.y), float(size.z), list);
 }
+
+bool SoundRoomAudio::is_room_settled() { return engine_ && engine_->roomSettled(); }
+float SoundRoomAudio::get_room_decay() const { return engine_ ? engine_->roomDecaySeconds() : 0.0f; }
 
 void SoundRoomAudio::set_source_muted(int id, bool muted) { if (engine_) engine_->setSourceMuted(id, muted); }
 void SoundRoomAudio::set_source_input_channel(int id, int channel) { if (engine_) engine_->setSourceInputChannel(id, channel); }
@@ -293,8 +300,10 @@ void SoundRoomAudio::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_source_count"), &SoundRoomAudio::get_source_count);
     ClassDB::bind_method(D_METHOD("get_max_sources"), &SoundRoomAudio::get_max_sources);
     ClassDB::bind_method(D_METHOD("set_source_position", "id", "position"), &SoundRoomAudio::set_source_position);
-    ClassDB::bind_method(D_METHOD("set_source_direct_path", "id", "via", "extra_length", "path_differences", "blocked"),
-                         &SoundRoomAudio::set_source_direct_path);
+    ClassDB::bind_method(D_METHOD("is_source_blocked", "id"), &SoundRoomAudio::is_source_blocked);
+    ClassDB::bind_method(D_METHOD("set_room", "size", "walls"), &SoundRoomAudio::set_room);
+    ClassDB::bind_method(D_METHOD("is_room_settled"), &SoundRoomAudio::is_room_settled);
+    ClassDB::bind_method(D_METHOD("get_room_decay"), &SoundRoomAudio::get_room_decay);
     ClassDB::bind_method(D_METHOD("set_source_muted", "id", "muted"), &SoundRoomAudio::set_source_muted);
     ClassDB::bind_method(D_METHOD("set_source_input_channel", "id", "channel"), &SoundRoomAudio::set_source_input_channel);
     ClassDB::bind_method(D_METHOD("set_listener", "transform"), &SoundRoomAudio::set_listener);

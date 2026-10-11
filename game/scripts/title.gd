@@ -6,8 +6,6 @@ const ACCENT := Color(0.49, 0.89, 0.82)
 const DIM := Color(0.62, 0.65, 0.74)
 const WARN := Color(1.0, 0.61, 0.48)
 const ORBIT_SECONDS := 90.0  # once round the room
-const ORBIT_RADII := Vector2(5.4, 3.7)
-const ORBIT_HEIGHT := 3.35   # above the partition, below the ceiling
 const LOOK_AT := Vector3(0.0, 0.8, -0.3)
 const TITLE_GAIN := 0.6      # the music plays a little quieter behind the title
 const TAGLINE := "A room of instruments, heard from where you stand."
@@ -79,8 +77,10 @@ func _process(delta: float) -> void:
 		_refresh_status()
 
 
+## An oval a little in from the room's sides and just under its ceiling (above the default room's wall).
 func _place_camera() -> void:
-	var at := Vector3(sin(_angle) * ORBIT_RADII.x, ORBIT_HEIGHT, cos(_angle) * ORBIT_RADII.y)
+	var room: Vector3 = app.room.size
+	var at := Vector3(sin(_angle) * (room.x / 2 - 1.6), room.y - 0.65, cos(_angle) * (room.z / 2 - 1.3))
 	camera.look_at_from_position(at, LOOK_AT, Vector3.UP)
 
 
@@ -147,9 +147,9 @@ func _build() -> void:
 	column.add_child(gap)
 
 	_button(column, "enter", "Enter the room", _on_enter_pressed)
-	_button(column, "audio", "Audio setup", _on_menu_pressed.bind(1))
-	_button(column, "settings", "Settings", _on_menu_pressed.bind(4))
-	_button(column, "controls", "Controls", _on_menu_pressed.bind(5))
+	_button(column, "audio", "Audio setup", _on_menu_pressed.bind("ENGINE_TAB"))
+	_button(column, "settings", "Settings", _on_menu_pressed.bind("SETTINGS_TAB"))
+	_button(column, "controls", "Controls", _on_menu_pressed.bind("CONTROLS_TAB"))
 	_button(column, "quit", "Quit", _on_quit_pressed)
 
 	var bottom := Control.new()
@@ -252,8 +252,8 @@ func _finish() -> void:
 		visible = false
 
 
-func _on_menu_pressed(tab: int) -> void:
-	app.menu.open(tab)
+func _on_menu_pressed(page: String) -> void:
+	app.menu.open(app.menu.get(page))
 
 
 func _on_quit_pressed() -> void:

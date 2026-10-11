@@ -1,7 +1,7 @@
 extends SceneTree
 ## Drives the real game with pretend key presses and mouse clicks and checks what happens: the title screen,
 ## walking up to an instrument, playing it, editing its pattern, the tempo and click, adding and removing instruments, the
-## Speaker, the menu.
+## Speaker, the menu, the room's size and walls.
 ## Run: godot --headless --path game --script tests/ui_check.gd -- --silent
 ## (--silent keeps it from making a sound or touching saved settings; the exit code is the number of failures)
 
@@ -63,6 +63,29 @@ func click(pos: Vector2, button := MOUSE_BUTTON_LEFT) -> void:
 		e.pressed = pressed
 		view.push_input(e)
 		await frames(1)
+	await frames(2)
+
+
+## Presses the mouse at one point of the floor plan (in metres) and lets go at another.
+func drag(plan, from: Vector2, to: Vector2) -> void:
+	var origin: Vector2 = plan.get_global_rect().position
+	for step in 6:
+		var at: Vector2 = origin + plan.to_screen(from.lerp(to, maxf(step - 1, 0) / 4.0))
+		var move := InputEventMouseMotion.new()
+		move.position = at
+		move.global_position = at
+		move.relative = Vector2(2, 1)
+		move.button_mask = MOUSE_BUTTON_MASK_LEFT if step > 0 else 0
+		view.push_input(move)
+		await frames(1)
+		if step == 0 or step == 5:
+			var button := InputEventMouseButton.new()
+			button.position = at
+			button.global_position = at
+			button.button_index = MOUSE_BUTTON_LEFT
+			button.pressed = step == 0
+			view.push_input(button)
+			await frames(1)
 	await frames(2)
 
 
@@ -359,6 +382,75 @@ func _run() -> void:
 	await frames(2)
 	check(is_equal_approx(audio.get_transport().bpm, 100.0) and is_equal_approx(audio.get_transport().swing, 0.0) and absf(audio.get_transport().click_volume - 0.501) < 0.01,
 		"its sliders set tempo, swing and click volume", str(audio.get_transport()))
+
+	print("The room")
+	var room = main.room
+	var menu = main.menu
+	player.place(Vector3(0.5, 0.0, -2.0), 0.0)  # the bass is on the other side of the wall from here
+	await frames(4)
+	check(audio.is_source_blocked(bass.source_id) and not audio.is_source_blocked(drums.source_id), "from behind the wall, the bass is hidden and the drums are not")
+	menu._tabs.current_tab = menu.ROOM_TAB
+	await frames(4)
+	var plan = menu._plan
+	check(menu._tabs.get_tab_title(menu.ROOM_TAB) == "Room" and plan.is_visible_in_tree() and plan.size.x > 250 and plan.size.y > 200,
+		"the Room page shows the floor plan", "%d x %d pixels" % [plan.size.x, plan.size.y])
+	var rang: float = audio.get_room_decay()
+	menu._size_sliders.x.value = 24.0
+	menu._size_sliders.z.value = 16.0
+	menu._size_sliders.y.value = 6.0
+	await frames(3)
+	check(room.size.is_equal_approx(Vector3(24, 6, 16)) and audio.get_room_decay() > rang + 0.4 and menu._decay_label.text.contains("%.1f" % audio.get_room_decay()),
+		"the sliders resize the room, and a bigger room rings longer", "%.2f s, then %.2f s" % [rang, audio.get_room_decay()])
+	await seconds(1.2)
+	check(audio.is_room_settled(), "the reverb has changed over within about a second")
+
+	var had: int = room.walls.size()
+	await drag(plan, Vector2(2.1, 3.05), Vector2(6.05, 2.9))
+	var drawn: Dictionary = room.walls[-1]
+	check(room.walls.size() == had + 1 and drawn.a.is_equal_approx(Vector2(2, 3)) and drawn.b.is_equal_approx(Vector2(6, 3)) and plan.selected == had,
+		"dragging on the floor draws a wall, snapped to the grid", "%s to %s" % [drawn.a, drawn.b])
+	check(menu._wall_title.text == "Wall %d  ·  4.30 m long" % (had + 1), "the page says which wall is selected and how long it is", menu._wall_title.text)
+	await drag(plan, Vector2(4, 3), Vector2(4, 5))
+	check(room.walls[had].a.is_equal_approx(Vector2(2, 5)) and room.walls[had].b.is_equal_approx(Vector2(6, 5)), "dragging a wall moves it",
+		"%s to %s" % [room.walls[had].a, room.walls[had].b])
+	await drag(plan, Vector2(6, 5), Vector2(6, 1))
+	check(room.walls[had].a.is_equal_approx(Vector2(2, 5)) and room.walls[had].b.is_equal_approx(Vector2(6, 1)), "dragging its end turns and stretches it",
+		"%s to %s" % [room.walls[had].a, room.walls[had].b])
+	await drag(plan, Vector2(2, 5), Vector2(5.9, 1.1))
+	check(room.walls[had].a.distance_to(room.walls[had].b) >= 0.5, "an end can't be dragged onto the other", "%s to %s" % [room.walls[had].a, room.walls[had].b])
+	await click(plan.get_global_rect().position + plan.to_screen(Vector2(-2.5, -1.9)))
+	check(plan.selected == 0 and menu._wall_note.text.contains("over the top"), "clicking another wall selects it", menu._wall_note.text)
+	menu._wall_height.value = 6.0
+	await frames(2)
+	check(is_equal_approx(room.walls[0].height, 6.0) and menu._wall_note.text.contains("reaches the ceiling"), "its height slider raises it to the ceiling", menu._wall_note.text)
+	menu._wall_remove.pressed.emit()
+	await frames(2)
+	check(room.walls.size() == had and plan.selected == -1 and menu._wall_remove.disabled, "Remove takes the selected wall away")
+	check(not audio.is_source_blocked(bass.source_id), "and the bass is no longer hidden")
+	menu._wall_add.pressed.emit()
+	await frames(2)
+	check(room.walls.size() == had + 1 and plan.selected == had, "Add a wall puts one in the middle, selected")
+	var inside: Vector3 = room.push_out_of_walls(Vector3(0.2, 1.0, 0.05), 0.5, Vector3(0.0, 0.0, 3.0))
+	check(is_equal_approx(inside.z, 0.65) and is_equal_approx(inside.x, 0.2), "something carried into a wall stays on the carrier's side of it", str(inside))
+
+	for axis in ["x", "z", "y"]:
+		menu._size_sliders[axis].value = 0.0  # as small as it goes
+	await frames(4)
+	var outside := []
+	if absf(player.global_position.x) > 1.8 or absf(player.global_position.z) > 1.8:  # jostled by six instruments, but in the room
+		outside.append("you at %s" % player.global_position)
+	for inst in main.instruments:
+		if absf(inst.global_position.x) > 1.41 or absf(inst.global_position.z) > 1.41 or inst.global_position.y + inst.size.y / 2 > 2.4:
+			outside.append("%s at %s" % [inst.display_name, inst.global_position])
+	for wall in room.walls:
+		if absf(wall.a.x) > 2.0 or absf(wall.b.x) > 2.0 or absf(wall.a.y) > 2.0 or absf(wall.b.y) > 2.0:
+			outside.append("a wall from %s to %s" % [wall.a, wall.b])
+	check(room.size.is_equal_approx(Vector3(4.0, 2.4, 4.0)) and outside.is_empty(), "shrinking the room brings the instruments, the walls and you inside it",
+		"%s, reverb %.2f s; left outside: %s" % [room.size, audio.get_room_decay(), ", ".join(outside) if not outside.is_empty() else "nothing"])
+	menu._on_room_reset_pressed()
+	await frames(3)
+	check(room.size.is_equal_approx(Vector3(14, 4, 10)) and room.walls.size() == 1 and is_equal_approx(audio.get_room_decay(), 1.1),
+		"Back to the default room restores its size and its one wall")
 
 	print("Back to the title screen")
 	await tap(KEY_ESCAPE)  # close the menu left open above
