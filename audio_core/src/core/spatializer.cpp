@@ -91,7 +91,7 @@ void SourceSpatializer::process(const float* mono, float* out_l, float* out_r, c
 
     IPLDirectEffectParams dp{};
     dp.flags = IPLDirectEffectFlags(IPL_DIRECTEFFECTFLAGS_APPLYDISTANCEATTENUATION | IPL_DIRECTEFFECTFLAGS_APPLYAIRABSORPTION);
-    dp.distanceAttenuation = kRefDistance / std::max(kRefDistance, p.distance);
+    dp.distanceAttenuation = std::pow(kRefDistance / std::max(kRefDistance, p.distance), p.falloff);
     // Steam Audio applies these three numbers as a three-band EQ, so air and walls share it.
     for (int b = 0; b < 3; ++b)
         dp.airAbsorption[b] = std::exp(-kAirAbsorption[b] * p.distance) * std::clamp(p.band_gain[b], 0.0f, 1.0f);

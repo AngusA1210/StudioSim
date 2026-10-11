@@ -1,6 +1,7 @@
 // Offline checks for the audio core: renders the prototype's room without a sound card and measures it.
 // Run: build/engine_tests            (exit code 0 = all checks passed)
-//      build/engine_tests --dump file  (writes what the default room plays, to compare before and after a change)
+//      build/engine_tests --dump file [old-levels]
+//                                    (writes what the default room plays, to compare before and after a change)
 //      build/engine_tests --paths in out  (the wall model's answers for the listener and source positions in `in`)
 //      build/engine_tests --device ["name" [buffer [left right]]]
 //                                    (lists audio devices, opens one silently, prints its latency)
@@ -255,10 +256,19 @@ int midiProbe(int seconds) {
     return 0;
 }
 
+// The engine's levels as they were when sound fell 6 dB per doubling of distance: that falloff, and the output
+// brought back up by what it was lowered when the gentler default came in. (The reverb can't be put back from
+// outside, so this matches the old engine only with the reverb off.)
+void oldLevels(AudioEngine& engine) {
+    engine.setDistanceFalloff(6.0f);
+    engine.setMasterVolume(std::sqrt(7.0f / 1.5f));
+}
+
 // Writes what the default room plays to a file of raw 32-bit floats (interleaved stereo): two loops of the full
 // mix, then one loop of each sequenced instrument alone with the reverb off. Comparing two dumps shows whether a
-// change to the engine altered the sound.
-int dumpGroove(const char* path) {
+// change to the engine altered the sound. With `old_levels`, the engine is first set to the levels it had before
+// the distance falloff became adjustable, to compare with dumps from then.
+int dumpGroove(const char* path, bool old_levels) {
     std::FILE* file = std::fopen(path, "wb");
     if (!file) {
         std::printf("could not write %s\n", path);
@@ -272,10 +282,12 @@ int dumpGroove(const char* path) {
     };
     {
         Room room;
+        if (old_levels) oldLevels(room.engine);
         write(renderSeconds(room.engine, 20.86));
     }
     for (int which = 0; which < 4; ++which) {
         Room room;
+        if (old_levels) oldLevels(room.engine);
         const int ids[4] = {room.drums, room.bass, room.pad, room.bells};
         room.soloOnly(ids[which]);
         room.engine.setReverb(false);
@@ -309,7 +321,7 @@ int dumpPaths(const char* in_path, const char* out_path) {
 }
 
 int main(int argc, char** argv) {
-    if (argc > 2 && std::string(argv[1]) == "--dump") return dumpGroove(argv[2]);
+    if (argc > 2 && std::string(argv[1]) == "--dump") return dumpGroove(argv[2], argc > 3 && std::string(argv[3]) == "old-levels");
     if (argc > 3 && std::string(argv[1]) == "--paths") return dumpPaths(argv[2], argv[3]);
     if (argc > 1 && std::string(argv[1]) == "--device") {  // --device ["name" [buffer [left right]]]
         DeviceConfig config;
@@ -532,20 +544,27 @@ int main(int argc, char** argv) {
 
     {
         std::printf("\nPlayback engine and I/O\n");
-        double reference = 0;
+        // With the reverb off the mix is the same at every size. With it on, the direct sound is a quarter of a buffer
+        // later than the reverb (the binaural rendering works that way), so sustained notes add up a little
+        // differently from size to size: the level is allowed to wander further.
         bool all_ok = true;
         std::string detail;
-        for (int block : {128, 32, 64, 256, 512, 1024}) {
-            Room room;
-            std::string err;
-            if (!room.engine.configure(48000, block, &err)) { all_ok = false; detail += " " + err; continue; }
-            Render r = renderSeconds(room.engine, 10.43);
-            const double level = db(std::sqrt((r.rms_l * r.rms_l + r.rms_r * r.rms_r) / 2));
-            if (block == 128) reference = level;
-            if (!r.finite || r.peak >= 1.0 || std::fabs(level - reference) > 1.0) all_ok = false;
-            detail += fmt(" %.0f:", block) + fmt("%.1f", level);
+        for (bool reverb : {false, true}) {
+            double reference = 0;
+            detail += reverb ? "; with reverb" : "dry";
+            for (int block : {128, 32, 64, 256, 512, 1024}) {
+                Room room;
+                std::string err;
+                room.engine.setReverb(reverb);
+                if (!room.engine.configure(48000, block, &err)) { all_ok = false; detail += " " + err; continue; }
+                Render r = renderSeconds(room.engine, 10.43);
+                const double measured = level(r);
+                if (block == 128) reference = measured;
+                if (!r.finite || r.peak >= 1.0 || std::fabs(measured - reference) > (reverb ? 2.0 : 0.3)) all_ok = false;
+                detail += fmt(" %.0f:", block) + fmt("%.1f", measured);
+            }
         }
-        check(all_ok, "every buffer size from 32 to 1024 renders the same mix", "frames:dBFS" + detail);
+        check(all_ok, "every buffer size from 32 to 1024 renders the same mix", "frames:dBFS, " + detail);
 
         Room room;
         renderSeconds(room.engine, 2.0);
@@ -653,13 +672,15 @@ int main(int argc, char** argv) {
 
     {
         std::printf("\nThe sequencer\n");
-        // Each instrument's part of the default groove, against levels measured before patterns became editable.
+        // Each instrument's part of the default groove, against levels measured before patterns became editable
+        // (and so at the levels the engine had then).
         const double reference[4] = {-34.57, -33.60, -26.03, -24.89};
         const char* names[4] = {"drums", "bass", "pad", "bells"};
         std::string levels;
         bool same = true;
         for (int which = 0; which < 4; ++which) {
             Room room;
+            oldLevels(room.engine);
             const int ids[4] = {room.drums, room.bass, room.pad, room.bells};
             room.soloOnly(ids[which]);
             room.engine.setReverb(false);
@@ -1040,6 +1061,75 @@ int main(int argc, char** argv) {
         Render after_swaps = renderSeconds(swap.engine, 10.43);
         check(swapped == 3 && swap.speaker >= 0 && swap.engine.sourceCount() == 6 && after_swaps.finite && level(after_swaps) > -24.0 && level(after_swaps) < -19.0,
               "a full room can be emptied and refilled at once, three times over", fmt("the groove afterwards: %.1f dBFS", level(after_swaps)));
+    }
+
+    {
+        std::printf("\nLevels\n");
+        // A held pad note, heard from straight ahead at a chosen distance.
+        auto heard = [](Room& room, float distance) {
+            room.face(4.8f, -1.6f + distance, 0.0f);
+            renderSeconds(room.engine, 0.3);
+            return level(renderSeconds(room.engine, 0.5));
+        };
+        Room room;
+        room.quietRoom(room.pad);
+        room.engine.noteOn(room.pad, 57, 0.8f);
+        renderSeconds(room.engine, 2.0);  // let the note swell
+        const double at2 = heard(room, 2.0f), at4 = heard(room, 4.0f), at8 = heard(room, 8.0f);
+        const double close = heard(room, 1.4f), closer = heard(room, 0.5f);
+        check(std::fabs((at2 - at4) - 3.0) < 0.4 && std::fabs((at4 - at8) - 3.0) < 0.4, "each doubling of distance takes 3 dB off",
+              fmt("%.1f dB from 2 to 4 m, %.1f dB from 4 to 8 m", at2 - at4, at4 - at8));
+        check(std::fabs(close - closer) < 0.3 && close > at2, "inside a metre and a half it gets no louder, however close",
+              fmt("%.1f dBFS at 1.4 m, %.1f dBFS at 0.5 m", close, closer));
+        room.engine.setDistanceFalloff(6.0f);
+        renderSeconds(room.engine, 0.5);
+        const double steep2 = heard(room, 2.0f), steep8 = heard(room, 8.0f);
+        room.engine.setDistanceFalloff(0.0f);
+        renderSeconds(room.engine, 0.5);
+        const double flat2 = heard(room, 2.0f), flat8 = heard(room, 8.0f);
+        room.engine.setDistanceFalloff(3.0f);
+        check(std::fabs((steep2 - steep8) - 12.0) < 0.6 && std::fabs(flat2 - flat8) < 0.4, "the falloff can be set: 6 dB a doubling, or none",
+              fmt("2 to 8 m: %.1f dB at the 6 dB setting, %.1f dB at 0", steep2 - steep8, flat2 - flat8));
+        const double before = heard(room, 2.0f);
+        room.engine.setSourceGain(room.pad, 0.5f);  // the pad was added at 1.0
+        const double halved = heard(room, 2.0f);
+        room.engine.setSourceGain(room.pad, 2.0f);
+        const double doubled = heard(room, 2.0f);
+        check(std::fabs((before - halved) - 6.02) < 0.2 && std::fabs((doubled - before) - 6.02) < 0.2, "an instrument's own level can be turned down and up",
+              fmt("half: %.1f dB, double: %+.1f dB", halved - before, doubled - before));
+
+        // The output meter and the limiter, with the whole groove.
+        Room mix;
+        renderSeconds(mix.engine, 1.0);
+        mix.engine.readMeter();
+        Render normal = renderSeconds(mix.engine, 5.0);
+        const MeterReading quiet = mix.engine.readMeter();
+        const MeterReading again = mix.engine.readMeter();
+        check(std::fabs(std::max(quiet.peak_l, quiet.peak_r) - float(normal.peak)) < 1e-6f && quiet.limiter_gain == 1.0f && quiet.clipped == 0 &&
+                  quiet.rms_l > 0.02f && quiet.rms_l < 0.3f && again.peak_l == 0.0f,
+              "the meter shows the output's peak and average, and starts afresh each time it is read",
+              fmt("peak %.1f dBFS, average %.1f dBFS, limiter idle", db(normal.peak), db(quiet.rms_l)));
+        mix.face(0.5f, -2.0f, 0.0f);  // a step away from the drums
+        renderSeconds(mix.engine, 0.5);
+        mix.engine.readMeter();
+        Render beside = renderSeconds(mix.engine, 10.43);
+        const MeterReading near_drums = mix.engine.readMeter();
+        check(near_drums.limiter_gain == 1.0f && beside.peak < Limiter::kThreshold, "standing next to the drums leaves headroom: the limiter isn't touched",
+              fmt("peak %.1f dBFS", db(beside.peak)));
+        mix.engine.setMasterVolume(4.0f);  // 12 dB up: far too loud
+        renderSeconds(mix.engine, 0.5);
+        mix.engine.readMeter();
+        Render pushed = renderSeconds(mix.engine, 10.43);
+        const MeterReading limited = mix.engine.readMeter();
+        check(pushed.peak <= 1.0 && limited.limiter_gain < 0.8f && limited.clipped == 0 && pushed.finite, "pushed too hard, the limiter holds the output under full scale",
+              fmt("peak %.1f dBFS with the limiter pulling down by up to %.1f dB", db(pushed.peak), -db(limited.limiter_gain)));
+        mix.engine.setLimiter(false);
+        renderSeconds(mix.engine, 0.5);
+        mix.engine.readMeter();
+        Render raw = renderSeconds(mix.engine, 10.43);
+        const MeterReading clipped = mix.engine.readMeter();
+        check(raw.peak == 1.0 && clipped.clipped > 0 && clipped.limiter_gain == 1.0f, "with the limiter off the mix is left alone, and the meter counts what is cut off at full scale",
+              fmt("%.0f samples over", double(clipped.clipped)));
     }
 
     {

@@ -16,9 +16,15 @@
 namespace sr {
 namespace {
 
-constexpr float kMasterGain = 1.9f;  // measured: about -21 dBFS RMS at the spawn point, like the prototype
-constexpr float kReverbLevel = 0.16f;
-constexpr float kClickLevel = 0.13f;  // the metronome peaks around -12 dBFS, clear above the room's mix
+// Levels were first balanced with sound falling 6 dB per doubling of distance, heard from about seven metres. With
+// the gentler default the same sources would be twice as loud from there, so the output is brought down to match
+// (and the reverb and click, which don't depend on distance, are brought up by as much to stay where they were).
+// What changes is close up: standing next to an instrument is now 6.7 dB quieter than it was.
+constexpr float kDefaultFalloffDb = 3.0f;
+const float kStage = std::sqrt(SourceSpatializer::kRefDistance / 7.0f);
+const float kMasterGain = 1.9f * kStage;   // about -21 dBFS RMS at the spawn point, like the prototype
+const float kReverbLevel = 0.16f / kStage;
+const float kClickLevel = 0.13f / kStage;  // the metronome peaks around -12 dBFS, clear above the room's mix
 // The room the reverb was tuned in. Other sizes are worked out from it, keeping the same wall surfaces.
 constexpr float kReferenceRoom[3] = {14.0f, 4.0f, 10.0f};  // width, height, depth in metres
 constexpr float kReferenceDecay = 1.1f;                    // its reverb time (RT60) in seconds
@@ -132,7 +138,7 @@ struct AudioEngine::Source {
     std::unique_ptr<Instrument> instrument;
     SourceSpatializer spatializer;
     std::vector<float> mono;
-    float gain = 1.0f, send = 1.0f;
+    float gain = 1.0f, gain_target = 1.0f, send = 1.0f;
     float mute_target = 1.0f, mute_gain = 1.0f;
     int input_channel = LiveInput::kAllInputs;
     // The pattern the sequencer plays on this source. These belong to the audio thread...
@@ -170,7 +176,8 @@ struct AudioEngine::Device {
 
 AudioEngine::AudioEngine(const EngineConfig& config)
     : sr_(config.sample_rate), block_(config.block_size), wanted_rt60_(kReferenceDecay), wanted_level_(kReverbLevel),
-      room_rt60_(kReferenceDecay), room_level_(kReverbLevel), reverb_level_(kReverbLevel), block_pos_(config.block_size) {
+      room_rt60_(kReferenceDecay), room_level_(kReverbLevel), falloff_target_(kDefaultFalloffDb / 6.0f),
+      falloff_(kDefaultFalloffDb / 6.0f), reverb_level_(kReverbLevel), block_pos_(config.block_size) {
     for (auto& l : levels_) l.store(0.0f);
     allocateBuffers();
     sequencer_.setSampleRate(sr_);
@@ -419,7 +426,7 @@ int AudioEngine::addSource(InstrumentKind kind, Vec3 position, float gain, float
     if (!src->spatializer.init(steam_, nullptr)) return -1;
     src->mono.assign(size_t(block_), 0.0f);
     src->via = src->via_target = src->position = position;
-    src->gain = gain;
+    src->gain = src->gain_target = gain;
     src->send = reverb_send;
 
     Command c;
@@ -460,6 +467,10 @@ void AudioEngine::setSourcePosition(int id, Vec3 p) {
     if (!s) return;
     s->position = p;
     updatePath(*s);
+}
+
+void AudioEngine::setSourceGain(int id, float gain) {
+    Command c; c.type = Command::SourceGain; c.id = id; c.v[0] = std::clamp(gain, 0.0f, 100.0f); push(c);
 }
 
 bool AudioEngine::sourceBlocked(int id) const {
@@ -633,6 +644,24 @@ int AudioEngine::patternSteps(int id) const {
 void AudioEngine::setSourceLoop(int id, bool on) {
     Command c; c.type = Command::SourceLoop; c.id = id; c.v[0] = on ? 1.0f : 0.0f; push(c);
 }
+void AudioEngine::setDistanceFalloff(float db_per_doubling) {
+    Command c; c.type = Command::Falloff; c.v[0] = std::clamp(db_per_doubling, 0.0f, 12.0f) / 6.0f; push(c);
+}
+void AudioEngine::setLimiter(bool on) {
+    Command c; c.type = Command::LimiterOn; c.v[0] = on ? 1.0f : 0.0f; push(c);
+}
+
+MeterReading AudioEngine::readMeter() {
+    MeterReading m;
+    m.peak_l = meter_peak_l_.exchange(0.0f, std::memory_order_relaxed);
+    m.peak_r = meter_peak_r_.exchange(0.0f, std::memory_order_relaxed);
+    m.rms_l = meter_rms_l_.load(std::memory_order_relaxed);
+    m.rms_r = meter_rms_r_.load(std::memory_order_relaxed);
+    m.limiter_gain = meter_gain_.exchange(1.0f, std::memory_order_relaxed);
+    m.clipped = meter_clipped_.exchange(0, std::memory_order_relaxed);
+    return m;
+}
+
 void AudioEngine::setSequencerRunning(bool on) {
     transport_.running = on;
     Command c; c.type = Command::SequencerRunning; c.v[0] = on ? 1.0f : 0.0f; push(c);
@@ -734,6 +763,7 @@ void AudioEngine::drainCommands() {
                 break;
             case Command::MasterVolume:
                 master_target_ = c.v[0];
+                if (clock_ == 0) master_gain_ = master_target_;  // set before anything has played: nothing to glide from
                 break;
             case Command::MidiTarget:
                 // Whatever was held on the previous instrument would never get its note-off: let it go now.
@@ -795,6 +825,16 @@ void AudioEngine::drainCommands() {
                 break;
             case Command::ClickVolume:
                 click_volume_ = c.v[0];
+                break;
+            case Command::SourceGain:
+                if (s) s->gain_target = c.v[0];
+                break;
+            case Command::Falloff:
+                falloff_target_ = c.v[0];
+                if (clock_ == 0) falloff_ = falloff_target_;  // set before anything has played: nothing to glide from
+                break;
+            case Command::LimiterOn:
+                limiter_on_ = c.v[0] > 0.5f;
                 break;
             case Command::Reverb2:  // the spare reverb has been rebuilt for a new room: fade over to it
                 reverb_next_ = c.id;
@@ -936,6 +976,7 @@ void AudioEngine::renderBlock() {
     listener_ahead_ = normalized(lerp(listener_ahead_, target_ahead_, glide));
     listener_up_ = normalized(lerp(listener_up_, target_up_, glide));
     const float wall_glide = 1.0f - std::exp(-float(block_) / (0.05f * float(sr_)));
+    falloff_ += (falloff_target_ - falloff_) * wall_glide;
     const float mute_coef = 1.0f - std::exp(-1.0f / (0.01f * float(sr_)));
 
     for (size_t index = 0; index < sources_.size(); ++index) {
@@ -948,6 +989,7 @@ void AudioEngine::renderBlock() {
         double energy = 0.0;
         for (int i = 0; i < block_; ++i) {
             s->mute_gain += (s->mute_target - s->mute_gain) * mute_coef;
+            s->gain += (s->gain_target - s->gain) * mute_coef;
             mono[i] *= s->gain * s->mute_gain;
             energy += double(mono[i]) * mono[i];
             send_[size_t(i)] += mono[i] * s->send;  // the room hears the source even when a wall blocks your view of it
@@ -964,6 +1006,7 @@ void AudioEngine::renderBlock() {
         p.direction = steam_.relativeDirection(s->via, listener_pos_, listener_ahead_, listener_up_);
         p.distance = length(sub(s->via, listener_pos_)) + s->extra;
         p.binaural = binaural_;
+        p.falloff = falloff_;
         s->spatializer.process(mono, mix_l_.data(), mix_r_.data(), p);
 
         if (s->fade_blocks >= 0 && --s->fade_blocks < 0) {  // removed and faded out: forget it and hand it back
@@ -1001,7 +1044,35 @@ void AudioEngine::renderBlock() {
         mix_l_[size_t(i)] = (mix_l_[size_t(i)] + rev_l_[size_t(i)] * wet + click_[size_t(i)]) * out;
         mix_r_[size_t(i)] = (mix_r_[size_t(i)] + rev_r_[size_t(i)] * wet + click_[size_t(i)]) * out;
     }
-    limiter_.process(mix_l_.data(), mix_r_.data(), block_);
+    if (limiter_on_) {
+        const float lowest = limiter_.process(mix_l_.data(), mix_r_.data(), block_);
+        if (lowest < meter_gain_.load(std::memory_order_relaxed)) meter_gain_.store(lowest, std::memory_order_relaxed);
+    } else {  // nothing holds the mix back: what goes over full scale is cut off, and the meter says so
+        uint32_t clipped = 0;
+        for (auto* side : {&mix_l_, &mix_r_})
+            for (float& v : *side)
+                if (std::fabs(v) > 1.0f) {
+                    v = std::copysign(1.0f, v);
+                    ++clipped;
+                }
+        if (clipped) meter_clipped_.fetch_add(clipped, std::memory_order_relaxed);
+    }
+    // The meter reads what leaves for the sound card.
+    float peak_l = 0.0f, peak_r = 0.0f;
+    double square_l = 0.0, square_r = 0.0;
+    for (int i = 0; i < block_; ++i) {
+        peak_l = std::max(peak_l, std::fabs(mix_l_[size_t(i)]));
+        peak_r = std::max(peak_r, std::fabs(mix_r_[size_t(i)]));
+        square_l += double(mix_l_[size_t(i)]) * mix_l_[size_t(i)];
+        square_r += double(mix_r_[size_t(i)]) * mix_r_[size_t(i)];
+    }
+    if (peak_l > meter_peak_l_.load(std::memory_order_relaxed)) meter_peak_l_.store(peak_l, std::memory_order_relaxed);
+    if (peak_r > meter_peak_r_.load(std::memory_order_relaxed)) meter_peak_r_.store(peak_r, std::memory_order_relaxed);
+    const float settle = std::exp(-float(block_) / (0.3f * float(sr_)));
+    meter_ms_l_ = meter_ms_l_ * settle + float(square_l / block_) * (1.0f - settle);
+    meter_ms_r_ = meter_ms_r_ * settle + float(square_r / block_) * (1.0f - settle);
+    meter_rms_l_.store(std::sqrt(meter_ms_l_), std::memory_order_relaxed);
+    meter_rms_r_.store(std::sqrt(meter_ms_r_), std::memory_order_relaxed);
     clock_ += block_;
 
     const double used = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();

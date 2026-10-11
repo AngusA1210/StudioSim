@@ -17,6 +17,9 @@ const MIN_WALL_HEIGHT := 0.5
 const MAX_WALLS := 16
 const MIN_WALL_RUN := 0.5  # the least distance between a wall's two ends
 const GRID := 0.25         # wall ends snap to this
+const LIGHT_SPACING := 7.0
+const LIGHT_RANGE := 12.0
+const LIGHT_ENERGY := 0.3
 
 const GRID_SHADER := """
 shader_type spatial;
@@ -40,9 +43,11 @@ void fragment() {
 
 var size := DEFAULT_SIZE
 var walls: Array = []
+var brightness := 1.0  # of the room's own lights
 
 var _shell: Node3D
 var _wall_nodes: Node3D
+var _lights: Array = []  # [light, its energy at normal brightness]
 var _shader: Shader
 
 
@@ -203,12 +208,31 @@ func _build_shell() -> void:
 	_block(_shell, Vector3(w / 2 + t / 2, h / 2, 0), Vector3(t, h, d), Color(0.06, 0.065, 0.085))
 	_block(_shell, Vector3(0, h / 2, -d / 2 - t / 2), Vector3(w, h, t), Color(0.06, 0.065, 0.085))
 	_block(_shell, Vector3(0, h / 2, d / 2 + t / 2), Vector3(w, h, t), Color(0.06, 0.065, 0.085))
-	var light := OmniLight3D.new()
-	light.position = Vector3(0.0, h - 0.3, 0.0)
-	light.light_color = Color(0.75, 0.8, 1.0)
-	light.light_energy = 0.35
-	light.omni_range = maxf(14.0, 0.81 * Vector2(w, d).length())
-	_shell.add_child(light)
+	# Lights in a grid about seven metres apart, so a big room is lit as evenly as a small one. They hang at the
+	# default room's ceiling height, where they light the floor and what stands on it; a tall room gets a second
+	# set under its own ceiling for the upper walls.
+	_lights.clear()
+	var across := clampi(roundi(w / LIGHT_SPACING), 1, 6)
+	var along := clampi(roundi(d / LIGHT_SPACING), 1, 6)
+	var layers := [[minf(h - 0.3, 3.7), 1.0]]  # height, share of the full energy
+	if h > 6.0:
+		layers.append([h - 0.3, 0.6])
+	for layer in layers:
+		for i in across:
+			for j in along:
+				var light := OmniLight3D.new()
+				light.position = Vector3((i + 0.5) * w / across - w / 2, layer[0], (j + 0.5) * d / along - d / 2)
+				light.light_color = Color(0.75, 0.8, 1.0)
+				light.omni_range = LIGHT_RANGE
+				_shell.add_child(light)
+				_lights.append([light, LIGHT_ENERGY * layer[1]])
+	set_brightness(brightness)
+
+
+func set_brightness(value: float) -> void:
+	brightness = value
+	for entry in _lights:
+		entry[0].light_energy = entry[1] * value
 
 
 func _build_walls() -> void:

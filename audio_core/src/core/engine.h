@@ -74,6 +74,14 @@ struct TransportState {
     int64_t step = -1;          // sixteenths since the sequence started; -1 while it is stopped
 };
 
+// What the output meter has seen since it was last read. Levels are linear: 1 is full scale (0 dBFS).
+struct MeterReading {
+    float peak_l = 0, peak_r = 0;  // the highest sample on each side
+    float rms_l = 0, rms_r = 0;    // the average level over the last third of a second or so
+    float limiter_gain = 1;        // the lowest gain the limiter applied (1 = it did nothing)
+    uint32_t clipped = 0;          // samples that hit full scale and were cut off (only with the limiter off)
+};
+
 class AudioEngine : private StepSink {
 public:
     static constexpr int kMaxSources = 32;  // how many instruments the room holds
@@ -111,6 +119,7 @@ public:
     int sourceCount() const;  // how many are in the room
     void setSourcePosition(int id, Vec3 position);
     bool sourceBlocked(int id) const;  // a wall stands between it and the listener
+    void setSourceGain(int id, float gain);  // its level, as heard within the reference distance (1 = as added)
 
     // ── The room ─────────────────────────────────────────────────────────────────────────────────────────
     // The room's inside dimensions in metres and the walls standing in it. The engine works out how each source's
@@ -137,6 +146,15 @@ public:
     void setBinaural(bool on);
     void setReverb(bool on);
     void setMasterVolume(float gain);  // 1 = normal
+    // How much quieter a source gets for each doubling of its distance beyond the reference distance (1.5 m), in
+    // decibels. 6 is a single source in the open; in a room the reverberation makes up some of the loss, and the
+    // default of 3 keeps levels more even as the listener moves about. Within the reference distance a source is at
+    // its own level and gets no louder, however close.
+    void setDistanceFalloff(float db_per_doubling);
+    // The limiter keeps the output from ever reaching full scale. With it off the output is what the mix adds up
+    // to, as on a mixing desk's master fader, and anything over full scale is cut off (and counted by the meter).
+    void setLimiter(bool on);
+    MeterReading readMeter();  // the output meter; reading it starts a new measurement
 
     // ── The sequencer ────────────────────────────────────────────────────────────────────────────────────
     // Every source has a pattern (empty to begin with) that the clock plays round and round.
@@ -185,7 +203,7 @@ private:
             AddSource, RemoveSource, SourcePosition, SourceDirectPath, SourceMuted, SourceInputChannel, Listener,
             NoteOn, NoteOff, AllNotesOff, Binaural, Reverb, MasterVolume, MidiTarget,
             PatternNoteSet, PatternNoteRemove, PatternClear, PatternSteps, SourceLoop,
-            SequencerRunning, Tempo, Swing, Click, ClickVolume, Reverb2,
+            SequencerRunning, Tempo, Swing, Click, ClickVolume, Reverb2, SourceGain, Falloff, LimiterOn,
         } type = AddSource;
         int id = 0;
         float v[9] = {};
@@ -238,6 +256,9 @@ private:
     bool binaural_ = true;
     float reverb_target_ = 1.0f, reverb_gain_ = 1.0f;
     float master_target_ = 1.0f, master_gain_ = 1.0f;
+    float falloff_target_, falloff_;
+    bool limiter_on_ = true;
+    float meter_ms_l_ = 0.0f, meter_ms_r_ = 0.0f;  // running mean squares for the meter
     Sequencer sequencer_;
     Rng rng_{0x6C078965u};  // for notes that only play some of the time
     std::array<voice::ToneHit, 4> clicks_;
@@ -262,6 +283,8 @@ private:
     std::atomic<uint64_t> blocks_{0};
     std::atomic<int> out_left_{0}, out_right_{1};
     std::atomic<int64_t> step_{-1};
+    std::atomic<float> meter_peak_l_{0.0f}, meter_peak_r_{0.0f}, meter_rms_l_{0.0f}, meter_rms_r_{0.0f}, meter_gain_{1.0f};
+    std::atomic<uint32_t> meter_clipped_{0};
     std::atomic<bool> reverb_changing_{false};  // set by the game thread with a new reverb, cleared when it has faded in
 };
 

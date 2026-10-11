@@ -51,6 +51,7 @@ public:
     int get_max_sources() const;
     void set_source_position(int id, const Vector3& position);
     bool is_source_blocked(int id) const;  // a wall stands between it and the listener
+    void set_source_gain(int id, float gain);  // its level within the reference distance; 1 = as it was added
     // The room's inside size (width, height, depth) in metres and the walls standing in it, each
     // {a: Vector2, b: Vector2, thickness: float, height: float} with a and b on the floor plan (x, z).
     // The audio core works out how sound gets round the walls, and how long and loudly a room that size rings.
@@ -66,6 +67,12 @@ public:
     void set_binaural(bool on);
     void set_reverb(bool on);
     void set_master_volume(float gain);
+    // How many decibels quieter a source gets for each doubling of distance beyond 1.5 m (3 by default, 6 in the open).
+    void set_distance_falloff(float db_per_doubling);
+    void set_limiter(bool on);  // off = the output is the plain sum of the mix, cut off at full scale
+    // The output meter since it was last read: {peak_l, peak_r, rms_l, rms_r, limiter_gain} as linear levels
+    // (1 = full scale; limiter_gain 1 = the limiter did nothing) and {clipped}, a count of samples cut off.
+    Dictionary read_meter();
     float get_source_level(int id) const;
     Dictionary get_stats() const;
 

@@ -3,6 +3,7 @@ extends CanvasLayer
 ## while you are at an instrument, and (if switched on in the menu) a small audio readout. Everything else lives
 ## in the menu and the pattern editor.
 
+const LevelMeter := preload("res://scripts/level_meter.gd")
 const PANEL_BG := Color(0.05, 0.06, 0.09, 0.82)
 const DIM := Color(0.62, 0.65, 0.74)
 const WARN := Color(1.0, 0.61, 0.48)
@@ -27,6 +28,9 @@ var _prompt_panel: PanelContainer
 var _prompt: Label
 var _beat_panel: PanelContainer
 var _beat: Label
+var _meter_panel: PanelContainer
+var _meter
+var _meter_text: Label
 var _piano: PanelContainer
 var _piano_title: Label
 var _piano_help: Label
@@ -79,6 +83,22 @@ func setup(the_app) -> void:
 	_beat.add_theme_font_size_override("font_size", 14)
 	_beat_panel.add_child(_beat)
 
+	# The master meter: output level, and a word when the limiter is working or the mix is clipping.
+	_meter_panel = _panel(_root)
+	var meter_row := HBoxContainer.new()
+	meter_row.add_theme_constant_override("separation", 8)
+	meter_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_meter_panel.add_child(meter_row)
+	_meter = LevelMeter.new()
+	_meter.custom_minimum_size = Vector2(150, 14)
+	_meter.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	meter_row.add_child(_meter)
+	_meter_text = Label.new()
+	_meter_text.add_theme_font_size_override("font_size", 13)
+	_meter_text.custom_minimum_size.x = 74
+	_meter_text.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	meter_row.add_child(_meter_text)
+
 	_build_piano(_root)
 
 
@@ -110,6 +130,22 @@ func _process(_delta: float) -> void:
 	_beat.text = "%s  %d BPM%s" % [dots if app.sequence_running else "■  stopped  · ", roundi(app.tempo), "  ·  click" if app.settings.click else ""]
 	_beat_panel.reset_size()
 	_beat_panel.position = Vector2(vp.x - _beat_panel.size.x - 14, 14)
+
+	_meter_panel.visible = app.settings.show_meter
+	if app.settings.show_meter:
+		var m: Dictionary = app.meter
+		_meter.feed([m.get("peak_l", 0.0), m.get("peak_r", 0.0)], [m.get("rms_l", 0.0), m.get("rms_r", 0.0)])
+		if app.meter_clipped:
+			_meter_text.text = "CLIP"
+			_meter_text.add_theme_color_override("font_color", LevelMeter.RED)
+		elif app.meter_reduction_db > 0.1:
+			_meter_text.text = "limit %.0f dB" % app.meter_reduction_db
+			_meter_text.add_theme_color_override("font_color", WARN)
+		else:
+			_meter_text.text = "%.0f dB" % _meter.held_db()
+			_meter_text.add_theme_color_override("font_color", DIM)
+		_meter_panel.reset_size()
+		_meter_panel.position = Vector2(vp.x - _meter_panel.size.x - 14, _beat_panel.position.y + _beat_panel.size.y + 8)
 
 	var hint := ""
 	if player.remove_pending != null:

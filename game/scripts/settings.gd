@@ -18,12 +18,16 @@ var binaural := true
 var reverb := true
 var click := false        # the metronome click (the tempo itself belongs to the room, not to these settings)
 var click_volume_db := 0.0
+var distance_falloff_db := 3.0  # how much quieter an instrument gets for each doubling of distance beyond 1.5 m
+var limiter := true             # hold the output under full scale; off = hear and meter exactly what the mix adds up to
 
 # Display and controls
 var text_scale := 1.0
 var fov := 75.0
 var mouse_sensitivity := 1.0
 var show_stats := false
+var show_meter := true    # the master level meter on screen
+var room_brightness := 1.0
 
 var path := "user://settings.cfg"
 var persist := true  # automated runs switch this off so they neither read nor change the player's settings
@@ -49,10 +53,14 @@ func load_from_disk() -> void:
 	reverb = file.get_value("sound", "reverb", reverb)
 	click = file.get_value("sound", "click", click)
 	click_volume_db = clampf(file.get_value("sound", "click_volume_db", click_volume_db), -24.0, 6.0)
+	distance_falloff_db = clampf(file.get_value("sound", "distance_falloff_db", distance_falloff_db), 0.0, 6.0)
+	limiter = file.get_value("sound", "limiter", limiter)
 	text_scale = clampf(file.get_value("display", "text_scale", text_scale), 0.75, 2.0)
 	fov = clampf(file.get_value("display", "fov", fov), 50.0, 110.0)
 	mouse_sensitivity = clampf(file.get_value("display", "mouse_sensitivity", mouse_sensitivity), 0.2, 3.0)
 	show_stats = file.get_value("display", "show_stats", show_stats)
+	show_meter = file.get_value("display", "show_meter", show_meter)
+	room_brightness = clampf(file.get_value("display", "room_brightness", room_brightness), 0.5, 3.0)
 
 
 func save_to_disk() -> void:
@@ -71,8 +79,12 @@ func save_to_disk() -> void:
 	file.set_value("sound", "reverb", reverb)
 	file.set_value("sound", "click", click)
 	file.set_value("sound", "click_volume_db", click_volume_db)
+	file.set_value("sound", "distance_falloff_db", distance_falloff_db)
+	file.set_value("sound", "limiter", limiter)
 	file.set_value("display", "text_scale", text_scale)
 	file.set_value("display", "fov", fov)
 	file.set_value("display", "mouse_sensitivity", mouse_sensitivity)
 	file.set_value("display", "show_stats", show_stats)
+	file.set_value("display", "show_meter", show_meter)
+	file.set_value("display", "room_brightness", room_brightness)
 	file.save(path)

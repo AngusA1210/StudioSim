@@ -64,6 +64,24 @@ can load the default one). A new Speaker plays the hardware input chosen in the 
 the I/O page; several Speakers can each play a different input. A second instrument of a kind is numbered and a
 paler colour, to tell them apart. Like the tempo and the patterns, the instruments you add are not saved yet.
 
+## Levels
+
+The Mixer page of the menu is where levels are managed, in decibels:
+
+- **Instruments**: a fader for everything in the room. 0 dB is the level an instrument was made at; a small meter
+  beside each shows it as heard from right next to it.
+- **Distance**: an instrument is at its own level within 1.5 m of it and gets no louder however close you stand.
+  Beyond that it falls by a set amount for each doubling of distance: 3 dB by default, adjustable from 0 to 6. (6 dB
+  is the figure for a single source in the open air. In a room the reverberation makes up some of that loss, and the
+  gentler default keeps levels more even as you move about.)
+- **Master**: the output volume, a stereo meter with peak hold, and the limiter. With the limiter on, the output
+  cannot clip, and the page says by how many decibels it is being held back whenever it is: the cue to turn
+  something down. With it off, the output is the plain sum of the mix, as on a mixing desk's master fader, and
+  anything over full scale is cut off and reported as clipping.
+
+A small master meter also sits on screen in the room (it can be switched off in Settings). It reads "limit" or
+"CLIP" when either is happening.
+
 ## The room
 
 The Room page of the menu changes the room itself, while the music plays:
@@ -79,6 +97,9 @@ Sound finds its way round the walls. Behind one, an instrument is duller and see
 bends round; the longer the detour, the duller it gets, highs first. A wall lower than the ceiling also lets sound
 over the top. Walls that meet close the gap between them, so four walls to the ceiling make a booth that all but
 shuts an instrument away, and a wall built out from the side of the room can only be passed at its free end.
+
+The room is lit by a grid of lamps that grows with it, so a large room is no darker than the default one. Settings
+has a Room lighting slider if it is still too dim or too bright for your screen.
 
 The room goes back to the default each time SoundRoom starts, until rooms can be saved.
 
@@ -104,13 +125,15 @@ patterns go back to the defaults at each start until rooms can be saved.
 ## The menu
 
 - **Metronome**: start and stop the patterns, tempo, swing, the click and its volume.
+- **Mixer**: a fader for each instrument, the distance falloff, the master volume, meter and limiter (see above).
 - **Room**: the room's size and the walls inside it (see above).
 - **Playback Engine**: which output device the audio engine runs on, and the hardware buffer size (32–1024 samples).
   The sample rate follows the device. Shows the resulting latency and CPU use.
 - **I/O**: which of the device's outputs carry the mix, the input device, and which hardware input each Speaker plays.
   Live input always starts switched off, so an open microphone never meets a pair of speakers by surprise.
 - **MIDI**: every MIDI device the system sees, with a tick box each and a light that flashes when it sends notes.
-- **Settings**: master volume, binaural, reverb, text size, field of view, mouse sensitivity, on-screen audio readout.
+- **Settings**: binaural, reverb, text size, field of view, mouse sensitivity, room lighting, and whether the
+  master meter and the audio readout are shown on screen.
 
 Choices are saved (Godot's user data folder, `settings.cfg`) and restored at the next start. If a saved device
 isn't connected, the system default is used until it is.
@@ -131,6 +154,7 @@ audio_core/
     acoustics.h            how much each frequency band dims when sound bends around a wall edge
     midi_input.*           MIDI controllers, read straight into the audio thread (CoreMIDI; other platforms to do)
     mix.*                  room reverb (feedback delay network, sized to the room) and output limiter
+                           (the output meter and the distance law live in engine.* and spatializer.*)
   src/godot/               the Godot extension wrapping the engine (SoundRoomAudio node)
   tests/engine_tests.cpp   offline checks: levels, binaural direction, walls, latency, MIDI, live input, sequencer
 game/tests/ui_check.gd     the game driven by pretend keys and clicks: title, playing, patterns, instruments, room, menus

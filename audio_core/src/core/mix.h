@@ -34,11 +34,12 @@ private:
 class Limiter {
 public:
     void init(float sr);
-    void process(float* l, float* r, int n);
+    // Returns the lowest gain it had to apply in these samples (1 = it did nothing).
+    float process(float* l, float* r, int n);
+    static constexpr float kThreshold = 0.8f;  // about -2 dBFS
 
 private:
     float env_ = 0.0f, release_ = 0.0f;
-    static constexpr float kThreshold = 0.8f;
 };
 
 }  // namespace sr

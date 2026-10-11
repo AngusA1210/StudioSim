@@ -128,6 +128,7 @@ int SoundRoomAudio::get_max_sources() const { return sr::AudioEngine::kMaxSource
 void SoundRoomAudio::set_source_position(int id, const Vector3& p) { if (engine_) engine_->setSourcePosition(id, vec(p)); }
 
 bool SoundRoomAudio::is_source_blocked(int id) const { return engine_ && engine_->sourceBlocked(id); }
+void SoundRoomAudio::set_source_gain(int id, float gain) { if (engine_) engine_->setSourceGain(id, gain); }
 
 void SoundRoomAudio::set_room(const Vector3& size, const Array& walls) {
     if (!ensureEngine()) return;
@@ -158,6 +159,21 @@ void SoundRoomAudio::all_notes_off(int id) { if (engine_) engine_->allNotesOff(i
 void SoundRoomAudio::set_binaural(bool on) { if (engine_) engine_->setBinaural(on); }
 void SoundRoomAudio::set_reverb(bool on) { if (engine_) engine_->setReverb(on); }
 void SoundRoomAudio::set_master_volume(float gain) { if (engine_) engine_->setMasterVolume(gain); }
+void SoundRoomAudio::set_distance_falloff(float db_per_doubling) { if (engine_) engine_->setDistanceFalloff(db_per_doubling); }
+void SoundRoomAudio::set_limiter(bool on) { if (engine_) engine_->setLimiter(on); }
+
+Dictionary SoundRoomAudio::read_meter() {
+    Dictionary d;
+    if (!engine_) return d;
+    const sr::MeterReading m = engine_->readMeter();
+    d["peak_l"] = m.peak_l;
+    d["peak_r"] = m.peak_r;
+    d["rms_l"] = m.rms_l;
+    d["rms_r"] = m.rms_r;
+    d["limiter_gain"] = m.limiter_gain;
+    d["clipped"] = int64_t(m.clipped);
+    return d;
+}
 float SoundRoomAudio::get_source_level(int id) const { return engine_ ? engine_->sourceLevel(id) : 0.0f; }
 
 Dictionary SoundRoomAudio::get_stats() const {
@@ -313,6 +329,10 @@ void SoundRoomAudio::_bind_methods() {
     ClassDB::bind_method(D_METHOD("set_binaural", "on"), &SoundRoomAudio::set_binaural);
     ClassDB::bind_method(D_METHOD("set_reverb", "on"), &SoundRoomAudio::set_reverb);
     ClassDB::bind_method(D_METHOD("set_master_volume", "gain"), &SoundRoomAudio::set_master_volume);
+    ClassDB::bind_method(D_METHOD("set_source_gain", "id", "gain"), &SoundRoomAudio::set_source_gain);
+    ClassDB::bind_method(D_METHOD("set_distance_falloff", "db_per_doubling"), &SoundRoomAudio::set_distance_falloff);
+    ClassDB::bind_method(D_METHOD("set_limiter", "on"), &SoundRoomAudio::set_limiter);
+    ClassDB::bind_method(D_METHOD("read_meter"), &SoundRoomAudio::read_meter);
     ClassDB::bind_method(D_METHOD("get_source_level", "id"), &SoundRoomAudio::get_source_level);
     ClassDB::bind_method(D_METHOD("get_stats"), &SoundRoomAudio::get_stats);
 

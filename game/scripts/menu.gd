@@ -1,6 +1,6 @@
 extends CanvasLayer
-## The menu (Esc). A Metronome page for the tempo and click, a Room page for its size and walls, then the audio
-## setup laid out the way a DAW does it:
+## The menu (Esc). A Metronome page for the tempo and click, a Mixer page with a fader for every instrument and the
+## master meter, a Room page for its size and walls, then the audio setup laid out the way a DAW does it:
 ## a Playback Engine page for the device and buffer size, an I/O page that maps hardware channels to what they
 ## carry, a MIDI page for enabling controllers, and general settings. The music keeps playing while it's open, so
 ## changes can be heard straight away.
@@ -10,20 +10,24 @@ const DIM := Color(0.62, 0.65, 0.74)
 const WARN := Color(1.0, 0.61, 0.48)
 const MAX_GRID_CHANNELS := 16
 const FloorPlan := preload("res://scripts/floor_plan.gd")
+const LevelMeter := preload("res://scripts/level_meter.gd")
 const Room := preload("res://scripts/room.gd")
 # The pages, in order.
 const METRONOME_TAB := 0
-const ROOM_TAB := 1
-const ENGINE_TAB := 2
-const IO_TAB := 3
-const MIDI_TAB := 4
-const SETTINGS_TAB := 5
-const CONTROLS_TAB := 6
+const MIXER_TAB := 1
+const ROOM_TAB := 2
+const ENGINE_TAB := 3
+const IO_TAB := 4
+const MIDI_TAB := 5
+const SETTINGS_TAB := 6
+const CONTROLS_TAB := 7
+const OUTPUT_TRIM := 0.88  # roughly what the engine multiplies an instrument by on its way out, for the strip meters
 const CONTROLS := """Move                    W A S D   (Shift to run)
 Look                    mouse   (click to capture it)
 Carry an instrument     G or click, again to put it down
 Add an instrument       N
 Remove an instrument    Backspace twice, facing or carrying it
+Levels and the meter    Esc, then the Mixer page
 Room size and walls     Esc, then the Room page
 Play an instrument      E when next to it, Q to stop
                         A S D F G H J K L ;  white keys
@@ -59,6 +63,18 @@ var _swing_value: Label
 var _click_toggle: CheckButton
 var _click_slider: HSlider
 var _click_value: Label
+
+# Mixer
+var _master_meter
+var _master_readout: Label
+var _master_state: Label
+var _limiter_toggle: CheckButton
+var _falloff_slider: HSlider
+var _falloff_value: Label
+var _falloff_note: Label
+var _strips: VBoxContainer
+var _strip_rows: Array = []  # {inst, slider, value, meter}
+var _strip_signature := ""
 
 # Room
 var _size_sliders := {}  # "x", "y", "z" → HSlider
@@ -116,6 +132,9 @@ var _fov_value: Label
 var _mouse_slider: HSlider
 var _mouse_value: Label
 var _stats_toggle: CheckButton
+var _meter_toggle: CheckButton
+var _light_slider: HSlider
+var _light_value: Label
 
 
 func setup(the_app) -> void:
@@ -174,6 +193,8 @@ func _process(delta: float) -> void:
 		var row: Dictionary = _midi_rows[device_name]
 		row.flash = maxf(row.flash - delta, 0.0)
 		row.dot.add_theme_color_override("font_color", ACCENT if row.flash > 0.0 else Color(1, 1, 1, 0.18))
+	if _tabs.current_tab == MIXER_TAB:
+		_refresh_meters()
 
 
 # ── Building ────────────────────────────────────────────────────────────────────────────────────────────────
@@ -229,6 +250,7 @@ func _build() -> void:
 	_tabs.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	box.add_child(_tabs)
 	_build_metronome_page(_page("Metronome"))
+	_build_mixer_page(_page("Mixer"))
 	_build_room_page(_page("Room"))
 	_build_engine_page(_page("Playback Engine"))
 	_build_io_page(_page("I-O"))
@@ -265,6 +287,79 @@ func _build_metronome_page(page: VBoxContainer) -> void:
 	_click_slider.value_changed.connect(_on_click_volume_changed)
 	_note(page, "The click is on every beat, higher on the first beat of the bar. It plays straight into your ears rather than from somewhere in the room.")
 	_note(page, "Space starts and stops the patterns and C switches the click, without opening this menu. To change what an instrument plays, walk up to it and press Tab. The tempo and the patterns go back to the defaults each time SoundRoom starts, until rooms can be saved.")
+
+
+func _build_mixer_page(page: VBoxContainer) -> void:
+	page.get_parent().size_flags_vertical = Control.SIZE_EXPAND_FILL  # so the list of instruments can take the height
+	var columns := HBoxContainer.new()
+	columns.add_theme_constant_override("separation", 20)
+	columns.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	page.add_child(columns)
+
+	# The master section: what leaves for your ears.
+	var master := VBoxContainer.new()
+	master.custom_minimum_size.x = 290
+	master.add_theme_constant_override("separation", 7)
+	columns.add_child(master)
+	_heading(master, "Master")
+	_master_meter = LevelMeter.new()
+	_master_meter.custom_minimum_size = Vector2(280, 26)
+	master.add_child(_master_meter)
+	_master_readout = Label.new()
+	_master_readout.add_theme_font_size_override("font_size", 13)
+	_master_readout.add_theme_color_override("font_color", DIM)
+	master.add_child(_master_readout)
+	_master_state = Label.new()
+	_master_state.add_theme_font_size_override("font_size", 13)
+	_master_state.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	master.add_child(_master_state)
+	_volume_value = Label.new()
+	_volume_slider = _narrow_slider(master, "Volume", -40.0, 12.0, 0.5, _volume_value)
+	_volume_slider.value_changed.connect(_on_volume_changed)
+	_limiter_toggle = CheckButton.new()
+	_limiter_toggle.toggled.connect(_on_limiter_toggled)
+	master.add_child(_limiter_toggle)
+	master.add_child(HSeparator.new())
+	_heading(master, "Distance")
+	_falloff_value = Label.new()
+	_falloff_slider = _narrow_slider(master, "Falloff", 0.0, 6.0, 0.5, _falloff_value)
+	_falloff_slider.value_changed.connect(_on_falloff_changed)
+	_falloff_note = Label.new()
+	_falloff_note.add_theme_font_size_override("font_size", 13)
+	_falloff_note.add_theme_color_override("font_color", DIM)
+	_falloff_note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	master.add_child(_falloff_note)
+
+	# A fader for everything in the room.
+	var right := VBoxContainer.new()
+	right.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	right.add_theme_constant_override("separation", 7)
+	columns.add_child(right)
+	var top := HBoxContainer.new()
+	right.add_child(top)
+	var title := Label.new()
+	title.text = "Instruments"
+	title.add_theme_font_size_override("font_size", 17)
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	top.add_child(title)
+	var reset := Button.new()
+	reset.text = "All to 0 dB"
+	reset.pressed.connect(_on_levels_reset_pressed)
+	top.add_child(reset)
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	right.add_child(scroll)
+	_strips = VBoxContainer.new()
+	_strips.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_strips.add_theme_constant_override("separation", 6)
+	scroll.add_child(_strips)
+	var hint := Label.new()
+	hint.text = "0 dB is the level an instrument was made at. The small meter shows it as heard from right beside it."
+	hint.add_theme_font_size_override("font_size", 12)
+	hint.add_theme_color_override("font_color", DIM)
+	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	right.add_child(hint)
 
 
 func _build_room_page(page: VBoxContainer) -> void:
@@ -398,9 +493,6 @@ func _build_midi_page(page: VBoxContainer) -> void:
 
 func _build_settings_page(page: VBoxContainer) -> void:
 	_heading(page, "Sound")
-	_volume_value = Label.new()
-	_volume_slider = _slider(page, "Master volume", -30.0, 6.0, 0.5, _volume_value)
-	_volume_slider.value_changed.connect(_on_volume_changed)
 	_binaural_toggle = CheckButton.new()
 	_binaural_toggle.toggled.connect(_on_binaural_toggled)
 	_field(page, "Binaural (HRTF)").add_child(_binaural_toggle)
@@ -422,6 +514,12 @@ func _build_settings_page(page: VBoxContainer) -> void:
 	_mouse_value = Label.new()
 	_mouse_slider = _slider(page, "Mouse sensitivity", 0.2, 3.0, 0.05, _mouse_value)
 	_mouse_slider.value_changed.connect(_on_mouse_changed)
+	_light_value = Label.new()
+	_light_slider = _slider(page, "Room lighting", 50.0, 300.0, 10.0, _light_value)
+	_light_slider.value_changed.connect(_on_light_changed)
+	_meter_toggle = CheckButton.new()
+	_meter_toggle.toggled.connect(_on_meter_toggled)
+	_field(page, "Master meter on screen").add_child(_meter_toggle)
 	_stats_toggle = CheckButton.new()
 	_stats_toggle.toggled.connect(_on_stats_toggled)
 	_field(page, "Audio readout on screen").add_child(_stats_toggle)
@@ -471,6 +569,27 @@ func _refresh_live() -> void:
 	_click_toggle.text = "On" if settings.click else "Off"
 	_click_slider.set_value_no_signal(settings.click_volume_db)
 	_click_value.text = "%+.1f dB" % settings.click_volume_db
+
+	# Mixer
+	_volume_slider.set_value_no_signal(settings.master_volume_db)
+	_volume_value.text = "%+.1f dB" % settings.master_volume_db
+	_limiter_toggle.set_pressed_no_signal(settings.limiter)
+	_limiter_toggle.text = "Limiter on: the output can't clip" if settings.limiter else "Limiter off: the mix as it is"
+	_falloff_slider.set_value_no_signal(settings.distance_falloff_db)
+	_falloff_value.text = "%.1f dB" % settings.distance_falloff_db
+	if settings.distance_falloff_db <= 0.0:
+		_falloff_note.text = "Instruments are as loud from across the room as from beside them."
+	else:
+		_falloff_note.text = "An instrument is at its own level within 1.5 m, and %.1f dB quieter for each doubling of distance beyond. (6 dB is a single source in the open air.)" % settings.distance_falloff_db
+	var strip_signature := ""
+	for inst in app.instruments:
+		strip_signature += "%d|" % inst.get_instance_id()
+	if strip_signature != _strip_signature:
+		_strip_signature = strip_signature
+		_fill_strips()
+	for row in _strip_rows:
+		row.slider.set_value_no_signal(row.inst.level_db)
+		row.value.text = "%+.1f dB" % row.inst.level_db
 
 	# Room
 	var room = app.room
@@ -559,8 +678,6 @@ func _refresh_live() -> void:
 	_midi_empty.visible = devices.is_empty()
 
 	# Settings
-	_volume_slider.set_value_no_signal(settings.master_volume_db)
-	_volume_value.text = "%+.1f dB" % settings.master_volume_db
 	_binaural_toggle.set_pressed_no_signal(settings.binaural)
 	_binaural_toggle.text = "On" if settings.binaural else "Off (plain stereo)"
 	_reverb_toggle.set_pressed_no_signal(settings.reverb)
@@ -574,6 +691,67 @@ func _refresh_live() -> void:
 	_mouse_value.text = "%.2f ×" % settings.mouse_sensitivity
 	_stats_toggle.set_pressed_no_signal(settings.show_stats)
 	_stats_toggle.text = "On" if settings.show_stats else "Off"
+	_meter_toggle.set_pressed_no_signal(settings.show_meter)
+	_meter_toggle.text = "On" if settings.show_meter else "Off"
+	_light_slider.set_value_no_signal(settings.room_brightness * 100.0)
+	_light_value.text = "%d %%" % roundi(settings.room_brightness * 100.0)
+
+
+## The Mixer's meters, every frame while that page is showing.
+func _refresh_meters() -> void:
+	var m: Dictionary = app.meter
+	_master_meter.feed([m.get("peak_l", 0.0), m.get("peak_r", 0.0)], [m.get("rms_l", 0.0), m.get("rms_r", 0.0)])
+	var average := linear_to_db(maxf(maxf(m.get("rms_l", 0.0), m.get("rms_r", 0.0)), 0.00001))
+	_master_readout.text = "Peak %.1f dBFS   ·   average %.0f dBFS" % [_master_meter.held_db(), average]
+	if app.meter_clipped:
+		_master_state.text = "Clipping: the mix is going over full scale. Turn the volume or an instrument down."
+		_master_state.add_theme_color_override("font_color", LevelMeter.RED)
+	elif app.meter_reduction_db > 0.1:
+		_master_state.text = "Limiting by %.1f dB. Turn the volume or an instrument down to stop it." % app.meter_reduction_db
+		_master_state.add_theme_color_override("font_color", WARN)
+	else:
+		_master_state.text = "Limiter idle." if app.settings.limiter else "No clipping."
+		_master_state.add_theme_color_override("font_color", DIM)
+	var out := OUTPUT_TRIM * db_to_linear(app.settings.master_volume_db)
+	for row in _strip_rows:
+		row.meter.feed([audio.get_source_level(row.inst.source_id) * out])
+
+
+## A row for each instrument: its name, its fader, the fader's value and a small meter.
+func _fill_strips() -> void:
+	for child in _strips.get_children():
+		child.queue_free()
+	_strip_rows.clear()
+	for inst in app.instruments:
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 8)
+		var swatch := ColorRect.new()
+		swatch.color = inst.color
+		swatch.custom_minimum_size = Vector2(6, 22)
+		row.add_child(swatch)
+		var name_label := Label.new()
+		name_label.text = inst.display_name
+		name_label.custom_minimum_size.x = 96
+		name_label.clip_text = true
+		row.add_child(name_label)
+		var slider := HSlider.new()
+		slider.min_value = -40.0
+		slider.max_value = 12.0
+		slider.step = 0.5
+		slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		slider.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		slider.value_changed.connect(_on_level_changed.bind(inst))
+		row.add_child(slider)
+		var value := Label.new()
+		value.custom_minimum_size.x = 66
+		value.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		row.add_child(value)
+		var strip_meter := LevelMeter.new()
+		strip_meter.custom_minimum_size = Vector2(64, 8)
+		strip_meter.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		row.add_child(strip_meter)
+		_strips.add_child(row)
+		_strip_rows.append({"inst": inst, "slider": slider, "value": value, "meter": strip_meter})
 
 
 # ── Handlers ────────────────────────────────────────────────────────────────────────────────────────────────
@@ -604,6 +782,37 @@ func _on_click_toggled(on: bool) -> void:
 
 func _on_click_volume_changed(db: float) -> void:
 	app.set_click_volume_db(db)
+	_refresh_live()
+
+
+func _on_level_changed(db: float, inst) -> void:
+	app.set_instrument_level(inst, db)
+	_refresh_live()
+
+
+func _on_levels_reset_pressed() -> void:
+	for inst in app.instruments:
+		app.set_instrument_level(inst, 0.0)
+	_refresh_live()
+
+
+func _on_limiter_toggled(on: bool) -> void:
+	app.set_limiter(on)
+	_refresh_live()
+
+
+func _on_falloff_changed(db: float) -> void:
+	app.set_distance_falloff(db)
+	_refresh_live()
+
+
+func _on_light_changed(percent: float) -> void:
+	app.set_room_brightness(percent / 100.0)
+	_refresh_live()
+
+
+func _on_meter_toggled(on: bool) -> void:
+	app.set_show_meter(on)
 	_refresh_live()
 
 

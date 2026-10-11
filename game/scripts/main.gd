@@ -8,7 +8,7 @@ extends Node3D
 ##   --skip-title             start in the room rather than on the title screen
 ##   --pose=x,z,yaw_degrees   start the player somewhere else
 ##   --live-input             switch the audio input on at start
-##   --menu=N                 open the menu on tab N at start
+##   --menu=N                 open the menu on page N at start (0 Metronome, 1 Mixer, 2 Room, 3 Playback Engine...)
 ##   --play=kind              sit down at an instrument at start (drums, bass, pad, bells, keys)
 ##   --sequencer=kind[,bar]   open that instrument's pattern editor at start
 ##   --add=kind               make a new instrument at start, in the player's hands
@@ -64,6 +64,14 @@ var options := {}
 var live_input := false   # never restored from settings: an open microphone next to speakers would feed back
 var audio_error := ""     # the last problem opening a device, shown in the menu
 var _stage_gain := 1.0    # the title screen turns the music down a little; 1 in the room
+var _environment: Environment
+# The output meter, read once a frame for whoever shows it: the latest reading, how hard the limiter has pulled
+# down lately (in dB, held for a moment), and whether samples have been cut off at full scale lately.
+var meter := {}
+var meter_reduction_db := 0.0
+var meter_clipped := false
+var _reduction_age := 0.0
+var _clip_age := 10.0
 var _frames := 0
 var _elapsed := 0.0
 var _midi_poll := 0.0
@@ -110,6 +118,8 @@ func _ready() -> void:
 	audio.set_binaural(settings.binaural)
 	audio.set_reverb(settings.reverb)
 	_apply_master_volume()
+	audio.set_distance_falloff(settings.distance_falloff_db)
+	audio.set_limiter(settings.limiter)
 	audio.set_click(settings.click)
 	audio.set_click_volume(db_to_linear(settings.click_volume_db))
 	if options.has("tempo"):
@@ -163,6 +173,7 @@ func _ready() -> void:
 func _process(delta: float) -> void:
 	_frames += 1
 	_elapsed += delta
+	_read_meter(delta)
 	_midi_poll += delta
 	if _midi_poll > 2.0:  # the system tells us about new controllers too; this is the fallback
 		_midi_poll = 0.0
@@ -175,6 +186,17 @@ func _process(delta: float) -> void:
 	elif options.has("quit-after") and _elapsed >= float(options["quit-after"]):
 		_print_stats()
 		get_tree().quit()
+
+
+func _read_meter(delta: float) -> void:
+	meter = audio.read_meter()
+	var reduction := -linear_to_db(maxf(meter.get("limiter_gain", 1.0), 0.001))
+	_reduction_age += delta
+	if reduction >= meter_reduction_db or _reduction_age > 1.5:
+		meter_reduction_db = reduction
+		_reduction_age = 0.0
+	_clip_age = 0.0 if int(meter.get("clipped", 0)) > 0 else _clip_age + delta
+	meter_clipped = _clip_age < 2.0
 
 
 ## Tell the audio core where each instrument is. It works out how the sound gets from there to the listener.
@@ -196,6 +218,7 @@ func _on_room_changed() -> void:
 		var stood: Vector3 = player.global_position
 		stood.y = 0.0
 		player.global_position = room.settle(stood, 0.5, 0.45, stood)
+	_apply_lighting()
 
 
 # ── Playback engine and I/O ─────────────────────────────────────────────────────────────────────────────────
@@ -409,6 +432,24 @@ func set_master_volume_db(db: float) -> void:
 	settings.save_to_disk()
 
 
+## An instrument's fader, in decibels above or below its normal level.
+func set_instrument_level(inst, db: float) -> void:
+	inst.set_level_db(clampf(db, -60.0, 12.0))
+
+
+## How much quieter an instrument gets for each doubling of distance beyond a metre and a half, in decibels.
+func set_distance_falloff(db: float) -> void:
+	settings.distance_falloff_db = clampf(db, 0.0, 6.0)
+	audio.set_distance_falloff(settings.distance_falloff_db)
+	settings.save_to_disk()
+
+
+func set_limiter(on: bool) -> void:
+	settings.limiter = on
+	audio.set_limiter(on)
+	settings.save_to_disk()
+
+
 ## A level on top of the master volume, for the title screen to hold the music back and bring it up on entering.
 func set_stage_gain(gain: float) -> void:
 	_stage_gain = gain
@@ -434,6 +475,28 @@ func set_fov(degrees: float) -> void:
 func set_mouse_sensitivity(multiplier: float) -> void:
 	settings.mouse_sensitivity = multiplier
 	settings.save_to_disk()
+
+
+func set_show_meter(on: bool) -> void:
+	settings.show_meter = on
+	settings.save_to_disk()
+
+
+func set_room_brightness(value: float) -> void:
+	settings.room_brightness = clampf(value, 0.5, 3.0)
+	_apply_lighting()
+	settings.save_to_disk()
+
+
+## The light that doesn't come from the instruments: the room's own lamps, the glow in the air, and how soon the
+## far walls fade into the dark (not at all sooner in a big room than in the default one).
+func _apply_lighting() -> void:
+	if room == null or _environment == null:
+		return
+	room.set_brightness(settings.room_brightness)
+	_environment.ambient_light_energy = 0.35 * settings.room_brightness
+	var default_span := Vector2(Room.DEFAULT_SIZE.x, Room.DEFAULT_SIZE.z).length()
+	_environment.fog_density = 0.02 * minf(1.0, default_span / Vector2(room.size.x, room.size.z).length())
 
 
 func set_show_stats(on: bool) -> void:
@@ -505,3 +568,4 @@ func _build_environment() -> void:
 	var world_env := WorldEnvironment.new()
 	world_env.environment = env
 	add_child(world_env)
+	_environment = env

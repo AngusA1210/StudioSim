@@ -1,7 +1,7 @@
 extends SceneTree
 ## Drives the real game with pretend key presses and mouse clicks and checks what happens: the title screen,
 ## walking up to an instrument, playing it, editing its pattern, the tempo and click, adding and removing instruments, the
-## Speaker, the menu, the room's size and walls.
+## Speaker, the menu, the mixer and meter, the room's size and walls.
 ## Run: godot --headless --path game --script tests/ui_check.gd -- --silent
 ## (--silent keeps it from making a sound or touching saved settings; the exit code is the number of failures)
 
@@ -89,6 +89,19 @@ func drag(plan, from: Vector2, to: Vector2) -> void:
 	await frames(2)
 
 
+## An instrument's level averaged over a while (a held pad note swells and ebbs as its two halves beat).
+func average_level(id: int, duration: float) -> float:
+	var total := 0.0
+	var count := 0
+	var until := Time.get_ticks_msec() + int(duration * 1000.0)
+	while Time.get_ticks_msec() < until:
+		var level: float = main.audio.get_source_level(id)
+		total += level * level
+		count += 1
+		await process_frame
+	return sqrt(total / maxi(count, 1))
+
+
 func frames(n: int) -> void:
 	for i in n:
 		await process_frame
@@ -152,6 +165,8 @@ func _run() -> void:
 	await frames(3)
 	await tap(KEY_ENTER)
 	await seconds(1.0)
+	check(main.hud._meter_panel.visible and main.hud._meter_text.text.ends_with(" dB") and main.hud._meter.held_db() > -40.0,
+		"the master meter is on screen, reading the music", main.hud._meter_text.text)
 	check(not title.is_open() and not title.visible and player.camera.current and main.hud._root.visible, "Enter goes into the room, in the player's view",
 		"title open %s, title showing %s, player camera %s, hud %s" % [title.is_open(), title.visible, player.camera.current, main.hud._root.visible])
 
@@ -383,9 +398,65 @@ func _run() -> void:
 	check(is_equal_approx(audio.get_transport().bpm, 100.0) and is_equal_approx(audio.get_transport().swing, 0.0) and absf(audio.get_transport().click_volume - 0.501) < 0.01,
 		"its sliders set tempo, swing and click volume", str(audio.get_transport()))
 
+	print("The mixer")
+	var menu = main.menu
+	var pad = main.find_instrument("pad")
+	menu._tabs.current_tab = menu.MIXER_TAB
+	await frames(4)
+	check(menu._strip_rows.size() == main.instruments.size() and menu._strip_rows[0].inst == drums and menu._strip_rows[0].value.text == "+0.0 dB",
+		"the Mixer page has a fader for each instrument, at 0 dB", "%d faders" % menu._strip_rows.size())
+	await seconds(0.5)
+	check(menu._master_meter.held_db() > -40.0 and menu._master_readout.text.begins_with("Peak -") and menu._master_state.text == "Limiter idle.",
+		"the master meter is reading the output", menu._master_readout.text)
+	var pad_row: Dictionary = menu._strip_rows[main.instruments.find(pad)]
+	pad.set_loop(false)
+	await seconds(1.5)
+	audio.note_on(pad.source_id, 57, 0.8)  # one held note to measure
+	await seconds(1.5)
+	var full: float = await average_level(pad.source_id, 1.5)
+	pad_row.slider.value = -12.0
+	await seconds(0.4)
+	var lowered: float = await average_level(pad.source_id, 1.5)
+	check(is_equal_approx(pad.level_db, -12.0) and absf(linear_to_db(lowered / full) + 12.0) < 1.0 and pad_row.value.text == "-12.0 dB",
+		"pulling the pad's fader down 12 dB makes it 12 dB quieter", "%.1f dB" % linear_to_db(lowered / full))
+	menu._on_levels_reset_pressed()
+	await seconds(0.4)
+	var restored: float = await average_level(pad.source_id, 1.5)
+	check(is_equal_approx(pad.level_db, 0.0) and absf(linear_to_db(restored / full)) < 1.0, "All to 0 dB puts it back", "%+.1f dB" % linear_to_db(restored / full))
+	audio.note_off(pad.source_id, 57)
+	pad.set_loop(true)
+
+	menu._volume_slider.value = 12.0  # far too loud
+	await seconds(1.5)
+	check(main.meter_reduction_db > 1.0 and not main.meter_clipped and menu._master_state.text.begins_with("Limiting by"),
+		"turned up too far, the limiter holds the output and the page says by how much", menu._master_state.text)
+	menu._limiter_toggle.button_pressed = false
+	await seconds(1.5)
+	check(not main.settings.limiter and main.meter_clipped and menu._master_state.text.begins_with("Clipping"),
+		"with the limiter off, the same mix is reported as clipping", menu._master_state.text)
+	menu._volume_slider.value = 0.0
+	menu._limiter_toggle.button_pressed = true
+	await seconds(2.5)
+	check(main.settings.limiter and not main.meter_clipped and main.meter_reduction_db < 0.1 and menu._master_state.text == "Limiter idle.",
+		"back at 0 dB with the limiter on, nothing is being held back", menu._master_state.text)
+	menu._falloff_slider.value = 6.0
+	await frames(3)
+	check(is_equal_approx(main.settings.distance_falloff_db, 6.0) and menu._falloff_note.text.contains("6.0 dB quieter"), "the distance falloff can be changed",
+		menu._falloff_note.text)
+	menu._falloff_slider.value = 3.0
+
+	menu._tabs.current_tab = menu.SETTINGS_TAB
+	await frames(3)
+	menu._light_slider.value = 200.0
+	menu._meter_toggle.button_pressed = false
+	await frames(3)
+	check(is_equal_approx(main.room.brightness, 2.0) and is_equal_approx(main._environment.ambient_light_energy, 0.7) and not main.settings.show_meter,
+		"Settings has the room lighting and the on-screen meter switch")
+	menu._light_slider.value = 100.0
+	menu._meter_toggle.button_pressed = true
+
 	print("The room")
 	var room = main.room
-	var menu = main.menu
 	player.place(Vector3(0.5, 0.0, -2.0), 0.0)  # the bass is on the other side of the wall from here
 	await frames(4)
 	check(audio.is_source_blocked(bass.source_id) and not audio.is_source_blocked(drums.source_id), "from behind the wall, the bass is hidden and the drums are not")

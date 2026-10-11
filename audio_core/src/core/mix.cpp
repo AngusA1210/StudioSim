@@ -78,14 +78,17 @@ void Limiter::init(float sr) {
     env_ = 0.0f;
 }
 
-void Limiter::process(float* l, float* r, int n) {
+float Limiter::process(float* l, float* r, int n) {
+    float lowest = 1.0f;
     for (int i = 0; i < n; ++i) {
         const float peak = std::max(std::fabs(l[i]), std::fabs(r[i]));
         env_ = std::max(peak, env_ * release_);
         const float g = env_ > kThreshold ? kThreshold / env_ : 1.0f;
+        lowest = std::min(lowest, g);
         l[i] = softClip(l[i] * g);
         r[i] = softClip(r[i] * g);
     }
+    return lowest;
 }
 
 }  // namespace sr

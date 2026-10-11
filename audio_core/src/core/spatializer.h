@@ -34,6 +34,7 @@ private:
 struct SpatialParams {
     Vec3 direction;          // unit vector from the listener toward where the sound arrives from, in listener space
     float distance = 1.0f;   // metres travelled, including any detour around a wall
+    float falloff = 1.0f;    // how fast the level drops with distance: 1 halves it (-6 dB) per doubling, 0.5 is -3 dB
     float band_gain[3] = {1.0f, 1.0f, 1.0f};  // what walls leave of the lows / mids / highs
     bool binaural = true;    // false = plain equal-power stereo panning (for A/B comparison)
 };
@@ -46,7 +47,7 @@ public:
     // Renders one frame of mono input and adds the stereo result into out_l / out_r.
     void process(const float* mono, float* out_l, float* out_r, const SpatialParams& params);
 
-    static constexpr float kRefDistance = 1.5f;  // full level inside this distance, 1/d beyond it
+    static constexpr float kRefDistance = 1.5f;  // full level inside this distance, falling away beyond it
 
 private:
     const SteamAudio* steam_ = nullptr;

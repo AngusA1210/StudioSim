@@ -12,10 +12,12 @@ var source_id := -1
 var muted := false     # the Speaker: silenced altogether
 var loop_on := true    # playable instruments: whether the sequencer plays their pattern
 var input_channel := -1  # live-input instruments: the hardware input they play (0-based), or -1 for all of them
+var level_db := 0.0    # its fader: how far above or below its normal level it is set
 var carried := false
 var glow := 0.0
 
 var _audio: SoundRoomAudio
+var _normal_gain := 1.0  # what 0 dB on its fader means to the audio core
 var _sent_position := Vector3.INF  # where the audio core last heard this instrument was
 var _spin := 0.0
 var _body: MeshInstance3D
@@ -39,6 +41,7 @@ func setup(spec: Dictionary, audio: SoundRoomAudio) -> void:
 	name = display_name
 	position = spec.position
 
+	_normal_gain = spec.gain
 	source_id = audio.add_source(kind, position, spec.gain, spec.send)
 	if source_id < 0:
 		return  # the room is full; whoever asked for this instrument gives up on it
@@ -108,6 +111,12 @@ func set_muted(value: bool) -> void:
 	_audio.set_source_muted(source_id, value)
 	_label.text = display_name + ("  (muted)" if value else "")
 	_label.modulate.a = 0.55 if value else 1.0
+
+
+## Its level: 0 dB is the level it was made at, heard from within a metre and a half.
+func set_level_db(db: float) -> void:
+	level_db = db
+	_audio.set_source_gain(source_id, _normal_gain * db_to_linear(db))
 
 
 func set_input_channel(channel: int) -> void:
