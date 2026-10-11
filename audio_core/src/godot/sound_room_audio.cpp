@@ -189,6 +189,7 @@ Dictionary SoundRoomAudio::get_stats() const {
     d["device_period"] = s.device_period;
     d["buffer_ms"] = s.buffer_ms;
     d["device_ms"] = s.device_ms;
+    d["binaural_ms"] = s.binaural_ms;
     d["output_latency_ms"] = s.output_latency_ms;
     d["live_input"] = s.live_input;
     d["input_device"] = str(s.input_device);

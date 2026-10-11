@@ -531,9 +531,9 @@ func _sit_at(kind: String) -> void:
 
 func _print_stats() -> void:
 	var s := audio.get_stats()
-	print("SoundRoom stats: device=%s backend=%s rate=%s block=%s device_period=%s buffer=%.2fms device=%.2fms output=%.2fms cpu=%.1f%% blocks=%s" % [
+	print("SoundRoom stats: device=%s backend=%s rate=%s block=%s device_period=%s buffer=%.2fms device=%.2fms binaural=%.2fms output=%.2fms cpu=%.1f%% blocks=%s" % [
 		s.get("output_device", "?"), s.get("backend", "?"), s.get("sample_rate", 0), s.get("block_size", 0),
-		s.get("device_period", 0), s.get("buffer_ms", 0.0), s.get("device_ms", 0.0), s.get("output_latency_ms", 0.0),
+		s.get("device_period", 0), s.get("buffer_ms", 0.0), s.get("device_ms", 0.0), s.get("binaural_ms", 0.0), s.get("output_latency_ms", 0.0),
 		100.0 * s.get("cpu_load", 0.0), s.get("blocks", 0)])
 	var levels := []
 	for inst in instruments:

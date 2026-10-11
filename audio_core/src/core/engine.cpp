@@ -30,6 +30,7 @@ constexpr float kReferenceRoom[3] = {14.0f, 4.0f, 10.0f};  // width, height, dep
 constexpr float kReferenceDecay = 1.1f;                    // its reverb time (RT60) in seconds
 constexpr float kPredelayMs = 12.0f;
 constexpr float kReverbFadeSeconds = 0.3f;
+constexpr float kBinauralFadeSeconds = 0.03f;  // switching binaural on or off crossfades over about this long
 
 float volumeOf(const float r[3]) { return r[0] * r[1] * r[2]; }
 float surfaceOf(const float r[3]) { return 2.0f * (r[0] * r[1] + r[1] * r[2] + r[0] * r[2]); }
@@ -193,6 +194,7 @@ AudioEngine::~AudioEngine() {
 void AudioEngine::allocateBuffers() {
     for (auto* buf : {&mix_l_, &mix_r_, &send_, &rev_l_, &rev_r_, &rev2_l_, &rev2_r_, &click_}) buf->assign(size_t(block_), 0.0f);
     for (auto& ch : input_bus_.channel) ch.assign(size_t(block_), 0.0f);
+    for (auto* delay : {&send_delay_, &click_delay_}) delay->init(SourceSpatializer::binauralDelay(block_));
     input_fifo_.assign(kFifoFrames * InputBus::kMaxChannels, 0.0f);
     input_read_ = input_count_ = 0;
     block_pos_ = block_;  // nothing rendered yet
@@ -343,7 +345,6 @@ bool AudioEngine::openDevice(const DeviceConfig& config, std::string* error) {
                                   dev->device.capture.internalSampleRate;
     }
 #endif
-    s.output_latency_ms = s.buffer_ms + s.device_ms;
     s.device_running = true;
 
     device_config_ = config;
@@ -565,6 +566,7 @@ void AudioEngine::allNotesOff(int id) {
     Command c; c.type = Command::AllNotesOff; c.id = id; push(c);
 }
 void AudioEngine::setBinaural(bool on) {
+    binaural_wanted_ = on;
     Command c; c.type = Command::Binaural; c.v[0] = on ? 1.0f : 0.0f; push(c);
 }
 void AudioEngine::setReverb(bool on) {
@@ -699,6 +701,9 @@ EngineStats AudioEngine::stats() const {
         s.sample_rate = sr_;
         s.block_size = block_;
     }
+    // The binaural rendering's delay is the engine's own, not the device's: it comes and goes with the setting.
+    s.binaural_ms = binaural_wanted_ ? 1000.0 * SourceSpatializer::binauralDelay(block_) / sr_ : 0.0;
+    s.output_latency_ms = s.buffer_ms + s.device_ms + s.binaural_ms;
     s.cpu_load = cpu_load_.load(std::memory_order_relaxed);
     s.blocks = blocks_.load(std::memory_order_relaxed);
     return s;
@@ -757,6 +762,7 @@ void AudioEngine::drainCommands() {
                 break;
             case Command::Binaural:
                 binaural_ = c.v[0] > 0.5f;
+                if (clock_ == 0) binaural_mix_ = binaural_ ? 1.0f : 0.0f;  // set before anything has played: nothing to fade from
                 break;
             case Command::Reverb:
                 reverb_target_ = c.v[0] > 0.5f ? 1.0f : 0.0f;
@@ -970,6 +976,15 @@ void AudioEngine::renderBlock() {
     for (auto& c : clicks_)
         if (c.active) for (int i = 0; i < block_ && c.active; ++i) click_[size_t(i)] += c.next();
 
+    // The binaural rendering comes out a quarter of a block late. The click and the reverb's feed don't pass through
+    // it, so while binaural is on they are held back by as much, to stay in step with the direct sound whatever the
+    // block size. Switching it on or off moves over from one rendering (and its timing) to the other across a few
+    // blocks, with what comes in meanwhile shared between the two.
+    const float binaural_from = binaural_mix_;
+    const float fade = float(block_) / (kBinauralFadeSeconds * float(sr_));
+    binaural_mix_ = binaural_ ? std::min(binaural_mix_ + fade, 1.0f) : std::max(binaural_mix_ - fade, 0.0f);
+    click_delay_.process(click_.data(), block_, binaural_from, binaural_mix_);
+
     // Game updates arrive at frame rate; glide toward them so movement doesn't step (time constant ~15 ms).
     const float glide = 1.0f - std::exp(-float(block_) / (0.015f * float(sr_)));
     listener_pos_ = lerp(listener_pos_, target_pos_, glide);
@@ -1005,7 +1020,8 @@ void AudioEngine::renderBlock() {
         }
         p.direction = steam_.relativeDirection(s->via, listener_pos_, listener_ahead_, listener_up_);
         p.distance = length(sub(s->via, listener_pos_)) + s->extra;
-        p.binaural = binaural_;
+        p.binaural_from = binaural_from;
+        p.binaural_to = binaural_mix_;
         p.falloff = falloff_;
         s->spatializer.process(mono, mix_l_.data(), mix_r_.data(), p);
 
@@ -1016,6 +1032,7 @@ void AudioEngine::renderBlock() {
         }
     }
 
+    send_delay_.process(send_.data(), block_, binaural_from, binaural_mix_);
     reverbs_[size_t(reverb_active_)].process(send_.data(), rev_l_.data(), rev_r_.data(), block_);
     float reverb_level = reverb_level_;
     if (reverb_fade_left_ > 0) {  // changing rooms: the old reverb dies away as the new one comes up

@@ -128,7 +128,8 @@ patterns go back to the defaults at each start until rooms can be saved.
 - **Mixer**: a fader for each instrument, the distance falloff, the master volume, meter and limiter (see above).
 - **Room**: the room's size and the walls inside it (see above).
 - **Playback Engine**: which output device the audio engine runs on, and the hardware buffer size (32–1024 samples).
-  The sample rate follows the device. Shows the resulting latency and CPU use.
+  The sample rate follows the device. Shows the resulting latency (the buffer, the device, and the quarter of a
+  buffer that binaural rendering adds while it is switched on) and CPU use.
 - **I/O**: which of the device's outputs carry the mix, the input device, and which hardware input each Speaker plays.
   Live input always starts switched off, so an open microphone never meets a pair of speakers by surprise.
 - **MIDI**: every MIDI device the system sees, with a tick box each and a light that flashes when it sends notes.

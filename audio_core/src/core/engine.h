@@ -58,7 +58,8 @@ struct EngineStats {
     int output_channels = 0, input_channels = 0;
     double buffer_ms = 0;          // the hardware buffer we fill ahead of playback
     double device_ms = 0;          // what the OS reports for the output device itself (driver, safety offset, hardware)
-    double output_latency_ms = 0;  // buffer + device: from a block being rendered to it being heard
+    double binaural_ms = 0;        // what binaural rendering adds: a quarter of a block (0 while it is switched off)
+    double output_latency_ms = 0;  // buffer + device + binaural: from a block being rendered to it being heard
     double input_latency_ms = 0;   // from sound entering the input device to the engine receiving it
     float cpu_load = 0;            // share of each block's time budget spent rendering
     uint64_t blocks = 0;
@@ -143,6 +144,8 @@ public:
     void noteOn(int id, int note, float velocity);
     void noteOff(int id, int note);
     void allNotesOff(int id);
+    // Binaural (HRTF) rendering, or plain stereo panning to compare it with. Binaural comes out a quarter of a block
+    // later (EngineStats::binaural_ms), and the reverb and the click with it. Switching crossfades between the two.
     void setBinaural(bool on);
     void setReverb(bool on);
     void setMasterVolume(float gain);  // 1 = normal
@@ -237,6 +240,7 @@ private:
     DeviceConfig device_config_;
     MidiInput midi_;
     TransportState transport_;  // what the game asked for; the audio thread follows
+    bool binaural_wanted_ = true;  // likewise; stats() reports the latency that goes with it
     RoomGeometry geometry_;
     Vec3 ear_{0, 1.65f, 0};     // where the listener was last put
     // The reverb the room's size calls for, and the one that has been handed to the audio thread so far.
@@ -254,6 +258,7 @@ private:
     Vec3 listener_pos_{0, 1.65f, 0}, listener_ahead_{0, 0, -1}, listener_up_{0, 1, 0};
     Vec3 target_pos_{0, 1.65f, 0}, target_ahead_{0, 0, -1}, target_up_{0, 1, 0};
     bool binaural_ = true;
+    float binaural_mix_ = 1.0f;  // the share of the sound rendered binaurally just now: glides to 0 or 1 when it is switched
     float reverb_target_ = 1.0f, reverb_gain_ = 1.0f;
     float master_target_ = 1.0f, master_gain_ = 1.0f;
     float falloff_target_, falloff_;
@@ -269,6 +274,9 @@ private:
     int reverb_active_ = 0, reverb_next_ = 0, reverb_fade_left_ = 0, reverb_fade_len_ = 1;
     float reverb_level_, reverb_next_level_ = 0.0f;
     Limiter limiter_;
+    // The reverb's feed and the click bypass the binaural rendering, which comes out a little late: these hold them
+    // back by as much while binaural is on, so the mix lines up the same way at every block size.
+    FadedDelay send_delay_, click_delay_;
     std::vector<float> mix_l_, mix_r_, send_, rev_l_, rev_r_, rev2_l_, rev2_r_, click_;
     InputBus input_bus_;               // this block's captured audio, per hardware input
     std::vector<float> input_fifo_;    // captured frames (interleaved) waiting to be rendered

@@ -85,6 +85,23 @@ int firstSound(const Render& r) {
     return -1;
 }
 
+// Where a sound starts: the first sample to reach a quarter of the loudest, looking from `from` on.
+int onsetAfter(const std::vector<float>& x, size_t from) {
+    double peak = 0;
+    for (size_t i = from; i < x.size(); ++i) peak = std::max(peak, double(std::fabs(x[i])));
+    for (size_t i = from; i < x.size(); ++i)
+        if (std::fabs(x[i]) > 0.25 * peak) return int(i);
+    return -1;
+}
+
+// The biggest jump from one sample to the next, in either ear: a click shows up as one far bigger than the music's.
+double biggestStep(const Render& r) {
+    double step = 0;
+    for (size_t i = 1; i < r.l.size(); ++i)
+        step = std::max(step, double(std::max(std::fabs(r.l[i] - r.l[i - 1]), std::fabs(r.r[i] - r.r[i - 1]))));
+    return step;
+}
+
 double tailPeak(const Render& r, size_t samples) {
     double peak = 0;
     for (size_t i = r.l.size() - samples; i < r.l.size(); ++i) peak = std::max(peak, double(std::fabs(r.l[i])));
@@ -217,8 +234,8 @@ int deviceProbe(const DeviceConfig& config) {
                 s.sample_rate, s.output_channels, s.device_period);
     std::printf("mix on outputs %d and %d; engine block %d frames\n", engine.deviceConfig().output_left + 1,
                 engine.deviceConfig().output_right + 1, engine.blockSize());
-    std::printf("buffer %.2f ms + device %.2f ms = output latency %.2f ms; %llu blocks rendered\n", s.buffer_ms,
-                s.device_ms, s.output_latency_ms, (unsigned long long)s.blocks);
+    std::printf("buffer %.2f ms + device %.2f ms + binaural %.2f ms = output latency %.2f ms; %llu blocks rendered\n", s.buffer_ms,
+                s.device_ms, s.binaural_ms, s.output_latency_ms, (unsigned long long)s.blocks);
     return s.blocks > 0 ? 0 : 1;
 }
 
@@ -544,9 +561,8 @@ int main(int argc, char** argv) {
 
     {
         std::printf("\nPlayback engine and I/O\n");
-        // With the reverb off the mix is the same at every size. With it on, the direct sound is a quarter of a buffer
-        // later than the reverb (the binaural rendering works that way), so sustained notes add up a little
-        // differently from size to size: the level is allowed to wander further.
+        // The same four bars at every size, dry and with the reverb. (Each room begins the sequence again, because
+        // changing the buffer size moves the first beat.)
         bool all_ok = true;
         std::string detail;
         for (bool reverb : {false, true}) {
@@ -557,18 +573,85 @@ int main(int argc, char** argv) {
                 std::string err;
                 room.engine.setReverb(reverb);
                 if (!room.engine.configure(48000, block, &err)) { all_ok = false; detail += " " + err; continue; }
+                room.engine.setSequencerRunning(false);
+                room.engine.setSequencerRunning(true);
                 Render r = renderSeconds(room.engine, 10.43);
                 const double measured = level(r);
                 if (block == 128) reference = measured;
-                if (!r.finite || r.peak >= 1.0 || std::fabs(measured - reference) > (reverb ? 2.0 : 0.3)) all_ok = false;
-                detail += fmt(" %.0f:", block) + fmt("%.1f", measured);
+                if (!r.finite || r.peak >= 1.0 || std::fabs(measured - reference) > 0.1) all_ok = false;
+                detail += fmt(" %.0f:", block) + fmt("%.2f", measured);
             }
         }
         check(all_ok, "every buffer size from 32 to 1024 renders the same mix", "frames:dBFS, " + detail);
 
+        // Binaural rendering comes out a quarter of a buffer late. The reverb and the click don't pass through it, so
+        // they are held back to match: all three keep their places against each other at every buffer size, and the
+        // delay is part of the latency the engine reports. Measured with a single sample of sound through the speaker
+        // on a beat, and with the click on that beat.
+        const int kBeat = 24960;  // the second beat at 120 BPM (the sequence starts 20 ms after it is told to)
+        auto heard = [&](int block, bool binaural, bool reverb, bool click) {
+            Room room;
+            std::string err;
+            room.engine.configure(48000, block, &err);
+            room.engine.setBinaural(binaural);
+            room.quietRoom(click ? -1 : room.speaker);
+            room.engine.setReverb(reverb);
+            room.face(-1.5f, 4.2f, 0.0f);  // facing the speaker
+            if (click) {
+                room.engine.setTempo(120.0);
+                room.engine.setClick(true);
+                room.engine.setSequencerRunning(true);
+            }
+            return renderSeconds(room.engine, 0.75, [&](int64_t n) { return n == kBeat && !click ? 0.25f : 0.0f; });
+        };
+        bool in_step = true, reported = true;
+        int reverb_after = 0, click_after = 0;
+        std::string late;
+        for (int block : {128, 32, 64, 256, 512, 1024}) {
+            int direct[2] = {};
+            for (bool binaural : {false, true}) {
+                const Render dry = heard(block, binaural, false, false), wet = heard(block, binaural, true, false);
+                std::vector<float> ring(dry.l.size());
+                for (size_t i = 0; i < ring.size(); ++i) ring[i] = wet.l[i] - dry.l[i];
+                direct[binaural] = onsetAfter(dry.l, 0);
+                const int reverb = onsetAfter(ring, 0) - direct[binaural];
+                const int click = onsetAfter(heard(block, binaural, false, true).l, size_t(kBeat) - 4800) - direct[binaural];
+                if (block == 128 && !binaural) { reverb_after = reverb; click_after = click; }
+                if (direct[binaural] < kBeat || reverb != reverb_after || click != click_after) in_step = false;
+            }
+            AudioEngine engine(EngineConfig{48000, block});
+            const EngineStats on = engine.stats();
+            engine.setBinaural(false);
+            const EngineStats off = engine.stats();
+            const int measured = direct[1] - direct[0];
+            if (measured != block / 4 || std::fabs(on.binaural_ms - 1000.0 * measured / 48000.0) > 1e-9 || off.binaural_ms != 0.0 ||
+                std::fabs(on.output_latency_ms - off.output_latency_ms - on.binaural_ms) > 1e-9 || direct[0] != kBeat)
+                reported = false;
+            late += fmt(" %.0f:", block) + fmt("%.0f", measured);
+        }
+        check(in_step, "the reverb and the click keep their places against the direct sound at every buffer size, binaural or not",
+              fmt("the reverb starts %.0f samples after the direct sound and the click %.0f", reverb_after, click_after));
+        check(reported, "binaural rendering is a quarter of a buffer late, plain stereo not at all, and the engine reports it",
+              "frames:samples late," + late);
+        Room timed;
+        std::string err;
+        DeviceConfig silent;
+        silent.mode = DeviceMode::Null;
+        silent.buffer_size = 256;
+        const bool opened = timed.engine.openDevice(silent, &err);
+        const EngineStats with = timed.engine.stats();
+        timed.engine.setBinaural(false);
+        const EngineStats without = timed.engine.stats();
+        timed.engine.stopDevice();
+        check(opened && with.buffer_ms > 0 && std::fabs(with.binaural_ms - 1000.0 * (with.block_size / 4) / with.sample_rate) < 1e-9 &&
+                  std::fabs(with.output_latency_ms - (with.buffer_ms + with.device_ms + with.binaural_ms)) < 1e-9 &&
+                  std::fabs(without.output_latency_ms - (without.buffer_ms + without.device_ms)) < 1e-9,
+              "the output latency counts it while binaural is on, and stops when it is switched off",
+              fmt("%.2f ms with binaural (%.2f buffer + %.2f binaural), ", with.output_latency_ms, with.buffer_ms, with.binaural_ms) +
+                  fmt("%.2f ms without", without.output_latency_ms));
+
         Room room;
         renderSeconds(room.engine, 2.0);
-        std::string err;
         const bool reconfigured = room.engine.configure(44100, 64, &err);
         Render after = renderSeconds(room.engine, 6.0);
         check(reconfigured && after.finite && after.rms_l > 0.02, "changing sample rate and buffer size mid-song keeps the music going",
@@ -1145,6 +1228,35 @@ int main(int argc, char** argv) {
         room.engine.setBinaural(false);
         Render plain = renderSeconds(room.engine, 2.0);
         check(plain.finite && plain.peak < 1.0, "plain stereo mode renders cleanly", fmt("peak %.1f dBFS", db(plain.peak)));
+
+        // Binaural switched off and on while a low, pure note comes from the speaker (so that any jump shows), each
+        // time at a different point in the wave. With a short buffer the change takes many blocks, with a long one two.
+        bool smooth = true;
+        std::string steps;
+        for (int block : {128, 1024}) {
+            Room held;
+            std::string err;
+            held.engine.configure(48000, block, &err);
+            held.soloOnly(held.speaker);
+            held.engine.setSequencerRunning(false);
+            held.face(-0.5f, 4.2f, 0.4f);  // the speaker off to one side, where the two renderings differ most
+            int64_t played = 0;
+            auto note = [&](double seconds) {
+                Render r = renderSeconds(held.engine, seconds, [&](int64_t n) { return 0.25f * float(std::sin(6.2831853 * 110.0 * double(played + n) / 48000.0)); });
+                played += int64_t(r.l.size());
+                return r;
+            };
+            note(1.0);
+            const double steady = biggestStep(note(1.0));
+            double switching = 0;
+            for (int turn = 0; turn < 8; ++turn) {
+                held.engine.setBinaural(turn % 2 == 1);
+                switching = std::max(switching, biggestStep(note(0.2 + 0.013 * turn)));
+            }
+            if (switching > 1.5 * steady) smooth = false;
+            steps += fmt(" %.0f frames: %.4f while switching, %.4f while playing;", block, switching, steady);
+        }
+        check(smooth, "switching binaural off and on makes no click", "biggest step from one sample to the next:" + steps);
         room.engine.setMasterVolume(0.5f);
         renderSeconds(room.engine, 0.5);
         Render half = renderSeconds(room.engine, 2.0);

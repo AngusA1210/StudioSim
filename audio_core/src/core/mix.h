@@ -1,6 +1,7 @@
 #pragma once
 
-// Room reverb and the output limiter. Both add zero latency.
+// Room reverb and the output limiter (both add zero latency), and the delay that keeps whatever bypasses the
+// binaural rendering in step with it.
 
 #include <array>
 #include <vector>
@@ -8,6 +9,20 @@
 #include "dsp.h"
 
 namespace sr {
+
+// A fixed delay that can be brought in and taken out without a click: each sample that arrives is shared between
+// passing straight through and coming out `delay` samples late.
+class FadedDelay {
+public:
+    void init(int delay);
+    // In place. `from` and `to` are the share that takes the late way, at the start and at the end of these samples:
+    // 0 = none of it (the signal passes straight through), 1 = all of it.
+    void process(float* x, int n, float from, float to);
+
+private:
+    std::vector<float> line_;
+    int pos_ = 0;
+};
 
 // Eight-line feedback delay network. Highs decay faster than lows, left and right are decorrelated,
 // and the output is scaled to unit energy so the send level alone sets how wet the room is.

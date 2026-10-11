@@ -14,6 +14,22 @@ inline float softClip(float x) {
 
 }  // namespace
 
+void FadedDelay::init(int delay) {
+    line_.assign(size_t(std::max(delay, 0)), 0.0f);
+    pos_ = 0;
+}
+
+void FadedDelay::process(float* x, int n, float from, float to) {
+    if (line_.empty()) return;
+    for (int i = 0; i < n; ++i) {
+        const float share = from + (to - from) * float(i + 1) / float(n);
+        const float late = line_[size_t(pos_)];
+        line_[size_t(pos_)] = x[i] * share;
+        if (++pos_ == int(line_.size())) pos_ = 0;
+        x[i] = late + x[i] * (1.0f - share);
+    }
+}
+
 void FdnReverb::init(float sr, float rt60, float predelay_ms, float size) {
     for (int k = 0; k < kLines; ++k) {
         len_[k] = std::max(1, int(kLineMs[k] * size * 0.001f * sr + 0.5f));

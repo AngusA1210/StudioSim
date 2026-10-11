@@ -79,6 +79,7 @@ bool SourceSpatializer::init(const SteamAudio& steam, std::string* error) {
     direct_out_.assign(size_t(frame_), 0.0f);
     left_.assign(size_t(frame_), 0.0f);
     right_.assign(size_t(frame_), 0.0f);
+    binaural_tail_ = 0;
     return true;
 }
 
@@ -97,8 +98,17 @@ void SourceSpatializer::process(const float* mono, float* out_l, float* out_r, c
         dp.airAbsorption[b] = std::exp(-kAirAbsorption[b] * p.distance) * std::clamp(p.band_gain[b], 0.0f, 1.0f);
     iplDirectEffectApply(direct_, &dp, &in, &direct);
 
-    if (p.binaural) {
-        if (!was_binaural_) iplBinauralEffectReset(binaural_);
+    // What goes into each rendering is its share of the sound, so nothing starts or stops abruptly in either.
+    const float from = std::clamp(p.binaural_from, 0.0f, 1.0f), to = std::clamp(p.binaural_to, 0.0f, 1.0f);
+    const bool feeding = from > 0.0f || to > 0.0f;
+    if (feeding || binaural_tail_ > 0) {
+        IPLAudioBuffer* feed = &direct;
+        if (from < 1.0f || to < 1.0f) {
+            for (int i = 0; i < frame_; ++i)
+                in_[size_t(i)] = direct_out_[size_t(i)] * (from + (to - from) * float(i + 1) / float(frame_));
+            feed = &in;
+        }
+        if (binaural_tail_ == 0) iplBinauralEffectReset(binaural_);  // starting afresh
         float* out_ch[2] = {left_.data(), right_.data()};
         IPLAudioBuffer out{2, frame_, out_ch};
         IPLBinauralEffectParams bp{};
@@ -107,25 +117,33 @@ void SourceSpatializer::process(const float* mono, float* out_l, float* out_r, c
         bp.spatialBlend = 1.0f;
         bp.hrtf = steam_->hrtf();
         bp.peakDelays = nullptr;
-        iplBinauralEffectApply(binaural_, &bp, &direct, &out);
+        iplBinauralEffectApply(binaural_, &bp, feed, &out);
+        // It gives out what it takes in a little late, so once its share is nothing it is still run, on silence,
+        // until the last of the sound has come out.
+        binaural_tail_ = feeding ? std::max(1, (iplBinauralEffectGetTailSize(binaural_) + frame_ - 1) / frame_) : binaural_tail_ - 1;
         for (int i = 0; i < frame_; ++i) {
             out_l[i] += left_[size_t(i)];
             out_r[i] += right_[size_t(i)];
         }
-    } else {
+    }
+    if (from < 1.0f || to < 1.0f) {
         // Equal-power panning on the left/right component of the direction, ramped across the frame.
         const float angle = (std::clamp(p.direction.x, -1.0f, 1.0f) + 1.0f) * 0.25f * 3.14159265f;
         const float target_l = std::cos(angle), target_r = std::sin(angle);
+        if (from >= 1.0f) {  // it has been idle: there is no earlier position to ramp from
+            pan_l_ = target_l;
+            pan_r_ = target_r;
+        }
         for (int i = 0; i < frame_; ++i) {
             const float a = float(i + 1) / float(frame_);
+            const float share = 1.0f - (from + (to - from) * a);
             const float gl = pan_l_ + (target_l - pan_l_) * a, gr = pan_r_ + (target_r - pan_r_) * a;
-            out_l[i] += direct_out_[size_t(i)] * gl;
-            out_r[i] += direct_out_[size_t(i)] * gr;
+            out_l[i] += direct_out_[size_t(i)] * gl * share;
+            out_r[i] += direct_out_[size_t(i)] * gr * share;
         }
         pan_l_ = target_l;
         pan_r_ = target_r;
     }
-    was_binaural_ = p.binaural;
 }
 
 }  // namespace sr

@@ -154,6 +154,19 @@ func _run() -> void:
 	check(main.menu.is_open() and main.menu._tabs.get_tab_title(main.menu._tabs.current_tab) == "Playback Engine"
 		and main.menu._resume.text.begins_with("Back") and not main.menu._to_title.visible and not title._ui.visible,
 		"Audio setup opens the menu on the Playback Engine page", main.menu._resume.text)
+	var with_binaural: Dictionary = audio.get_stats()
+	check(main.menu._latency_label.text.contains("binaural") and with_binaural.binaural_ms > 0.0
+		and is_equal_approx(with_binaural.output_latency_ms, with_binaural.buffer_ms + with_binaural.device_ms + with_binaural.binaural_ms),
+		"the output latency it shows counts what binaural rendering adds", main.menu._latency_label.text)
+	main.menu._binaural_toggle.button_pressed = false
+	await seconds(0.3)
+	var plain: Dictionary = audio.get_stats()
+	check(not main.menu._latency_label.text.contains("binaural") and is_zero_approx(plain.binaural_ms)
+		and is_equal_approx(plain.output_latency_ms, with_binaural.output_latency_ms - with_binaural.binaural_ms),
+		"and less with binaural switched off", main.menu._latency_label.text)
+	main.menu._binaural_toggle.button_pressed = true
+	await seconds(0.3)
+	check(main.settings.binaural and main.menu._latency_label.text.contains("binaural"), "switching it back on brings the delay back", main.menu._latency_label.text)
 	await tap(KEY_ENTER)
 	check(title.is_open(), "Enter doesn't slip through the menu to the title's buttons")
 	await tap(KEY_ESCAPE)
