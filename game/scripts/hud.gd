@@ -117,7 +117,7 @@ func setup(the_app) -> void:
 func _process(_delta: float) -> void:
 	_frame += 1
 	var covered := false
-	for panel in [app.title, app.menu, app.sequencer, app.mixer, app.instrument_menu]:
+	for panel in [app.title, app.menu, app.sequencer, app.mixer, app.amp_panel, app.instrument_menu]:
 		covered = covered or (panel != null and panel.is_open())
 	_root.visible = not covered
 	if covered:
@@ -200,16 +200,36 @@ func _show_hint(vp: Vector2) -> void:
 		title = "Carrying %s" % player.carried.display_name
 		tint = player.carried.color.lightened(0.3)
 		rows = [["G or click", "put it down"], ["", ""], ["Backspace", "remove"]]
+	elif player.clear_pending != null:
+		title = "Clear %s's loop?" % player.clear_pending.display_name
+		tint = WARN
+		rows = [["J", "yes, clear it"], ["look away", "keep it"]]
 	elif player.target != null and player.playing == null:
 		var t = player.target
 		title = t.display_name
 		tint = t.color.lightened(0.3)
-		if t.playable:
+		if t.is_amp:  # an amp and its loop pedal
+			var loop: Dictionary = t.looper
+			var state: String = loop.get("state", "empty")
+			rows.append(["I", "input off" if t.input_on else "input on"])
+			rows.append(["Enter", "knobs and loop pedal"])
+			rows.append(["L", {"empty": "record a loop", "waiting": "cancel (waiting for the bar)", "recording": "close the loop",
+				"playing": "overdub", "overdubbing": "stop overdubbing", "stopped": "play the loop"}[state]])
+			if state in ["playing", "overdubbing", "recording"]:
+				rows.append(["K", "stop the loop"])
+			if loop.get("can_undo", false):
+				rows.append(["U", "undo the last overdub"])
+			elif loop.get("can_redo", false):
+				rows.append(["U", "redo the overdub"])
+			if state not in ["empty", "waiting"]:
+				rows.append(["J", "clear the loop (press twice)"])
+			rows.append(["M", "unmute" if t.muted else "mute"])
+		elif t.playable:
 			rows.append(["E", "play" if player.can_play_target() else "play (step closer)"])
 			rows.append(["Enter", "edit its pattern"])
 			rows.append(["I", "input off" if t.input_on else "input on"])
 			rows.append(["M", "loop on" if not t.loop_on else "loop off"])
-		else:
+		elif not t.is_amp:
 			rows.append(["I", "input off" if t.input_on else "input on"])
 			rows.append(["M", "unmute" if t.muted else "mute"])
 		rows.append(["G", "carry"])

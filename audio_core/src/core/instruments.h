@@ -13,8 +13,12 @@
 
 namespace sr {
 
-enum class InstrumentKind : uint8_t { Drums, Bass, Pad, Bells, Keys, Live };
-constexpr int kInstrumentKinds = 6;
+enum class InstrumentKind : uint8_t { Drums, Bass, Pad, Bells, Keys, Live, GuitarCombo, GuitarStack, BassCombo, BassStack };
+constexpr int kInstrumentKinds = 10;
+
+// The kinds that play an audio input (the Speaker and the amps) rather than notes.
+inline bool isLiveInput(InstrumentKind kind) { return kind >= InstrumentKind::Live; }
+inline bool isAmp(InstrumentKind kind) { return kind >= InstrumentKind::GuitarCombo; }
 
 class Instrument {
 public:

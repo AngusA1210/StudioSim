@@ -1,6 +1,6 @@
 extends SceneTree
 ## Drives the real game with pretend key presses and mouse clicks and checks what happens: the title screen,
-## walking up to an instrument, its instruction card and input, playing it, editing its pattern, the tempo and click, adding and removing instruments, the
+## walking up to an instrument, its instruction card and input, the amps and their loop pedals, playing it, editing its pattern, the tempo and click, adding and removing instruments, the
 ## Speaker, the menu, the mixer and meter, the room's size and walls.
 ## Run: godot --headless --path game --script tests/ui_check.gd -- --silent
 ## (--silent keeps it from making a sound or touching saved settings; the exit code is the number of failures)
@@ -353,7 +353,8 @@ func _run() -> void:
 	await tap(KEY_BACKSPACE)
 	check(player.target == null and player.remove_pending == null, "Backspace does nothing when you aren't facing an instrument")
 	await tap(KEY_N)
-	check(im.is_open() and im._cards.size() == 6 and not im._cards[0].disabled, "N opens the instrument menu", im._footer.text)
+	check(im.is_open() and im._cards.size() == 10 and not im._cards[0].disabled, "N opens the instrument menu, with the amps among the live inputs",
+		im._footer.text)
 	await click(im._cards[1].get_global_rect().get_center())
 	var bass2 = player.carried
 	check(not im.is_open() and bass2 != null and bass2.display_name == "Bass 2" and bass2.kind == "bass" and main.instruments.size() == count_before + 1,
@@ -440,6 +441,93 @@ func _run() -> void:
 	check(not im.is_open() and audio.get_source_count() == count_before + 1 and returned != null and returned.display_name == "Pad 2",
 		"N closes the menu again, and removing instruments makes space")
 	main.remove_instrument(returned)
+
+	print("An amp and its loop pedal")
+	main.set_tempo(240.0)  # bars of one second, so the pedal doesn't keep the test waiting
+	player.place(Vector3(0.0, 0.0, 3.6), 0.0)
+	await frames(3)
+	await tap(KEY_N)
+	await click(im._cards[6].get_global_rect().get_center())
+	var amp = player.carried
+	check(amp != null and amp.display_name == "Guitar Combo" and amp.is_amp and not amp.playable and amp._led != null,
+		"the instrument menu offers a guitar combo, with its loop pedal")
+	await tap(KEY_G)
+	await frames(5)
+	var amp_card: Array = main.hud.hint_lines()
+	check(player.target == amp and amp_card.has("L record a loop") and amp_card.has("Enter knobs and loop pedal") and not amp_card.has("E play"),
+		"its card offers the loop pedal and the knobs", " / ".join(amp_card))
+	await tap(KEY_L)
+	await frames(3)
+	check(amp.input_on and amp.looper.get("state", "") == "waiting", "L arms the pedal: its input goes on, and with Sync it waits for the bar line",
+		amp.looper.get("state", ""))
+	var waited := 0.0
+	while amp.looper.get("state", "") == "waiting" and waited < 1.5:
+		await seconds(0.02)
+		waited += 0.02
+	check(amp.looper.get("state", "") == "recording", "on the bar line it starts recording", "after %.2f s" % waited)
+	await seconds(0.4)
+	await tap(KEY_L)  # under a bar in: it carries on to the end of the bar
+	await seconds(1.0)
+	check(amp.looper.get("state", "") == "playing" and absf(float(amp.looper.get("length", 0.0)) - 1.0) < 0.02 and amp._loop_label.text.begins_with("▶ LOOP"),
+		"L again closes the loop on the next bar line, a whole bar long, and it plays", "%.3f s; %s" % [amp.looper.get("length", 0.0), amp._loop_label.text])
+	await tap(KEY_L)
+	await frames(3)
+	check(amp.looper.get("state", "") == "overdubbing", "L once more overdubs")
+	await seconds(0.3)
+	await tap(KEY_L)
+	await seconds(0.3)
+	check(amp.looper.get("state", "") == "playing" and amp.looper.get("can_undo", false) and main.hud.hint_lines().has("U undo the last overdub"),
+		"and again goes back to playing, with the overdub ready to undo")
+	await tap(KEY_U)
+	await frames(3)
+	check(amp.looper.get("can_redo", false) and not amp.looper.get("can_undo", false), "U undoes it")
+	await tap(KEY_K)
+	await frames(3)
+	check(amp.looper.get("state", "") == "stopped" and amp._loop_label.text.contains("stopped"), "K stops the loop", amp._loop_label.text)
+	await tap(KEY_ENTER)
+	await frames(4)
+	var panel = main.amp_panel
+	check(panel.is_open() and panel.inst == amp and panel._display.text == "■ STOPPED" and panel._footswitch.text.begins_with("Play"),
+		"Enter opens the amp's panel: its knobs and the loop pedal", panel._display.text)
+	var gain_knob = panel._knobs.gain
+	var knob_at: Vector2 = gain_knob.get_global_rect().get_center() - Vector2(0, 20)
+	var grab := InputEventMouseButton.new()
+	grab.position = knob_at
+	grab.global_position = knob_at
+	grab.button_index = MOUSE_BUTTON_LEFT
+	grab.pressed = true
+	view.push_input(grab)
+	await frames(1)
+	var turn := InputEventMouseMotion.new()
+	turn.position = knob_at + Vector2(0, -45)
+	turn.global_position = turn.position
+	turn.relative = Vector2(0, -45)
+	turn.button_mask = MOUSE_BUTTON_MASK_LEFT
+	view.push_input(turn)
+	await frames(1)
+	var let_go := grab.duplicate()
+	let_go.pressed = false
+	view.push_input(let_go)
+	await frames(2)
+	check(absf(amp.amp_controls.gain - 8.0) < 0.2, "dragging the Gain knob up turns it up", "%.2f" % amp.amp_controls.gain)
+	await click(panel._footswitch.get_global_rect().get_center())
+	check(amp.looper.get("state", "") == "playing", "the pedal's footswitch button plays it again")
+	await tap(KEY_J)
+	await tap(KEY_J)
+	await frames(3)
+	check(amp.looper.get("state", "") == "empty", "J twice clears the loop, from the panel too")
+	await tap(KEY_ENTER)
+	check(not panel.is_open(), "Enter closes the panel")
+	await tap(KEY_L)
+	await frames(2)
+	await tap(KEY_L)  # cancel the wait
+	await frames(2)
+	await tap(KEY_J)
+	await frames(2)
+	check(amp.looper.get("state", "") == "empty" and player.clear_pending == null, "a pedal waiting for the bar can be cancelled, and has nothing to clear")
+	main.set_input(amp, false)
+	main.remove_instrument(amp)
+	main.set_tempo(100.0)
 
 	print("The Speaker and the menu")
 	var from: Vector3 = speaker.position + Vector3(0.0, 0.0, 1.8)

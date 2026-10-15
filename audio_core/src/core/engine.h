@@ -14,7 +14,9 @@
 #include <string>
 #include <vector>
 
+#include "amp.h"
 #include "instruments.h"
+#include "looper.h"
 #include "midi_input.h"
 #include "mix.h"
 #include "room_geometry.h"
@@ -83,6 +85,13 @@ struct MeterReading {
     uint32_t clipped = 0;          // samples that hit full scale and were cut off (only with the limiter off)
 };
 
+// What a loop pedal is doing, for the game to show.
+struct LooperStatus {
+    Looper::State state = Looper::Empty;
+    double length = 0, position = 0, capacity = 0;  // seconds
+    bool can_undo = false, can_redo = false;
+};
+
 class AudioEngine : private StepSink {
 public:
     static constexpr int kMaxSources = 32;  // how many instruments the room holds
@@ -144,6 +153,17 @@ public:
     // what MIDI controllers send (all such instruments at once); a live-input source plays its hardware input.
     // Every source starts with its input off.
     void setSourceInput(int id, bool on);
+
+    // ── Amps ─────────────────────────────────────────────────────────────────────────────────────────────
+    static constexpr double kLoopSeconds = 90.0;  // the longest loop a pedal holds
+    void setAmpControl(int id, AmpControl control, float value);  // a knob, 0 to 10
+    // The loop pedal in front of an amp. The first Press gives it its memory (two buffers of kLoopSeconds),
+    // allocated here on the calling thread. False if the source isn't an amp.
+    bool looperAction(int id, Looper::Action action);
+    // Playback level (1 = as recorded); whether recordings start and end on bar lines while the patterns run; and
+    // whether finishing the first recording goes straight into overdubbing.
+    void setLooperOptions(int id, float level, bool sync, bool overdub_after_record);
+    LooperStatus looperStatus(int id) const;
     void setListener(Vec3 position, Vec3 ahead, Vec3 up);
     void noteOn(int id, int note, float velocity);
     void noteOff(int id, int note);
@@ -209,10 +229,13 @@ private:
             NoteOn, NoteOff, AllNotesOff, Binaural, Reverb, MasterVolume, SourceInput,
             PatternNoteSet, PatternNoteRemove, PatternClear, PatternSteps, SourceLoop,
             SequencerRunning, Tempo, Swing, Click, ClickVolume, Reverb2, SourceGain, Falloff, LimiterOn,
+            AmpKnob, LooperMemory, LooperAct, LooperOptions,
         } type = AddSource;
         int id = 0;
         float v[9] = {};
         Source* source = nullptr;
+        float* memory[2] = {nullptr, nullptr};  // LooperMemory
+        int64_t count = 0;
     };
 
     void push(const Command& c);
@@ -221,6 +244,7 @@ private:
     void renderBlock();
     void allocateBuffers();
     std::unique_ptr<Instrument> makeInstrument(InstrumentKind kind) const;
+    void connect(Source& source);  // an amp's loop pedal and knobs, after its instrument is (re)built
     Source* owned(int id) const;  // the source with this id, unless it is on its way out
     void reap();                  // frees removed sources the audio thread has finished with
     void updatePath(Source& source);  // works out how its sound reaches the listener and tells the audio thread
@@ -285,6 +309,7 @@ private:
     size_t input_read_ = 0, input_count_ = 0;  // in frames
     int block_pos_;
     int64_t clock_ = 0;  // samples rendered since start: the engine's shared musical clock
+    int64_t bar_timing_[2] = {-1, 0};  // for the loop pedals: samples from this block's start to the next bar line, a bar
 
     // Shared between threads
     std::array<std::atomic<float>, kSourceSlots> levels_{};

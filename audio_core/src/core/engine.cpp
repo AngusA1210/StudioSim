@@ -144,6 +144,11 @@ struct AudioEngine::Source {
     float mute_target = 1.0f, mute_gain = 1.0f;
     int input_channel = LiveInput::kAllInputs;
     bool input_on = false;  // see setSourceInput; kept by both threads (the game's copy survives a reconfigure)
+    // Amps: the knobs (the game thread's copy, put back if the amp is rebuilt), and the loop pedal, which lives here
+    // rather than in the amp so that a loop survives a change of buffer size. Its memory belongs to the game thread.
+    std::array<float, kAmpControls> amp_controls{5, 5, 5, 5, 5, 5};
+    Looper looper;
+    std::unique_ptr<float[]> loop_memory[2];
     // The pattern the sequencer plays on this source. These belong to the audio thread...
     std::array<PatternNote, kMaxPatternNotes> notes;
     int note_count = 0, steps = kMaxPatternSteps;
@@ -211,8 +216,20 @@ std::unique_ptr<Instrument> AudioEngine::makeInstrument(InstrumentKind kind) con
         case InstrumentKind::Bells: return std::make_unique<Bells>(sr);
         case InstrumentKind::Keys:  return std::make_unique<Keys>(sr);
         case InstrumentKind::Live:  return std::make_unique<LiveInput>(sr, &input_bus_);
+        case InstrumentKind::GuitarCombo:
+        case InstrumentKind::GuitarStack:
+        case InstrumentKind::BassCombo:
+        case InstrumentKind::BassStack:
+            return std::make_unique<Amp>(sr, kind, &input_bus_, block_);
     }
     return nullptr;
+}
+
+void AudioEngine::connect(Source& s) {
+    if (!isAmp(s.kind)) return;
+    auto* amp = static_cast<Amp*>(s.instrument.get());
+    amp->connect(&s.looper, bar_timing_);
+    for (int c = 0; c < kAmpControls; ++c) amp->setControl(AmpControl(c), s.amp_controls[size_t(c)]);
 }
 
 std::vector<AudioDeviceInfo> AudioEngine::outputDevices() { return listDevices(ma_device_type_playback); }
@@ -255,6 +272,12 @@ bool AudioEngine::configure(int sample_rate, int block_size, std::string* error)
         s->instrument = makeInstrument(s->kind);
         s->instrument->setInputChannel(s->input_channel);
         s->instrument->setInputEnabled(s->input_on);
+        connect(*s);
+        if (ratio != 1.0 && s->loop_memory[0]) {  // a loop recorded at another sample rate would play at the wrong speed
+            s->looper.reset();
+            s->loop_memory[0].reset();
+            s->loop_memory[1].reset();
+        }
         s->mono.assign(size_t(block_), 0.0f);
         if (!s->spatializer.init(steam_, error)) return false;
     }
@@ -407,6 +430,49 @@ bool AudioEngine::startMidi(std::string* error) {
 
 void AudioEngine::pollMidi() { midi_.rescan(); }
 
+void AudioEngine::setAmpControl(int id, AmpControl control, float value) {
+    Source* s = owned(id);
+    if (!s || !isAmp(s->kind)) return;
+    s->amp_controls[size_t(control)] = std::clamp(value, 0.0f, 10.0f);
+    Command c; c.type = Command::AmpKnob; c.id = id; c.v[0] = float(int(control)); c.v[1] = s->amp_controls[size_t(control)]; push(c);
+}
+
+bool AudioEngine::looperAction(int id, Looper::Action action) {
+    Source* s = owned(id);
+    if (!s || !isAmp(s->kind)) return false;
+    if (action == Looper::Press && !s->loop_memory[0]) {  // its first recording: give it somewhere to record
+        const int64_t capacity = int64_t(kLoopSeconds * sr_);
+        s->loop_memory[0].reset(new float[size_t(capacity)]());
+        s->loop_memory[1].reset(new float[size_t(capacity)]());
+        Command m; m.type = Command::LooperMemory; m.id = id;
+        m.memory[0] = s->loop_memory[0].get();
+        m.memory[1] = s->loop_memory[1].get();
+        m.count = capacity;
+        push(m);
+    }
+    Command c; c.type = Command::LooperAct; c.id = id; c.v[0] = float(int(action)); push(c);
+    return true;
+}
+
+void AudioEngine::setLooperOptions(int id, float level, bool sync, bool overdub_after_record) {
+    Command c; c.type = Command::LooperOptions; c.id = id;
+    c.v[0] = std::clamp(level, 0.0f, 4.0f); c.v[1] = sync ? 1.0f : 0.0f; c.v[2] = overdub_after_record ? 1.0f : 0.0f;
+    push(c);
+}
+
+LooperStatus AudioEngine::looperStatus(int id) const {
+    LooperStatus out;
+    const Source* s = owned(id);
+    if (!s || !isAmp(s->kind)) return out;
+    out.state = s->looper.state();
+    out.length = double(s->looper.length()) / sr_;
+    out.position = double(s->looper.position()) / sr_;
+    out.capacity = kLoopSeconds;
+    out.can_undo = s->looper.canUndo();
+    out.can_redo = s->looper.canRedo();
+    return out;
+}
+
 void AudioEngine::setSourceInput(int id, bool on) {
     if (Source* s = owned(id)) s->input_on = on;
     Command c; c.type = Command::SourceInput; c.id = id; c.v[0] = on ? 1.0f : 0.0f; push(c);
@@ -428,6 +494,7 @@ int AudioEngine::addSource(InstrumentKind kind, Vec3 position, float gain, float
     src->id = int(slot);
     src->kind = kind;
     src->instrument = makeInstrument(kind);
+    connect(*src);
     if (!src->spatializer.init(steam_, nullptr)) return -1;
     src->mono.assign(size_t(block_), 0.0f);
     src->via = src->via_target = src->position = position;
@@ -837,6 +904,22 @@ void AudioEngine::drainCommands() {
             case Command::ClickVolume:
                 click_volume_ = c.v[0];
                 break;
+            case Command::AmpKnob:
+                if (s && isAmp(s->kind)) static_cast<Amp*>(s->instrument.get())->setControl(AmpControl(int(c.v[0])), c.v[1]);
+                break;
+            case Command::LooperMemory:
+                if (s) s->looper.setMemory(c.memory[0], c.memory[1], c.count);
+                break;
+            case Command::LooperAct:
+                if (s) s->looper.act(Looper::Action(int(c.v[0])));
+                break;
+            case Command::LooperOptions:
+                if (s) {
+                    s->looper.setLevel(c.v[0]);
+                    s->looper.setSync(c.v[1] > 0.5f);
+                    s->looper.setDubAfterRecord(c.v[2] > 0.5f);
+                }
+                break;
             case Command::SourceGain:
                 if (s) s->gain_target = c.v[0];
                 break;
@@ -860,7 +943,7 @@ void AudioEngine::drainMidi() {
     MidiEvent e;
     while (midi_queue_.pop(e)) {
         for (Source* s : sources_) {  // every instrument with its input on
-            if (!s || !s->input_on || s->kind == InstrumentKind::Live) continue;
+            if (!s || !s->input_on || isLiveInput(s->kind)) continue;
             switch (e.type) {
                 case MidiEvent::NoteOn:  s->instrument->noteOn(e.note, e.velocity); break;
                 case MidiEvent::NoteOff: s->instrument->noteOff(e.note); break;
@@ -979,6 +1062,9 @@ void AudioEngine::renderBlock() {
     std::fill(send_.begin(), send_.end(), 0.0f);
     std::fill(click_.begin(), click_.end(), 0.0f);
     sequencer_.process(clock_ + block_, *this);
+    const int64_t next_bar = sequencer_.nextBarAt(clock_);
+    bar_timing_[0] = next_bar < 0 ? -1 : next_bar - clock_;
+    bar_timing_[1] = int64_t(std::llround(sequencer_.barSamples()));
     for (auto& c : clicks_)
         if (c.active) for (int i = 0; i < block_ && c.active; ++i) click_[size_t(i)] += c.next();
 

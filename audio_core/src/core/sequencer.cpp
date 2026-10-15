@@ -1,6 +1,7 @@
 #include "sequencer.h"
 
 #include <algorithm>
+#include <cmath>
 
 namespace sr {
 namespace {
@@ -60,8 +61,7 @@ std::vector<PatternNote> defaultPattern(InstrumentKind kind) {
                 case InstrumentKind::Bells:
                     if (kBells[bar % 2][s] >= 0) add(step, chord.tones[kBells[bar % 2][s]], 1, 0.45f + (s % 4 == 0 ? 0.2f : 0.0f));
                     break;
-                case InstrumentKind::Keys:
-                case InstrumentKind::Live:
+                default:  // the Keys, and everything that plays an input
                     break;
             }
         }
@@ -93,6 +93,16 @@ void Sequencer::start(int64_t now) {
     running_ = true;
     next_step_ = 0;
     next_step_time_ = double(now) + 0.02 * sr_;
+}
+
+int64_t Sequencer::nextBarAt(int64_t from) const {
+    if (!running_ || step_samples_ <= 0.0) return -1;
+    // Steps fall every step_samples_ either side of the next one due; bars begin on every sixteenth step.
+    int64_t step = next_step_ - int64_t(std::floor((next_step_time_ - double(from)) / step_samples_));
+    while (next_step_time_ + double(step - next_step_) * step_samples_ < double(from)) ++step;
+    step = (step + kStepsPerBar - 1) / kStepsPerBar * kStepsPerBar;
+    if (step < 0) step = 0;
+    return int64_t(std::llround(next_step_time_ + double(step - next_step_) * step_samples_));
 }
 
 void Sequencer::process(int64_t block_end, StepSink& sink) {

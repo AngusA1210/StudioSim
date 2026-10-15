@@ -4,6 +4,14 @@ extends Node3D
 
 const Models := preload("res://scripts/instrument_models.gd")
 const INPUT_GREEN := Color(0.36, 0.9, 0.5)
+# How an amp's loop pedal shows what it is doing: on the pedal's light, and under the amp's name.
+const LOOP_LOOKS := {
+	"waiting": ["waiting for the bar", Color(1.0, 0.75, 0.3)],
+	"recording": ["● REC", Color(1.0, 0.3, 0.28)],
+	"playing": ["▶ LOOP", Color(0.4, 0.9, 0.5)],
+	"overdubbing": ["● DUB", Color(1.0, 0.6, 0.2)],
+	"stopped": ["■ loop stopped", Color(0.55, 0.58, 0.65)],
+}
 
 var kind := ""
 var display_name := ""
@@ -20,6 +28,12 @@ var loop_on := true    # playable instruments: whether the sequencer plays their
 var input_on := false  # it takes input: MIDI controllers play it, or a Speaker plays its hardware input
 var input_channel := -1  # live-input instruments: the hardware input they play (0-based), or -1 for all of them
 var level_db := 0.0    # its fader: how far above or below its normal level it is set
+var is_amp := false    # a guitar or bass amp, with knobs and a loop pedal
+var amp_controls := {"gain": 5.0, "bass": 5.0, "mid": 5.0, "treble": 5.0, "presence": 5.0, "master": 5.0}
+var looper := {}       # what its loop pedal is doing, from the audio core (amps only)
+var looper_level := 1.0
+var looper_sync := true
+var looper_dub_after := false
 var carried := false
 var glow := 0.0
 
@@ -31,6 +45,8 @@ var _accent: StandardMaterial3D  # the parts in its own colour, which light up a
 var _light: OmniLight3D
 var _label: Label3D
 var _input_badge: Label3D
+var _loop_label: Label3D
+var _led: StandardMaterial3D
 var _collider: CollisionShape3D
 
 
@@ -44,6 +60,7 @@ func setup(spec: Dictionary, audio: SoundRoomAudio) -> void:
 	footprint = spec.footprint
 	playable = not spec.get("live_input", false)
 	default_octave = spec.get("octave", 0)
+	is_amp = spec.get("amp", false)
 	name = display_name
 	position = Vector3(spec.position.x, source_height, spec.position.z)
 
@@ -57,6 +74,7 @@ func setup(spec: Dictionary, audio: SoundRoomAudio) -> void:
 	_model.position.y = -source_height  # the model is drawn from the floor up
 	add_child(_model)
 	_accent = built.accent
+	_led = built.get("led")
 
 	_light = OmniLight3D.new()
 	_light.light_color = color
@@ -84,6 +102,14 @@ func setup(spec: Dictionary, audio: SoundRoomAudio) -> void:
 	_input_badge.position = _label.position - Vector3(0, 0.15, 0)
 	_input_badge.visible = false
 	add_child(_input_badge)
+	_loop_label = Label3D.new()  # an amp's loop pedal: recording, looping, overdubbing
+	_loop_label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	_loop_label.font_size = 30
+	_loop_label.pixel_size = 0.004
+	_loop_label.outline_size = 8
+	_loop_label.position = _label.position - Vector3(0, 0.3, 0)
+	_loop_label.visible = false
+	add_child(_loop_label)
 
 	# Something solid to bump into, on the default layer only (sound passes through instruments).
 	var body := StaticBody3D.new()
@@ -104,6 +130,22 @@ func _process(delta: float) -> void:
 	var on := 0.25 if muted else 1.0
 	_accent.emission_energy_multiplier = (0.12 + 1.5 * glow) * on
 	_light.light_energy = (0.1 + 1.6 * glow) * on
+	if is_amp:
+		_show_looper()
+
+
+func _show_looper() -> void:
+	looper = _audio.get_looper(source_id)
+	var state: String = looper.get("state", "empty")
+	var look: Array = LOOP_LOOKS.get(state, ["", Color.BLACK])
+	var text: String = look[0]
+	if state in ["recording", "playing", "overdubbing"]:
+		text += "  %.1f s" % (looper.length if state == "recording" else looper.position)
+	_loop_label.text = text
+	_loop_label.modulate = look[1]
+	_loop_label.visible = text != "" and _label.visible
+	_led.emission = look[1]
+	_led.emission_energy_multiplier = 0.0 if state == "empty" else (2.5 if state in ["recording", "overdubbing"] else 1.5)
 
 
 ## Tells the audio core where this instrument is, if it has moved.
@@ -154,6 +196,8 @@ func set_loop(on: bool) -> void:
 func set_label_visible(on: bool) -> void:
 	_label.visible = on
 	_input_badge.visible = on and input_on
+	if not on:
+		_loop_label.visible = false
 
 
 func set_carried(value: bool) -> void:

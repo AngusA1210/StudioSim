@@ -1,16 +1,18 @@
 extends RefCounted
 ## What each kind of instrument looks like, built from simple shapes: a drum kit, a monophonic bass synth, a
-## modular synth for the pad, tubular bells, an electric piano, and a PA speaker on a tripod.
+## modular synth for the pad, tubular bells, an electric piano, a PA speaker on a tripod, and guitar and bass amps
+## (combos, and heads on cabinets), each with its loop pedal on the floor in front.
 ##
 ## Each model stands on the floor (y = 0) and faces +z. The parts drawn in the instrument's own colour use the
-## `accent` material, which the instrument lights up as it plays.
+## `accent` material, which the instrument lights up as it plays. An amp's pedal has an `led` material too, which
+## shows what the pedal is doing.
 
 const KEY_WHITE := 0.0235  # width of a white key, in metres
 
 static var _shared := {}  # finishes every model uses, made once
 
 
-## Returns {node: Node3D, accent: StandardMaterial3D}.
+## Returns {node: Node3D, accent: StandardMaterial3D} and, for an amp, {led: StandardMaterial3D}.
 static func build(kind: String, color: Color) -> Dictionary:
 	var node := Node3D.new()
 	var accent := StandardMaterial3D.new()
@@ -18,7 +20,22 @@ static func build(kind: String, color: Color) -> Dictionary:
 	accent.roughness = 0.35
 	accent.emission_enabled = true
 	accent.emission = color
+	var built := {"node": node, "accent": accent}
 	match kind:
+		"guitar_combo":
+			_amp_box(node, accent, Vector3(0.62, 0.48, 0.25), false, 1)
+			built.led = _loop_pedal(node, 0.42)
+		"guitar_stack":
+			_amp_box(node, accent, Vector3(0.76, 0.76, 0.36), false, 4)  # the 4x12 cabinet
+			_amp_head(node, accent, Vector3(0.74, 0.25, 0.27), 0.76)
+			built.led = _loop_pedal(node, 0.5)
+		"bass_combo":
+			_amp_box(node, accent, Vector3(0.56, 0.7, 0.42), true, 1)
+			built.led = _loop_pedal(node, 0.52)
+		"bass_stack":
+			_amp_box(node, accent, Vector3(0.6, 1.3, 0.45), false, 8)  # the 8x10 cabinet
+			_amp_head(node, accent, Vector3(0.62, 0.24, 0.32), 1.3)
+			built.led = _loop_pedal(node, 0.55)
 		"drums":
 			_drum_kit(node, accent)
 		"bass":
@@ -31,7 +48,7 @@ static func build(kind: String, color: Color) -> Dictionary:
 			_electric_piano(node, accent)
 		"live":
 			_speaker(node, accent)
-	return {"node": node, "accent": accent}
+	return built
 
 
 # ── The instruments ─────────────────────────────────────────────────────────────────────────────────────────
@@ -187,6 +204,62 @@ static func _speaker(node: Node3D, accent: Material) -> void:
 	_tripod(node, Vector3(0, 0.62, 0), 0.42, chrome)
 
 
+## A guitar or bass amp's box: tolex all round, grille cloth on the front, metal corners, and (for a combo) the
+## control panel along the top. `speakers` only sets how the grille is divided: one big panel, or a cabinet's look.
+static func _amp_box(node: Node3D, accent: Material, size: Vector3, casters: bool, speakers: int) -> void:
+	var black := _finish("black")
+	var grille := _finish("grille")
+	var chrome := _finish("chrome")
+	var lift := 0.05 if casters else 0.015
+	_box(node, size, black, Vector3(0, lift + size.y / 2, 0))
+	var face_height := size.y - (0.11 if speakers == 1 else 0.06)
+	_box(node, Vector3(size.x - 0.06, face_height - 0.04, 0.01), grille,
+		Vector3(0, lift + 0.03 + (face_height - 0.04) / 2, size.z / 2 + 0.002))
+	_box(node, Vector3(size.x - 0.04, 0.012, 0.012), accent, Vector3(0, lift + 0.03 + face_height - 0.03, size.z / 2 + 0.006))  # piping
+	if speakers == 1:  # a combo: the panel across the top front, with its knobs
+		_box(node, Vector3(size.x - 0.04, 0.07, 0.012), _finish("panel"), Vector3(0, lift + size.y - 0.045, size.z / 2 + 0.002))
+		for k in 6:
+			_cylinder(node, 0.014, 0.02, _finish("knob_white"), Vector3(-0.2 + k * 0.07, lift + size.y - 0.045, size.z / 2 + 0.014), Vector3(PI / 2, 0, 0))
+		_sphere(node, 0.01, accent, Vector3(size.x / 2 - 0.05, lift + size.y - 0.045, size.z / 2 + 0.01))  # the pilot light
+		_box(node, Vector3(0.18, 0.03, 0.04), black, Vector3(0, lift + size.y + 0.015, 0))  # the handle
+	for x in [-1.0, 1.0]:  # corners
+		for y in [lift + 0.015, lift + size.y - 0.015]:
+			for z in [-1.0, 1.0]:
+				_box(node, Vector3(0.04, 0.04, 0.04), chrome, Vector3(x * (size.x / 2 - 0.01), y, z * (size.z / 2 - 0.01)))
+	if casters:
+		for x in [-1.0, 1.0]:
+			for z in [-1.0, 1.0]:
+				_sphere(node, 0.022, black, Vector3(x * (size.x / 2 - 0.06), 0.022, z * (size.z / 2 - 0.06)))
+
+
+## A head sitting on top of a cabinet `on_top` metres high: a box with its faceplate in the accent colour and a row of
+## knobs, a power switch, and a handle.
+static func _amp_head(node: Node3D, accent: Material, size: Vector3, on_top: float) -> void:
+	var black := _finish("black")
+	var y := on_top + 0.015 + size.y / 2
+	_box(node, size, black, Vector3(0, y, 0))
+	_box(node, Vector3(size.x - 0.05, size.y * 0.55, 0.01), accent, Vector3(0, y - 0.01, size.z / 2 + 0.002))
+	for k in 6:
+		_cylinder(node, 0.016, 0.022, _finish("knob"), Vector3(-0.22 + k * 0.075, y - 0.01, size.z / 2 + 0.016), Vector3(PI / 2, 0, 0))
+	_box(node, Vector3(0.02, 0.035, 0.02), _finish("chrome"), Vector3(size.x / 2 - 0.06, y - 0.01, size.z / 2 + 0.012))
+	_box(node, Vector3(0.2, 0.03, 0.04), black, Vector3(0, on_top + size.y + 0.03, 0))
+
+
+## The loop pedal on the floor in front of an amp, `ahead` metres out. Returns its light's material.
+static func _loop_pedal(node: Node3D, ahead: float) -> StandardMaterial3D:
+	var body := _plain(Color(0.2, 0.22, 0.26))
+	body.metallic = 0.5
+	_box(node, Vector3(0.075, 0.045, 0.125), body, Vector3(0, 0.0225, ahead))
+	_cylinder(node, 0.013, 0.02, _finish("chrome"), Vector3(0, 0.055, ahead + 0.025))  # the footswitch
+	var led := StandardMaterial3D.new()
+	led.albedo_color = Color(0.1, 0.1, 0.1)
+	led.emission_enabled = true
+	led.emission = Color(0, 0, 0)
+	_ring(node, 0.018, 0.026, led, Vector3(0, 0.046, ahead - 0.025))  # its light, round a small level knob
+	_cylinder(node, 0.012, 0.015, _finish("knob"), Vector3(0, 0.052, ahead - 0.025))
+	return led
+
+
 # ── Shared parts ────────────────────────────────────────────────────────────────────────────────────────────
 
 ## A drum: a shell in the accent colour with a head on top.
@@ -309,7 +382,8 @@ static func _finish(which: String) -> StandardMaterial3D:
 		"head": [Color(0.88, 0.87, 0.82), 0.0, 0.6], "wood": [Color(0.46, 0.28, 0.15), 0.0, 0.55],
 		"panel": [Color(0.2, 0.21, 0.24), 0.4, 0.4], "knob": [Color(0.09, 0.09, 0.1), 0.0, 0.4],
 		"ivory": [Color(0.93, 0.92, 0.88), 0.0, 0.35], "ebony": [Color(0.04, 0.04, 0.05), 0.0, 0.3],
-		"cone": [Color(0.11, 0.11, 0.12), 0.0, 0.85],
+		"cone": [Color(0.11, 0.11, 0.12), 0.0, 0.85], "grille": [Color(0.24, 0.24, 0.23), 0.0, 0.95],
+		"knob_white": [Color(0.86, 0.85, 0.8), 0.0, 0.4],
 	}
 	var spec: Array = specs[which]
 	var material := StandardMaterial3D.new()

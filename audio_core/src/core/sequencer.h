@@ -52,6 +52,9 @@ public:
 
     // Reports every step that starts before `block_end` (and has not been reported yet).
     void process(int64_t block_end, StepSink& sink);
+    // Where the first bar line at or after sample `from` falls (-1 while stopped), and how long a bar is.
+    int64_t nextBarAt(int64_t from) const;
+    double barSamples() const { return step_samples_ * kStepsPerBar; }
 
 private:
     double sr_ = 48000.0, bpm_ = kDefaultBpm, swing_ = kDefaultSwing;

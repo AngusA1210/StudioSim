@@ -35,6 +35,8 @@ var octave := 0
 var held := {}      # physical key → [MIDI note sounding, the instruments it was sent to]
 var remove_pending = null  # instrument that Backspace was pressed on once; a second press removes it
 var _sat_input := false    # sitting down switched the input on, so getting up switches it off again
+var clear_pending = null   # the amp whose loop J was pressed for once; a second press clears it
+var _clear_deadline := 0
 
 var _remove_deadline := 0
 
@@ -133,11 +135,13 @@ func forget(inst) -> void:
 		target = null
 	if remove_pending == inst:
 		remove_pending = null
+	if clear_pending == inst:
+		clear_pending = null
 
 
 ## The title screen, one of the menus or the pattern editor is up: the keyboard and mouse belong to it.
 func _ui_open() -> bool:
-	for panel in [app.title, app.menu, app.sequencer, app.mixer, app.instrument_menu]:
+	for panel in [app.title, app.menu, app.sequencer, app.mixer, app.amp_panel, app.instrument_menu]:
 		if panel != null and panel.is_open():
 			return true
 	return false
@@ -183,6 +187,8 @@ func _handle_key(event: InputEventKey) -> void:
 		KEY_ENTER, KEY_KP_ENTER:
 			if at != null and at.playable and (playing != null or can_play_target()):
 				app.sequencer.open(at)
+			elif at != null and at.is_amp and _distance_to(at) < PLAY_REACH + 0.5:
+				app.amp_panel.open(at)
 			return
 		KEY_N:
 			app.instrument_menu.open()
@@ -233,6 +239,28 @@ func _handle_key(event: InputEventKey) -> void:
 				start_playing(target)
 		KEY_G:
 			_grab_or_drop()
+		KEY_L, KEY_K, KEY_U, KEY_J:  # an amp's loop pedal
+			if target != null and target.is_amp:
+				_loop_pedal(target, key)
+
+
+## The loop pedal's buttons as keys: L the footswitch, K stop or play, U undo or redo, J clear (twice).
+func _loop_pedal(amp, key: int) -> void:
+	var loop: Dictionary = amp.looper
+	match key:
+		KEY_L:
+			app.looper_action(amp, "press")
+		KEY_K:
+			app.looper_action(amp, "play" if loop.get("state", "") == "stopped" else "stop")
+		KEY_U:
+			app.looper_action(amp, "undo" if loop.get("can_undo", false) else "redo")
+		KEY_J:
+			if clear_pending == amp and Time.get_ticks_msec() < _clear_deadline:
+				clear_pending = null
+				app.looper_action(amp, "clear")
+			elif loop.get("state", "empty") != "empty":
+				clear_pending = amp
+				_clear_deadline = Time.get_ticks_msec() + REMOVE_WINDOW_MS
 
 
 func _physics_process(delta: float) -> void:
@@ -273,6 +301,8 @@ func _process(_delta: float) -> void:
 	if remove_pending != null and (Time.get_ticks_msec() >= _remove_deadline
 			or (remove_pending != carried and remove_pending != target and remove_pending != playing)):
 		remove_pending = null  # too slow, or looking at something else now
+	if clear_pending != null and (Time.get_ticks_msec() >= _clear_deadline or clear_pending != target):
+		clear_pending = null
 	var aimed = null if carried != null else _pick_target()
 	if aimed != target:
 		if target != null:

@@ -12,12 +12,15 @@
 #include <cstdio>
 #include <cstdlib>
 #include <functional>
+#include <numeric>
 #include <string>
 #include <thread>
 #include <vector>
 
 #include "acoustics.h"
+#include "amp.h"
 #include "engine.h"
+#include "looper.h"
 #include "room_geometry.h"
 
 #ifdef __APPLE__
@@ -140,6 +143,41 @@ int crossings(const Render& r, int from, int count) {
     for (int i = from + 1; i < from + count && i < int(r.l.size()); ++i)
         if ((r.l[size_t(i)] >= 0) != (r.l[size_t(i - 1)] >= 0)) ++n;
     return n;
+}
+
+// How strong frequency `hz` is in `x` (Goertzel), as power.
+double tonePower(const std::vector<float>& x, double hz, double sr) {
+    const double w = 2.0 * 3.14159265358979 * hz / sr, c = 2.0 * std::cos(w);
+    double s1 = 0, s2 = 0;
+    for (float v : x) {
+        const double s0 = v + c * s1 - s2;
+        s2 = s1;
+        s1 = s0;
+    }
+    return (s1 * s1 + s2 * s2 - c * s1 * s2) / double(x.size() * x.size());
+}
+
+// A plucked string (Karplus-Strong), as a guitar or bass plugged straight into an interface sounds before an amp.
+std::vector<float> pluckedString(double hz, double seconds, float level, double sr = 48000.0) {
+    std::vector<float> out(size_t(seconds * sr));
+    Rng rng;
+    for (size_t start = 0; start < out.size(); start += size_t(sr / 2)) {  // a note every half second
+        std::vector<float> line(size_t(sr / hz));
+        for (float& v : line) v = rng.next();
+        size_t at = 0;
+        for (size_t i = start; i < out.size() && i < start + size_t(sr / 2); ++i) {
+            const size_t next = (at + 1) % line.size();
+            const float y = 0.498f * (line[at] + line[next]);
+            out[i] += line[at];
+            line[at] = y;
+            at = next;
+        }
+    }
+    double energy = 0;
+    for (float v : out) energy += double(v) * v;
+    const float scale = level / float(std::sqrt(energy / double(out.size())));
+    for (float& v : out) v *= scale;
+    return out;
 }
 
 // The prototype's room: same instruments, positions, levels and reverb sends, plus a speaker for live input.
@@ -1094,6 +1132,230 @@ int main(int argc, char** argv) {
         const Render later = renderSeconds(changing.engine, 2.0);
         check(biggest > 1e-3 && steepest < 0.4 * biggest && mid_change && settled && reconfigured && later.finite && changing.engine.roomSettled(),
               "the room can change while music plays, without a click", fmt("the changeover peaks at %.4f and never steps by more than %.4f", biggest, steepest));
+    }
+
+    {
+        std::printf("\nThe loop pedal\n");
+        constexpr int64_t kSr = 48000;
+        // Feeds a looper `samples` of input in blocks of 128 and returns what it played back. Bar lines, if any, fall
+        // every `bar` samples from `bar_from` on the running clock `t`.
+        struct Rig {
+            std::vector<float> a, b;
+            Looper looper;
+            int64_t t = 0, bar = 0, bar_from = -1;
+            explicit Rig(int64_t capacity) : a(size_t(capacity)), b(size_t(capacity)) { looper.setMemory(a.data(), b.data(), capacity); }
+            std::vector<float> run(int64_t samples, const std::function<float(int64_t)>& input) {
+                std::vector<float> out(size_t(samples), 0.0f), in(128);
+                for (int64_t done = 0; done < samples; done += 128) {
+                    const int n = int(std::min<int64_t>(128, samples - done));
+                    for (int i = 0; i < n; ++i) in[size_t(i)] = input ? input(t + i) : 0.0f;
+                    int64_t next_bar = -1;
+                    if (bar_from >= 0) next_bar = t <= bar_from ? bar_from - t : (bar - (t - bar_from) % bar) % bar;
+                    looper.process(in.data(), out.data() + done, n, next_bar, bar);
+                    t += n;
+                }
+                return out;
+            }
+        };
+        auto tone = [](double hz) { return [hz](int64_t n) { return 0.2f * float(std::sin(6.2831853 * hz * double(n) / 48000.0)); }; };
+        auto rms = [](const std::vector<float>& x, size_t from, size_t to) {
+            double e = 0;
+            for (size_t i = from; i < to; ++i) e += double(x[i]) * x[i];
+            return std::sqrt(e / double(std::max<size_t>(to - from, 1)));
+        };
+        auto same = [](const std::vector<float>& x, size_t a, size_t b, size_t n) {
+            double worst = 0;
+            for (size_t i = 0; i < n; ++i) worst = std::max(worst, double(std::fabs(x[a + i] - x[b + i])));
+            return worst;
+        };
+
+        Rig rig(kSr * 10);
+        rig.looper.act(Looper::Press);
+        const bool recording = rig.looper.state() == Looper::Recording;
+        rig.run(kSr, tone(440));
+        rig.looper.act(Looper::Press);
+        const int64_t length = rig.looper.length();
+        std::vector<float> played = rig.run(kSr * 3, {});
+        check(recording && rig.looper.state() == Looper::Playing && length == kSr && rms(played, 0, kSr) > 0.1 &&
+                  same(played, 0, size_t(kSr), size_t(kSr)) < 1e-7 && same(played, 0, size_t(2 * kSr), size_t(kSr)) < 1e-7,
+              "a press records, the next closes the loop, and it plays round and round", fmt("a %.2f s loop", double(length) / kSr));
+        const double one_layer = rms(played, 1000, size_t(kSr) - 1000);
+
+        rig.looper.act(Looper::Press);  // overdub a second tone over one whole pass
+        const bool dubbing = rig.looper.state() == Looper::Overdubbing;
+        rig.run(kSr, tone(660));
+        rig.looper.act(Looper::Press);
+        std::vector<float> two = rig.run(kSr * 2, {});
+        const double with_dub = rms(two, 1000, size_t(kSr) - 1000);
+        check(dubbing && std::fabs(with_dub / one_layer - std::sqrt(2.0)) < 0.05 && rig.looper.canUndo() && same(two, 0, size_t(kSr), size_t(kSr)) < 1e-7,
+              "overdubbing lays a second part on top", fmt("level %.3f with one layer, %.3f with two", one_layer, with_dub));
+        rig.looper.act(Looper::Undo);
+        std::vector<float> undone = rig.run(kSr, {});
+        rig.looper.act(Looper::Redo);
+        std::vector<float> redone = rig.run(kSr, {});
+        check(std::fabs(rms(undone, 1000, size_t(kSr) - 1000) - one_layer) < 1e-4 && std::fabs(rms(redone, 1000, size_t(kSr) - 1000) - with_dub) < 1e-4 &&
+                  rig.looper.canUndo() && !rig.looper.canRedo(),
+              "Undo takes the overdub off, and Redo puts it back", "");
+
+        // A short overdub, part of the way round: the rest of the loop is copied over in the background.
+        rig.looper.act(Looper::Undo);
+        rig.run(kSr / 4, {});
+        rig.looper.act(Looper::Press);
+        rig.run(kSr / 4, tone(880));
+        rig.looper.act(Looper::Press);
+        rig.run(kSr, {});
+        const bool undoable = rig.looper.canUndo();
+        rig.looper.act(Looper::Press);  // straight into another overdub
+        std::vector<float> while_dubbing = rig.run(kSr / 2, {});
+        rig.looper.act(Looper::Undo);   // thrown away while it is still going
+        std::vector<float> after = rig.run(kSr, {});
+        rig.looper.act(Looper::Undo);   // and then the short one
+        std::vector<float> original = rig.run(kSr, {});
+        check(undoable && rig.looper.state() == Looper::Playing && rms(while_dubbing, 0, size_t(kSr / 2)) > 0.1 &&
+                  std::fabs(rms(original, 1000, size_t(kSr) - 1000) - one_layer) < 1e-4 && rms(after, 0, size_t(kSr)) > rms(original, 0, size_t(kSr)),
+              "Undo during an overdub throws that one away; Undo again goes back one more layer", "");
+
+        rig.looper.act(Looper::Stop);
+        std::vector<float> stopped = rig.run(kSr, {});
+        rig.looper.act(Looper::Play);
+        std::vector<float> again = rig.run(kSr, {});
+        check(rig.looper.state() == Looper::Playing && rms(stopped, 0, size_t(kSr)) == 0.0 && same(again, 0, size_t(0), 10) == 0.0 &&
+                  std::fabs(rms(again, 1000, size_t(kSr) - 1000) - one_layer) < 1e-4,
+              "Stop silences it, and Play starts it again from the top", "");
+        rig.looper.act(Looper::Clear);
+        std::vector<float> cleared = rig.run(kSr, tone(440));
+        check(rig.looper.state() == Looper::Empty && rig.looper.length() == 0 && rms(cleared, 0, size_t(kSr)) == 0.0,
+              "Clear empties it", "");
+
+        // Sync: the bars are half a second long and the first falls 10000 samples in.
+        Rig synced(kSr * 10);
+        synced.bar = kSr / 2;
+        synced.bar_from = 10000;
+        synced.looper.setSync(true);
+        synced.looper.act(Looper::Press);
+        synced.run(2000, tone(440));
+        const bool waiting = synced.looper.state() == Looper::Waiting;
+        synced.run(8000 + 30000, [](int64_t n) { return n >= 10000 && n < 10400 ? 1.0f : 0.0f; });  // a burst right on the bar line
+        synced.looper.act(Looper::Press);  // a bar and a quarter in: it should carry on to two whole bars
+        synced.run(30000, {});
+        check(waiting && synced.looper.state() == Looper::Playing && synced.looper.length() == 2 * synced.bar &&
+                  synced.a[0] == 0.0f && synced.a[150] > 0.5f,
+              "with Sync, recording waits for the bar line and the loop comes out a whole number of bars",
+              fmt("%.2f bars, starting on the bar line", double(synced.looper.length()) / double(synced.bar)));
+
+        Rig small(kSr);
+        small.looper.setDubAfterRecord(true);
+        small.looper.act(Looper::Press);
+        small.run(kSr * 2, tone(440));
+        check(small.looper.length() == kSr && small.looper.state() == Looper::Overdubbing,
+              "a recording that fills the pedal closes by itself; set to, it goes straight into overdubbing", "");
+    }
+
+    {
+        std::printf("\nGuitar and bass amps\n");
+        const InstrumentKind kinds[4] = {InstrumentKind::GuitarCombo, InstrumentKind::GuitarStack, InstrumentKind::BassCombo, InstrumentKind::BassStack};
+        const char* names[4] = {"guitar combo", "guitar stack", "bass combo", "bass stack"};
+        auto through = [](InstrumentKind kind, std::vector<float> signal, float gain, float bass = 5, float treble = 5) {
+            AmpModel amp;
+            amp.init(kind, 48000.0f);
+            amp.setControl(AmpControl::Gain, gain);
+            amp.setControl(AmpControl::Bass, bass);
+            amp.setControl(AmpControl::Treble, treble);
+            for (size_t i = 0; i < signal.size(); i += 128) amp.process(signal.data() + i, int(std::min<size_t>(128, signal.size() - i)));
+            signal.erase(signal.begin(), signal.begin() + 4800);  // let the filters settle
+            return signal;
+        };
+        std::vector<float> sine(48000 * 2);
+        for (size_t i = 0; i < sine.size(); ++i) sine[i] = 0.1f * float(std::sin(6.2831853 * 220.0 * double(i) / 48000.0));
+        auto distortion = [&](const std::vector<float>& x) {  // harmonics 2 to 5 against the fundamental
+            double harmonics = 0;
+            for (int h = 2; h <= 5; ++h) harmonics += tonePower(x, 220.0 * h, 48000.0);
+            return std::sqrt(harmonics / tonePower(x, 220.0, 48000.0));
+        };
+        const double clean = distortion(through(InstrumentKind::GuitarCombo, sine, 0.0f));
+        const double crunch = distortion(through(InstrumentKind::GuitarCombo, sine, 6.0f));
+        const double lead = distortion(through(InstrumentKind::GuitarStack, sine, 9.0f));
+        check(clean < 0.05 && crunch > 3 * clean && lead > 0.3, "the gain knob takes it from clean to distorted",
+              fmt("harmonics against the note: %.1f %% clean, %.0f %% crunch, %.0f %% on the stack at 9", 100 * clean, 100 * crunch, 100 * lead));
+
+        Rng rng;
+        std::vector<float> noise(48000 * 2);
+        for (float& v : noise) v = 0.05f * rng.next();
+        double low_band, high_band, low_cut, high_cut;
+        bandEnergy(through(InstrumentKind::GuitarCombo, noise, 2.0f, 10.0f, 10.0f), 48000.0f, low_band, high_band);
+        bandEnergy(through(InstrumentKind::GuitarCombo, noise, 2.0f, 0.0f, 0.0f), 48000.0f, low_cut, high_cut);
+        check(10 * std::log10(low_band / low_cut) > 10.0 && 10 * std::log10(high_band / high_cut) > 12.0,
+              "Bass and Treble turn the lows and highs up and down", fmt("lows %.0f dB apart, highs %.0f dB apart, ends of the knobs",
+                                                                         10 * std::log10(low_band / low_cut), 10 * std::log10(high_band / high_cut)));
+
+        // Through each amp, a plucked string at the level an instrument gives an interface: how loud, how bright, how deep.
+        std::string levels;
+        double loudest = -100, quietest = 0;
+        bool no_fizz = true;
+        std::string fizz;
+        double deep[4];
+        for (int k = 0; k < 4; ++k) {
+            const bool bass_amp = k >= 2;
+            std::vector<float> dry = pluckedString(bass_amp ? 55.0 : 110.0, 2.0, 0.1f);
+            std::vector<float> wet = through(kinds[k], dry, 5.0f);
+            const double level = db(std::sqrt(std::inner_product(wet.begin(), wet.end(), wet.begin(), 0.0) / double(wet.size())));
+            loudest = std::max(loudest, level);
+            quietest = std::min(quietest, level);
+            std::vector<float> hot = through(kinds[k], dry, 10.0f);
+            double total = 0, above;
+            for (float v : hot) total += double(v) * v;
+            Biquad hp[2];
+            for (auto& f : hp) f.set(Biquad::Highpass, 48000.0f, 9000.0f, 0.707f);
+            above = 0;
+            for (float v : hot) {
+                const float x = hp[1].process(hp[0].process(v));
+                above += double(x) * x;
+            }
+            if (10 * std::log10(above / total) > -30.0) no_fizz = false;
+            fizz += std::string(k ? ", " : "") + names[k] + fmt(" %.0f", 10 * std::log10(above / total));
+            deep[k] = 10 * std::log10(tonePower(through(kinds[k], std::vector<float>(sine.size(), 0.0f), 5.0f), 50.0, 48000.0) + 1e-30);
+            std::vector<float> low_sine(48000 * 2);
+            for (size_t i = 0; i < low_sine.size(); ++i) low_sine[i] = 0.05f * float(std::sin(6.2831853 * 45.0 * double(i) / 48000.0));
+            deep[k] = 10 * std::log10(tonePower(through(kinds[k], low_sine, 0.0f), 45.0, 48000.0) / tonePower(low_sine, 45.0, 48000.0));
+            levels += std::string(k ? ", " : "") + names[k] + fmt(" %.1f", level);
+        }
+        check(loudest - quietest < 4.0 && quietest > -26.0 && loudest < -10.0, "at their default settings the four amps are about as loud as each other",
+              "dBFS RMS: " + levels);
+        check(no_fizz, "even flat out, the cabinets keep the fizz above 9 kHz at least 30 dB down", "dB: " + fizz);
+        check(deep[2] > deep[0] + 12.0 && deep[3] > deep[1] + 10.0, "the bass amps go deeper than the guitar amps",
+              fmt("45 Hz: guitar combo %.0f dB, bass combo %.0f dB", deep[0], deep[2]) + fmt(", guitar stack %.0f dB, bass stack %.0f dB", deep[1], deep[3]));
+
+        // In the engine: a guitar into a combo, looped, then the guitar stops and the loop carries on through the amp.
+        Room room;
+        room.soloOnly(-1);
+        room.engine.setReverb(false);
+        room.engine.setSequencerRunning(false);
+        const int amp = room.engine.addSource(InstrumentKind::GuitarCombo, {0.0f, 0.3f, 2.0f}, 1.0f, 0.4f);
+        room.engine.setSourceInput(amp, true);
+        std::vector<float> guitar = pluckedString(110.0, 1.0, 0.1f);
+        renderSeconds(room.engine, 0.2);
+        room.engine.looperAction(amp, Looper::Press);
+        Render live = renderSeconds(room.engine, 1.0, [&](int64_t n) { return guitar[size_t(n) % guitar.size()]; });
+        room.engine.looperAction(amp, Looper::Press);
+        room.engine.setSourceInput(amp, false);  // the guitar is put down
+        renderSeconds(room.engine, 0.5);
+        const LooperStatus looping = room.engine.looperStatus(amp);
+        Render loop = renderSeconds(room.engine, 2.0);
+        check(live.rms_l > 0.003 && looping.state == Looper::Playing && std::fabs(looping.length - 1.0) < 0.01 && loop.rms_l > 0.5 * live.rms_l,
+              "a guitar recorded on an amp's loop pedal keeps playing through the amp after the guitar stops",
+              fmt("live %.0f dBFS, the loop %.0f dBFS, %.2f s long", db(live.rms_l), db(loop.rms_l), looping.length));
+        room.engine.setAmpControl(amp, AmpControl::Master, 0.0f);
+        renderSeconds(room.engine, 0.3);
+        Render hushed = renderSeconds(room.engine, 0.5);
+        room.engine.setAmpControl(amp, AmpControl::Master, 5.0f);
+        std::string err;
+        room.engine.configure(48000, 512, &err);  // a new buffer size keeps the loop
+        renderSeconds(room.engine, 0.3);
+        const LooperStatus kept = room.engine.looperStatus(amp);
+        room.engine.configure(44100, 512, &err);  // a new sample rate can't
+        const LooperStatus gone = room.engine.looperStatus(amp);
+        check(hushed.peak < 1e-4 && kept.state == Looper::Playing && gone.state == Looper::Empty && !room.engine.looperAction(room.drums, Looper::Press),
+              "the amp's knobs act on the loop too; a loop survives a new buffer size but not a new sample rate", "");
     }
 
     {

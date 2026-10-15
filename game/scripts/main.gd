@@ -28,6 +28,7 @@ const Menu := preload("res://scripts/menu.gd")
 const Sequencer := preload("res://scripts/sequencer.gd")
 const InstrumentMenu := preload("res://scripts/instrument_menu.gd")
 const Mixer := preload("res://scripts/mixer.gd")
+const AmpPanel := preload("res://scripts/amp_panel.gd")
 const Title := preload("res://scripts/title.gd")
 const Catalog := preload("res://scripts/catalog.gd")
 const Settings := preload("res://scripts/settings.gd")
@@ -55,6 +56,7 @@ var hud
 var menu
 var sequencer  # the pattern editor
 var mixer  # the mix window (Tab)
+var amp_panel  # an amp's knobs and loop pedal (Enter at an amp)
 var instrument_menu
 var title  # the title screen
 var room  # its size and the walls inside it
@@ -152,6 +154,9 @@ func _ready() -> void:
 	mixer = Mixer.new()
 	add_child(mixer)
 	mixer.setup(self)
+	amp_panel = AmpPanel.new()
+	add_child(amp_panel)
+	amp_panel.setup(self)
 	instrument_menu = InstrumentMenu.new()
 	add_child(instrument_menu)
 	instrument_menu.setup(self)
@@ -327,6 +332,31 @@ func _follow_speaker_inputs() -> void:
 				inst.set_input(false)
 
 
+# ── Amps ────────────────────────────────────────────────────────────────────────────────────────────────────
+
+## One of an amp's knobs ("gain", "bass", "mid", "treble", "presence", "master"), 0 to 10.
+func set_amp_control(inst, control: String, value: float) -> void:
+	inst.amp_controls[control] = clampf(value, 0.0, 10.0)
+	audio.set_amp_control(inst.source_id, control, inst.amp_controls[control])
+
+
+## A loop pedal's buttons: "press" (the footswitch), "stop", "play", "undo", "redo", "clear". Starting a recording
+## switches the amp's input on, since there would be nothing to record otherwise.
+func looper_action(inst, action: String) -> void:
+	if not inst.is_amp:
+		return
+	if action == "press" and inst.looper.get("state", "empty") == "empty" and not inst.input_on:
+		set_input(inst, true)
+	audio.looper(inst.source_id, action)
+
+
+func set_looper_options(inst, level: float, sync: bool, dub_after: bool) -> void:
+	inst.looper_level = clampf(level, 0.0, 2.0)
+	inst.looper_sync = sync
+	inst.looper_dub_after = dub_after
+	audio.set_looper_options(inst.source_id, inst.looper_level, sync, dub_after)
+
+
 ## Mute and solo, as on a mixing desk: while anything is soloed, everything else is silent.
 func set_muted(inst, on: bool) -> void:
 	inst.muted = on
@@ -411,7 +441,7 @@ func listener_position() -> Vector3:
 
 ## Back to the title screen. The room carries on as it is.
 func show_title() -> void:
-	for panel in [menu, sequencer, instrument_menu]:
+	for panel in [menu, sequencer, mixer, amp_panel, instrument_menu]:
 		if panel.is_open():
 			panel.close()
 	player.stop_playing()
@@ -446,6 +476,8 @@ func add_instrument(kind: String, at: Vector3, with_default_pattern := false):
 		inst.queue_free()
 		return null
 	instruments.append(inst)
+	if inst.is_amp:
+		set_looper_options(inst, inst.looper_level, inst.looper_sync, inst.looper_dub_after)
 	if with_default_pattern and inst.playable:
 		audio.load_default_pattern(inst.source_id)
 	return inst
@@ -456,6 +488,8 @@ func remove_instrument(inst) -> void:
 		return
 	if sequencer.is_open() and sequencer.inst == inst:
 		sequencer.close()
+	if amp_panel.is_open() and amp_panel.inst == inst:
+		amp_panel.close()
 	player.forget(inst)
 	instruments.erase(inst)
 	if inst == speaker:

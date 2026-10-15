@@ -43,7 +43,8 @@ public:
     String get_error() const { return error_; }
 
     // ── The room ─────────────────────────────────────────────────────────────────────────────────────────
-    // kind: "drums", "bass", "pad", "bells", "keys" or "live" (the audio input). Returns a source id, or -1.
+    // kind: "drums", "bass", "pad", "bells", "keys", "live" (the Speaker), or an amp: "guitar_combo",
+    // "guitar_stack", "bass_combo", "bass_stack". Returns a source id, or -1.
     // Every kind but "live" can be played with note_on/note_off and given a pattern for the sequencer.
     int add_source(const String& kind, const Vector3& position, float gain, float reverb_send);
     bool remove_source(int id);    // fades it out and frees its id for reuse
@@ -63,6 +64,17 @@ public:
     // Whether a source takes input: an instrument plays what MIDI controllers send, a live source plays its
     // hardware input. Every source starts with its input off.
     void set_source_input(int id, bool on);
+
+    // ── Amps ─────────────────────────────────────────────────────────────────────────────────────────────
+    // control: "gain", "bass", "mid", "treble", "presence" or "master"; value 0 to 10 as on the panel.
+    void set_amp_control(int id, const String& control, float value);
+    // The loop pedal in front of an amp. action: "press" (the footswitch: record, play, overdub), "stop", "play",
+    // "undo", "redo" or "clear". False if it isn't an amp.
+    bool looper(int id, const String& action);
+    void set_looper_options(int id, float level, bool sync, bool overdub_after_record);
+    // {state: "empty"|"waiting"|"recording"|"playing"|"overdubbing"|"stopped", length, position, capacity (seconds),
+    //  can_undo, can_redo}
+    Dictionary get_looper(int id) const;
     void set_listener(const Transform3D& transform);
     void note_on(int id, int note, float velocity);
     void note_off(int id, int note);

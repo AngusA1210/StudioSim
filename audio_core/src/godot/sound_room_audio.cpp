@@ -114,6 +114,10 @@ int SoundRoomAudio::add_source(const String& kind, const Vector3& position, floa
     else if (kind == "bells") k = sr::InstrumentKind::Bells;
     else if (kind == "keys") k = sr::InstrumentKind::Keys;
     else if (kind == "live") k = sr::InstrumentKind::Live;
+    else if (kind == "guitar_combo") k = sr::InstrumentKind::GuitarCombo;
+    else if (kind == "guitar_stack") k = sr::InstrumentKind::GuitarStack;
+    else if (kind == "bass_combo") k = sr::InstrumentKind::BassCombo;
+    else if (kind == "bass_stack") k = sr::InstrumentKind::BassStack;
     else {
         UtilityFunctions::push_error("SoundRoomAudio: unknown instrument kind ", kind);
         return -1;
@@ -147,6 +151,37 @@ float SoundRoomAudio::get_room_decay() const { return engine_ ? engine_->roomDec
 void SoundRoomAudio::set_source_muted(int id, bool muted) { if (engine_) engine_->setSourceMuted(id, muted); }
 void SoundRoomAudio::set_source_input_channel(int id, int channel) { if (engine_) engine_->setSourceInputChannel(id, channel); }
 void SoundRoomAudio::set_source_input(int id, bool on) { if (engine_) engine_->setSourceInput(id, on); }
+
+void SoundRoomAudio::set_amp_control(int id, const String& control, float value) {
+    static const char* const kNames[sr::kAmpControls] = {"gain", "bass", "mid", "treble", "presence", "master"};
+    for (int c = 0; c < sr::kAmpControls; ++c)
+        if (control == kNames[c] && engine_) engine_->setAmpControl(id, sr::AmpControl(c), value);
+}
+
+bool SoundRoomAudio::looper(int id, const String& action) {
+    static const char* const kNames[] = {"press", "stop", "play", "undo", "redo", "clear"};
+    for (int a = 0; a < 6; ++a)
+        if (action == kNames[a]) return engine_ && engine_->looperAction(id, sr::Looper::Action(a));
+    return false;
+}
+
+void SoundRoomAudio::set_looper_options(int id, float level, bool sync, bool overdub_after_record) {
+    if (engine_) engine_->setLooperOptions(id, level, sync, overdub_after_record);
+}
+
+Dictionary SoundRoomAudio::get_looper(int id) const {
+    static const char* const kStates[] = {"empty", "waiting", "recording", "playing", "overdubbing", "stopped"};
+    Dictionary d;
+    if (!engine_) return d;
+    const sr::LooperStatus st = engine_->looperStatus(id);
+    d["state"] = String(kStates[int(st.state)]);
+    d["length"] = st.length;
+    d["position"] = st.position;
+    d["capacity"] = st.capacity;
+    d["can_undo"] = st.can_undo;
+    d["can_redo"] = st.can_redo;
+    return d;
+}
 
 void SoundRoomAudio::set_listener(const Transform3D& t) {
     if (!engine_) return;
@@ -324,6 +359,10 @@ void SoundRoomAudio::_bind_methods() {
     ClassDB::bind_method(D_METHOD("set_source_muted", "id", "muted"), &SoundRoomAudio::set_source_muted);
     ClassDB::bind_method(D_METHOD("set_source_input_channel", "id", "channel"), &SoundRoomAudio::set_source_input_channel);
     ClassDB::bind_method(D_METHOD("set_source_input", "id", "on"), &SoundRoomAudio::set_source_input);
+    ClassDB::bind_method(D_METHOD("set_amp_control", "id", "control", "value"), &SoundRoomAudio::set_amp_control);
+    ClassDB::bind_method(D_METHOD("looper", "id", "action"), &SoundRoomAudio::looper);
+    ClassDB::bind_method(D_METHOD("set_looper_options", "id", "level", "sync", "overdub_after_record"), &SoundRoomAudio::set_looper_options);
+    ClassDB::bind_method(D_METHOD("get_looper", "id"), &SoundRoomAudio::get_looper);
     ClassDB::bind_method(D_METHOD("set_listener", "transform"), &SoundRoomAudio::set_listener);
     ClassDB::bind_method(D_METHOD("note_on", "id", "note", "velocity"), &SoundRoomAudio::note_on);
     ClassDB::bind_method(D_METHOD("note_off", "id", "note"), &SoundRoomAudio::note_off);
