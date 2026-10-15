@@ -580,7 +580,7 @@ func _refresh_live() -> void:
 	if settings.distance_falloff_db <= 0.0:
 		_falloff_note.text = "Instruments are as loud from across the room as from beside them."
 	else:
-		_falloff_note.text = "An instrument is at its own level within 1.5 m, and %.1f dB quieter for each doubling of distance beyond. (6 dB is a single source in the open air.)" % settings.distance_falloff_db
+		_falloff_note.text = "An instrument is at its own level within 1.5 m, and %.1f dB quieter for each doubling of distance beyond. 6 dB is the inverse square law; less keeps levels more even as you move about." % settings.distance_falloff_db
 	var strip_signature := ""
 	for inst in app.instruments:
 		strip_signature += "%d|" % inst.get_instance_id()

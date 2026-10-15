@@ -150,9 +150,8 @@ public:
     void setReverb(bool on);
     void setMasterVolume(float gain);  // 1 = normal
     // How much quieter a source gets for each doubling of its distance beyond the reference distance (1.5 m), in
-    // decibels. 6 is a single source in the open; in a room the reverberation makes up some of the loss, and the
-    // default of 3 keeps levels more even as the listener moves about. Within the reference distance a source is at
-    // its own level and gets no louder, however close.
+    // decibels. The default, 6, is the inverse square law; less keeps levels more even as the listener moves about.
+    // Within the reference distance a source is at its own level and gets no louder, however close.
     void setDistanceFalloff(float db_per_doubling);
     // The limiter keeps the output from ever reaching full scale. With it off the output is what the mix adds up
     // to, as on a mixing desk's master fader, and anything over full scale is cut off (and counted by the meter).

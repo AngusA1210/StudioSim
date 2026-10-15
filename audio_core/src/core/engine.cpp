@@ -16,15 +16,16 @@
 namespace sr {
 namespace {
 
-// Levels were first balanced with sound falling 6 dB per doubling of distance, heard from about seven metres. With
-// the gentler default the same sources would be twice as loud from there, so the output is brought down to match
-// (and the reverb and click, which don't depend on distance, are brought up by as much to stay where they were).
-// What changes is close up: standing next to an instrument is now 6.7 dB quieter than it was.
-constexpr float kDefaultFalloffDb = 3.0f;
+// Sound falls 6 dB for each doubling of distance, as the inverse square law has it. The mix was first balanced to be
+// heard from about seven metres away, which left it 13 dB hotter right beside an instrument, enough to push the
+// output into the limiter. The whole output (the instruments, the reverb and the click alike, so the balance between
+// them is unchanged) is therefore 6.7 dB lower than it was, leaving headroom close up. The master volume at +6.7 dB
+// gives the old level exactly.
+constexpr float kDefaultFalloffDb = 6.0f;
 const float kStage = std::sqrt(SourceSpatializer::kRefDistance / 7.0f);
-const float kMasterGain = 1.9f * kStage;   // about -21 dBFS RMS at the spawn point, like the prototype
-const float kReverbLevel = 0.16f / kStage;
-const float kClickLevel = 0.13f / kStage;  // the metronome peaks around -12 dBFS, clear above the room's mix
+const float kMasterGain = 1.9f * kStage;  // about -28 dBFS RMS at the spawn point, peaks around -12
+const float kReverbLevel = 0.16f;
+const float kClickLevel = 0.13f;  // the metronome peaks about 10 dB above the mix's average level
 // The room the reverb was tuned in. Other sizes are worked out from it, keeping the same wall surfaces.
 constexpr float kReferenceRoom[3] = {14.0f, 4.0f, 10.0f};  // width, height, depth in metres
 constexpr float kReferenceDecay = 1.1f;                    // its reverb time (RT60) in seconds

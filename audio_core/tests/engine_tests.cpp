@@ -79,9 +79,9 @@ Render renderSeconds(AudioEngine& e, double seconds, const std::function<float(i
     return out;
 }
 
-int firstSound(const Render& r) {
+int firstSound(const Render& r) {  // the first sample above -100 dBFS
     for (size_t i = 0; i < r.l.size(); ++i)
-        if (std::fabs(r.l[i]) > 1e-4f || std::fabs(r.r[i]) > 1e-4f) return int(i);
+        if (std::fabs(r.l[i]) > 1e-5f || std::fabs(r.r[i]) > 1e-5f) return int(i);
     return -1;
 }
 
@@ -273,9 +273,8 @@ int midiProbe(int seconds) {
     return 0;
 }
 
-// The engine's levels as they were when sound fell 6 dB per doubling of distance: that falloff, and the output
-// brought back up by what it was lowered when the gentler default came in. (The reverb can't be put back from
-// outside, so this matches the old engine only with the reverb off.)
+// The engine's levels as they were before the output was lowered to leave headroom close up: the master volume
+// brought back up by as much.
 void oldLevels(AudioEngine& engine) {
     engine.setDistanceFalloff(6.0f);
     engine.setMasterVolume(std::sqrt(7.0f / 1.5f));
@@ -359,7 +358,8 @@ int main(int argc, char** argv) {
         check(r.finite, "output is finite", "no NaN or infinity");
         check(r.peak < 1.0, "no clipping", fmt("peak %.1f dBFS", db(r.peak)));
         const double rms = std::sqrt((r.rms_l * r.rms_l + r.rms_r * r.rms_r) / 2);
-        check(rms > 0.05 && rms < 0.3, "comfortable level", fmt("%.1f dBFS RMS (L %.1f, R %.1f)", db(rms), db(r.rms_l), db(r.rms_r)));
+        check(rms > 0.025 && rms < 0.06 && r.peak < 0.4, "a moderate level, with headroom to spare",
+              fmt("%.1f dBFS RMS (L %.1f, R %.1f)", db(rms), db(r.rms_l), db(r.rms_r)) + fmt(", peaks %.1f dBFS", db(r.peak)));
         check(secs < 10.43 / 4, "renders well faster than real time", fmt("%.1fx real time", 10.43 / secs));
     }
 
@@ -894,7 +894,7 @@ int main(int argc, char** argv) {
         check(off.peak < 1e-5 && spaced(on, 0, 24000, detail), "the click sounds on every beat, and only when switched on", detail);
         double apart = 0;
         for (size_t i = 0; i < clicks.l.size(); ++i) apart = std::max(apart, double(std::fabs(clicks.l[i] - clicks.r[i])));
-        check(apart < 1e-6 && clicks.peak > 0.15 && clicks.peak < 0.35, "it is heard directly, the same in both ears, clear above the mix",
+        check(apart < 1e-6 && clicks.peak > 0.07 && clicks.peak < 0.17, "it is heard directly, the same in both ears, clear above the mix",
               fmt("peak %.1f dBFS, ears differ by %.0f dBFS", db(clicks.peak), db(apart)));
         // Clicks land on steps 4, 8, 12, 16...: the first bar line reached in this render is a higher pitch.
         int high_pitch = 0, low_pitch = 0;
@@ -1142,7 +1142,7 @@ int main(int argc, char** argv) {
             renderSeconds(swap.engine, 0.5);
         }
         Render after_swaps = renderSeconds(swap.engine, 10.43);
-        check(swapped == 3 && swap.speaker >= 0 && swap.engine.sourceCount() == 6 && after_swaps.finite && level(after_swaps) > -24.0 && level(after_swaps) < -19.0,
+        check(swapped == 3 && swap.speaker >= 0 && swap.engine.sourceCount() == 6 && after_swaps.finite && level(after_swaps) > -31.0 && level(after_swaps) < -24.0,
               "a full room can be emptied and refilled at once, three times over", fmt("the groove afterwards: %.1f dBFS", level(after_swaps)));
     }
 
@@ -1160,19 +1160,19 @@ int main(int argc, char** argv) {
         renderSeconds(room.engine, 2.0);  // let the note swell
         const double at2 = heard(room, 2.0f), at4 = heard(room, 4.0f), at8 = heard(room, 8.0f);
         const double close = heard(room, 1.4f), closer = heard(room, 0.5f);
-        check(std::fabs((at2 - at4) - 3.0) < 0.4 && std::fabs((at4 - at8) - 3.0) < 0.4, "each doubling of distance takes 3 dB off",
+        check(std::fabs((at2 - at4) - 6.0) < 0.4 && std::fabs((at4 - at8) - 6.0) < 0.4, "each doubling of distance takes 6 dB off: the inverse square law",
               fmt("%.1f dB from 2 to 4 m, %.1f dB from 4 to 8 m", at2 - at4, at4 - at8));
         check(std::fabs(close - closer) < 0.3 && close > at2, "inside a metre and a half it gets no louder, however close",
               fmt("%.1f dBFS at 1.4 m, %.1f dBFS at 0.5 m", close, closer));
-        room.engine.setDistanceFalloff(6.0f);
+        room.engine.setDistanceFalloff(3.0f);
         renderSeconds(room.engine, 0.5);
-        const double steep2 = heard(room, 2.0f), steep8 = heard(room, 8.0f);
+        const double gentle2 = heard(room, 2.0f), gentle8 = heard(room, 8.0f);
         room.engine.setDistanceFalloff(0.0f);
         renderSeconds(room.engine, 0.5);
         const double flat2 = heard(room, 2.0f), flat8 = heard(room, 8.0f);
-        room.engine.setDistanceFalloff(3.0f);
-        check(std::fabs((steep2 - steep8) - 12.0) < 0.6 && std::fabs(flat2 - flat8) < 0.4, "the falloff can be set: 6 dB a doubling, or none",
-              fmt("2 to 8 m: %.1f dB at the 6 dB setting, %.1f dB at 0", steep2 - steep8, flat2 - flat8));
+        room.engine.setDistanceFalloff(6.0f);
+        check(std::fabs((gentle2 - gentle8) - 6.0) < 0.6 && std::fabs(flat2 - flat8) < 0.4, "the falloff can be set gentler: 3 dB a doubling, or none",
+              fmt("2 to 8 m: %.1f dB at the 3 dB setting, %.1f dB at 0", gentle2 - gentle8, flat2 - flat8));
         const double before = heard(room, 2.0f);
         room.engine.setSourceGain(room.pad, 0.5f);  // the pad was added at 1.0
         const double halved = heard(room, 2.0f);

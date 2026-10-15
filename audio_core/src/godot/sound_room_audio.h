@@ -67,7 +67,7 @@ public:
     void set_binaural(bool on);
     void set_reverb(bool on);
     void set_master_volume(float gain);
-    // How many decibels quieter a source gets for each doubling of distance beyond 1.5 m (3 by default, 6 in the open).
+    // How many decibels quieter a source gets for each doubling of distance beyond 1.5 m (6 by default: inverse square).
     void set_distance_falloff(float db_per_doubling);
     void set_limiter(bool on);  // off = the output is the plain sum of the mix, cut off at full scale
     // The output meter since it was last read: {peak_l, peak_r, rms_l, rms_r, limiter_gain} as linear levels

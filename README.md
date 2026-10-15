@@ -71,9 +71,10 @@ The Mixer page of the menu is where levels are managed, in decibels:
 - **Instruments**: a fader for everything in the room. 0 dB is the level an instrument was made at; a small meter
   beside each shows it as heard from right next to it.
 - **Distance**: an instrument is at its own level within 1.5 m of it and gets no louder however close you stand.
-  Beyond that it falls by a set amount for each doubling of distance: 3 dB by default, adjustable from 0 to 6. (6 dB
-  is the figure for a single source in the open air. In a room the reverberation makes up some of that loss, and the
-  gentler default keeps levels more even as you move about.)
+  Beyond that it falls 6 dB for each doubling of distance, as the inverse square law has it. The Falloff slider can
+  make that gentler (down to 0, where distance makes no difference) if you want levels to stay more even as you move.
+  The output is set to leave headroom right beside an instrument, so from across the room the mix is fairly quiet;
+  raise the master volume to taste and watch the meter.
 - **Master**: the output volume, a stereo meter with peak hold, and the limiter. With the limiter on, the output
   cannot clip, and the page says by how many decibels it is being held back whenever it is: the cue to turn
   something down. With it off, the output is the plain sum of the mix, as on a mixing desk's master fader, and

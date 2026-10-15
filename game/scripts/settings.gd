@@ -18,7 +18,7 @@ var binaural := true
 var reverb := true
 var click := false        # the metronome click (the tempo itself belongs to the room, not to these settings)
 var click_volume_db := 0.0
-var distance_falloff_db := 3.0  # how much quieter an instrument gets for each doubling of distance beyond 1.5 m
+var distance_falloff_db := 6.0  # how much quieter an instrument gets for each doubling of distance beyond 1.5 m
 var limiter := true             # hold the output under full scale; off = hear and meter exactly what the mix adds up to
 
 # Display and controls
@@ -53,7 +53,7 @@ func load_from_disk() -> void:
 	reverb = file.get_value("sound", "reverb", reverb)
 	click = file.get_value("sound", "click", click)
 	click_volume_db = clampf(file.get_value("sound", "click_volume_db", click_volume_db), -24.0, 6.0)
-	distance_falloff_db = clampf(file.get_value("sound", "distance_falloff_db", distance_falloff_db), 0.0, 6.0)
+	distance_falloff_db = clampf(file.get_value("sound", "falloff_db_per_doubling", distance_falloff_db), 0.0, 6.0)
 	limiter = file.get_value("sound", "limiter", limiter)
 	text_scale = clampf(file.get_value("display", "text_scale", text_scale), 0.75, 2.0)
 	fov = clampf(file.get_value("display", "fov", fov), 50.0, 110.0)
@@ -79,7 +79,7 @@ func save_to_disk() -> void:
 	file.set_value("sound", "reverb", reverb)
 	file.set_value("sound", "click", click)
 	file.set_value("sound", "click_volume_db", click_volume_db)
-	file.set_value("sound", "distance_falloff_db", distance_falloff_db)
+	file.set_value("sound", "falloff_db_per_doubling", distance_falloff_db)
 	file.set_value("sound", "limiter", limiter)
 	file.set_value("display", "text_scale", text_scale)
 	file.set_value("display", "fov", fov)

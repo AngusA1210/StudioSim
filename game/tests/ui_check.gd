@@ -440,6 +440,7 @@ func _run() -> void:
 	pad.set_loop(true)
 
 	menu._volume_slider.value = 12.0  # far too loud
+	menu._strip_rows[0].slider.value = 12.0  # and the drums with it
 	await seconds(1.5)
 	check(main.meter_reduction_db > 1.0 and not main.meter_clipped and menu._master_state.text.begins_with("Limiting by"),
 		"turned up too far, the limiter holds the output and the page says by how much", menu._master_state.text)
@@ -448,15 +449,18 @@ func _run() -> void:
 	check(not main.settings.limiter and main.meter_clipped and menu._master_state.text.begins_with("Clipping"),
 		"with the limiter off, the same mix is reported as clipping", menu._master_state.text)
 	menu._volume_slider.value = 0.0
+	menu._strip_rows[0].slider.value = 0.0
 	menu._limiter_toggle.button_pressed = true
 	await seconds(2.5)
 	check(main.settings.limiter and not main.meter_clipped and main.meter_reduction_db < 0.1 and menu._master_state.text == "Limiter idle.",
 		"back at 0 dB with the limiter on, nothing is being held back", menu._master_state.text)
-	menu._falloff_slider.value = 6.0
-	await frames(3)
-	check(is_equal_approx(main.settings.distance_falloff_db, 6.0) and menu._falloff_note.text.contains("6.0 dB quieter"), "the distance falloff can be changed",
-		menu._falloff_note.text)
+	check(is_equal_approx(main.settings.distance_falloff_db, 6.0) and menu._falloff_note.text.contains("6.0 dB quieter"),
+		"sound falls 6 dB per doubling of distance: the inverse square law", menu._falloff_note.text)
 	menu._falloff_slider.value = 3.0
+	await frames(3)
+	check(is_equal_approx(main.settings.distance_falloff_db, 3.0) and menu._falloff_note.text.contains("3.0 dB quieter"), "and it can be made gentler",
+		menu._falloff_note.text)
+	menu._falloff_slider.value = 6.0
 
 	menu._tabs.current_tab = menu.SETTINGS_TAB
 	await frames(3)
