@@ -60,6 +60,9 @@ public:
     float get_room_decay() const;    // the reverb time (RT60) that goes with the room's size, in seconds
     void set_source_muted(int id, bool muted);
     void set_source_input_channel(int id, int channel);  // live sources: 0-based hardware input, or -1 for all
+    // Whether a source takes input: an instrument plays what MIDI controllers send, a live source plays its
+    // hardware input. Every source starts with its input off.
+    void set_source_input(int id, bool on);
     void set_listener(const Transform3D& transform);
     void note_on(int id, int note, float velocity);
     void note_off(int id, int note);
@@ -98,11 +101,9 @@ public:
     String get_drum_piece_name(int note) const; // which piece a note plays
 
     // ── MIDI ─────────────────────────────────────────────────────────────────────────────────────────────
-    // Controllers go straight into the audio core and play `set_midi_target`'s source: the instrument the player
-    // is at. With no target (-1) they play nothing.
+    // Controllers go straight into the audio core and play every instrument whose input is on.
     bool start_midi();
     void poll_midi();
-    void set_midi_target(int id);
     Array get_midi_devices() const;  // [{name, enabled, events}]
     void set_midi_device_enabled(const String& name, bool enabled);
     int get_midi_event_count() const;

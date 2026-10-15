@@ -1,16 +1,23 @@
 extends Node3D
-## One instrument in the room: its body, stand, label and light, plus its sound source in the audio core.
-## The node's origin is where the sound comes from.
+## One instrument in the room: its model, label and light, plus its sound source in the audio core.
+## It stands on the floor; the node's origin is where the sound comes from, `source_height` above the floor.
+
+const Models := preload("res://scripts/instrument_models.gd")
+const INPUT_GREEN := Color(0.36, 0.9, 0.5)
 
 var kind := ""
 var display_name := ""
 var color := Color.WHITE
-var size := Vector3.ONE
+var source_height := 1.0  # metres above the floor the sound comes from
+var top := 1.0            # how tall the model stands
+var footprint := Vector2.ONE
 var playable := false  # can be played by hand, and has a pattern the sequencer plays
 var default_octave := 0  # where the computer keyboard starts when you sit down at it
 var source_id := -1
-var muted := false     # the Speaker: silenced altogether
+var muted := false     # its mixer channel is muted (for a Speaker, also M in the room)
+var soloed := false
 var loop_on := true    # playable instruments: whether the sequencer plays their pattern
+var input_on := false  # it takes input: MIDI controllers play it, or a Speaker plays its hardware input
 var input_channel := -1  # live-input instruments: the hardware input they play (0-based), or -1 for all of them
 var level_db := 0.0    # its fader: how far above or below its normal level it is set
 var carried := false
@@ -19,13 +26,11 @@ var glow := 0.0
 var _audio: SoundRoomAudio
 var _normal_gain := 1.0  # what 0 dB on its fader means to the audio core
 var _sent_position := Vector3.INF  # where the audio core last heard this instrument was
-var _spin := 0.0
-var _body: MeshInstance3D
-var _body_material: StandardMaterial3D
-var _stand: MeshInstance3D
-var _foot: MeshInstance3D
+var _model: Node3D
+var _accent: StandardMaterial3D  # the parts in its own colour, which light up as it plays
 var _light: OmniLight3D
 var _label: Label3D
+var _input_badge: Label3D
 var _collider: CollisionShape3D
 
 
@@ -34,34 +39,29 @@ func setup(spec: Dictionary, audio: SoundRoomAudio) -> void:
 	kind = spec.kind
 	display_name = spec.name
 	color = spec.color
-	size = spec.size
+	source_height = spec.height
+	top = spec.top
+	footprint = spec.footprint
 	playable = not spec.get("live_input", false)
 	default_octave = spec.get("octave", 0)
-	_spin = spec.get("spin", 0.0)
 	name = display_name
-	position = spec.position
+	position = Vector3(spec.position.x, source_height, spec.position.z)
 
 	_normal_gain = spec.gain
 	source_id = audio.add_source(kind, position, spec.gain, spec.send)
 	if source_id < 0:
 		return  # the room is full; whoever asked for this instrument gives up on it
 
-	_body_material = StandardMaterial3D.new()
-	_body_material.albedo_color = color.darkened(0.7)
-	_body_material.emission_enabled = true
-	_body_material.emission = color
-	_body = _box(size, _body_material)
-	if _spin != 0.0:
-		_body.rotation.y = PI / 4
-
-	var stand_material := StandardMaterial3D.new()
-	stand_material.albedo_color = Color(0.03, 0.032, 0.04)
-	_stand = _box(Vector3(0.07, 1.0, 0.07), stand_material)
-	_foot = _box(Vector3(0.5, 0.05, 0.5), stand_material)
+	var built: Dictionary = Models.build(kind, color)
+	_model = built.node
+	_model.position.y = -source_height  # the model is drawn from the floor up
+	add_child(_model)
+	_accent = built.accent
 
 	_light = OmniLight3D.new()
 	_light.light_color = color
-	_light.omni_range = 5.0
+	_light.omni_range = 4.0
+	_light.position = Vector3(0, top - source_height + 0.15, 0.6)  # above and in front, lighting it from the player's side
 	add_child(_light)
 
 	_label = Label3D.new()
@@ -71,16 +71,27 @@ func setup(spec: Dictionary, audio: SoundRoomAudio) -> void:
 	_label.pixel_size = 0.004
 	_label.outline_size = 10
 	_label.modulate = color.lightened(0.35)
-	_label.position = Vector3(0, size.y / 2 + 0.3, 0)
+	_label.position = Vector3(0, top - source_height + 0.3, 0)
 	add_child(_label)
+	# A green "i" under the name while it takes input, as a DAW marks a track whose input is on.
+	_input_badge = Label3D.new()
+	_input_badge.text = "i"
+	_input_badge.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	_input_badge.font_size = 44
+	_input_badge.pixel_size = 0.004
+	_input_badge.outline_size = 12
+	_input_badge.modulate = INPUT_GREEN
+	_input_badge.position = _label.position - Vector3(0, 0.15, 0)
+	_input_badge.visible = false
+	add_child(_input_badge)
 
 	# Something solid to bump into, on the default layer only (sound passes through instruments).
 	var body := StaticBody3D.new()
 	_collider = CollisionShape3D.new()
-	var cylinder := CylinderShape3D.new()
-	cylinder.radius = 0.4
-	cylinder.height = 2.0
-	_collider.shape = cylinder
+	var box := BoxShape3D.new()
+	box.size = Vector3(footprint.x * 0.85, top, footprint.y * 0.85)
+	_collider.shape = box
+	_collider.position.y = top / 2 - source_height
 	body.add_child(_collider)
 	add_child(body)
 
@@ -90,13 +101,9 @@ func _process(delta: float) -> void:
 		return
 	var target := minf(1.0, sqrt(_audio.get_source_level(source_id)) * 1.6)
 	glow = lerpf(glow, target, minf(1.0, delta * (40.0 if target > glow else 7.0)))
-	var on := 0.0 if muted else 1.0
-	_body_material.emission_energy_multiplier = 0.03 + (0.3 + 2.4 * glow) * on
-	_light.light_energy = (0.12 + 2.2 * glow) * on
-	_body.scale = Vector3.ONE * (1.0 + 0.07 * glow)
-	if _spin != 0.0:
-		_body.rotate_y(_spin * delta * (0.4 + 2.0 * glow))
-	_update_stand()
+	var on := 0.25 if muted else 1.0
+	_accent.emission_energy_multiplier = (0.12 + 1.5 * glow) * on
+	_light.light_energy = (0.1 + 1.6 * glow) * on
 
 
 ## Tells the audio core where this instrument is, if it has moved.
@@ -106,17 +113,29 @@ func sync_position() -> void:
 		_audio.set_source_position(source_id, global_position)
 
 
-func set_muted(value: bool) -> void:
-	muted = value
-	_audio.set_source_muted(source_id, value)
-	_label.text = display_name + ("  (muted)" if value else "")
-	_label.modulate.a = 0.55 if value else 1.0
+## Turns it to face a point on the floor (its front is the side a player stands at).
+func face(point: Vector3) -> void:
+	rotation.y = atan2(point.x - global_position.x, point.z - global_position.z)
+
+
+## Its mixer channel: muted, soloed, and whether that leaves it silent once every solo in the room is counted.
+func set_channel(is_muted: bool, is_soloed: bool, silent: bool) -> void:
+	muted = is_muted
+	soloed = is_soloed
+	_audio.set_source_muted(source_id, silent)
+	_refresh_label()
 
 
 ## Its level: 0 dB is the level it was made at, heard from within a metre and a half.
 func set_level_db(db: float) -> void:
 	level_db = db
-	_audio.set_source_gain(source_id, _normal_gain * db_to_linear(db))
+	_audio.set_source_gain(source_id, 0.0 if db <= -79.0 else _normal_gain * db_to_linear(db))
+
+
+func set_input(on: bool) -> void:
+	input_on = on
+	_audio.set_source_input(source_id, on)
+	_input_badge.visible = on and _label.visible
 
 
 func set_input_channel(channel: int) -> void:
@@ -128,25 +147,13 @@ func set_input_channel(channel: int) -> void:
 func set_loop(on: bool) -> void:
 	loop_on = on
 	_audio.set_source_loop(source_id, on)
-	_label.text = display_name + ("" if on else "  (loop off)")
-	_label.modulate.a = 1.0 if on else 0.55
-
-
-## What M does: for an instrument, its loop on or off; for the Speaker, mute.
-func toggle_quiet() -> void:
-	if playable:
-		set_loop(not loop_on)
-	else:
-		set_muted(not muted)
-
-
-func is_quiet() -> bool:
-	return not loop_on if playable else muted
+	_refresh_label()
 
 
 ## The name floating above it. The title screen hides these so they don't drift behind its words.
 func set_label_visible(on: bool) -> void:
 	_label.visible = on
+	_input_badge.visible = on and input_on
 
 
 func set_carried(value: bool) -> void:
@@ -158,20 +165,11 @@ func set_highlighted(value: bool) -> void:
 	_label.outline_modulate = color.darkened(0.2) if value else Color(0, 0, 0, 0.85)
 
 
-func _update_stand() -> void:
-	var bottom := global_position.y - size.y / 2
-	_stand.visible = not carried and bottom > 0.02
-	_foot.visible = _stand.visible
-	_stand.scale.y = maxf(bottom, 0.01)
-	_stand.position.y = -size.y / 2 - bottom / 2
-	_foot.position.y = -global_position.y + 0.025
-
-
-func _box(box_size: Vector3, material: Material) -> MeshInstance3D:
-	var mesh := MeshInstance3D.new()
-	var box := BoxMesh.new()
-	box.size = box_size
-	mesh.mesh = box
-	mesh.material_override = material
-	add_child(mesh)
-	return mesh
+func _refresh_label() -> void:
+	var notes := []
+	if muted:
+		notes.append("muted")
+	if playable and not loop_on:
+		notes.append("loop off")
+	_label.text = display_name + ("  (%s)" % ", ".join(notes) if not notes.is_empty() else "")
+	_label.modulate.a = 0.55 if not notes.is_empty() else 1.0

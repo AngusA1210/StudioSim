@@ -143,6 +143,7 @@ struct AudioEngine::Source {
     float gain = 1.0f, gain_target = 1.0f, send = 1.0f;
     float mute_target = 1.0f, mute_gain = 1.0f;
     int input_channel = LiveInput::kAllInputs;
+    bool input_on = false;  // see setSourceInput; kept by both threads (the game's copy survives a reconfigure)
     // The pattern the sequencer plays on this source. These belong to the audio thread...
     std::array<PatternNote, kMaxPatternNotes> notes;
     int note_count = 0, steps = kMaxPatternSteps;
@@ -253,6 +254,7 @@ bool AudioEngine::configure(int sample_rate, int block_size, std::string* error)
         if (!s) continue;
         s->instrument = makeInstrument(s->kind);
         s->instrument->setInputChannel(s->input_channel);
+        s->instrument->setInputEnabled(s->input_on);
         s->mono.assign(size_t(block_), 0.0f);
         if (!s->spatializer.init(steam_, error)) return false;
     }
@@ -405,8 +407,9 @@ bool AudioEngine::startMidi(std::string* error) {
 
 void AudioEngine::pollMidi() { midi_.rescan(); }
 
-void AudioEngine::setMidiTarget(int id) {
-    Command c; c.type = Command::MidiTarget; c.id = id; push(c);
+void AudioEngine::setSourceInput(int id, bool on) {
+    if (Source* s = owned(id)) s->input_on = on;
+    Command c; c.type = Command::SourceInput; c.id = id; c.v[0] = on ? 1.0f : 0.0f; push(c);
 }
 
 // ── Game-thread API ────────────────────────────────────────────────────────────────────────────────────────
@@ -725,7 +728,6 @@ void AudioEngine::drainCommands() {
                     s->loop = false;
                     s->fade_blocks = int(0.06f * float(sr_) / float(block_)) + 1;
                 }
-                if (midi_target_ == c.id) midi_target_ = -1;
                 break;
             case Command::SourcePosition:
                 if (s) {
@@ -772,11 +774,13 @@ void AudioEngine::drainCommands() {
                 master_target_ = c.v[0];
                 if (clock_ == 0) master_gain_ = master_target_;  // set before anything has played: nothing to glide from
                 break;
-            case Command::MidiTarget:
-                // Whatever was held on the previous instrument would never get its note-off: let it go now.
-                if (c.id != midi_target_ && midi_target_ >= 0 && midi_target_ < kSourceSlots && sources_[size_t(midi_target_)])
-                    sources_[size_t(midi_target_)]->instrument->allNotesOff();
-                midi_target_ = c.id;
+            case Command::SourceInput:
+                if (s) {
+                    s->input_on = c.v[0] > 0.5f;
+                    s->instrument->setInputEnabled(s->input_on);
+                    // Notes held when the input goes off would never get their note-off: let them go now.
+                    if (!s->input_on) s->instrument->allNotesOff();
+                }
                 break;
             case Command::PatternNoteSet:
                 if (s) {
@@ -855,12 +859,13 @@ void AudioEngine::drainCommands() {
 void AudioEngine::drainMidi() {
     MidiEvent e;
     while (midi_queue_.pop(e)) {
-        Source* s = (midi_target_ >= 0 && midi_target_ < kSourceSlots) ? sources_[size_t(midi_target_)] : nullptr;
-        if (!s) continue;  // nobody is at an instrument
-        switch (e.type) {
-            case MidiEvent::NoteOn:  s->instrument->noteOn(e.note, e.velocity); break;
-            case MidiEvent::NoteOff: s->instrument->noteOff(e.note); break;
-            case MidiEvent::Sustain: s->instrument->sustain(e.note != 0); break;
+        for (Source* s : sources_) {  // every instrument with its input on
+            if (!s || !s->input_on || s->kind == InstrumentKind::Live) continue;
+            switch (e.type) {
+                case MidiEvent::NoteOn:  s->instrument->noteOn(e.note, e.velocity); break;
+                case MidiEvent::NoteOff: s->instrument->noteOff(e.note); break;
+                case MidiEvent::Sustain: s->instrument->sustain(e.note != 0); break;
+            }
         }
     }
 }

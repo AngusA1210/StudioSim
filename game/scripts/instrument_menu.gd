@@ -49,8 +49,9 @@ func create(kind: String):
 	if inst == null:
 		return null
 	if not inst.playable:
-		app.set_instrument_input(inst, _input_choice)
+		app.set_input_channel(inst, _input_choice)
 	player.carry(inst)
+	inst.face(player.global_position)
 	return inst
 
 

@@ -37,6 +37,7 @@ public:
     virtual float velocityJitter() const { return 0.0f; }
 
     virtual void setInputChannel(int /*channel*/) {}  // live input only
+    virtual void setInputEnabled(bool /*on*/) {}      // live input only
 
 protected:
     float sr_;
@@ -214,8 +215,9 @@ public:
     static constexpr int kAllInputs = -1;
     LiveInput(float sample_rate, const InputBus* bus) : Instrument(sample_rate), bus_(bus) {}
     void setInputChannel(int channel) override { channel_ = channel; }
+    void setInputEnabled(bool on) override { enabled_ = on; }  // off: silent, whatever comes in
     void render(float* out, int n) override {
-        if (!bus_) return;
+        if (!bus_ || !enabled_) return;
         const int first = channel_ < 0 ? 0 : channel_, last = channel_ < 0 ? bus_->active : channel_ + 1;
         for (int c = first; c < last && c < bus_->active; ++c) {
             const float* in = bus_->channel[size_t(c)].data();
@@ -226,6 +228,7 @@ public:
 private:
     const InputBus* bus_;
     int channel_ = kAllInputs;
+    bool enabled_ = false;
 };
 
 }  // namespace sr

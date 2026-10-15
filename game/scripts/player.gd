@@ -1,6 +1,7 @@
 extends CharacterBody3D
 ## First-person player: walks the room, aims at instruments, carries them, and sits down at one to play it.
-## While you are at an instrument the computer keyboard and any MIDI controller play that instrument.
+## Sitting at an instrument switches its input on (until you get up), so the MIDI keyboard plays it; the computer
+## keyboard plays it too. Both also play every other instrument whose input you have switched on yourself.
 ## The camera is also the listener, so the audio core hears the room from here.
 
 const EYE_HEIGHT := 1.65
@@ -15,7 +16,7 @@ const CARRY_DISTANCE := 1.5
 const REMOVE_WINDOW_MS := 3000  # how long the second Backspace has to follow the first
 
 # Computer keyboard as a piano, the usual DAW layout. Values are semitones above the base C. The shortcuts that
-# have to work while playing (Q, Z, X, Tab, M, N, C, Space, Backspace, B, R, I) are deliberately not among these keys.
+# have to work while playing (Q, Z, X, Tab, Enter, M, N, C, Space, Backspace, B, R, I) are deliberately not among these keys.
 const KEYMAP := {
 	KEY_A: 0, KEY_W: 1, KEY_S: 2, KEY_E: 3, KEY_D: 4, KEY_F: 5, KEY_T: 6, KEY_G: 7, KEY_Y: 8,
 	KEY_H: 9, KEY_U: 10, KEY_J: 11, KEY_K: 12, KEY_O: 13, KEY_L: 14, KEY_P: 15, KEY_SEMICOLON: 16,
@@ -31,8 +32,9 @@ var target = null   # instrument you're aiming at
 var carried = null  # instrument you're carrying
 var playing = null  # instrument you're playing
 var octave := 0
-var held := {}      # physical key → MIDI note currently sounding
+var held := {}      # physical key → [MIDI note sounding, the instruments it was sent to]
 var remove_pending = null  # instrument that Backspace was pressed on once; a second press removes it
+var _sat_input := false    # sitting down switched the input on, so getting up switches it off again
 
 var _remove_deadline := 0
 
@@ -82,15 +84,26 @@ func start_playing(inst) -> void:
 	stop_playing()
 	playing = inst
 	octave = inst.default_octave
-	audio.set_midi_target(inst.source_id)
+	var was_on: bool = inst.input_on
+	if not was_on:
+		app.set_input(inst, true)  # (this tells notice_input, which would mark the input as your own choice)
+	_sat_input = not was_on
 
 
 func stop_playing() -> void:
-	if playing != null:
-		audio.all_notes_off(playing.source_id)
-	audio.set_midi_target(-1)
-	held.clear()
+	release_keys()
+	var was = playing
 	playing = null
+	if was != null and _sat_input and was.input_on:
+		app.set_input(was, false)
+	_sat_input = false
+
+
+## An instrument's input was switched on or off. If it is the one you are sitting at, the choice is now yours:
+## getting up leaves it as it is.
+func notice_input(inst) -> void:
+	if inst == playing:
+		_sat_input = false
 
 
 func put_down() -> void:
@@ -124,7 +137,7 @@ func forget(inst) -> void:
 
 ## The title screen, one of the menus or the pattern editor is up: the keyboard and mouse belong to it.
 func _ui_open() -> bool:
-	for panel in [app.title, app.menu, app.sequencer, app.instrument_menu]:
+	for panel in [app.title, app.menu, app.sequencer, app.mixer, app.instrument_menu]:
 		if panel != null and panel.is_open():
 			return true
 	return false
@@ -151,7 +164,8 @@ func _handle_key(event: InputEventKey) -> void:
 	var key := event.physical_keycode
 	if not event.pressed:
 		if held.has(key):
-			audio.note_off(playing.source_id, held[key])
+			for id in held[key][1]:
+				audio.note_off(id, held[key][0])
 			held.erase(key)
 		return
 	# The instrument these keys act on: the one you are playing, or else the one you are facing.
@@ -164,9 +178,10 @@ func _handle_key(event: InputEventKey) -> void:
 				app.menu.open()
 			return
 		KEY_TAB:
-			if at != null and not at.playable:
-				app.menu.open(app.menu.IO_TAB)  # a live input: where its hardware input is chosen
-			elif playing != null or can_play_target():
+			app.mixer.open()
+			return
+		KEY_ENTER, KEY_KP_ENTER:
+			if at != null and at.playable and (playing != null or can_play_target()):
 				app.sequencer.open(at)
 			return
 		KEY_N:
@@ -175,9 +190,11 @@ func _handle_key(event: InputEventKey) -> void:
 		KEY_BACKSPACE, KEY_DELETE:
 			_ask_to_remove(carried if carried != null else at)
 			return
-		KEY_M:
-			if at != null:
-				at.toggle_quiet()
+		KEY_M:  # an instrument's loop; a Speaker has none, so it mutes
+			if at != null and at.playable:
+				at.set_loop(not at.loop_on)
+			elif at != null:
+				app.set_muted(at, not at.muted)
 			return
 		KEY_SPACE:
 			app.set_sequence_running(not app.sequence_running)
@@ -192,7 +209,8 @@ func _handle_key(event: InputEventKey) -> void:
 			app.set_reverb(not app.settings.reverb)
 			return
 		KEY_I:
-			app.set_live_input(not app.live_input)
+			if at != null:
+				app.set_input(at, not at.input_on)
 			return
 	if playing != null:
 		if key == KEY_Q:
@@ -201,8 +219,13 @@ func _handle_key(event: InputEventKey) -> void:
 			octave = clampi(octave + (1 if key == KEY_X else -1), -3, 3)
 		elif KEYMAP.has(key):
 			var note := 60 + 12 * octave + int(KEYMAP[key])
-			audio.note_on(playing.source_id, note, 0.8)
-			held[key] = note
+			var ids := [playing.source_id]  # the instrument you're at, and any others whose input is on
+			for inst in app.armed_instruments():
+				if inst != playing:
+					ids.append(inst.source_id)
+			for id in ids:
+				audio.note_on(id, note, 0.8)
+			held[key] = [note, ids]
 		return
 	match key:
 		KEY_E:
@@ -235,6 +258,9 @@ func _physics_process(delta: float) -> void:
 	velocity.z = wish.z * speed
 	velocity.y = 0.0 if is_on_floor() else velocity.y - 9.8 * delta
 	move_and_slide()
+	# However crowded it gets (instruments brought in when the room shrinks push you about), you stay in the room.
+	var inside: Vector3 = app.room.keep_inside(global_position, 0.3)
+	global_position = Vector3(inside.x, global_position.y, inside.z)
 
 	if playing != null and _distance_to(playing) > PLAY_REACH + 0.6:
 		stop_playing()
@@ -269,9 +295,9 @@ func _ask_to_remove(inst) -> void:
 
 ## Called when the menu or the pattern editor opens: let go of any notes held on the computer keyboard.
 func release_keys() -> void:
-	if playing != null:
-		for key in held:
-			audio.note_off(playing.source_id, held[key])
+	for key in held:
+		for id in held[key][1]:
+			audio.note_off(id, held[key][0])
 	held.clear()
 
 
@@ -316,10 +342,11 @@ func _update_carry() -> void:
 	if carried == null:
 		return
 	var ahead := Vector3(-sin(yaw), 0.0, -cos(yaw))
-	var p := global_position + ahead * CARRY_DISTANCE
-	p.y = clampf(EYE_HEIGHT - 0.35 + sin(pitch) * 1.4, carried.size.y / 2 + 0.25, minf(2.8, app.room.size.y - carried.size.y / 2 - 0.3))
-	# Inside the room, and on your side of any wall.
+	var p := global_position + ahead * (CARRY_DISTANCE + maxf(carried.footprint.y, carried.footprint.x) * 0.35)
+	p.y = carried.source_height  # instruments stay on the floor
+	# Inside the room, and on your side of any wall, turned towards you.
 	carried.global_position = app.room.settle(p, 0.6, 0.5, global_position)
+	carried.face(global_position)
 
 
 func _distance_to(inst) -> float:

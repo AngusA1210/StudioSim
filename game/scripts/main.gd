@@ -7,12 +7,13 @@ extends Node3D
 ##   --silent                 run the audio clock without opening a sound card (also leaves saved settings alone)
 ##   --skip-title             start in the room rather than on the title screen
 ##   --pose=x,z,yaw_degrees   start the player somewhere else
-##   --live-input             switch the audio input on at start
+##   --live-input             switch the Speaker's input on at start
 ##   --menu=N                 open the menu on page N at start (0 Metronome, 1 Mixer, 2 Room, 3 Playback Engine...)
 ##   --play=kind              sit down at an instrument at start (drums, bass, pad, bells, keys)
 ##   --sequencer=kind[,bar]   open that instrument's pattern editor at start
 ##   --add=kind               make a new instrument at start, in the player's hands
 ##   --instruments            open the instrument menu at start
+##   --mixer                  open the mix window at start
 ##   --room=W,H,L             start with a room this wide, high and long (metres)
 ##   --walls=ax,az,bx,bz[,h];...   replace the room's walls: each runs from (ax, az) to (bx, bz), h high
 ##   --tempo=BPM              start at another tempo
@@ -26,22 +27,24 @@ const Hud := preload("res://scripts/hud.gd")
 const Menu := preload("res://scripts/menu.gd")
 const Sequencer := preload("res://scripts/sequencer.gd")
 const InstrumentMenu := preload("res://scripts/instrument_menu.gd")
+const Mixer := preload("res://scripts/mixer.gd")
 const Title := preload("res://scripts/title.gd")
 const Catalog := preload("res://scripts/catalog.gd")
 const Settings := preload("res://scripts/settings.gd")
 const Room := preload("res://scripts/room.gd")
 
-# The instruments the room starts with, each playing its part of the default groove. More can be added from the
-# instrument menu; scripts/catalog.gd describes each kind.
+# The instruments the room starts with, each playing its part of the default groove and turned to face where the
+# player comes in. More can be added from the instrument menu; scripts/catalog.gd describes each kind.
 const DEFAULT_ROOM := [
-	{"kind": "drums", "position": Vector3(0.5, 0.9, -3.6)},
-	{"kind": "bass", "position": Vector3(-5.0, 1.0, -2.0)},
-	{"kind": "pad", "position": Vector3(4.8, 1.6, -1.6)},
-	{"kind": "bells", "position": Vector3(-4.6, 1.6, 2.4)},
-	{"kind": "keys", "position": Vector3(3.0, 0.95, 1.8)},
-	# Whatever is plugged into the audio input comes out of this speaker once live input is switched on.
-	{"kind": "live", "position": Vector3(-2.0, 0.6, 1.6)},
+	{"kind": "drums", "position": Vector3(0.5, 0.0, -3.6)},
+	{"kind": "bass", "position": Vector3(-5.0, 0.0, -2.0)},
+	{"kind": "pad", "position": Vector3(4.8, 0.0, -1.6)},
+	{"kind": "bells", "position": Vector3(-4.6, 0.0, 2.4)},
+	{"kind": "keys", "position": Vector3(3.0, 0.0, 1.8)},
+	# Whatever is plugged into the audio input comes out of this speaker once its input is switched on.
+	{"kind": "live", "position": Vector3(-2.0, 0.0, 1.6)},
 ]
+const SPAWN := Vector3(0.0, 0.0, 3.6)
 const DEFAULT_TEMPO := 92.0
 const DEFAULT_SWING := 0.14
 
@@ -51,6 +54,7 @@ var player
 var hud
 var menu
 var sequencer  # the pattern editor
+var mixer  # the mix window (Tab)
 var instrument_menu
 var title  # the title screen
 var room  # its size and the walls inside it
@@ -61,7 +65,8 @@ var tempo := DEFAULT_TEMPO
 var swing := DEFAULT_SWING
 var sequence_running := true  # whether the sequencer is playing the patterns
 var options := {}
-var live_input := false   # never restored from settings: an open microphone next to speakers would feed back
+var live_input := false   # the audio input is open: some Speaker's input is on. Every Speaker starts with it off,
+                          # since an open microphone next to speakers would feed back
 var audio_error := ""     # the last problem opening a device, shown in the menu
 var _stage_gain := 1.0    # the title screen turns the music down a little; 1 in the room
 var _environment: Environment
@@ -108,6 +113,7 @@ func _ready() -> void:
 			room.add_wall(Vector2(float(n[0]), float(n[1])), Vector2(float(n[2]), float(n[3])), float(n[4]) if n.size() > 4 else Room.DEFAULT_WALL_HEIGHT)
 	for entry in DEFAULT_ROOM:
 		var inst = add_instrument(entry.kind, entry.position, true)  # with its part of the default groove
+		inst.face(SPAWN)
 		if entry.kind == "live":
 			speaker = inst
 			inst.set_input_channel(settings.speaker_input)
@@ -143,6 +149,9 @@ func _ready() -> void:
 	sequencer = Sequencer.new()
 	add_child(sequencer)
 	sequencer.setup(self)
+	mixer = Mixer.new()
+	add_child(mixer)
+	mixer.setup(self)
 	instrument_menu = InstrumentMenu.new()
 	add_child(instrument_menu)
 	instrument_menu.setup(self)
@@ -153,8 +162,8 @@ func _ready() -> void:
 	if not options.has("skip-title"):
 		title.open()
 
-	if options.has("live-input"):
-		set_live_input(true)
+	if options.has("live-input") and speaker != null:
+		set_input(speaker, true)
 	if options.has("menu"):
 		menu.open(int(options.menu))
 	if options.has("play"):
@@ -168,6 +177,8 @@ func _ready() -> void:
 		instrument_menu.create(options.add)
 	if options.has("instruments"):
 		instrument_menu.open()
+	if options.has("mixer"):
+		mixer.open()
 
 
 func _process(delta: float) -> void:
@@ -212,7 +223,7 @@ func _on_room_changed() -> void:
 	audio.set_room(room.size, room.audio_walls())
 	for inst in instruments:
 		var at: Vector3 = inst.global_position
-		at.y = minf(at.y, room.size.y - inst.size.y / 2 - 0.3)
+		at.y = inst.source_height
 		inst.global_position = room.settle(at, 0.6, 0.5, at)
 	if player != null:
 		var stood: Vector3 = player.global_position
@@ -280,13 +291,61 @@ func set_input_device(device_name: String) -> void:
 	settings.save_to_disk()
 
 
+## Every Speaker's input on or off at once (the I/O page's switch).
 func set_live_input(on: bool) -> void:
-	live_input = on
+	for inst in instruments:
+		if not inst.playable:
+			inst.set_input(on)
+	_follow_speaker_inputs()
+
+
+## Switches an instrument's input on or off, as a track's input in a DAW. With it on, a MIDI instrument plays what
+## the MIDI keyboard sends, and a Speaker plays its hardware input (the audio input opens when the first one does).
+func set_input(inst, on: bool) -> void:
+	inst.set_input(on)
+	if player != null:
+		player.notice_input(inst)
+	if not inst.playable:
+		_follow_speaker_inputs()
+
+
+## The MIDI instruments whose input is on: what the keyboards play.
+func armed_instruments() -> Array:
+	return instruments.filter(func(inst): return inst.playable and inst.input_on)
+
+
+## Opens the audio input while any Speaker wants it, and closes it when none does.
+func _follow_speaker_inputs() -> void:
+	var wanted := instruments.any(func(inst): return not inst.playable and inst.input_on)
+	if wanted == live_input:
+		return
+	live_input = wanted
 	open_audio()
+	if wanted and not live_input:  # the input wouldn't open: say so through the Speakers too
+		for inst in instruments:
+			if not inst.playable:
+				inst.set_input(false)
+
+
+## Mute and solo, as on a mixing desk: while anything is soloed, everything else is silent.
+func set_muted(inst, on: bool) -> void:
+	inst.muted = on
+	_apply_channels()
+
+
+func set_soloed(inst, on: bool) -> void:
+	inst.soloed = on
+	_apply_channels()
+
+
+func _apply_channels() -> void:
+	var any_solo := instruments.any(func(inst): return inst.soloed)
+	for inst in instruments:
+		inst.set_channel(inst.muted, inst.soloed, inst.muted or (any_solo and not inst.soloed))
 
 
 ## Which hardware input a live-input instrument plays (-1 = all of them).
-func set_instrument_input(inst, channel: int) -> void:
+func set_input_channel(inst, channel: int) -> void:
 	inst.set_input_channel(channel)
 	if inst == speaker:
 		settings.speaker_input = channel
@@ -403,6 +462,9 @@ func remove_instrument(inst) -> void:
 		speaker = null
 	audio.remove_source(inst.source_id)  # fades out over a few milliseconds
 	inst.queue_free()
+	_apply_channels()  # it may have been the one soloed
+	if not inst.playable:
+		_follow_speaker_inputs()
 
 
 func find_instrument(kind: String):
@@ -434,7 +496,7 @@ func set_master_volume_db(db: float) -> void:
 
 ## An instrument's fader, in decibels above or below its normal level.
 func set_instrument_level(inst, db: float) -> void:
-	inst.set_level_db(clampf(db, -60.0, 12.0))
+	inst.set_level_db(clampf(db, -80.0, 12.0))  # -80: the bottom of the fader, silence
 
 
 ## How much quieter an instrument gets for each doubling of distance beyond a metre and a half, in decibels.
@@ -504,10 +566,20 @@ func set_show_stats(on: bool) -> void:
 	settings.save_to_disk()
 
 
+func set_fullscreen(on: bool) -> void:
+	settings.fullscreen = on
+	_apply_display()
+	settings.save_to_disk()
+
+
 func _apply_display() -> void:
 	get_window().content_scale_factor = settings.text_scale
 	if player:
 		player.camera.fov = settings.fov
+	if not options.has("silent"):  # automated runs keep their window as it is
+		var mode := Window.MODE_FULLSCREEN if settings.fullscreen else Window.MODE_WINDOWED
+		if get_window().mode != mode and not (mode == Window.MODE_WINDOWED and get_window().mode == Window.MODE_MAXIMIZED):
+			get_window().mode = mode
 
 
 # ── Setup ───────────────────────────────────────────────────────────────────────────────────────────────────

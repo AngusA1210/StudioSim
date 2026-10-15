@@ -34,20 +34,23 @@ settings, and enter the room. The menu inside the room has a button to come back
 | --- | --- |
 | W A S D, mouse | move, look (click to capture the mouse) |
 | Shift | run |
-| G or click | pick up the instrument you're facing, put it down |
+| G or click | pick up the instrument you're facing, put it down (it turns to face you) |
 | N | the instrument menu: add an instrument to the room |
 | Backspace, twice | remove the instrument you're facing or carrying |
 | E | play the instrument you're next to; Q stops |
 | A S D F G H J K L ; | white keys while playing (W E T Y U O P are the black keys, Z/X change octave) |
-| MIDI keyboard | plays the instrument you are playing, with velocity (and the sustain pedal on the Keys); plug in any time |
-| Tab | open the pattern editor for the instrument you're next to or playing (at a Speaker: choose its input) |
+| I | that instrument's input on/off (see below) |
+| MIDI keyboard | plays every instrument whose input is on, with velocity (and the sustain pedal on the Keys); plug in any time |
+| Enter | open the pattern editor for the instrument you're next to or playing |
 | M | switch that instrument's loop off or on (for a Speaker: mute) |
+| Tab | the mix window |
 | Space | start or stop every instrument's pattern |
 | C | metronome click on/off |
 | Esc | the menu (see below), including the room's size and walls; the music keeps playing while it's open |
-| I | live input on/off: your microphone or audio interface comes out of the Speaker (macOS asks for permission once) |
 | B | binaural on/off (compare with plain stereo) |
 | R | room reverb on/off |
+
+Facing an instrument, a card at the right of the screen lists what each key does to it.
 
 ## Instruments
 
@@ -58,27 +61,47 @@ There are two families of instrument, and the instrument menu (N) adds either to
 - **Live inputs** bring a microphone, or an instrument plugged into the audio interface, into the room. For now
   that means the Speaker, which plays an input just as it comes in; guitar and bass amplifiers will join it.
 
+Each is drawn as its real counterpart, standing on the floor: a drum kit, a bass synthesizer, a modular synthesizer
+for the pad, tubular bells, an electric piano, and a PA speaker on a tripod. The parts in the instrument's colour
+light up as it plays.
+
 Pick one and it appears in your hands: walk it to where it should stand and click to put it down. A new MIDI
 instrument starts with an empty pattern, so it is silent until you play it or write it a pattern (the pattern editor
-can load the default one). A new Speaker plays the hardware input chosen in the menu, which can be changed later on
-the I/O page; several Speakers can each play a different input. A second instrument of a kind is numbered and a
+can load the default one). A new Speaker plays the hardware input chosen in the menu, which can be changed later in
+its mix window strip or on the I/O page; several Speakers can each play a different input. A second instrument of a kind is numbered and a
 paler colour, to tell them apart. Like the tempo and the patterns, the instruments you add are not saved yet.
 
-## Levels
+### Inputs
 
-The Mixer page of the menu is where levels are managed, in decibels:
+Every instrument has an input that can be on or off, as a track's input is in a DAW, and a green **i** under its
+name shows when it is on. A MIDI instrument with its input on plays what the MIDI keyboard sends; several can be on
+at once, so one keyboard can play a layer of instruments. A Speaker with its input on plays its hardware input; the
+audio input opens when the first Speaker's input goes on and closes when the last goes off.
 
-- **Instruments**: a fader for everything in the room. 0 dB is the level an instrument was made at; a small meter
-  beside each shows it as heard from right next to it.
-- **Distance**: an instrument is at its own level within 1.5 m of it and gets no louder however close you stand.
-  Beyond that it falls 6 dB for each doubling of distance, as the inverse square law has it. The Falloff slider can
-  make that gentler (down to 0, where distance makes no difference) if you want levels to stay more even as you move.
-  The output is set to leave headroom right beside an instrument, so from across the room the mix is fairly quiet;
-  raise the master volume to taste and watch the meter.
-- **Master**: the output volume, a stereo meter with peak hold, and the limiter. With the limiter on, the output
-  cannot clip, and the page says by how many decibels it is being held back whenever it is: the cue to turn
-  something down. With it off, the output is the plain sum of the mix, as on a mixing desk's master fader, and
-  anything over full scale is cut off and reported as clipping.
+Sitting down at an instrument (E) switches its input on until you get up, so the MIDI keyboard plays whatever you are
+at. Switch an input on yourself (I, or the I button in the mix window) and it stays on when you walk away. The
+computer keyboard plays the instrument you are sitting at, along with any others whose input is on. Every input
+starts switched off, so an open microphone never meets a pair of speakers by surprise.
+
+## The mix window
+
+Tab opens the mix window, docked along the bottom of the screen so the room stays in view. It is laid out like a
+mixing desk: a channel strip for every instrument, side by side, and the master strip on the right.
+
+- **Each strip**: the input at the top (MIDI, or a list of hardware inputs for a Speaker), buttons for input (I),
+  mute (M) and solo (S), a fader with the strip's meter beside it, the fader's value, and the instrument's name in its
+  colour. Faders run from +12 dB down to silence, spaced as on a console. Drag one to move it (Shift for fine moves),
+  turn the scroll wheel to nudge it, or double-click it for 0 dB. 0 dB is the level the instrument was made at, heard
+  from right beside it.
+- **Master**: the output volume, a stereo meter with peak hold, and LIMIT. With the limiter on, the output cannot
+  clip, and the window says by how many decibels it is being held back whenever it is: the cue to turn something
+  down. With it off, the output is the plain sum of the mix, as on a mixing desk's master fader, and anything over
+  full scale is cut off and reported as clipping.
+- **Distance falloff**: an instrument is at its own level within 1.5 m of it and gets no louder however close you
+  stand. Beyond that it falls 6 dB for each doubling of distance, as the inverse square law has it. The slider can
+  make that gentler (down to 0, where distance makes no difference). The output is set to leave headroom right
+  beside an instrument, so from across the room the mix is fairly quiet: raise the master to taste and watch the
+  meter.
 
 A small master meter also sits on screen in the room (it can be switched off in Settings). It reads "limit" or
 "CLIP" when either is happening.
@@ -107,11 +130,11 @@ The room goes back to the default each time SoundRoom starts, until rooms can be
 ## Playing and sequencing
 
 Every MIDI instrument in the room can be played by hand. Walk up to one and press E: the
-computer keyboard becomes a small piano for it, and any MIDI controller plays it too. With nobody at an instrument a
-MIDI controller plays nothing. The drums are a drum machine: each key is a drum, laid out like a General MIDI kit
+computer keyboard becomes a small piano for it, and any MIDI controller plays it too (see Inputs, above). The drums
+work like a drum machine: each key is a drum, laid out like a General MIDI kit
 (C kick, D snare, F# closed hat, A# open hat, F and A toms, D# clap, C# crash) and repeated in every octave.
 
-Each instrument also has a pattern that the sequencer loops. The room starts with the default groove. Press Tab at
+Each instrument also has a pattern that the sequencer loops. The room starts with the default groove. Press Enter at
 an instrument to edit its pattern on a step grid, one bar at a time:
 
 - click a square to add a note, click a note to remove it, right-click a note to step through loud, medium, soft
@@ -126,7 +149,6 @@ patterns go back to the defaults at each start until rooms can be saved.
 ## The menu
 
 - **Metronome**: start and stop the patterns, tempo, swing, the click and its volume.
-- **Mixer**: a fader for each instrument, the distance falloff, the master volume, meter and limiter (see above).
 - **Room**: the room's size and the walls inside it (see above).
 - **Playback Engine**: which output device the audio engine runs on, and the hardware buffer size (32–1024 samples).
   The sample rate follows the device. Shows the resulting latency (the buffer, the device, and the quarter of a
@@ -134,8 +156,8 @@ patterns go back to the defaults at each start until rooms can be saved.
 - **I/O**: which of the device's outputs carry the mix, the input device, and which hardware input each Speaker plays.
   Live input always starts switched off, so an open microphone never meets a pair of speakers by surprise.
 - **MIDI**: every MIDI device the system sees, with a tick box each and a light that flashes when it sends notes.
-- **Settings**: binaural, reverb, text size, field of view, mouse sensitivity, room lighting, and whether the
-  master meter and the audio readout are shown on screen.
+- **Settings**: binaural, reverb, text size, field of view, mouse sensitivity, room lighting, full screen (which
+  SoundRoom then opens in every time), and whether the master meter and the audio readout are shown on screen.
 
 Choices are saved (Godot's user data folder, `settings.cfg`) and restored at the next start. If a saved device
 isn't connected, the system default is used until it is.
@@ -143,9 +165,11 @@ isn't connected, the system default is used until it is.
 ## How it's put together
 
 ```
-game/                      Godot project: the room, player, instruments, HUD, menus and pattern editor (GDScript)
+game/                      Godot project: the room, player, instruments, HUD, menus, mix window, pattern editor (GDScript)
   scripts/catalog.gd       every kind of instrument and the two groups the instrument menu shows them in
   scripts/room.gd          the room's floor, ceiling and walls, built to whatever size and layout is set
+  scripts/instrument_models.gd   what each instrument looks like, built from simple shapes
+  scripts/mixer.gd         the mix window: channel strips, faders (fader.gd) and meters (level_meter.gd)
 audio_core/
   src/core/                the audio engine, plain C++ with no Godot dependency
     engine.*               device, command queue, mixing, the shared clock

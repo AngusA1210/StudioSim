@@ -146,6 +146,7 @@ float SoundRoomAudio::get_room_decay() const { return engine_ ? engine_->roomDec
 
 void SoundRoomAudio::set_source_muted(int id, bool muted) { if (engine_) engine_->setSourceMuted(id, muted); }
 void SoundRoomAudio::set_source_input_channel(int id, int channel) { if (engine_) engine_->setSourceInputChannel(id, channel); }
+void SoundRoomAudio::set_source_input(int id, bool on) { if (engine_) engine_->setSourceInput(id, on); }
 
 void SoundRoomAudio::set_listener(const Transform3D& t) {
     if (!engine_) return;
@@ -279,7 +280,6 @@ bool SoundRoomAudio::start_midi() {
 }
 
 void SoundRoomAudio::poll_midi() { if (engine_) engine_->pollMidi(); }
-void SoundRoomAudio::set_midi_target(int id) { if (engine_) engine_->setMidiTarget(id); }
 
 Array SoundRoomAudio::get_midi_devices() const {
     Array out;
@@ -323,6 +323,7 @@ void SoundRoomAudio::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_room_decay"), &SoundRoomAudio::get_room_decay);
     ClassDB::bind_method(D_METHOD("set_source_muted", "id", "muted"), &SoundRoomAudio::set_source_muted);
     ClassDB::bind_method(D_METHOD("set_source_input_channel", "id", "channel"), &SoundRoomAudio::set_source_input_channel);
+    ClassDB::bind_method(D_METHOD("set_source_input", "id", "on"), &SoundRoomAudio::set_source_input);
     ClassDB::bind_method(D_METHOD("set_listener", "transform"), &SoundRoomAudio::set_listener);
     ClassDB::bind_method(D_METHOD("note_on", "id", "note", "velocity"), &SoundRoomAudio::note_on);
     ClassDB::bind_method(D_METHOD("note_off", "id", "note"), &SoundRoomAudio::note_off);
@@ -357,7 +358,6 @@ void SoundRoomAudio::_bind_methods() {
 
     ClassDB::bind_method(D_METHOD("start_midi"), &SoundRoomAudio::start_midi);
     ClassDB::bind_method(D_METHOD("poll_midi"), &SoundRoomAudio::poll_midi);
-    ClassDB::bind_method(D_METHOD("set_midi_target", "id"), &SoundRoomAudio::set_midi_target);
     ClassDB::bind_method(D_METHOD("get_midi_devices"), &SoundRoomAudio::get_midi_devices);
     ClassDB::bind_method(D_METHOD("set_midi_device_enabled", "name", "enabled"), &SoundRoomAudio::set_midi_device_enabled);
     ClassDB::bind_method(D_METHOD("get_midi_event_count"), &SoundRoomAudio::get_midi_event_count);

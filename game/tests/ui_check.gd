@@ -1,6 +1,6 @@
 extends SceneTree
 ## Drives the real game with pretend key presses and mouse clicks and checks what happens: the title screen,
-## walking up to an instrument, playing it, editing its pattern, the tempo and click, adding and removing instruments, the
+## walking up to an instrument, its instruction card and input, playing it, editing its pattern, the tempo and click, adding and removing instruments, the
 ## Speaker, the menu, the mixer and meter, the room's size and walls.
 ## Run: godot --headless --path game --script tests/ui_check.gd -- --silent
 ## (--silent keeps it from making a sound or touching saved settings; the exit code is the number of failures)
@@ -185,13 +185,23 @@ func _run() -> void:
 
 	print("Walking up to an instrument")
 	check(speaker.display_name == "Speaker", "the live input is called the Speaker", speaker.display_name)
+	await tap(KEY_ENTER)
+	check(not seq.is_open(), "Enter does nothing when you aren't at an instrument")
 	await tap(KEY_TAB)
-	check(not seq.is_open(), "Tab does nothing when you aren't at an instrument")
+	check(main.mixer.is_open(), "Tab opens the mix window from anywhere")
+	await tap(KEY_TAB)
+	check(not main.mixer.is_open(), "and closes it again")
 	main._sit_at("drums")
 	await frames(5)
 	check(player.target == drums and player.can_play_target(), "standing at the drums, they are what you're facing")
-	check(main.hud._hint.text.contains("E play") and main.hud._hint.text.contains("Tab pattern") and main.hud._hint.text.contains("M loop off"),
-		"the hint offers play, pattern and loop", main.hud._hint.text)
+	var card: Array = main.hud.hint_lines()
+	check(card == ["Drums", "E play", "Enter edit its pattern", "I input on", "M loop off", "G carry", "Backspace remove (press twice)"],
+		"a card lists what each key does, one per line, with removing at the bottom", " / ".join(card))
+	var parts := 0
+	for node in drums._model.find_children("*", "MeshInstance3D", true, false):
+		parts += 1
+	check(parts > 30 and drums.source_height == 0.9 and is_equal_approx(drums.global_position.y, 0.9), "the drums are a drum kit standing on the floor",
+		"%d parts" % parts)
 
 	print("Playing by hand")
 	await tap(KEY_M)
@@ -200,6 +210,8 @@ func _run() -> void:
 	var quiet: float = audio.get_source_level(drums.source_id)
 	await tap(KEY_E)
 	check(player.playing == drums and main.hud._piano.visible, "E sits down at the drums and shows the keyboard", main.hud._piano_help.text)
+	check(drums.input_on and drums._input_badge.visible and main.armed_instruments() == [drums],
+		"sitting down switches the drums' input on, and a green i shows under their name")
 	check(main.hud._piano_keys[KEY_A].piece.text == "Kick" and main.hud._piano_keys[KEY_T].piece.text == "CH" and main.hud._piano_keys[KEY_S].piece.text == "Snare",
 		"the keys are labelled with the drums they hit", "A %s, S %s, T %s" % [main.hud._piano_keys[KEY_A].piece.text, main.hud._piano_keys[KEY_S].piece.text, main.hud._piano_keys[KEY_T].piece.text])
 	key(KEY_A)
@@ -211,8 +223,8 @@ func _run() -> void:
 	check(drums.loop_on, "M works while playing too, and brings the loop back")
 
 	print("The pattern editor")
-	await tap(KEY_TAB)
-	check(seq.is_open() and seq.inst == drums and seq._title.text == "Drums pattern", "Tab opens the drums' pattern", seq._title.text)
+	await tap(KEY_ENTER)
+	check(seq.is_open() and seq.inst == drums and seq._title.text == "Drums pattern", "Enter opens the drums' pattern", seq._title.text)
 	check(seq._grid.rows.size() == 8 and seq._grid.rows[7].label == "Kick" and seq._grid.rows[0].label == "Crash", "eight rows, kick at the bottom",
 		"%d rows" % seq._grid.rows.size())
 	check(not seq._note_length_box.visible, "no note-length choice for drums")
@@ -279,19 +291,39 @@ func _run() -> void:
 	seq._click.button_pressed = true
 	await frames(2)
 	check(main.settings.click and audio.get_transport().click, "the click switch turns the metronome on")
-	await tap(KEY_TAB)
-	check(not seq.is_open() and player.playing == drums, "Tab closes the editor; you are still at the drums")
+	await tap(KEY_ENTER)
+	check(not seq.is_open() and player.playing == drums, "Enter closes the editor; you are still at the drums")
 	await tap(KEY_C)
 	check(not main.settings.click, "C switches the click off")
 	check(main.hud._beat.text.contains("120 BPM"), "the beat readout shows the tempo", main.hud._beat.text)
 	await tap(KEY_Q)
-	check(player.playing == null, "Q stands up")
+	check(player.playing == null and not drums.input_on and not drums._input_badge.visible, "Q stands up, and the drums' input goes off again")
+	await tap(KEY_I)
+	check(drums.input_on and drums._input_badge.visible and main.armed_instruments() == [drums], "I switches it on for good")
+	main._sit_at("keys")
+	await frames(5)
+	var keys = main.find_instrument("keys")
+	await tap(KEY_E)
+	await seconds(0.5)
+	key(KEY_A)
+	await frames(4)
+	var keys_level: float = audio.get_source_level(keys.source_id)
+	var drums_level: float = audio.get_source_level(drums.source_id)
+	key(KEY_A, false)
+	check(keys_level > 0.001 and drums_level > 0.01, "sitting at the Keys, a key plays them and the drums, whose input is still on",
+		"keys %.3f, drums %.3f" % [keys_level, drums_level])
+	await tap(KEY_Q)
+	check(not keys.input_on and drums.input_on, "getting up switches only the Keys' input off")
+	main._sit_at("drums")
+	await frames(5)
+	await tap(KEY_I)
+	check(not drums.input_on, "and I switches the drums' off")
 
 	print("A melodic instrument")
 	main._sit_at("bass")
 	await frames(5)
-	await tap(KEY_TAB)
-	check(seq.is_open() and seq.inst == bass and player.playing == bass, "Tab opens the bass pattern straight from facing it", seq._title.text)
+	await tap(KEY_ENTER)
+	check(seq.is_open() and seq.inst == bass and player.playing == bass, "Enter opens the bass pattern straight from facing it", seq._title.text)
 	check(seq._note_length_box.visible and seq._grid.rows.size() >= 33, "a row for each note, and a note-length choice", "%d rows" % seq._grid.rows.size())
 	await frames(4)
 	seq._on_bar_pressed(0)
@@ -325,7 +357,7 @@ func _run() -> void:
 	await click(im._cards[1].get_global_rect().get_center())
 	var bass2 = player.carried
 	check(not im.is_open() and bass2 != null and bass2.display_name == "Bass 2" and bass2.kind == "bass" and main.instruments.size() == count_before + 1,
-		"picking Bass puts a second bass in your hands", main.hud._hint.text)
+		"picking Bass puts a second bass in your hands", " / ".join(main.hud.hint_lines()))
 	check(audio.get_pattern(bass2.source_id).is_empty() and bass2.loop_on and bass2.color != bass.color, "it has an empty pattern and a paler colour")
 	await seconds(0.3)
 	var ahead: Vector3 = bass2.global_position - player.global_position
@@ -341,14 +373,15 @@ func _run() -> void:
 	var sounding: float = audio.get_source_level(bass2.source_id)
 	key(KEY_A, false)
 	check(player.playing == bass2 and silent_before < 0.0005 and sounding > 0.01, "it is silent until you play it", "before %.4f, playing %.3f" % [silent_before, sounding])
-	await tap(KEY_TAB)
+	await tap(KEY_ENTER)
 	check(seq.is_open() and seq._title.text == "Bass 2 pattern", "and it has its own pattern to edit", seq._title.text)
 	await tap(KEY_BACKSPACE)
 	check(main.instruments.has(bass2), "Backspace is ignored while the pattern editor is open")
-	await tap(KEY_TAB)
+	await tap(KEY_ENTER)
 	await tap(KEY_BACKSPACE)
-	check(player.remove_pending == bass2 and main.instruments.has(bass2) and main.hud._hint.text.begins_with("Remove Bass 2?"),
-		"one Backspace only asks", main.hud._hint.text)
+	await frames(2)
+	check(player.remove_pending == bass2 and main.instruments.has(bass2) and main.hud.hint_lines()[0] == "Remove Bass 2?",
+		"one Backspace only asks", " / ".join(main.hud.hint_lines()))
 	await tap(KEY_BACKSPACE)
 	await frames(3)
 	check(not main.instruments.has(bass2) and main.instruments.size() == count_before and audio.get_source_count() == count_before
@@ -364,12 +397,27 @@ func _run() -> void:
 		"input %d of %d" % [speaker2.input_channel + 1, im._input_option.item_count - 1])
 	await tap(KEY_G)
 	await frames(5)
+	check(not speaker2.input_on and not main.live_input, "a new Speaker's input starts off, and the audio input is closed")
+	await tap(KEY_I)
+	await frames(3)
+	check(speaker2.input_on and speaker2._input_badge.visible and main.live_input and audio.get_stats().get("live_input", false),
+		"I switches its input on: the audio input opens, and a green i shows under its name")
 	await tap(KEY_TAB)
+	await frames(5)
+	var strip2: Dictionary = main.mixer._strips[main.instruments.find(speaker2)]
+	check(main.mixer.is_open() and strip2.source is OptionButton and strip2.input.button_pressed, "its strip in the mix window has an input list, and its input lit",
+		strip2.source.get_item_text(strip2.source.selected))
+	strip2.source.select(0)
+	main.mixer._on_source_selected(0, speaker2)
+	check(speaker2.input_channel == -1, "choosing All in there sets which input it plays")
+	await click(strip2.input.get_global_rect().get_center())
+	check(not speaker2.input_on and not main.live_input, "its I button switches the input off, and the audio input closes")
+	await tap(KEY_TAB)
+	main.menu.open(main.menu.IO_TAB)
 	await frames(15)
-	check(main.menu.is_open() and main.menu._tabs.current_tab == main.menu.IO_TAB and main.menu._live_rows.get_child_count() == 2,
-		"Tab at a Speaker opens the I/O page, which has a row for each Speaker", "%d rows" % main.menu._live_rows.get_child_count())
-	main.menu._on_live_clicked(-1, speaker2)
-	check(speaker2.input_channel == -1 and speaker.input_channel == main.settings.speaker_input, "each Speaker's input is set on its own row")
+	check(main.menu._live_rows.get_child_count() == 2, "the I/O page has a row for each Speaker", "%d rows" % main.menu._live_rows.get_child_count())
+	main.menu._on_live_clicked(1, speaker2)
+	check(speaker2.input_channel == 1 and speaker.input_channel == main.settings.speaker_input, "each Speaker's input is set on its own row")
 	await tap(KEY_ESCAPE)
 	await tap(KEY_BACKSPACE)
 	await tap(KEY_BACKSPACE)
@@ -397,7 +445,9 @@ func _run() -> void:
 	var from: Vector3 = speaker.position + Vector3(0.0, 0.0, 1.8)
 	player.place(Vector3(from.x, 0.0, from.z), 0.0)
 	await frames(5)
-	check(player.target == speaker and main.hud._hint.text.contains("M mute") and not main.hud._hint.text.contains("E play"), "the Speaker can be muted but not played", main.hud._hint.text)
+	var speaker_card: Array = main.hud.hint_lines()
+	check(player.target == speaker and speaker_card == ["Speaker", "I input on", "M mute", "G carry", "Backspace remove (press twice)"],
+		"the Speaker's card offers input and mute, but not playing", " / ".join(speaker_card))
 	await tap(KEY_M)
 	check(speaker.muted, "M mutes it")
 	await tap(KEY_E)
@@ -411,57 +461,105 @@ func _run() -> void:
 	check(is_equal_approx(audio.get_transport().bpm, 100.0) and is_equal_approx(audio.get_transport().swing, 0.0) and absf(audio.get_transport().click_volume - 0.501) < 0.01,
 		"its sliders set tempo, swing and click volume", str(audio.get_transport()))
 
-	print("The mixer")
+	print("The mix window")
 	var menu = main.menu
 	var pad = main.find_instrument("pad")
-	menu._tabs.current_tab = menu.MIXER_TAB
+	await tap(KEY_ESCAPE)  # out of the menu, into the mix window
+	await tap(KEY_TAB)
 	await frames(4)
-	check(menu._strip_rows.size() == main.instruments.size() and menu._strip_rows[0].inst == drums and menu._strip_rows[0].value.text == "+0.0 dB",
-		"the Mixer page has a fader for each instrument, at 0 dB", "%d faders" % menu._strip_rows.size())
+	var mix = main.mixer
+	check(mix.is_open() and mix._strips.size() == main.instruments.size() and mix._strips[0].inst == drums and mix._strips[0].value.text == "+0.0",
+		"Tab opens the mix window: a strip for each instrument, at 0 dB", "%d strips" % mix._strips.size())
 	await seconds(0.5)
-	check(menu._master_meter.held_db() > -40.0 and menu._master_readout.text.begins_with("Peak -") and menu._master_state.text == "Limiter idle.",
-		"the master meter is reading the output", menu._master_readout.text)
-	var pad_row: Dictionary = menu._strip_rows[main.instruments.find(pad)]
+	check(mix._master.meter.held_db() > -40.0 and mix._status.text.begins_with("Peak -") and mix._status.text.ends_with("Limiter idle"),
+		"the master meter beside the master fader is reading the output", mix._status.text)
+	var pad_strip: Dictionary = mix._strips[main.instruments.find(pad)]
 	pad.set_loop(false)
 	await seconds(1.5)
 	audio.note_on(pad.source_id, 57, 0.8)  # one held note to measure
 	await seconds(1.5)
 	var full: float = await average_level(pad.source_id, 1.5)
-	pad_row.slider.value = -12.0
+	# Drag the pad's fader cap down by as far as 12 dB is on its scale.
+	var fader = pad_strip.fader
+	var travel: float = fader._travel_pixels()
+	var cap: Vector2 = fader.get_global_rect().position + Vector2(fader.SCALE_WIDTH + fader.CAP.x / 2 + 2, (1.0 - fader.position_of(0.0)) * travel + fader.CAP.y / 2)
+	var drop: float = (fader.position_of(0.0) - fader.position_of(-12.0)) * travel
+	var press := InputEventMouseButton.new()
+	press.position = cap
+	press.global_position = cap
+	press.button_index = MOUSE_BUTTON_LEFT
+	press.pressed = true
+	view.push_input(press)
+	await frames(1)
+	for step in 4:
+		var move := InputEventMouseMotion.new()
+		move.position = cap + Vector2(0, drop * (step + 1) / 4.0)
+		move.global_position = move.position
+		move.relative = Vector2(0, drop / 4.0)
+		move.button_mask = MOUSE_BUTTON_MASK_LEFT
+		view.push_input(move)
+		await frames(1)
+	var lift := press.duplicate()
+	lift.pressed = false
+	view.push_input(lift)
 	await seconds(0.4)
 	var lowered: float = await average_level(pad.source_id, 1.5)
-	check(is_equal_approx(pad.level_db, -12.0) and absf(linear_to_db(lowered / full) + 12.0) < 1.0 and pad_row.value.text == "-12.0 dB",
-		"pulling the pad's fader down 12 dB makes it 12 dB quieter", "%.1f dB" % linear_to_db(lowered / full))
-	menu._on_levels_reset_pressed()
+	check(absf(pad.level_db + 12.0) < 0.6 and absf(linear_to_db(lowered / full) + 12.0) < 1.0 and pad_strip.value.text.begins_with("-1"),
+		"dragging the pad's fader down 12 dB makes it 12 dB quieter", "fader at %s, %.1f dB quieter" % [pad_strip.value.text, -linear_to_db(lowered / full)])
+	var twice := press.duplicate()
+	twice.double_click = true
+	view.push_input(twice)
+	await frames(2)
+	view.push_input(lift)
 	await seconds(0.4)
 	var restored: float = await average_level(pad.source_id, 1.5)
-	check(is_equal_approx(pad.level_db, 0.0) and absf(linear_to_db(restored / full)) < 1.0, "All to 0 dB puts it back", "%+.1f dB" % linear_to_db(restored / full))
+	check(is_equal_approx(pad.level_db, 0.0) and absf(linear_to_db(restored / full)) < 1.0, "double-clicking the fader puts it back to 0 dB",
+		"%+.1f dB" % linear_to_db(restored / full))
+	await click(pad_strip.solo.get_global_rect().get_center())
+	await seconds(0.5)
+	var soloed_drums: float = await average_level(drums.source_id, 0.5)
+	var soloed_pad: float = await average_level(pad.source_id, 0.5)
+	check(pad.soloed and soloed_drums < 0.0005 and soloed_pad > 0.005, "soloing the pad silences everything else",
+		"drums %.4f, pad %.4f" % [soloed_drums, soloed_pad])
+	await click(pad_strip.solo.get_global_rect().get_center())
+	await click(mix._strips[0].mute.get_global_rect().get_center())
+	await seconds(0.5)
+	check(not pad.soloed and drums.muted and drums._label.text.contains("muted") and await average_level(drums.source_id, 0.5) < 0.0005,
+		"M on the drums' strip mutes them, and their label says so", drums._label.text)
+	await click(mix._strips[0].mute.get_global_rect().get_center())
 	audio.note_off(pad.source_id, 57)
 	pad.set_loop(true)
 
-	menu._volume_slider.value = 12.0  # far too loud
-	menu._strip_rows[0].slider.value = 12.0  # and the drums with it
+	mix._on_master_changed(12.0)  # far too loud
+	mix._on_fader_changed(12.0, drums)  # and the drums with it
 	await seconds(1.5)
-	check(main.meter_reduction_db > 1.0 and not main.meter_clipped and menu._master_state.text.begins_with("Limiting by"),
-		"turned up too far, the limiter holds the output and the page says by how much", menu._master_state.text)
-	menu._limiter_toggle.button_pressed = false
+	check(main.meter_reduction_db > 1.0 and not main.meter_clipped and mix._status.text.contains("Limiting by"),
+		"turned up too far, the limiter holds the output and the window says by how much", mix._status.text)
+	await click(mix._master.limiter.get_global_rect().get_center())
 	await seconds(1.5)
-	check(not main.settings.limiter and main.meter_clipped and menu._master_state.text.begins_with("Clipping"),
-		"with the limiter off, the same mix is reported as clipping", menu._master_state.text)
-	menu._volume_slider.value = 0.0
-	menu._strip_rows[0].slider.value = 0.0
-	menu._limiter_toggle.button_pressed = true
+	check(not main.settings.limiter and main.meter_clipped and mix._status.text.contains("Clipping"),
+		"with the LIMIT button off, the same mix is reported as clipping", mix._status.text)
+	mix._on_master_changed(0.0)
+	mix._on_fader_changed(0.0, drums)
+	await click(mix._master.limiter.get_global_rect().get_center())
 	await seconds(2.5)
-	check(main.settings.limiter and not main.meter_clipped and main.meter_reduction_db < 0.1 and menu._master_state.text == "Limiter idle.",
-		"back at 0 dB with the limiter on, nothing is being held back", menu._master_state.text)
-	check(is_equal_approx(main.settings.distance_falloff_db, 6.0) and menu._falloff_note.text.contains("6.0 dB quieter"),
-		"sound falls 6 dB per doubling of distance: the inverse square law", menu._falloff_note.text)
-	menu._falloff_slider.value = 3.0
+	check(main.settings.limiter and not main.meter_clipped and main.meter_reduction_db < 0.1 and mix._status.text.ends_with("Limiter idle"),
+		"back at 0 dB with the limiter on, nothing is being held back", mix._status.text)
+	check(is_equal_approx(main.settings.distance_falloff_db, 6.0) and mix._falloff_value.text == "6.0 dB per doubling",
+		"sound falls 6 dB per doubling of distance: the inverse square law", mix._falloff_value.text)
+	mix._falloff.value = 3.0
 	await frames(3)
-	check(is_equal_approx(main.settings.distance_falloff_db, 3.0) and menu._falloff_note.text.contains("3.0 dB quieter"), "and it can be made gentler",
-		menu._falloff_note.text)
-	menu._falloff_slider.value = 6.0
+	check(is_equal_approx(main.settings.distance_falloff_db, 3.0), "and it can be made gentler", mix._falloff_value.text)
+	mix._falloff.value = 6.0
+	await tap(KEY_TAB)
+	check(not mix.is_open(), "Tab closes the mix window")
 
+	menu.open(menu.SETTINGS_TAB)
+	await frames(3)
+	menu._fullscreen_toggle.button_pressed = true
+	await frames(2)
+	check(main.settings.fullscreen and menu._fullscreen_toggle.text.begins_with("On"), "Settings has a full-screen switch that is remembered for next time")
+	menu._fullscreen_toggle.button_pressed = false
 	menu._tabs.current_tab = menu.SETTINGS_TAB
 	await frames(3)
 	menu._light_slider.value = 200.0
@@ -528,7 +626,7 @@ func _run() -> void:
 	if absf(player.global_position.x) > 1.8 or absf(player.global_position.z) > 1.8:  # jostled by six instruments, but in the room
 		outside.append("you at %s" % player.global_position)
 	for inst in main.instruments:
-		if absf(inst.global_position.x) > 1.41 or absf(inst.global_position.z) > 1.41 or inst.global_position.y + inst.size.y / 2 > 2.4:
+		if absf(inst.global_position.x) > 1.41 or absf(inst.global_position.z) > 1.41 or inst.top > 2.4:
 			outside.append("%s at %s" % [inst.display_name, inst.global_position])
 	for wall in room.walls:
 		if absf(wall.a.x) > 2.0 or absf(wall.b.x) > 2.0 or absf(wall.a.y) > 2.0 or absf(wall.b.y) > 2.0:

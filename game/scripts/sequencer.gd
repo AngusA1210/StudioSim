@@ -1,5 +1,5 @@
 extends CanvasLayer
-## The pattern editor (Tab at an instrument): a step grid for the loop that instrument plays, one bar at a time,
+## The pattern editor (Enter at an instrument): a step grid for the loop that instrument plays, one bar at a time,
 ## with the tempo and the metronome click along the top. The music keeps playing while it's open, so every change
 ## is heard on the next time round. While it's open, a MIDI controller plays the instrument being edited.
 
@@ -92,8 +92,16 @@ func _input(event: InputEvent) -> void:
 	if not is_open() or not (event is InputEventKey) or not event.pressed or event.echo:
 		return
 	match event.physical_keycode:
-		KEY_TAB, KEY_ESCAPE:
+		KEY_ESCAPE:
 			close()
+			get_viewport().set_input_as_handled()
+		KEY_ENTER, KEY_KP_ENTER:
+			if not (get_viewport().gui_get_focus_owner() is LineEdit):  # Enter in the tempo box sets the tempo
+				close()
+				get_viewport().set_input_as_handled()
+		KEY_TAB:  # straight over to the mix window
+			close()
+			app.mixer.open()
 			get_viewport().set_input_as_handled()
 		KEY_SPACE:
 			if not (get_viewport().gui_get_focus_owner() is LineEdit):
@@ -166,7 +174,7 @@ func _build() -> void:
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header.add_child(spacer)
 	var close_button := Button.new()
-	close_button.text = "Close  (Tab)"
+	close_button.text = "Close  (Enter)"
 	close_button.pressed.connect(close)
 	header.add_child(close_button)
 

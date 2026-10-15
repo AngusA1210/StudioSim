@@ -463,9 +463,9 @@ int main(int argc, char** argv) {
             keyboard.send(0x90, 62, 100);
             Render nobody = renderSeconds(room.engine, 0.3);
             keyboard.send(0x80, 62, 0);
-            check(nobody.peak < 1e-5, "with nobody at an instrument, the controller plays nothing", fmt("peak %.0f dBFS", db(nobody.peak)));
+            check(nobody.peak < 1e-5, "with no instrument's input on, the controller plays nothing", fmt("peak %.0f dBFS", db(nobody.peak)));
 
-            room.engine.setMidiTarget(room.keys);  // the player sits down at the Keys
+            room.engine.setSourceInput(room.keys, true);  // the player sits down at the Keys
             keyboard.send(0x90, 60, 100);  // note on, middle C
             Render on = renderSeconds(room.engine, 0.3);
             check(firstSound(on) >= 0 && firstSound(on) < room.engine.blockSize(), "a key press sounds in the next block",
@@ -491,27 +491,41 @@ int main(int argc, char** argv) {
             check(ignored.peak < 1e-4 && heard.peak > 1e-2, "a device can be switched off and back on",
                   fmt("off: %.0f dBFS, on: %.0f dBFS", db(ignored.peak), db(heard.peak)));
 
-            // The controller plays whichever instrument the player is at.
+            // The controller plays whichever instruments have their input on.
             renderSeconds(room.engine, 1.0);
             room.engine.setSourceMuted(room.drums, false);
             room.engine.setSourceMuted(room.bass, false);
-            room.engine.setMidiTarget(room.drums);
+            room.engine.setSourceInput(room.keys, false);
+            room.engine.setSourceInput(room.drums, true);
             keyboard.send(0x90, 36, 110);  // the kick on a General MIDI drum map
             renderSeconds(room.engine, 0.02);
             const double drums_level = room.engine.sourceLevel(room.drums), keys_level = room.engine.sourceLevel(room.keys);
             keyboard.send(0x80, 36, 0);
-            check(drums_level > 1e-3 && keys_level < 1e-5, "at the drums, the controller plays the drums and not the Keys",
+            check(drums_level > 1e-3 && keys_level < 1e-5, "with the drums' input on instead, the controller plays the drums and not the Keys",
                   fmt("drums %.0f dBFS, keys %.0f dBFS", db(drums_level), db(keys_level)));
-            room.engine.setMidiTarget(room.bass);
+            room.engine.setSourceInput(room.drums, false);
+            room.engine.setSourceInput(room.bass, true);
             keyboard.send(0x90, 40, 100);
             renderSeconds(room.engine, 0.5);
             const double held_bass = room.engine.sourceLevel(room.bass);
-            room.engine.setMidiTarget(room.keys);  // walking away with the key still down
+            room.engine.setSourceInput(room.bass, false);  // switched off with the key still down
             renderSeconds(room.engine, 0.3);
             const double left_bass = room.engine.sourceLevel(room.bass);
             keyboard.send(0x80, 40, 0);
-            check(held_bass > 1e-3 && left_bass < 1e-4, "a held bass note sustains, and moving to another instrument lets it go",
-                  fmt("held %.0f dBFS, after leaving %.0f dBFS", db(held_bass), db(left_bass)));
+            check(held_bass > 1e-3 && left_bass < 1e-4, "a held bass note sustains, and switching its input off lets it go",
+                  fmt("held %.0f dBFS, after switching off %.0f dBFS", db(held_bass), db(left_bass)));
+            room.engine.setSourceMuted(room.keys, false);
+            room.engine.setSourceInput(room.keys, true);
+            room.engine.setSourceInput(room.bass, true);
+            renderSeconds(room.engine, 0.5);
+            keyboard.send(0x90, 45, 100);
+            renderSeconds(room.engine, 0.1);
+            const double layered_keys = room.engine.sourceLevel(room.keys), layered_bass = room.engine.sourceLevel(room.bass);
+            keyboard.send(0x80, 45, 0);
+            room.engine.setSourceInput(room.keys, false);
+            room.engine.setSourceInput(room.bass, false);
+            check(layered_keys > 1e-3 && layered_bass > 1e-3, "with two inputs on, one keyboard plays both instruments at once",
+                  fmt("keys %.0f dBFS, bass %.0f dBFS", db(layered_keys), db(layered_bass)));
 
             VirtualKeyboard second;  // plugged in while running
             second.open(CFSTR("SoundRoom Second Keyboard"));
@@ -528,15 +542,19 @@ int main(int argc, char** argv) {
         Room room;
         room.quietRoom(room.speaker);
         room.face(-1.5f, 4.2f, 0.0f);  // facing the speaker from 1.6 m
+        auto tone = [](int64_t n) { return 0.25f * float(std::sin(6.2831853 * 440.0 * double(n) / 48000.0)); };
+        Render input_off = renderSeconds(room.engine, 0.5, tone);
+        check(input_off.peak < 1e-5, "with its input off, the speaker stays silent whatever comes in", fmt("peak %.1f dBFS", db(input_off.peak)));
+        room.engine.setSourceInput(room.speaker, true);
         Render silent = renderSeconds(room.engine, 0.3);
         check(silent.peak < 1e-5, "with nothing coming in, the speaker is silent", fmt("peak %.1f dBFS", db(silent.peak)));
-        auto tone = [](int64_t n) { return 0.25f * float(std::sin(6.2831853 * 440.0 * double(n) / 48000.0)); };
         Render live = renderSeconds(room.engine, 1.0, tone);
         check(live.finite && live.rms_l > 0.02, "input is heard from the speaker", fmt("%.1f dBFS RMS", db(live.rms_l)));
         check(std::fabs(db(live.rms_l) - db(live.rms_r)) < 2.0, "and placed in the room (straight ahead here)",
               fmt("L-R %+.1f dB", db(live.rms_l) - db(live.rms_r)));
         Room click;
         click.quietRoom(click.speaker);
+        click.engine.setSourceInput(click.speaker, true);
         click.face(-1.5f, 4.2f, 0.0f);
         renderSeconds(click.engine, 0.3);
         Render hit = renderSeconds(click.engine, 0.05, [](int64_t n) { return n == 0 ? 1.0f : 0.0f; });
@@ -595,6 +613,7 @@ int main(int argc, char** argv) {
             room.engine.configure(48000, block, &err);
             room.engine.setBinaural(binaural);
             room.quietRoom(click ? -1 : room.speaker);
+            room.engine.setSourceInput(room.speaker, true);
             room.engine.setReverb(reverb);
             room.face(-1.5f, 4.2f, 0.0f);  // facing the speaker
             if (click) {
@@ -673,6 +692,7 @@ int main(int argc, char** argv) {
         // A two-input device: a tone on input 2 only. The speaker plays whichever input it is assigned.
         Room inputs;
         inputs.quietRoom(inputs.speaker);
+        inputs.engine.setSourceInput(inputs.speaker, true);
         inputs.face(-1.5f, 4.2f, 0.0f);
         auto two_in = [&](int assigned) {
             inputs.engine.setSourceInputChannel(inputs.speaker, assigned);
@@ -1104,7 +1124,7 @@ int main(int argc, char** argv) {
               "removing an instrument fades it out without a click", fmt("gone to %.0f dBFS; steepest step %.4f while leaving, %.4f while playing",
                                                                       db(tailPeak(leaving, 4800)), steepest(leaving), steepest(sounding)));
         room.engine.noteOn(bass, 40, 0.8f);  // what is sent to an instrument that has gone is ignored
-        room.engine.setMidiTarget(bass);
+        room.engine.setSourceInput(bass, true);
         const bool refused = !room.engine.setPatternNote(bass, {0, 40, 1, 0.8f, 1.0f}) && !room.engine.removeSource(bass);
         Render ghost = renderSeconds(room.engine, 0.3);
         const int reused = room.engine.addSource(InstrumentKind::Pad, {0.0f, 1.6f, 2.0f}, 1.0f, 1.0f);

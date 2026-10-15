@@ -22,8 +22,10 @@ var player
 var _root: Control
 var _stats_panel: PanelContainer
 var _stats: Label
-var _hint: Label
 var _hint_panel: PanelContainer
+var _hint_title: Label
+var _hint_rows: VBoxContainer
+var _hint_signature := ""
 var _prompt_panel: PanelContainer
 var _prompt: Label
 var _beat_panel: PanelContainer
@@ -68,9 +70,19 @@ func setup(the_app) -> void:
 	cross.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_root.add_child(cross)
 
+	# What you can do with the instrument you're facing: its name, then a key and an action on each line.
 	_hint_panel = _panel(_root)
-	_hint = Label.new()
-	_hint_panel.add_child(_hint)
+	var hint_box := VBoxContainer.new()
+	hint_box.add_theme_constant_override("separation", 3)
+	hint_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_hint_panel.add_child(hint_box)
+	_hint_title = Label.new()
+	_hint_title.add_theme_font_size_override("font_size", 17)
+	hint_box.add_child(_hint_title)
+	_hint_rows = VBoxContainer.new()
+	_hint_rows.add_theme_constant_override("separation", 2)
+	_hint_rows.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hint_box.add_child(_hint_rows)
 
 	_prompt_panel = _panel(_root)
 	_prompt = Label.new()
@@ -105,7 +117,7 @@ func setup(the_app) -> void:
 func _process(_delta: float) -> void:
 	_frame += 1
 	var covered := false
-	for panel in [app.title, app.menu, app.sequencer, app.instrument_menu]:
+	for panel in [app.title, app.menu, app.sequencer, app.mixer, app.instrument_menu]:
 		covered = covered or (panel != null and panel.is_open())
 	_root.visible = not covered
 	if covered:
@@ -147,23 +159,7 @@ func _process(_delta: float) -> void:
 		_meter_panel.reset_size()
 		_meter_panel.position = Vector2(vp.x - _meter_panel.size.x - 14, _beat_panel.position.y + _beat_panel.size.y + 8)
 
-	var hint := ""
-	if player.remove_pending != null:
-		hint = "Remove %s?  ·  Backspace again to remove it" % player.remove_pending.display_name
-	elif player.carried != null:
-		hint = "Carrying %s  ·  G or click to put it down  ·  Backspace remove" % player.carried.display_name
-	elif player.target != null and player.playing == null:
-		var t = player.target
-		if t.playable:
-			var play := "E play  ·  Tab pattern" if player.can_play_target() else "step closer to play"
-			hint = "%s  ·  %s  ·  G carry  ·  M loop %s" % [t.display_name, play, "on" if t.is_quiet() else "off"]
-		else:
-			hint = "%s  ·  Tab input  ·  G carry  ·  M %s" % [t.display_name, "unmute" if t.is_quiet() else "mute"]
-	_hint.text = hint
-	_hint.add_theme_color_override("font_color", WARN if player.remove_pending != null else Color.WHITE)
-	_hint_panel.visible = hint != ""
-	_hint_panel.reset_size()
-	_hint_panel.position = Vector2((vp.x - _hint_panel.size.x) / 2, vp.y / 2 + 24)
+	_show_hint(vp)
 
 	# One line of guidance: how to start, or where the menu is.
 	var playing: bool = player.playing != null
@@ -182,12 +178,86 @@ func _process(_delta: float) -> void:
 			_label_piano(inst)
 		_piano_title.text = "Playing the %s" % inst.display_name
 		var octave := "" if inst.kind == "drums" else "Z X  octave (lowest key C%d)  ·  " % (4 + player.octave)
-		_piano_help.text = "Q  stop  ·  %sTab  pattern  ·  M  loop %s" % [octave, "on" if inst.is_quiet() else "off"]
+		_piano_help.text = "Q  stop  ·  %sEnter  pattern  ·  I  input %s  ·  M  loop %s" % [octave, "off" if inst.input_on else "on",
+			"on" if not inst.loop_on else "off"]
 		_piano.reset_size()
 		_piano.position = Vector2((vp.x - _piano.size.x) / 2, vp.y - _piano.size.y - 18)
 		for key in _piano_keys:
 			var entry: Dictionary = _piano_keys[key]
 			entry.rect.color = inst.color.lightened(0.15) if player.held.has(key) else entry.idle
+
+
+## The instruction card beside the crosshair: for what you're facing, what you're carrying, or a removal to confirm.
+func _show_hint(vp: Vector2) -> void:
+	var title := ""
+	var tint := Color.WHITE
+	var rows := []  # [key, action]; an empty key draws a line, for the removal at the bottom
+	if player.remove_pending != null:
+		title = "Remove %s?" % player.remove_pending.display_name
+		tint = WARN
+		rows = [["Backspace", "yes, remove it"], ["look away", "keep it"]]
+	elif player.carried != null:
+		title = "Carrying %s" % player.carried.display_name
+		tint = player.carried.color.lightened(0.3)
+		rows = [["G or click", "put it down"], ["", ""], ["Backspace", "remove"]]
+	elif player.target != null and player.playing == null:
+		var t = player.target
+		title = t.display_name
+		tint = t.color.lightened(0.3)
+		if t.playable:
+			rows.append(["E", "play" if player.can_play_target() else "play (step closer)"])
+			rows.append(["Enter", "edit its pattern"])
+			rows.append(["I", "input off" if t.input_on else "input on"])
+			rows.append(["M", "loop on" if not t.loop_on else "loop off"])
+		else:
+			rows.append(["I", "input off" if t.input_on else "input on"])
+			rows.append(["M", "unmute" if t.muted else "mute"])
+		rows.append(["G", "carry"])
+		rows.append(["", ""])
+		rows.append(["Backspace", "remove (press twice)"])
+	_hint_panel.visible = title != ""
+	if title == "":
+		return
+	var signature := title + str(rows)
+	if signature != _hint_signature:
+		_hint_signature = signature
+		_hint_title.text = title
+		_hint_title.add_theme_color_override("font_color", tint)
+		for child in _hint_rows.get_children():
+			child.queue_free()
+		for row in rows:
+			if row[0] == "":
+				var line := HSeparator.new()
+				line.mouse_filter = Control.MOUSE_FILTER_IGNORE
+				_hint_rows.add_child(line)
+				continue
+			var line := HBoxContainer.new()
+			line.add_theme_constant_override("separation", 10)
+			line.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			var key := Label.new()
+			key.text = row[0]
+			key.custom_minimum_size.x = 92
+			key.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+			key.add_theme_color_override("font_color", tint if player.remove_pending == null else WARN)
+			key.add_theme_font_size_override("font_size", 14)
+			line.add_child(key)
+			var action := Label.new()
+			action.text = row[1]
+			action.add_theme_font_size_override("font_size", 14)
+			action.add_theme_color_override("font_color", Color(0.86, 0.88, 0.93))
+			line.add_child(action)
+			_hint_rows.add_child(line)
+		_hint_panel.reset_size()
+	# At the right-hand side, clear of what you're looking at.
+	_hint_panel.position = Vector2(vp.x - _hint_panel.size.x - 24, vp.y / 2 - _hint_panel.size.y / 2)
+
+
+func hint_lines() -> Array:  # what the card says, line by line (for the automated checks)
+	var lines := [_hint_title.text]
+	for row in _hint_rows.get_children():
+		if row is HBoxContainer:
+			lines.append("%s %s" % [row.get_child(0).text, row.get_child(1).text])
+	return lines
 
 
 func _build_piano(root: Control) -> void:

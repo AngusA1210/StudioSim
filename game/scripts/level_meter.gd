@@ -1,6 +1,6 @@
 extends Control
-## A level meter: a bar for each channel, from -60 dB at the left to full scale at the right, with the highest
-## recent peak held as a tick. Green up to -12 dB, amber up to -3, red above. Feed it every frame.
+## A level meter: a bar for each channel, from -60 dB at the left (or the bottom, if `vertical`) to full scale, with
+## the highest recent peak held as a tick. Green up to -12 dB, amber up to -3, red above. Feed it every frame.
 
 const FLOOR_DB := -60.0
 const AMBER_DB := -12.0
@@ -11,6 +11,7 @@ const GREEN := Color(0.36, 0.83, 0.55)
 const AMBER := Color(0.95, 0.77, 0.3)
 const RED := Color(1.0, 0.4, 0.36)
 
+var vertical := false
 var _bars: Array = []      # what each bar shows now, in dB: jumps up with the signal, falls back steadily
 var _averages: Array = []  # the average level of each channel in dB, drawn brighter inside the bar
 var _held: Array = []      # the tick: the highest peak lately
@@ -62,30 +63,40 @@ func _process(delta: float) -> void:
 func _draw() -> void:
 	var count := maxi(_bars.size(), 1)
 	var gap := 2.0 if count > 1 else 0.0
-	var height := (size.y - gap * (count - 1)) / count
+	var across := ((size.x if vertical else size.y) - gap * (count - 1)) / count
 	for i in count:
-		var y := i * (height + gap)
-		draw_rect(Rect2(0, y, size.x, height), Color(1, 1, 1, 0.08))
+		var at := i * (across + gap)
+		_rect(at, across, 0.0, 1.0, Color(1, 1, 1, 0.08))
 		if i >= _bars.size():
 			continue
-		_stretch(y, height, _bars[i], 0.45)
+		_stretch(at, across, _bars[i], 0.45)
 		if i < _averages.size():
-			_stretch(y, height, _averages[i], 1.0)
+			_stretch(at, across, _averages[i], 1.0)
 		if _held[i] > FLOOR_DB + 0.5:
-			var x := clampf(_along(_held[i]) * size.x, 1.0, size.x - 1.0)
-			draw_rect(Rect2(x - 1.0, y, 2.0, height), _ink(_held[i]))
+			var length := size.y if vertical else size.x
+			var spot := clampf(_along(_held[i]), 1.0 / length, 1.0 - 1.0 / length)
+			_rect(at, across, spot - 1.0 / length, spot + 1.0 / length, _ink(_held[i]))
 	for mark in [AMBER_DB, RED_DB]:  # where the colours change
-		draw_rect(Rect2(_along(mark) * size.x, 0, 1.0, size.y), Color(0, 0, 0, 0.5))
+		var length := size.y if vertical else size.x
+		_rect(0.0, size.x if vertical else size.y, _along(mark), _along(mark) + 1.0 / length, Color(0, 0, 0, 0.5))
 
 
-## A bar from the left up to `level`, in the colour of each zone it passes through.
-func _stretch(y: float, height: float, level: float, alpha: float) -> void:
+## A bar from the floor up to `level`, in the colour of each zone it passes through.
+func _stretch(at: float, across: float, level: float, alpha: float) -> void:
 	var from := FLOOR_DB
 	for zone in [[AMBER_DB, GREEN], [RED_DB, AMBER], [6.0, RED]]:
 		var to := minf(level, zone[0])
 		if to > from:
-			draw_rect(Rect2(_along(from) * size.x, y, (_along(to) - _along(from)) * size.x, height), Color(zone[1], alpha))
+			_rect(at, across, _along(from), _along(to), Color(zone[1], alpha))
 		from = zone[0]
+
+
+## A rectangle `across` wide starting `at` across the meter, from `low` to `high` of the way along it (0 = -60 dB).
+func _rect(at: float, across: float, low: float, high: float, color: Color) -> void:
+	if vertical:
+		draw_rect(Rect2(at, size.y * (1.0 - high), across, size.y * (high - low)), color)
+	else:
+		draw_rect(Rect2(size.x * low, at, size.x * (high - low), across), color)
 
 
 func _ink(level: float) -> Color:

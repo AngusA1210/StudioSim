@@ -140,6 +140,10 @@ public:
     void setSourceMuted(int id, bool muted);
     // For live-input sources: which hardware input to play (0-based), or LiveInput::kAllInputs.
     void setSourceInputChannel(int id, int channel);
+    // Whether a source takes input, as a track's input is switched on in a DAW. An instrument with its input on plays
+    // what MIDI controllers send (all such instruments at once); a live-input source plays its hardware input.
+    // Every source starts with its input off.
+    void setSourceInput(int id, bool on);
     void setListener(Vec3 position, Vec3 ahead, Vec3 up);
     void noteOn(int id, int note, float velocity);
     void noteOff(int id, int note);
@@ -176,10 +180,9 @@ public:
     void setClickVolume(float gain);
     TransportState transport() const;
 
-    // MIDI controllers play `setMidiTarget`'s source: the instrument the player is at. -1 = nothing.
+    // MIDI controllers play every instrument whose input is on (see setSourceInput).
     bool startMidi(std::string* error);
     void pollMidi();  // picks up controllers plugged in since the last call
-    void setMidiTarget(int id);
     std::vector<MidiDeviceInfo> midiDevices() const { return midi_.devices(); }
     void setMidiDeviceEnabled(const std::string& name, bool enabled) { midi_.setEnabled(name, enabled); }
     uint32_t midiEventCount() const { return midi_events_.load(std::memory_order_relaxed); }
@@ -203,7 +206,7 @@ private:
     struct Command {
         enum Type : uint8_t {
             AddSource, RemoveSource, SourcePosition, SourceDirectPath, SourceMuted, SourceInputChannel, Listener,
-            NoteOn, NoteOff, AllNotesOff, Binaural, Reverb, MasterVolume, MidiTarget,
+            NoteOn, NoteOff, AllNotesOff, Binaural, Reverb, MasterVolume, SourceInput,
             PatternNoteSet, PatternNoteRemove, PatternClear, PatternSteps, SourceLoop,
             SequencerRunning, Tempo, Swing, Click, ClickVolume, Reverb2, SourceGain, Falloff, LimiterOn,
         } type = AddSource;
@@ -253,7 +256,6 @@ private:
 
     // Audio-thread state
     std::array<Source*, kSourceSlots> sources_{};
-    int midi_target_ = -1;
     Vec3 listener_pos_{0, 1.65f, 0}, listener_ahead_{0, 0, -1}, listener_up_{0, 1, 0};
     Vec3 target_pos_{0, 1.65f, 0}, target_ahead_{0, 0, -1}, target_up_{0, 1, 0};
     bool binaural_ = true;
