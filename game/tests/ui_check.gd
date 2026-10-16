@@ -717,14 +717,24 @@ func _run() -> void:
 	await frames(3)
 	check(not picker.visible and drums.inserts[0].plugin_name == "AUDelay" and drums_strip.inserts[0].button.text == "AUDelay" and
 		audio.get_inserts(drums.source_id)[0].plugin_name == "AUDelay", "choosing a plug-in puts it on the drums' first insert")
-	var cmd_click := InputEventMouseButton.new()
-	cmd_click.button_index = MOUSE_BUTTON_LEFT
-	cmd_click.pressed = true
-	cmd_click.meta_pressed = true
-	mix._on_insert_input(cmd_click, drums, 0)
+	mix._on_insert_clicked(drums, 0, true)  # with Cmd held
 	await frames(2)
 	check(not drums.inserts[0].on and drums_strip.inserts[0].style.bg_color.b > 0.6, "Cmd-click bypasses it, and it turns blue")
-	mix._on_insert_input(cmd_click, drums, 0)
+	mix._on_insert_clicked(drums, 0, true)
+	var held = mix._insert_drag(Vector2.ZERO, drums, 0)
+	check(held != null and mix._insert_can_drop(Vector2.ZERO, held, drums, 2) and not mix._insert_can_drop(Vector2.ZERO, held, drums, 0) and
+		mix._insert_drag(Vector2.ZERO, drums, 4) == null, "an insert can be picked up and dropped on another slot, but an empty one can't be picked up")
+	mix.drop_insert(held, drums, 2, false)
+	await frames(2)
+	check(drums.inserts[0].plugin_name == "" and drums.inserts[2].plugin_name == "AUDelay", "dragging it down the strip moves it to that slot")
+	mix.drop_insert(mix._insert_drag(Vector2.ZERO, drums, 2), bass, 0, false)
+	await frames(2)
+	check(drums.inserts[2].plugin_name == "" and bass.inserts[0].plugin_name == "AUDelay" and mix._strip_for(bass).inserts[0].button.text == "AUDelay",
+		"dragging it to another strip moves it to that instrument")
+	mix.drop_insert(mix._insert_drag(Vector2.ZERO, bass, 0), drums, 0, true)  # with Option held
+	await frames(2)
+	check(bass.inserts[0].plugin_name == "AUDelay" and drums.inserts[0].plugin_name == "AUDelay", "with Option held it is copied instead, as in Pro Tools")
+	main.clear_insert(bass, 0)
 	var right_click := InputEventMouseButton.new()
 	right_click.button_index = MOUSE_BUTTON_RIGHT
 	right_click.pressed = true

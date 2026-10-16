@@ -102,6 +102,10 @@ public:
     bool clear_insert(int id, int slot);
     void set_insert_on(int id, int slot, bool on);  // off = bypassed
     bool show_insert_editor(int id, int slot, bool show, const String& title);
+    // Dragging an insert: moving it swaps it with what is in the slot it goes to; copying it puts a second of the same
+    // plug-in there, with the same settings (false with the reason in get_error()).
+    bool move_insert(int from_id, int from_slot, int to_id, int to_slot);
+    bool copy_insert(int from_id, int from_slot, int to_id, int to_slot);
     int get_max_inserts() const;
     void set_listener(const Transform3D& transform);
     void note_on(int id, int note, float velocity);

@@ -234,6 +234,36 @@ public:
     }
 
     bool editorVisible() const override { return window_ && window_.visible; }
+
+    std::vector<uint8_t> saveState() const override {
+        std::vector<uint8_t> out;
+        CFPropertyListRef info = nullptr;
+        UInt32 size = sizeof(info);
+        if (AudioUnitGetProperty(unit_, kAudioUnitProperty_ClassInfo, kAudioUnitScope_Global, 0, &info, &size) != noErr || !info)
+            return out;
+        if (CFDataRef data = CFPropertyListCreateData(nullptr, info, kCFPropertyListBinaryFormat_v1_0, 0, nullptr)) {
+            const uint8_t* bytes = CFDataGetBytePtr(data);
+            out.assign(bytes, bytes + CFDataGetLength(data));
+            CFRelease(data);
+        }
+        CFRelease(info);
+        return out;
+    }
+
+    bool loadState(const std::vector<uint8_t>& state) override {
+        if (state.empty()) return false;
+        CFDataRef data = CFDataCreate(nullptr, state.data(), CFIndex(state.size()));
+        CFPropertyListRef info = data ? CFPropertyListCreateWithData(nullptr, data, kCFPropertyListImmutable, nullptr, nullptr) : nullptr;
+        if (data) CFRelease(data);
+        if (!info) return false;
+        const bool done = AudioUnitSetProperty(unit_, kAudioUnitProperty_ClassInfo, kAudioUnitScope_Global, 0, &info, sizeof(info)) == noErr;
+        CFRelease(info);
+        if (done) {  // tell its window, if open, that every parameter may have changed
+            AudioUnitParameter all{unit_, kAUParameterListener_AnyParameter, kAudioUnitScope_Global, 0};
+            AUParameterListenerNotify(nullptr, nullptr, &all);
+        }
+        return done;
+    }
     int latencySamples() const override { return latency_; }
 
     void setTempo(double bpm) override { tempo_.store(bpm, std::memory_order_relaxed); }

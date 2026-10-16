@@ -654,6 +654,20 @@ bool AudioEngine::showPluginEditor(int id, int index, bool show, const std::stri
 }
 
 // ── Inserts (game thread) ──────────────────────────────────────────────────────────────────────────────────
+std::unique_ptr<PluginPedal> AudioEngine::makePluginPedal(const std::string& plugin_id, const std::vector<uint8_t>* state,
+                                                          std::string* error) {
+    std::unique_ptr<PluginInstance> plugin = PluginInstance::load(plugin_id, error);
+    if (!plugin) return nullptr;
+    auto pedal = std::make_unique<PluginPedal>(std::move(plugin));
+    pedal->prepare(float(sr_));
+    if (!pedal->ready()) {
+        if (error) *error = pedal->error();
+        return nullptr;
+    }
+    if (state) pedal->plugin()->loadState(*state);  // before the audio thread has it
+    return pedal;
+}
+
 bool AudioEngine::setInsert(int id, int slot, const std::string& plugin_id, std::string* error) {
     reapPedals();
     Source* s = owned(id);
@@ -661,28 +675,66 @@ bool AudioEngine::setInsert(int id, int slot, const std::string& plugin_id, std:
         if (error) *error = "there is no such insert";
         return false;
     }
-    std::unique_ptr<PluginInstance> plugin = PluginInstance::load(plugin_id, error);
-    if (!plugin) return false;
-    auto pedal = std::make_unique<PluginPedal>(std::move(plugin));
-    pedal->prepare(float(sr_));
-    if (!pedal->ready()) {
-        if (error) *error = pedal->error();
-        return false;
-    }
-    auto& place = s->inserts[size_t(slot)];
+    std::unique_ptr<PluginPedal> pedal = makePluginPedal(plugin_id, nullptr, error);
+    return pedal && placeInsert(*s, slot, std::move(pedal), true, error);
+}
+
+bool AudioEngine::placeInsert(Source& s, int slot, std::unique_ptr<PluginPedal> pedal, bool on, std::string* error) {
+    pedal->setOn(on);
+    auto& place = s.inserts[size_t(slot)];
     std::unique_ptr<Pedal> old = std::move(place.pedal);
     place.pedal = std::move(pedal);
-    place.on = true;
-    if (!sendBoard(*s, true)) {
+    place.on = on;
+    if (!sendBoard(s, true)) {
         place.pedal = std::move(old);
         if (error) *error = "the audio engine is busy: try again";
         return false;
     }
     if (old) {
         if (PluginInstance* previous = static_cast<PluginPedal*>(old.get())->plugin()) previous->hideEditor();
-        s->retired.emplace_back(std::move(old), s->board_sent);
+        s.retired.emplace_back(std::move(old), s.board_sent);
     }
     return true;
+}
+
+bool AudioEngine::moveInsert(int from_id, int from_slot, int to_id, int to_slot) {
+    reapPedals();
+    Source* a = owned(from_id);
+    Source* b = owned(to_id);
+    if (!a || !b || from_slot < 0 || from_slot >= kMaxInserts || to_slot < 0 || to_slot >= kMaxInserts || !a->inserts[size_t(from_slot)].pedal)
+        return false;
+    if (a == b && from_slot == to_slot) return true;
+    auto& from = a->inserts[size_t(from_slot)];
+    auto& to = b->inserts[size_t(to_slot)];
+    Source::PedalSlot moving = std::move(from), displaced = std::move(to);
+    from.pedal.reset();
+    to.pedal.reset();
+    // Off both channels first, then on again where they now belong: no plug-in is ever on two boards at once, so none
+    // is played twice in a block.
+    sendBoard(*a, true);
+    if (b != a) sendBoard(*b, true);
+    to = std::move(moving);
+    from = std::move(displaced);
+    sendBoard(*b, true);
+    if (b != a) sendBoard(*a, true);
+    return true;
+}
+
+bool AudioEngine::copyInsert(int from_id, int from_slot, int to_id, int to_slot, std::string* error) {
+    reapPedals();
+    Source* a = owned(from_id);
+    Source* b = owned(to_id);
+    const PluginInstance* original = a && from_slot >= 0 && from_slot < kMaxInserts && a->inserts[size_t(from_slot)].pedal
+                                         ? static_cast<PluginPedal*>(a->inserts[size_t(from_slot)].pedal.get())->plugin()
+                                         : nullptr;
+    if (!original || !b || to_slot < 0 || to_slot >= kMaxInserts) {
+        if (error) *error = "there is nothing there to copy";
+        return false;
+    }
+    if (a == b && from_slot == to_slot) return true;
+    const std::vector<uint8_t> state = original->saveState();
+    std::unique_ptr<PluginPedal> copy = makePluginPedal(original->description().id, &state, error);
+    return copy && placeInsert(*b, to_slot, std::move(copy), a->inserts[size_t(from_slot)].on, error);
 }
 
 bool AudioEngine::clearInsert(int id, int slot) {

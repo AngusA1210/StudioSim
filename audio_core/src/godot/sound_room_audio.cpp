@@ -277,6 +277,15 @@ bool SoundRoomAudio::show_insert_editor(int id, int slot, bool show, const Strin
     return engine_ && engine_->showInsertEditor(id, slot, show, str(title));
 }
 int SoundRoomAudio::get_max_inserts() const { return sr::AudioEngine::kMaxInserts; }
+bool SoundRoomAudio::move_insert(int from_id, int from_slot, int to_id, int to_slot) {
+    return engine_ && engine_->moveInsert(from_id, from_slot, to_id, to_slot);
+}
+bool SoundRoomAudio::copy_insert(int from_id, int from_slot, int to_id, int to_slot) {
+    std::string err;
+    if (engine_ && engine_->copyInsert(from_id, from_slot, to_id, to_slot, &err)) return true;
+    error_ = str(err.empty() ? std::string("the audio engine isn't running") : err);
+    return false;
+}
 
 void SoundRoomAudio::set_listener(const Transform3D& t) {
     if (!engine_) return;
@@ -476,6 +485,8 @@ void SoundRoomAudio::_bind_methods() {
     ClassDB::bind_method(D_METHOD("set_insert_on", "id", "slot", "on"), &SoundRoomAudio::set_insert_on);
     ClassDB::bind_method(D_METHOD("show_insert_editor", "id", "slot", "show", "title"), &SoundRoomAudio::show_insert_editor);
     ClassDB::bind_method(D_METHOD("get_max_inserts"), &SoundRoomAudio::get_max_inserts);
+    ClassDB::bind_method(D_METHOD("move_insert", "from_id", "from_slot", "to_id", "to_slot"), &SoundRoomAudio::move_insert);
+    ClassDB::bind_method(D_METHOD("copy_insert", "from_id", "from_slot", "to_id", "to_slot"), &SoundRoomAudio::copy_insert);
     ClassDB::bind_method(D_METHOD("set_listener", "transform"), &SoundRoomAudio::set_listener);
     ClassDB::bind_method(D_METHOD("note_on", "id", "note", "velocity"), &SoundRoomAudio::note_on);
     ClassDB::bind_method(D_METHOD("note_off", "id", "note"), &SoundRoomAudio::note_off);

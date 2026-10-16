@@ -5,7 +5,9 @@ extends CanvasLayer
 ## highest peak beneath them, and the instrument's name in its colour at the foot.
 ## The inserts work as Pro Tools' do: click an empty one to choose a plug-in (its window opens), click a full one to
 ## open or close its window, Cmd-click (Ctrl-click) to bypass it, and right-click for the rest. A bypassed insert is
-## blue. They play on the instrument's sound in order, before its fader.
+## blue. Drag one to another slot, on its own strip or another, to move it there (it swaps with what was there);
+## hold Option while dropping to copy it instead, settings and all. They play on the instrument's sound in order,
+## before its fader.
 ## Click a strip's name to open the instrument's own window (an amp's panel and pedals, a pattern, a Speaker's panel),
 ## right-click it to remove the instrument from the room. You can walk about while the window is open. As in Pro Tools, the peak readout holds the highest peak
 ## until it is clicked (Alt-click clears them all), and clicking a meter does the same.
@@ -160,7 +162,7 @@ func _build() -> void:
 	_root.add_child(_confirm)
 
 	var hint := Label.new()
-	hint.text = "Inserts: click an empty one for a plug-in, a full one for its window, Cmd-click to bypass it (blue), right-click for more.   Drag a fader (Shift for fine moves), or double-click or Alt-click it for 0 dB. Under each fader: its level, and the highest peak since you last clicked it (Alt-click clears them all).   I  input on: the keyboard plays it, or a Speaker or amp plays its input.   M  mute.   S  solo."
+	hint.text = "Inserts: click an empty one for a plug-in, a full one for its window, Cmd-click to bypass it (blue), drag to move (Option to copy), right-click for more.   Drag a fader (Shift for fine moves), or double-click or Alt-click it for 0 dB. Under each fader: its level, and the highest peak since you last clicked it (Alt-click clears them all).   I  input on: the keyboard plays it, or a Speaker or amp plays its input.   M  mute.   S  solo."
 	hint.add_theme_font_size_override("font_size", 12)
 	hint.add_theme_color_override("font_color", DIM)
 	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -267,7 +269,10 @@ func _build_inserts(box: VBoxContainer, inst) -> Array:
 		style.content_margin_right = 4
 		for state in ["normal", "hover", "pressed", "hover_pressed"]:
 			button.add_theme_stylebox_override(state, style)
+		button.pressed.connect(func() -> void:
+			_on_insert_clicked(inst, slot, Input.is_key_pressed(KEY_META) or Input.is_key_pressed(KEY_CTRL)))
 		button.gui_input.connect(_on_insert_input.bind(inst, slot))
+		button.set_drag_forwarding(_insert_drag.bind(inst, slot), _insert_can_drop.bind(inst, slot), _insert_drop.bind(inst, slot))
 		column.add_child(button)
 		slots.append({"button": button, "style": style})
 	return slots
@@ -531,20 +536,68 @@ func _on_limiter_toggled(on: bool) -> void:
 	app.set_limiter(on)
 
 
+## A click on an insert (on letting go, so that a drag doesn't count): an empty one offers the plug-ins, a full one opens
+## or closes its window, or with Cmd (`command`) is bypassed, as in Pro Tools.
+func _on_insert_clicked(inst, slot: int, command: bool) -> void:
+	var insert: Dictionary = inst.inserts[slot] if slot < inst.inserts.size() else {}
+	if insert.get("plugin_name", "") == "":
+		_choose_insert(inst, slot, _strip_for(inst).inserts[slot].button)
+	elif command:
+		app.set_insert_on(inst, slot, not insert.get("on", true))
+	else:
+		app.show_insert_editor(inst, slot, not insert.get("editor_open", false))
+
+
+## Picking an insert up: what it holds, to drop on another slot.
+func _insert_drag(_at: Vector2, inst, slot: int):
+	var insert: Dictionary = inst.inserts[slot] if slot < inst.inserts.size() else {}
+	if insert.get("plugin_name", "") == "":
+		return null
+	var tag := Label.new()
+	tag.text = "  %s  " % insert.plugin_name
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.3, 0.32, 0.38, 0.9)
+	style.set_corner_radius_all(3)
+	tag.add_theme_stylebox_override("normal", style)
+	tag.add_theme_font_size_override("font_size", 11)
+	if get_viewport().gui_is_dragging():
+		_strip_for(inst).inserts[slot].button.set_drag_preview(tag)
+	else:  # asked for outside a drag (the automated checks)
+		tag.free()
+	return {"insert": true, "inst": inst, "slot": slot}
+
+
+func _insert_can_drop(_at: Vector2, data, inst, slot: int) -> bool:
+	return data is Dictionary and data.get("insert", false) and app.instruments.has(data.inst) and \
+		not (data.inst == inst and data.slot == slot)
+
+
+func _insert_drop(_at: Vector2, data, inst, slot: int) -> void:
+	drop_insert(data, inst, slot, Input.is_key_pressed(KEY_ALT))
+
+
+## Dropping an insert on a slot: it moves there, swapping with what was there, or with `copy` (Option held) a second of
+## it goes there instead, with the same settings.
+func drop_insert(data: Dictionary, inst, slot: int, copy: bool) -> void:
+	if not app.instruments.has(data.inst) or not app.instruments.has(inst):
+		return
+	if copy:
+		var problem: String = app.copy_insert(data.inst, data.slot, inst, slot)
+		if problem != "":
+			_status.text = "It couldn't be copied: %s." % problem
+			_status.add_theme_color_override("font_color", WARN)
+			_problem_until = Time.get_ticks_msec() + 5000
+	else:
+		app.move_insert(data.inst, data.slot, inst, slot)
+
+
 func _on_insert_input(event: InputEvent, inst, slot: int) -> void:
 	if not (event is InputEventMouseButton) or not event.pressed:
 		return
 	var insert: Dictionary = inst.inserts[slot] if slot < inst.inserts.size() else {}
 	var full: bool = insert.get("plugin_name", "") != ""
 	var button: Button = _strip_for(inst).inserts[slot].button
-	if event.button_index == MOUSE_BUTTON_LEFT:
-		if not full:
-			_choose_insert(inst, slot, button)
-		elif event.meta_pressed or event.ctrl_pressed:  # Cmd-click bypasses, as in Pro Tools
-			app.set_insert_on(inst, slot, not insert.get("on", true))
-		else:
-			app.show_insert_editor(inst, slot, not insert.get("editor_open", false))
-	elif event.button_index == MOUSE_BUTTON_RIGHT and full:
+	if event.button_index == MOUSE_BUTTON_RIGHT and full:
 		_menu_for = [inst, slot]
 		_insert_menu.clear()
 		_insert_menu.add_item("Close its window" if insert.get("editor_open", false) else "Open its window", 0)
@@ -554,7 +607,7 @@ func _on_insert_input(event: InputEvent, inst, slot: int) -> void:
 		_insert_menu.add_item("Remove", 3)
 		_insert_menu.position = Vector2i(button.get_screen_position() + Vector2(0, button.size.y))
 		_insert_menu.popup()
-	button.accept_event()
+		button.accept_event()  # only the right-click: a left one is left to the button, which acts when it is let go
 
 
 func _on_insert_menu_chosen(id: int) -> void:

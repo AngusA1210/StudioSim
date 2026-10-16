@@ -5,6 +5,7 @@
 //
 // A plug-in runs in the same process as the game, as it would in a DAW: one that crashes takes SoundRoom with it.
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -41,6 +42,10 @@ public:
     virtual void hideEditor() = 0;
     virtual bool editorVisible() const = 0;
     virtual int latencySamples() const = 0;  // how late what it plays back is, as it reports
+    // Its settings, as the plug-in itself saves them (an Audio Unit's class info, as a binary property list), and
+    // putting them back: for copying a plug-in with its settings, and for saving them (game thread).
+    virtual std::vector<uint8_t> saveState() const = 0;
+    virtual bool loadState(const std::vector<uint8_t>& state) = 0;
 };
 
 }  // namespace sr

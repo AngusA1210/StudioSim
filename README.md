@@ -184,7 +184,9 @@ mixing desk: a channel strip for every instrument, side by side, and the master 
 - **Inserts** at the top of each strip, A to E, as in Pro Tools: plug-ins played in order on the instrument's sound
   before its fader (on an amp, after its pedals and the amp). Click an empty one to choose a plug-in, a full one to
   open or close its window, Cmd-click (or Ctrl-click) to bypass it, which turns it blue, and right-click to replace or
-  remove it. Closing the mix window puts the windows away.
+  remove it. Drag one to another slot, on its own strip or another instrument's, to move it there (it swaps places
+  with whatever was there); hold Option as you drop it to copy it instead, settings and all. Closing the mix window
+  puts the plug-in windows away.
 - **Each strip**: the input (MIDI, or a list of hardware inputs for a Speaker or an amp), buttons for input (I),
   mute (M) and solo (S), a fader with the strip's meter beside it, and under the fader its level and its peak
   readout, then the instrument's name in its colour. Faders run from +12 dB down to silence, spaced as on a console.

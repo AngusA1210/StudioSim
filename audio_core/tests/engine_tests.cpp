@@ -1760,6 +1760,26 @@ int main(int argc, char** argv) {
         const auto [hit3, between3, echo3] = hitAndListen();
         check(echo2 < 0.05 * hit2 && cleared && mix.engine.inserts(mix.drums)[1].plugin.id.empty() && echo3 < 0.05 * hit3 && hit3 > 0.5 * kick,
               "bypassed, or taken out, it no longer echoes", "");
+
+        // Dragging inserts about: AUDelay moved from the drums to another channel, then copied back with its settings.
+        mix.engine.setInsert(mix.drums, 1, au_delay, &insert_error);
+        mix.engine.setInsert(mix.bass, 3, "AU:61756678:72766232:6170706c", &insert_error);  // AUReverb2, to be swapped out
+        const bool moved = mix.engine.moveInsert(mix.drums, 1, mix.bass, 3);
+        const auto drum_slots = mix.engine.inserts(mix.drums), bass_slots = mix.engine.inserts(mix.bass);
+        const auto [hit4, between4, echo4] = hitAndListen();
+        check(moved && bass_slots[3].plugin.name == "AUDelay" && drum_slots[1].plugin.name == "AUReverb2" && echo4 < 0.05 * hit4,
+              "an insert dragged to a slot on another channel swaps places with what was there, and the drums stop echoing", "");
+        const bool copied = mix.engine.copyInsert(mix.bass, 3, mix.drums, 1, &insert_error);
+        const auto [hit5, between5, echo5] = hitAndListen();
+        check(copied && mix.engine.inserts(mix.drums)[1].plugin.name == "AUDelay" && mix.engine.inserts(mix.bass)[3].plugin.name == "AUDelay" &&
+                  echo5 > 0.2 * hit5,
+              "copying it (Option-drag) leaves it where it was and puts a second one in the other slot", insert_error);
+        std::string state_error;
+        std::unique_ptr<PluginInstance> saved = PluginInstance::load(au_delay, &state_error), restored = PluginInstance::load(au_delay, &state_error);
+        const bool both = saved && restored && saved->prepare(48000.0, 4096, &state_error) && restored->prepare(48000.0, 4096, &state_error);
+        const std::vector<uint8_t> state = both ? saved->saveState() : std::vector<uint8_t>{};
+        check(both && !state.empty() && restored->loadState(state) && restored->saveState().size() == state.size(),
+              "a plug-in's settings can be saved and put back", fmt("%.0f bytes", double(state.size())));
 #else
         check(plugins.empty(), "no plug-ins on this platform yet", "");
 #endif

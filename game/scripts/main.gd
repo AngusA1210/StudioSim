@@ -472,6 +472,20 @@ func set_insert(inst, slot: int, plugin_id: String) -> String:
 	return "" if loaded else audio.get_error()
 
 
+## Dragging an insert to another slot, on this channel or another: it moves there and whatever was there takes its
+## place. Copying instead puts a second of the same plug-in there, with its settings; it returns why it couldn't, or "".
+func move_insert(from_inst, from_slot: int, to_inst, to_slot: int) -> void:
+	audio.move_insert(from_inst.source_id, from_slot, to_inst.source_id, to_slot)
+	from_inst.inserts = audio.get_inserts(from_inst.source_id)
+	to_inst.inserts = audio.get_inserts(to_inst.source_id)
+
+
+func copy_insert(from_inst, from_slot: int, to_inst, to_slot: int) -> String:
+	var copied := audio.copy_insert(from_inst.source_id, from_slot, to_inst.source_id, to_slot)
+	to_inst.inserts = audio.get_inserts(to_inst.source_id)
+	return "" if copied else audio.get_error()
+
+
 func clear_insert(inst, slot: int) -> void:
 	audio.clear_insert(inst.source_id, slot)
 	inst.inserts = audio.get_inserts(inst.source_id)

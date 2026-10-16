@@ -208,6 +208,11 @@ public:
     void setInsertOn(int id, int slot, bool on);  // off = bypassed
     std::vector<PedalStatus> inserts(int id) const;  // one for each slot; an empty `plugin` where there is none
     bool showInsertEditor(int id, int slot, bool show, const std::string& title = "");
+    // Dragging inserts about, as in Pro Tools: moving one to another slot, on this channel or another, swaps it with
+    // whatever was there; copying one (Option-drag) puts a second of the same plug-in there, with the same settings,
+    // in place of what was there.
+    bool moveInsert(int from_id, int from_slot, int to_id, int to_slot);
+    bool copyInsert(int from_id, int from_slot, int to_id, int to_slot, std::string* error);
     void setListener(Vec3 position, Vec3 ahead, Vec3 up);
     void noteOn(int id, int note, float velocity);
     void noteOff(int id, int note);
@@ -302,6 +307,9 @@ private:
     void connect(Source& source);  // an amp's pedals and knobs, after its instrument is (re)built
     bool sendBoard(Source& source, bool inserts = false);  // hands the audio thread the pedals (or inserts) anew
     LooperPedal* looperOf(const Source& source) const;     // the loop pedal on its board, if any
+    // A Plug-in pedal holding this plug-in, ready to play (and given these settings, if any); null, with the reason.
+    std::unique_ptr<PluginPedal> makePluginPedal(const std::string& plugin_id, const std::vector<uint8_t>* state, std::string* error);
+    bool placeInsert(Source& source, int slot, std::unique_ptr<PluginPedal> pedal, bool on, std::string* error);
     void reapPedals();              // frees pedals the audio thread has let go of
     Source* owned(int id) const;  // the source with this id, unless it is on its way out
     void reap();                  // frees removed sources the audio thread has finished with
