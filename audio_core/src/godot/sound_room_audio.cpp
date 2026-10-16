@@ -211,6 +211,7 @@ Dictionary SoundRoomAudio::read_meter() {
     return d;
 }
 float SoundRoomAudio::get_source_level(int id) const { return engine_ ? engine_->sourceLevel(id) : 0.0f; }
+float SoundRoomAudio::get_source_peak(int id) { return engine_ ? engine_->sourcePeak(id) : 0.0f; }
 
 Dictionary SoundRoomAudio::get_stats() const {
     Dictionary d;
@@ -375,6 +376,7 @@ void SoundRoomAudio::_bind_methods() {
     ClassDB::bind_method(D_METHOD("set_limiter", "on"), &SoundRoomAudio::set_limiter);
     ClassDB::bind_method(D_METHOD("read_meter"), &SoundRoomAudio::read_meter);
     ClassDB::bind_method(D_METHOD("get_source_level", "id"), &SoundRoomAudio::get_source_level);
+    ClassDB::bind_method(D_METHOD("get_source_peak", "id"), &SoundRoomAudio::get_source_peak);
     ClassDB::bind_method(D_METHOD("get_stats"), &SoundRoomAudio::get_stats);
 
     ClassDB::bind_method(D_METHOD("load_default_pattern", "id"), &SoundRoomAudio::load_default_pattern);

@@ -1,12 +1,14 @@
 extends CanvasLayer
-## What stays on screen while playing: the crosshair, a hint about what you're facing, the beat, the keyboard
-## while you are at an instrument, and (if switched on in the menu) a small audio readout. Everything else lives
-## in the menu and the pattern editor.
+## What stays on screen while playing: the crosshair, a hint about what you're facing, the beat, whether binaural
+## and the room reverb are on, the master meter, the keyboard while you are at an instrument, and (if switched on in
+## the menu) a small audio readout. Everything else lives in the menu, the mix window and the pattern editor.
 
 const LevelMeter := preload("res://scripts/level_meter.gd")
 const PANEL_BG := Color(0.05, 0.06, 0.09, 0.82)
 const DIM := Color(0.62, 0.65, 0.74)
 const WARN := Color(1.0, 0.61, 0.48)
+const BINAURAL_BLUE := Color(0.55, 0.78, 1.0)
+const REVERB_TEAL := Color(0.4, 0.88, 0.78)
 const WHITE_KEYS := [[KEY_A, "A"], [KEY_S, "S"], [KEY_D, "D"], [KEY_F, "F"], [KEY_G, "G"], [KEY_H, "H"], [KEY_J, "J"],
 	[KEY_K, "K"], [KEY_L, "L"], [KEY_SEMICOLON, ";"]]
 const BLACK_KEYS := [[KEY_W, "W", 0], [KEY_E, "E", 1], [KEY_T, "T", 3], [KEY_Y, "Y", 4], [KEY_U, "U", 5],
@@ -30,6 +32,9 @@ var _prompt_panel: PanelContainer
 var _prompt: Label
 var _beat_panel: PanelContainer
 var _beat: Label
+var _modes_panel: PanelContainer
+var _binaural_chip: Label
+var _reverb_chip: Label
 var _meter_panel: PanelContainer
 var _meter
 var _meter_text: Label
@@ -95,21 +100,39 @@ func setup(the_app) -> void:
 	_beat.add_theme_font_size_override("font_size", 14)
 	_beat_panel.add_child(_beat)
 
-	# The master meter: output level, and a word when the limiter is working or the mix is clipping.
+	# Whether binaural rendering and the room reverb are on (B and R), lit when they are.
+	_modes_panel = _panel(_root)
+	var modes := HBoxContainer.new()
+	modes.add_theme_constant_override("separation", 6)
+	modes.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_modes_panel.add_child(modes)
+	_binaural_chip = _chip(modes)
+	_reverb_chip = _chip(modes)
+
+	# The master meter, standing upright as on a mixing desk: the output level, and under it the recent peak, or a
+	# word when the limiter is working or the output is clipping.
 	_meter_panel = _panel(_root)
-	var meter_row := HBoxContainer.new()
-	meter_row.add_theme_constant_override("separation", 8)
-	meter_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_meter_panel.add_child(meter_row)
+	var meter_box := VBoxContainer.new()
+	meter_box.add_theme_constant_override("separation", 4)
+	meter_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_meter_panel.add_child(meter_box)
+	var meter_title := Label.new()
+	meter_title.text = "MASTER"
+	meter_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	meter_title.add_theme_font_size_override("font_size", 10)
+	meter_title.add_theme_color_override("font_color", DIM)
+	meter_box.add_child(meter_title)
 	_meter = LevelMeter.new()
-	_meter.custom_minimum_size = Vector2(150, 14)
-	_meter.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	meter_row.add_child(_meter)
+	_meter.vertical = true
+	_meter.show_scale = true
+	_meter.custom_minimum_size = Vector2(LevelMeter.SCALE_WIDTH + 24, 150)
+	_meter.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	meter_box.add_child(_meter)
 	_meter_text = Label.new()
-	_meter_text.add_theme_font_size_override("font_size", 13)
-	_meter_text.custom_minimum_size.x = 74
-	_meter_text.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	meter_row.add_child(_meter_text)
+	_meter_text.add_theme_font_size_override("font_size", 12)
+	_meter_text.custom_minimum_size.x = 56
+	_meter_text.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	meter_box.add_child(_meter_text)
 
 	_build_piano(_root)
 
@@ -143,6 +166,11 @@ func _process(_delta: float) -> void:
 	_beat_panel.reset_size()
 	_beat_panel.position = Vector2(vp.x - _beat_panel.size.x - 14, 14)
 
+	_light_chip(_binaural_chip, "BINAURAL", app.settings.binaural, BINAURAL_BLUE)
+	_light_chip(_reverb_chip, "REVERB", app.settings.reverb, REVERB_TEAL)
+	_modes_panel.reset_size()
+	_modes_panel.position = Vector2(_beat_panel.position.x - _modes_panel.size.x - 8, 14)
+
 	_meter_panel.visible = app.settings.show_meter
 	if app.settings.show_meter:
 		var m: Dictionary = app.meter
@@ -151,7 +179,7 @@ func _process(_delta: float) -> void:
 			_meter_text.text = "CLIP"
 			_meter_text.add_theme_color_override("font_color", LevelMeter.RED)
 		elif app.meter_reduction_db > 0.1:
-			_meter_text.text = "limit %.0f dB" % app.meter_reduction_db
+			_meter_text.text = "limit\n%.0f dB" % app.meter_reduction_db
 			_meter_text.add_theme_color_override("font_color", WARN)
 		else:
 			_meter_text.text = "%.0f dB" % _meter.held_db()
@@ -244,6 +272,7 @@ func _show_hint(vp: Vector2) -> void:
 		_hint_title.text = title
 		_hint_title.add_theme_color_override("font_color", tint)
 		for child in _hint_rows.get_children():
+			_hint_rows.remove_child(child)  # now, so the card is measured without them
 			child.queue_free()
 		for row in rows:
 			if row[0] == "":
@@ -267,9 +296,12 @@ func _show_hint(vp: Vector2) -> void:
 			action.add_theme_color_override("font_color", Color(0.86, 0.88, 0.93))
 			line.add_child(action)
 			_hint_rows.add_child(line)
-		_hint_panel.reset_size()
-	# At the right-hand side, clear of what you're looking at.
-	_hint_panel.position = Vector2(vp.x - _hint_panel.size.x - 24, vp.y / 2 - _hint_panel.size.y / 2)
+	_hint_panel.reset_size()
+	# At the right-hand side, clear of what you're looking at, and left of the master meter if they would meet.
+	var at := Vector2(vp.x - _hint_panel.size.x - 24, vp.y / 2 - _hint_panel.size.y / 2)
+	if _meter_panel.visible and at.y < _meter_panel.position.y + _meter_panel.size.y + 8:
+		at.x = minf(at.x, _meter_panel.position.x - _hint_panel.size.x - 12)
+	_hint_panel.position = at
 
 
 func hint_lines() -> Array:  # what the card says, line by line (for the automated checks)
@@ -344,6 +376,30 @@ func _label_piano(inst) -> void:
 		if inst.kind == "drums":
 			var names: Array = DRUM_LABELS.get(audio.get_drum_piece_name(60 + int(entry.semitone)), ["", ""])
 			entry.piece.text = names[0] if entry.white else names[1]
+
+
+## A small label that lights up in its colour while what it names is on.
+func _chip(parent: Control) -> Label:
+	var chip := Label.new()
+	chip.add_theme_font_size_override("font_size", 12)
+	var style := StyleBoxFlat.new()
+	style.set_corner_radius_all(4)
+	style.set_border_width_all(1)
+	style.content_margin_left = 7
+	style.content_margin_right = 7
+	style.content_margin_top = 2
+	style.content_margin_bottom = 2
+	chip.add_theme_stylebox_override("normal", style)
+	parent.add_child(chip)
+	return chip
+
+
+func _light_chip(chip: Label, name: String, on: bool, lit: Color) -> void:
+	chip.text = name if on else name + " OFF"
+	var style: StyleBoxFlat = chip.get_theme_stylebox("normal")
+	style.bg_color = lit if on else Color(0, 0, 0, 0)
+	style.border_color = lit if on else Color(1, 1, 1, 0.25)
+	chip.add_theme_color_override("font_color", Color(0.06, 0.07, 0.09) if on else Color(0.62, 0.65, 0.74, 0.8))
 
 
 func _panel(parent: Control) -> PanelContainer:

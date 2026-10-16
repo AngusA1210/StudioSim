@@ -18,7 +18,7 @@ func _initialize() -> void:
 	main = load("res://main.tscn").instantiate()
 	view.add_child(main)
 	view.notification(Node.NOTIFICATION_VP_MOUSE_ENTER)  # as a real window does when the mouse is over it
-	create_timer(90.0).timeout.connect(_on_timeout)  # a script error would otherwise leave this running for ever
+	create_timer(150.0).timeout.connect(_on_timeout)  # a script error would otherwise leave this running for ever
 	_run()
 
 
@@ -178,8 +178,17 @@ func _run() -> void:
 	await frames(3)
 	await tap(KEY_ENTER)
 	await seconds(1.0)
-	check(main.hud._meter_panel.visible and main.hud._meter_text.text.ends_with(" dB") and main.hud._meter.held_db() > -40.0,
-		"the master meter is on screen, reading the music", main.hud._meter_text.text)
+	check(main.hud._meter_panel.visible and main.hud._meter.vertical and main.hud._meter_text.text.ends_with(" dB") and main.hud._meter.held_db() > -40.0,
+		"the master meter stands upright on screen, reading the music", main.hud._meter_text.text)
+	check(main.hud._binaural_chip.text == "BINAURAL" and main.hud._reverb_chip.text == "REVERB" and main.hud._modes_panel.visible,
+		"the screen shows that binaural and the room reverb are on")
+	await tap(KEY_B)
+	await tap(KEY_R)
+	check(main.hud._binaural_chip.text == "BINAURAL OFF" and main.hud._reverb_chip.text == "REVERB OFF" and not main.settings.binaural,
+		"and B and R switch them off, which it shows", "%s, %s" % [main.hud._binaural_chip.text, main.hud._reverb_chip.text])
+	await tap(KEY_B)
+	await tap(KEY_R)
+	check(main.settings.binaural and main.settings.reverb and main.hud._binaural_chip.text == "BINAURAL", "and on again")
 	check(not title.is_open() and not title.visible and player.camera.current and main.hud._root.visible, "Enter goes into the room, in the player's view",
 		"title open %s, title showing %s, player camera %s, hud %s" % [title.is_open(), title.visible, player.camera.current, main.hud._root.visible])
 
@@ -559,8 +568,17 @@ func _run() -> void:
 	check(mix.is_open() and mix._strips.size() == main.instruments.size() and mix._strips[0].inst == drums and mix._strips[0].value.text == "+0.0",
 		"Tab opens the mix window: a strip for each instrument, at 0 dB", "%d strips" % mix._strips.size())
 	await seconds(0.5)
-	check(mix._master.meter.held_db() > -40.0 and mix._status.text.begins_with("Peak -") and mix._status.text.ends_with("Limiter idle"),
-		"the master meter beside the master fader is reading the output", mix._status.text)
+	check(mix._master.meter.held_db() > -40.0 and mix._master.peak.text.begins_with("-") and mix._status.text == "Limiter idle",
+		"the master meter beside the master fader is reading the output, with its peak beneath", mix._master.peak.text)
+	var drums_strip: Dictionary = mix._strips[0]
+	check(drums.peak_hold > 0.01 and drums_strip.peak.text.begins_with("-") and drums_strip.peak.text != "-inf" and mix._strips[0].meter.held_db() > -40.0,
+		"each strip has its own peak readout under the fader", drums_strip.peak.text)
+	main.set_muted(drums, true)
+	await seconds(0.3)
+	await click(drums_strip.peak.get_global_rect().get_center())
+	await frames(2)
+	check(drums.peak_hold < 0.00001 and drums_strip.peak.text == "-inf", "clicking the peak readout clears it, as in Pro Tools", drums_strip.peak.text)
+	main.set_muted(drums, false)
 	var pad_strip: Dictionary = mix._strips[main.instruments.find(pad)]
 	pad.set_loop(false)
 	await seconds(1.5)
@@ -618,32 +636,47 @@ func _run() -> void:
 	audio.note_off(pad.source_id, 57)
 	pad.set_loop(true)
 
-	mix._on_master_changed(12.0)  # far too loud
-	mix._on_fader_changed(12.0, drums)  # and the drums with it
+	for inst in main.instruments:  # every instrument far too loud
+		mix._on_fader_changed(12.0, inst)
 	await seconds(1.5)
 	check(main.meter_reduction_db > 1.0 and not main.meter_clipped and mix._status.text.contains("Limiting by"),
 		"turned up too far, the limiter holds the output and the window says by how much", mix._status.text)
+	var limiting: float = main.meter_reduction_db
+	mix._on_master_changed(-10.0)
+	await seconds(1.6)
+	check(absf(main.meter_reduction_db - limiting) < 2.0 and main.meter_reduction_db > 1.0,
+		"the limiter comes before the master fader: bringing the master down doesn't ease it", "%.1f dB, then %.1f dB" % [limiting, main.meter_reduction_db])
+	mix._on_master_changed(0.0)
 	await click(mix._master.limiter.get_global_rect().get_center())
 	await seconds(1.5)
 	check(not main.settings.limiter and main.meter_clipped and mix._status.text.contains("Clipping"),
 		"with the LIMIT button off, the same mix is reported as clipping", mix._status.text)
-	mix._on_master_changed(0.0)
-	mix._on_fader_changed(0.0, drums)
+	for inst in main.instruments:
+		mix._on_fader_changed(0.0, inst)
 	await click(mix._master.limiter.get_global_rect().get_center())
 	await seconds(2.5)
 	check(main.settings.limiter and not main.meter_clipped and main.meter_reduction_db < 0.1 and mix._status.text.ends_with("Limiter idle"),
 		"back at 0 dB with the limiter on, nothing is being held back", mix._status.text)
-	check(is_equal_approx(main.settings.distance_falloff_db, 6.0) and mix._falloff_value.text == "6.0 dB per doubling",
-		"sound falls 6 dB per doubling of distance: the inverse square law", mix._falloff_value.text)
-	mix._falloff.value = 3.0
+	var held_loud: float = main.master_peak_hold
+	var press_alt := InputEventMouseButton.new()
+	press_alt.button_index = MOUSE_BUTTON_LEFT
+	press_alt.pressed = true
+	press_alt.alt_pressed = true
+	mix._on_peak_input(press_alt, pad)
 	await frames(3)
-	check(is_equal_approx(main.settings.distance_falloff_db, 3.0), "and it can be made gentler", mix._falloff_value.text)
-	mix._falloff.value = 6.0
+	check(held_loud > 0.5 and main.master_peak_hold < 0.5 and drums.peak_hold < 0.5 and pad.peak_hold < held_loud,
+		"Alt-clicking a peak readout clears them all, the master's too", "master held %.2f, now %.2f" % [held_loud, main.master_peak_hold])
 	await tap(KEY_TAB)
 	check(not mix.is_open(), "Tab closes the mix window")
 
 	menu.open(menu.SETTINGS_TAB)
 	await frames(3)
+	check(is_equal_approx(main.settings.distance_falloff_db, 6.0) and menu._falloff_value.text == "6.0 dB per doubling",
+		"sound falls 6 dB per doubling of distance: the inverse square law, set in Settings", menu._falloff_value.text)
+	menu._falloff_slider.value = 3.0
+	await frames(3)
+	check(is_equal_approx(main.settings.distance_falloff_db, 3.0), "and it can be made gentler there", menu._falloff_value.text)
+	menu._falloff_slider.value = 6.0
 	menu._fullscreen_toggle.button_pressed = true
 	await frames(2)
 	check(main.settings.fullscreen and menu._fullscreen_toggle.text.begins_with("On"), "Settings has a full-screen switch that is remembered for next time")

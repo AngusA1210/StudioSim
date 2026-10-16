@@ -105,6 +105,8 @@ var _midi_signature := ""
 # Settings
 var _binaural_toggle: CheckButton
 var _reverb_toggle: CheckButton
+var _falloff_slider: HSlider
+var _falloff_value: Label
 var _text_slider: HSlider
 var _text_value: Label
 var _text_dragging := false
@@ -405,6 +407,11 @@ func _build_settings_page(page: VBoxContainer) -> void:
 	_reverb_toggle = CheckButton.new()
 	_reverb_toggle.toggled.connect(_on_reverb_toggled)
 	_field(page, "Room reverb").add_child(_reverb_toggle)
+	_falloff_value = Label.new()
+	_falloff_slider = _slider(page, "Distance falloff", 0.0, 6.0, 0.5, _falloff_value)
+	_falloff_slider.value_changed.connect(_on_falloff_changed)
+	_falloff_value.custom_minimum_size.x = 150
+	_note(page, "How much quieter an instrument gets for each doubling of distance beyond 1.5 m. 6 dB is the inverse square law, as in a real room; less keeps the levels more even as you move about.")
 
 	page.add_child(HSeparator.new())
 	_heading(page, "Display and controls")
@@ -573,6 +580,8 @@ func _refresh_live() -> void:
 	_binaural_toggle.text = "On" if settings.binaural else "Off (plain stereo)"
 	_reverb_toggle.set_pressed_no_signal(settings.reverb)
 	_reverb_toggle.text = "On" if settings.reverb else "Off"
+	_falloff_slider.set_value_no_signal(settings.distance_falloff_db)
+	_falloff_value.text = "%.1f dB per doubling" % settings.distance_falloff_db
 	if not _text_dragging:
 		_text_slider.set_value_no_signal(settings.text_scale * 100.0)
 		_text_value.text = "%d %%" % roundi(settings.text_scale * 100.0)
@@ -735,6 +744,10 @@ func _on_midi_toggled(on: bool, device_name: String) -> void:
 func _on_binaural_toggled(on: bool) -> void:
 	app.set_binaural(on)
 	_refresh_live()
+
+
+func _on_falloff_changed(db: float) -> void:
+	app.set_distance_falloff(db)
 
 
 func _on_reverb_toggled(on: bool) -> void:

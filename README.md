@@ -123,22 +123,30 @@ Tab opens the mix window, docked along the bottom of the screen so the room stay
 mixing desk: a channel strip for every instrument, side by side, and the master strip on the right.
 
 - **Each strip**: the input at the top (MIDI, or a list of hardware inputs for a Speaker or an amp), buttons for input (I),
-  mute (M) and solo (S), a fader with the strip's meter beside it, the fader's value, and the instrument's name in its
-  colour. Faders run from +12 dB down to silence, spaced as on a console. Drag one to move it (Shift for fine moves),
-  turn the scroll wheel to nudge it, or double-click it for 0 dB. 0 dB is the level the instrument was made at, heard
-  from right beside it.
-- **Master**: the output volume, a stereo meter with peak hold, and LIMIT. With the limiter on, the output cannot
-  clip, and the window says by how many decibels it is being held back whenever it is: the cue to turn something
-  down. With it off, the output is the plain sum of the mix, as on a mixing desk's master fader, and anything over
-  full scale is cut off and reported as clipping.
-- **Distance falloff**: an instrument is at its own level within 1.5 m of it and gets no louder however close you
-  stand. Beyond that it falls 6 dB for each doubling of distance, as the inverse square law has it. The slider can
-  make that gentler (down to 0, where distance makes no difference). The output is set to leave headroom right
-  beside an instrument, so from across the room the mix is fairly quiet: raise the master to taste and watch the
-  meter.
+  mute (M) and solo (S), a fader with the strip's meter beside it, and under the fader its level and its peak
+  readout, then the instrument's name in its colour. Faders run from +12 dB down to silence, spaced as on a console.
+  Drag one to move it (Shift for fine moves), turn the scroll wheel to nudge it, or double-click or Alt-click it for
+  0 dB. 0 dB is the level the instrument was made at, heard from right beside it, and the strip's meter reads it at
+  that level, as a DAW's track meter reads what the track sends to the master.
+- **Peak readouts**: as in Pro Tools, the number beside each fader's level holds the highest peak (in dBFS) until
+  you click it, and turns red once anything reaches full scale. Clicking a meter clears it too; Alt-click clears
+  every one, the master's included.
+- **Master**: LIMIT, the master fader with a stereo meter, and the output's peak readout. The master is laid out as
+  a DAW's master track: the limiter is an insert, so it comes before the fader and works just as hard wherever the
+  fader is. With it on, the mix can't reach full scale on its way to the fader, and the window says by how many
+  decibels it is being held back whenever it is: the cue to bring an instrument down. With it off, the mix is the
+  plain sum of the instruments. Either way, whatever leaves the master fader over full scale is cut off and
+  reported as clipping, so a master pushed above 0 dB can clip even with the limiter on.
 
-A small master meter also sits on screen in the room (it can be switched off in Settings). It reads "limit" or
-"CLIP" when either is happening.
+The output is set to leave headroom right beside an instrument, so from across the room the mix is fairly quiet:
+raise the master to taste and watch the meter. An instrument is at its own level within 1.5 m of it and gets no
+louder however close you stand; beyond that it falls 6 dB for each doubling of distance, as the inverse square law
+has it. That can be made gentler (down to 0, where distance makes no difference) under Distance falloff in the
+Settings page of the menu.
+
+In the room, the master meter stands at the top right of the screen (it can be switched off in Settings). Under it
+is the recent peak, or "limit" or "CLIP" when either is happening. Beside the tempo, two lamps show whether
+binaural rendering (B) and the room reverb (R) are on.
 
 ## The room
 
@@ -190,7 +198,7 @@ patterns go back to the defaults at each start until rooms can be saved.
 - **I/O**: which of the device's outputs carry the mix, the input device, and which hardware input each Speaker plays.
   Live input always starts switched off, so an open microphone never meets a pair of speakers by surprise.
 - **MIDI**: every MIDI device the system sees, with a tick box each and a light that flashes when it sends notes.
-- **Settings**: binaural, reverb, text size, field of view, mouse sensitivity, room lighting, full screen (which
+- **Settings**: binaural, reverb, distance falloff, text size, field of view, mouse sensitivity, room lighting, full screen (which
   SoundRoom then opens in every time), and whether the master meter and the audio readout are shown on screen.
 
 Choices are saved (Godot's user data folder, `settings.cfg`) and restored at the next start. If a saved device

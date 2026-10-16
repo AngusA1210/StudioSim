@@ -187,6 +187,7 @@ AudioEngine::AudioEngine(const EngineConfig& config)
       room_rt60_(kReferenceDecay), room_level_(kReverbLevel), falloff_target_(kDefaultFalloffDb / 6.0f),
       falloff_(kDefaultFalloffDb / 6.0f), reverb_level_(kReverbLevel), block_pos_(config.block_size) {
     for (auto& l : levels_) l.store(0.0f);
+    for (auto& p : peaks_) p.store(0.0f);
     allocateBuffers();
     sequencer_.setSampleRate(sr_);
     for (auto& reverb : reverbs_) buildReverb(reverb, float(sr_), room_rt60_, room_size_);
@@ -766,6 +767,10 @@ float AudioEngine::sourceLevel(int id) const {
     return id >= 0 && id < kSourceSlots ? levels_[size_t(id)].load(std::memory_order_relaxed) : 0.0f;
 }
 
+float AudioEngine::sourcePeak(int id) {
+    return id >= 0 && id < kSourceSlots ? peaks_[size_t(id)].exchange(0.0f, std::memory_order_relaxed) : 0.0f;
+}
+
 EngineStats AudioEngine::stats() const {
     EngineStats s = device_stats_;
     if (!s.device_running) {
@@ -1094,14 +1099,17 @@ void AudioEngine::renderBlock() {
         s->instrument->render(mono, block_);
 
         double energy = 0.0;
+        float peak = 0.0f;
         for (int i = 0; i < block_; ++i) {
             s->mute_gain += (s->mute_target - s->mute_gain) * mute_coef;
             s->gain += (s->gain_target - s->gain) * mute_coef;
             mono[i] *= s->gain * s->mute_gain;
             energy += double(mono[i]) * mono[i];
+            peak = std::max(peak, std::fabs(mono[i]));
             send_[size_t(i)] += mono[i] * s->send;  // the room hears the source even when a wall blocks your view of it
         }
         levels_[size_t(s->id)].store(float(std::sqrt(energy / block_)), std::memory_order_relaxed);
+        if (peak > peaks_[size_t(s->id)].load(std::memory_order_relaxed)) peaks_[size_t(s->id)].store(peak, std::memory_order_relaxed);
 
         s->via = lerp(s->via, s->via_target, glide);
         s->extra += (s->extra_target - s->extra) * wall_glide;
@@ -1120,6 +1128,7 @@ void AudioEngine::renderBlock() {
         if (s->fade_blocks >= 0 && --s->fade_blocks < 0) {  // removed and faded out: forget it and hand it back
             sources_[index] = nullptr;
             levels_[index].store(0.0f, std::memory_order_relaxed);
+            peaks_[index].store(0.0f, std::memory_order_relaxed);
             s->released.store(true, std::memory_order_release);  // must be the last thing this thread does with it
         }
     }
@@ -1147,25 +1156,29 @@ void AudioEngine::renderBlock() {
     const float slow = 1.0f - std::exp(-1.0f / (0.05f * float(sr_)));
     for (int i = 0; i < block_; ++i) {
         reverb_gain_ += (reverb_target_ - reverb_gain_) * slow;
-        master_gain_ += (master_target_ - master_gain_) * slow;
-        const float wet = reverb_level * reverb_gain_, out = kMasterGain * master_gain_;
+        const float wet = reverb_level * reverb_gain_;
         // The click goes straight to both ears: it is for the player, not part of the room.
-        mix_l_[size_t(i)] = (mix_l_[size_t(i)] + rev_l_[size_t(i)] * wet + click_[size_t(i)]) * out;
-        mix_r_[size_t(i)] = (mix_r_[size_t(i)] + rev_r_[size_t(i)] * wet + click_[size_t(i)]) * out;
+        mix_l_[size_t(i)] = (mix_l_[size_t(i)] + rev_l_[size_t(i)] * wet + click_[size_t(i)]) * kMasterGain;
+        mix_r_[size_t(i)] = (mix_r_[size_t(i)] + rev_r_[size_t(i)] * wet + click_[size_t(i)]) * kMasterGain;
     }
+    // The master track, laid out as in a DAW: the limiter is an insert, so it comes before the master fader and works
+    // as hard whatever the fader says. Then the fader; and whatever leaves it over full scale is cut off and counted.
     if (limiter_on_) {
         const float lowest = limiter_.process(mix_l_.data(), mix_r_.data(), block_);
         if (lowest < meter_gain_.load(std::memory_order_relaxed)) meter_gain_.store(lowest, std::memory_order_relaxed);
-    } else {  // nothing holds the mix back: what goes over full scale is cut off, and the meter says so
-        uint32_t clipped = 0;
-        for (auto* side : {&mix_l_, &mix_r_})
-            for (float& v : *side)
-                if (std::fabs(v) > 1.0f) {
-                    v = std::copysign(1.0f, v);
-                    ++clipped;
-                }
-        if (clipped) meter_clipped_.fetch_add(clipped, std::memory_order_relaxed);
     }
+    uint32_t clipped = 0;
+    for (int i = 0; i < block_; ++i) {
+        master_gain_ += (master_target_ - master_gain_) * slow;
+        for (float* v : {&mix_l_[size_t(i)], &mix_r_[size_t(i)]}) {
+            *v *= master_gain_;
+            if (std::fabs(*v) > 1.0f) {
+                *v = std::copysign(1.0f, *v);
+                ++clipped;
+            }
+        }
+    }
+    if (clipped) meter_clipped_.fetch_add(clipped, std::memory_order_relaxed);
     // The meter reads what leaves for the sound card.
     float peak_l = 0.0f, peak_r = 0.0f;
     double square_l = 0.0, square_r = 0.0;

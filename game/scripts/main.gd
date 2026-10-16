@@ -46,6 +46,9 @@ const DEFAULT_ROOM := [
 	{"kind": "live", "position": Vector3(-2.0, 0.0, 1.6)},
 ]
 const SPAWN := Vector3(0.0, 0.0, 3.6)
+# What the audio core multiplies an instrument by on its way to the master, heard within 1.5 m: its channel meter
+# reads the instrument at that level, as a DAW's track meter reads the signal the track sends to the master.
+const CHANNEL_TRIM := 0.88
 const DEFAULT_TEMPO := 92.0
 const DEFAULT_SWING := 0.14
 
@@ -73,8 +76,10 @@ var audio_error := ""     # the last problem opening a device, shown in the menu
 var _stage_gain := 1.0    # the title screen turns the music down a little; 1 in the room
 var _environment: Environment
 # The output meter, read once a frame for whoever shows it: the latest reading, how hard the limiter has pulled
-# down lately (in dB, held for a moment), and whether samples have been cut off at full scale lately.
+# down lately (in dB, held for a moment), and whether samples have been cut off at full scale lately. Like the
+# instruments' channel meters, it also keeps the highest peak since it was last cleared, as a DAW's peak readout does.
 var meter := {}
+var master_peak_hold := 0.0
 var meter_reduction_db := 0.0
 var meter_clipped := false
 var _reduction_age := 0.0
@@ -206,6 +211,11 @@ func _process(delta: float) -> void:
 
 func _read_meter(delta: float) -> void:
 	meter = audio.read_meter()
+	master_peak_hold = maxf(master_peak_hold, maxf(meter.get("peak_l", 0.0), meter.get("peak_r", 0.0)))
+	for inst in instruments:  # each channel as it reaches the master: after its fader, before distance and the master's
+		inst.meter_peak = audio.get_source_peak(inst.source_id) * CHANNEL_TRIM
+		inst.meter_rms = audio.get_source_level(inst.source_id) * CHANNEL_TRIM
+		inst.peak_hold = maxf(inst.peak_hold, inst.meter_peak)
 	var reduction := -linear_to_db(maxf(meter.get("limiter_gain", 1.0), 0.001))
 	_reduction_age += delta
 	if reduction >= meter_reduction_db or _reduction_age > 1.5:
@@ -213,6 +223,20 @@ func _read_meter(delta: float) -> void:
 		_reduction_age = 0.0
 	_clip_age = 0.0 if int(meter.get("clipped", 0)) > 0 else _clip_age + delta
 	meter_clipped = _clip_age < 2.0
+
+
+## Clears a channel's peak readout (null: the master's), or every one of them.
+func clear_peak(inst) -> void:
+	if inst == null:
+		master_peak_hold = 0.0
+	else:
+		inst.peak_hold = 0.0
+
+
+func clear_all_peaks() -> void:
+	master_peak_hold = 0.0
+	for inst in instruments:
+		inst.peak_hold = 0.0
 
 
 ## Tell the audio core where each instrument is. It works out how the sound gets from there to the listener.

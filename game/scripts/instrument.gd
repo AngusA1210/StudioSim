@@ -28,6 +28,11 @@ var loop_on := true    # playable instruments: whether the sequencer plays their
 var input_on := false  # it takes input: MIDI controllers play it, or a Speaker plays its hardware input
 var input_channel := -1  # live-input instruments: the hardware input they play (0-based), or -1 for all of them
 var level_db := 0.0    # its fader: how far above or below its normal level it is set
+# Its channel meter, as linear levels where 1 is full scale: this frame's peak and average, and the highest peak
+# since its peak readout was last cleared (read by the game each frame; see main.gd).
+var meter_peak := 0.0
+var meter_rms := 0.0
+var peak_hold := 0.0
 var is_amp := false    # a guitar or bass amp, with knobs and a loop pedal
 var amp_controls := {"gain": 5.0, "bass": 5.0, "mid": 5.0, "treble": 5.0, "presence": 5.0, "master": 5.0}
 var looper := {}       # what its loop pedal is doing, from the audio core (amps only)

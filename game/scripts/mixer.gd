@@ -1,7 +1,9 @@
 extends CanvasLayer
 ## The mix window (Tab), laid out like a mixing desk: a channel strip for every instrument side by side, the master
 ## strip on the right. A strip has the instrument's input at the top (which hardware input, for a Speaker), buttons
-## for input, mute and solo, a fader with its meter beside it, and the instrument's name in its colour at the foot.
+## for input, mute and solo, a fader with its meter beside it, the fader's level and the highest peak beneath them,
+## and the instrument's name in its colour at the foot. As in Pro Tools, the peak readout holds the highest peak
+## until it is clicked (Alt-click clears them all), and clicking a meter does the same.
 ## It docks along the bottom of the screen so the room stays in view, and the music keeps playing.
 
 const Fader := preload("res://scripts/fader.gd")
@@ -14,7 +16,6 @@ const WARN := Color(1.0, 0.61, 0.48)
 const INPUT_GREEN := Color(0.36, 0.9, 0.5)
 const MUTE_ORANGE := Color(1.0, 0.62, 0.25)
 const SOLO_YELLOW := Color(0.98, 0.86, 0.3)
-const OUTPUT_TRIM := 0.88  # roughly what the engine multiplies an instrument by on its way out, for the strip meters
 
 var app
 var audio: SoundRoomAudio
@@ -22,12 +23,10 @@ var audio: SoundRoomAudio
 var _root: Control
 var _panel: PanelContainer
 var _strip_row: HBoxContainer
-var _strips: Array = []  # {inst, fader, meter, value, input, mute, solo, source}
+var _strips: Array = []  # {inst, fader, meter, value, peak, input, mute, solo, source}
 var _signature := ""
 var _input_channels := -1
 var _master := {}
-var _falloff: HSlider
-var _falloff_value: Label
 var _status: Label
 
 
@@ -104,22 +103,6 @@ func _build() -> void:
 	_status.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_status.clip_text = true
 	header.add_child(_status)
-	var falloff_label := Label.new()
-	falloff_label.text = "Distance falloff"
-	falloff_label.add_theme_color_override("font_color", DIM)
-	header.add_child(falloff_label)
-	_falloff = HSlider.new()
-	_falloff.min_value = 0.0
-	_falloff.max_value = 6.0
-	_falloff.step = 0.5
-	_falloff.custom_minimum_size.x = 120
-	_falloff.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	_falloff.tooltip_text = "How much quieter an instrument gets for each doubling of distance beyond 1.5 m. 6 dB is the inverse square law."
-	_falloff.value_changed.connect(_on_falloff_changed)
-	header.add_child(_falloff)
-	_falloff_value = Label.new()
-	_falloff_value.custom_minimum_size.x = 150
-	header.add_child(_falloff_value)
 	var close_button := Button.new()
 	close_button.text = "Close  (Tab)"
 	close_button.pressed.connect(close)
@@ -141,7 +124,7 @@ func _build() -> void:
 	desk.add_child(_build_master())
 
 	var hint := Label.new()
-	hint.text = "Drag a fader (Shift for fine moves), or double-click it for 0 dB.   I  input on: the keyboard plays it, or a Speaker plays its input.   M  mute.   S  solo."
+	hint.text = "Drag a fader (Shift for fine moves), or double-click or Alt-click it for 0 dB. Under each fader: its level, and the highest peak since you last clicked it (Alt-click clears them all).   I  input on: the keyboard plays it, or a Speaker or amp plays its input.   M  mute.   S  solo."
 	hint.add_theme_font_size_override("font_size", 12)
 	hint.add_theme_color_override("font_color", DIM)
 	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -153,7 +136,7 @@ func _build_master() -> PanelContainer:
 	var box: VBoxContainer = strip.get_child(0)
 	_small(box, "OUTPUT")
 	var limiter := _toggle("LIMIT", Color(0.55, 0.78, 1.0))
-	limiter.tooltip_text = "On: the output can't go over full scale. Off: the plain sum of the mix, cut off at full scale."
+	limiter.tooltip_text = "On: the mix can't go over full scale on its way into the master fader. Off: the plain sum of the mix. Either way, what leaves the master fader over full scale is cut off."
 	limiter.toggled.connect(_on_limiter_toggled)
 	limiter.custom_minimum_size = Vector2(76, 24)
 	limiter.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
@@ -161,11 +144,11 @@ func _build_master() -> PanelContainer:
 	var gap := Control.new()
 	gap.custom_minimum_size.y = 24
 	box.add_child(gap)
-	var pair := _fader_and_meter(box, 2)
+	var pair := _fader_and_meter(box, 2, null)
 	pair.fader.value_changed.connect(_on_master_changed)
-	var value := _value_label(box)
+	var readouts := _readouts(box, null)
 	box.add_child(_name_plate("Master", Color(0.75, 0.77, 0.82)))
-	_master = {"fader": pair.fader, "meter": pair.meter, "value": value, "limiter": limiter}
+	_master = {"fader": pair.fader, "meter": pair.meter, "value": readouts.value, "peak": readouts.peak, "limiter": limiter}
 	return strip
 
 
@@ -206,13 +189,13 @@ func _build_strip(inst) -> Dictionary:
 	solo.tooltip_text = "Solo: while anything is soloed, everything else is silent"
 	solo.toggled.connect(_on_solo_toggled.bind(inst))
 	buttons.add_child(solo)
-	var pair := _fader_and_meter(box, 1)
+	var pair := _fader_and_meter(box, 1, inst)
 	pair.fader.value_changed.connect(_on_fader_changed.bind(inst))
-	var value := _value_label(box)
+	var readouts := _readouts(box, inst)
 	box.add_child(_name_plate(inst.display_name, inst.color))
 	_strip_row.add_child(strip)
-	return {"inst": inst, "fader": pair.fader, "meter": pair.meter, "value": value, "input": input, "mute": mute, "solo": solo,
-		"source": source}
+	return {"inst": inst, "fader": pair.fader, "meter": pair.meter, "value": readouts.value, "peak": readouts.peak, "input": input,
+		"mute": mute, "solo": solo, "source": source}
 
 
 func _strip_panel(width: float) -> PanelContainer:
@@ -235,8 +218,9 @@ func _strip_panel(width: float) -> PanelContainer:
 	return strip
 
 
-## The fader with its meter just to the right, filling the strip's height.
-func _fader_and_meter(box: VBoxContainer, channels: int) -> Dictionary:
+## The fader with its meter just to the right, filling the strip's height. `inst` is whose peak a click on the
+## meter clears (null: the master's).
+func _fader_and_meter(box: VBoxContainer, channels: int, inst) -> Dictionary:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 3)
 	row.alignment = BoxContainer.ALIGNMENT_CENTER
@@ -247,18 +231,42 @@ func _fader_and_meter(box: VBoxContainer, channels: int) -> Dictionary:
 	row.add_child(fader)
 	var meter := LevelMeter.new()
 	meter.vertical = true
+	meter.clickable = true
+	meter.tooltip_text = "Click to clear the peak (Alt-click: every peak)"
+	meter.pressed.connect(_on_peak_pressed.bind(inst))
 	meter.custom_minimum_size = Vector2(8 * channels + 2 * (channels - 1), 60)
 	meter.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	row.add_child(meter)
 	return {"fader": fader, "meter": meter}
 
 
-func _value_label(box: VBoxContainer) -> Label:
+## Under the fader, side by side as in Pro Tools: the fader's level, and the peak readout, which holds the highest
+## peak until it is clicked.
+func _readouts(box: VBoxContainer, inst) -> Dictionary:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 3)
+	box.add_child(row)
 	var value := Label.new()
 	value.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	value.add_theme_font_size_override("font_size", 13)
-	box.add_child(value)
-	return value
+	value.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	value.add_theme_font_size_override("font_size", 12)
+	value.tooltip_text = "The fader's level"
+	row.add_child(value)
+	var peak := Button.new()
+	peak.focus_mode = Control.FOCUS_NONE
+	peak.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	peak.custom_minimum_size = Vector2(0, 20)
+	peak.add_theme_font_size_override("font_size", 12)
+	peak.tooltip_text = "The highest peak since this was last clicked. Click to clear it (Alt-click: every peak)."
+	for state in ["normal", "hover", "pressed", "hover_pressed"]:
+		var style := StyleBoxFlat.new()
+		style.bg_color = Color(0.03, 0.035, 0.04) if not state.begins_with("hover") else Color(0.08, 0.085, 0.1)
+		style.set_corner_radius_all(3)
+		style.set_content_margin_all(1)
+		peak.add_theme_stylebox_override(state, style)
+	peak.gui_input.connect(_on_peak_input.bind(inst))
+	row.add_child(peak)
+	return {"value": value, "peak": peak}
 
 
 func _name_plate(text: String, color: Color) -> PanelContainer:
@@ -327,7 +335,6 @@ func _refresh() -> void:
 	var channels: int = app.input_channel_count()
 	var relist := channels != _input_channels
 	_input_channels = channels
-	var out := OUTPUT_TRIM * db_to_linear(settings.master_volume_db)
 	for strip in _strips:
 		var inst = strip.inst
 		if not strip.fader._dragging:
@@ -343,30 +350,38 @@ func _refresh() -> void:
 				for i in channels:
 					strip.source.add_item("In %d" % (i + 1))
 			strip.source.select(clampi(inst.input_channel + 1, 0, strip.source.item_count - 1))
-		strip.meter.feed([audio.get_source_level(inst.source_id) * out])
+		strip.meter.feed([inst.meter_peak], [inst.meter_rms])
+		_show_peak(strip.peak, inst.peak_hold)
 
 	var m: Dictionary = app.meter
 	_master.meter.feed([m.get("peak_l", 0.0), m.get("peak_r", 0.0)], [m.get("rms_l", 0.0), m.get("rms_r", 0.0)])
 	if not _master.fader._dragging:
 		_master.fader.set_value_no_signal(settings.master_volume_db)
 	_master.value.text = _db_text(settings.master_volume_db)
+	_show_peak(_master.peak, app.master_peak_hold)
 	_master.limiter.set_pressed_no_signal(settings.limiter)
-	_falloff.set_value_no_signal(settings.distance_falloff_db)
-	_falloff_value.text = "%.1f dB per doubling" % settings.distance_falloff_db
-	var peak := "Peak %.1f dBFS" % _master.meter.held_db()
 	if app.meter_clipped:
-		_status.text = "%s   ·   Clipping: the mix is going over full scale. Bring the master or an instrument down." % peak
+		_status.text = "Clipping: the output is going over full scale. Bring the master or an instrument down."
 		_status.add_theme_color_override("font_color", LevelMeter.RED)
 	elif app.meter_reduction_db > 0.1:
-		_status.text = "%s   ·   Limiting by %.1f dB. Bring the master or an instrument down to stop it." % [peak, app.meter_reduction_db]
+		_status.text = "Limiting by %.1f dB. Bring an instrument down to stop it (the limiter comes before the master fader)." % app.meter_reduction_db
 		_status.add_theme_color_override("font_color", WARN)
 	else:
-		_status.text = "%s   ·   %s" % [peak, "Limiter idle" if settings.limiter else "No clipping"]
+		_status.text = "Limiter idle" if settings.limiter else "Limiter off  ·  no clipping"
 		_status.add_theme_color_override("font_color", DIM)
 
 
 func _db_text(db: float) -> String:
 	return "-inf" if db <= Fader.SILENT + 0.05 else "%+.1f" % db
+
+
+## A peak readout: the level in dBFS, red once anything has reached full scale.
+func _show_peak(button: Button, linear: float) -> void:
+	var db := linear_to_db(maxf(linear, 0.0000001))
+	button.text = "-inf" if db < -99.0 else "%.1f" % db
+	var ink := LevelMeter.RED if db >= -0.05 else (Color(0.85, 0.86, 0.9) if db > -99.0 else Color(0.5, 0.52, 0.58))
+	for state in ["font_color", "font_hover_color", "font_pressed_color"]:
+		button.add_theme_color_override(state, ink)
 
 
 # ── Handlers ────────────────────────────────────────────────────────────────────────────────────────────────
@@ -399,5 +414,22 @@ func _on_limiter_toggled(on: bool) -> void:
 	app.set_limiter(on)
 
 
-func _on_falloff_changed(db: float) -> void:
-	app.set_distance_falloff(db)
+func _on_peak_input(event: InputEvent, inst) -> void:
+	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+		_on_peak_pressed(event.alt_pressed, inst)
+
+
+## Clears a peak readout (and the held tick on its meter), or with Alt every one of them.
+func _on_peak_pressed(alt: bool, inst) -> void:
+	if alt:
+		app.clear_all_peaks()
+		_master.meter.clear_hold()
+		for strip in _strips:
+			strip.meter.clear_hold()
+		return
+	app.clear_peak(inst)
+	if inst == null:
+		_master.meter.clear_hold()
+	for strip in _strips:
+		if strip.inst == inst:
+			strip.meter.clear_hold()

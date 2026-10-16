@@ -1,6 +1,10 @@
 extends Control
 ## A level meter: a bar for each channel, from -60 dB at the left (or the bottom, if `vertical`) to full scale, with
 ## the highest recent peak held as a tick. Green up to -12 dB, amber up to -3, red above. Feed it every frame.
+## A vertical meter can carry its decibel scale down its left side (`show_scale`), and can be clicked (`clickable`),
+## as a DAW's meters are to clear their peaks: it says so with `pressed`.
+
+signal pressed(alt: bool)
 
 const FLOOR_DB := -60.0
 const AMBER_DB := -12.0
@@ -10,8 +14,12 @@ const FALL_DB_PER_SECOND := 40.0
 const GREEN := Color(0.36, 0.83, 0.55)
 const AMBER := Color(0.95, 0.77, 0.3)
 const RED := Color(1.0, 0.4, 0.36)
+const SCALE_WIDTH := 20.0
+const SCALE_MARKS := [0.0, -6.0, -12.0, -24.0, -40.0, -60.0]
 
 var vertical := false
+var show_scale := false
+var clickable := false
 var _bars: Array = []      # what each bar shows now, in dB: jumps up with the signal, falls back steadily
 var _averages: Array = []  # the average level of each channel in dB, drawn brighter inside the bar
 var _held: Array = []      # the tick: the highest peak lately
@@ -19,7 +27,21 @@ var _held_for: Array = []
 
 
 func _ready() -> void:
-	mouse_filter = Control.MOUSE_FILTER_IGNORE
+	mouse_filter = Control.MOUSE_FILTER_STOP if clickable else Control.MOUSE_FILTER_IGNORE
+
+
+func _gui_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+		pressed.emit(event.alt_pressed)
+		accept_event()
+
+
+## Lets go of the held peak ticks at once.
+func clear_hold() -> void:
+	for i in _held.size():
+		_held[i] = _bars[i]
+		_held_for[i] = 0.0
+	queue_redraw()
 
 
 ## `peaks` (and optionally `averages`) are linear levels, one per channel, where 1 is full scale.
@@ -63,9 +85,17 @@ func _process(delta: float) -> void:
 func _draw() -> void:
 	var count := maxi(_bars.size(), 1)
 	var gap := 2.0 if count > 1 else 0.0
-	var across := ((size.x if vertical else size.y) - gap * (count - 1)) / count
+	var start := SCALE_WIDTH if show_scale and vertical else 0.0
+	var across := ((size.x if vertical else size.y) - start - gap * (count - 1)) / count
+	if start > 0.0:
+		var font := get_theme_default_font()
+		for mark in SCALE_MARKS:
+			var y := size.y * (1.0 - _along(mark))
+			draw_line(Vector2(start - 4, y), Vector2(start - 1, y), Color(1, 1, 1, 0.45), 1.0)
+			draw_string(font, Vector2(0, clampf(y + 4, 9, size.y)), str(int(-mark)), HORIZONTAL_ALIGNMENT_RIGHT, start - 5, 9,
+				Color(1, 1, 1, 0.5))
 	for i in count:
-		var at := i * (across + gap)
+		var at := start + i * (across + gap)
 		_rect(at, across, 0.0, 1.0, Color(1, 1, 1, 0.08))
 		if i >= _bars.size():
 			continue
@@ -78,7 +108,7 @@ func _draw() -> void:
 			_rect(at, across, spot - 1.0 / length, spot + 1.0 / length, _ink(_held[i]))
 	for mark in [AMBER_DB, RED_DB]:  # where the colours change
 		var length := size.y if vertical else size.x
-		_rect(0.0, size.x if vertical else size.y, _along(mark), _along(mark) + 1.0 / length, Color(0, 0, 0, 0.5))
+		_rect(start, (size.x if vertical else size.y) - start, _along(mark), _along(mark) + 1.0 / length, Color(0, 0, 0, 0.5))
 
 
 ## A bar from the floor up to `level`, in the colour of each zone it passes through.

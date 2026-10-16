@@ -1481,18 +1481,34 @@ int main(int argc, char** argv) {
         const MeterReading near_drums = mix.engine.readMeter();
         check(near_drums.limiter_gain == 1.0f && beside.peak < Limiter::kThreshold, "standing next to the drums leaves headroom: the limiter isn't touched",
               fmt("peak %.1f dBFS", db(beside.peak)));
-        mix.engine.setMasterVolume(4.0f);  // 12 dB up: far too loud
-        renderSeconds(mix.engine, 0.5);
-        mix.engine.readMeter();
-        Render pushed = renderSeconds(mix.engine, 10.43);
-        const MeterReading limited = mix.engine.readMeter();
+        // Every instrument turned up 12 dB: far too loud for the mix.
+        const std::pair<int, float> levels[] = {{mix.drums, 0.50f}, {mix.bass, 0.38f}, {mix.pad, 1.0f}, {mix.bells, 0.42f}, {mix.keys, 0.20f}};
+        for (auto [id, gain] : levels) mix.engine.setSourceGain(id, gain * 4.0f);
+        auto cycle = [&](MeterReading& m) {  // one time round the groove, as the meter sees it
+            renderSeconds(mix.engine, 0.5);
+            mix.engine.readMeter();
+            Render r = renderSeconds(mix.engine, 10.43);
+            m = mix.engine.readMeter();
+            return r;
+        };
+        MeterReading limited, faded, boosted, clipped;
+        Render pushed = cycle(limited);
         check(pushed.peak <= 1.0 && limited.limiter_gain < 0.8f && limited.clipped == 0 && pushed.finite, "pushed too hard, the limiter holds the output under full scale",
               fmt("peak %.1f dBFS with the limiter pulling down by up to %.1f dB", db(pushed.peak), -db(limited.limiter_gain)));
+        mix.engine.setMasterVolume(0.5f);
+        Render down = cycle(faded);
+        check(std::fabs(db(faded.limiter_gain) - db(limited.limiter_gain)) < 1.0 && std::fabs((db(pushed.peak) - db(down.peak)) - 6.0) < 0.5,
+              "the limiter comes before the master fader, as on a DAW's master track: turning the master down doesn't ease it",
+              fmt("limiting by %.1f dB with the master at 0 dB, %.1f dB at -6 dB; the output %.1f dB quieter", -db(limited.limiter_gain),
+                  -db(faded.limiter_gain), db(pushed.peak) - db(down.peak)));
+        mix.engine.setMasterVolume(4.0f);
+        Render up = cycle(boosted);
+        check(up.peak == 1.0 && boosted.clipped > 0 && std::fabs(db(boosted.limiter_gain) - db(limited.limiter_gain)) < 1.0,
+              "so the master fader pushed up past the limiter can clip the output, and the meter counts it",
+              fmt("%.0f samples over", double(boosted.clipped)));
+        mix.engine.setMasterVolume(1.0f);
         mix.engine.setLimiter(false);
-        renderSeconds(mix.engine, 0.5);
-        mix.engine.readMeter();
-        Render raw = renderSeconds(mix.engine, 10.43);
-        const MeterReading clipped = mix.engine.readMeter();
+        Render raw = cycle(clipped);
         check(raw.peak == 1.0 && clipped.clipped > 0 && clipped.limiter_gain == 1.0f, "with the limiter off the mix is left alone, and the meter counts what is cut off at full scale",
               fmt("%.0f samples over", double(clipped.clipped)));
     }

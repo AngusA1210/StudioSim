@@ -82,7 +82,7 @@ struct MeterReading {
     float peak_l = 0, peak_r = 0;  // the highest sample on each side
     float rms_l = 0, rms_r = 0;    // the average level over the last third of a second or so
     float limiter_gain = 1;        // the lowest gain the limiter applied (1 = it did nothing)
-    uint32_t clipped = 0;          // samples that hit full scale and were cut off (only with the limiter off)
+    uint32_t clipped = 0;          // samples that went over full scale and were cut off
 };
 
 // What a loop pedal is doing, for the game to show.
@@ -172,13 +172,16 @@ public:
     // later (EngineStats::binaural_ms), and the reverb and the click with it. Switching crossfades between the two.
     void setBinaural(bool on);
     void setReverb(bool on);
-    void setMasterVolume(float gain);  // 1 = normal
+    // The master fader, after the limiter as on a DAW's master track: the limiter's inserts come before the fader, so
+    // how hard it works doesn't depend on where the fader sits. 1 = normal; above 1 the output can clip again.
+    void setMasterVolume(float gain);
     // How much quieter a source gets for each doubling of its distance beyond the reference distance (1.5 m), in
     // decibels. The default, 6, is the inverse square law; less keeps levels more even as the listener moves about.
     // Within the reference distance a source is at its own level and gets no louder, however close.
     void setDistanceFalloff(float db_per_doubling);
-    // The limiter keeps the output from ever reaching full scale. With it off the output is what the mix adds up
-    // to, as on a mixing desk's master fader, and anything over full scale is cut off (and counted by the meter).
+    // The limiter keeps the mix from ever reaching full scale on its way into the master fader. With it off the
+    // output is what the mix adds up to. Either way, anything leaving the master fader over full scale is cut off
+    // (and counted by the meter).
     void setLimiter(bool on);
     MeterReading readMeter();  // the output meter; reading it starts a new measurement
 
@@ -208,6 +211,7 @@ public:
     uint32_t midiEventCount() const { return midi_events_.load(std::memory_order_relaxed); }
 
     float sourceLevel(int id) const;  // RMS of the source's last block, before distance and walls
+    float sourcePeak(int id);         // the highest sample since the last call, likewise; reading it starts again
     EngineStats stats() const;
     int sampleRate() const { return sr_; }
     int blockSize() const { return block_; }
@@ -312,7 +316,7 @@ private:
     int64_t bar_timing_[2] = {-1, 0};  // for the loop pedals: samples from this block's start to the next bar line, a bar
 
     // Shared between threads
-    std::array<std::atomic<float>, kSourceSlots> levels_{};
+    std::array<std::atomic<float>, kSourceSlots> levels_{}, peaks_{};
     std::atomic<float> cpu_load_{0.0f};
     std::atomic<uint64_t> blocks_{0};
     std::atomic<int> out_left_{0}, out_right_{1};

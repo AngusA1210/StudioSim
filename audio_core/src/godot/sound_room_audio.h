@@ -81,14 +81,15 @@ public:
     void all_notes_off(int id);
     void set_binaural(bool on);
     void set_reverb(bool on);
-    void set_master_volume(float gain);
+    void set_master_volume(float gain);  // the master fader: after the limiter, as on a DAW's master track
     // How many decibels quieter a source gets for each doubling of distance beyond 1.5 m (6 by default: inverse square).
     void set_distance_falloff(float db_per_doubling);
-    void set_limiter(bool on);  // off = the output is the plain sum of the mix, cut off at full scale
+    void set_limiter(bool on);  // off = the plain sum of the mix; either way the output is cut off at full scale
     // The output meter since it was last read: {peak_l, peak_r, rms_l, rms_r, limiter_gain} as linear levels
     // (1 = full scale; limiter_gain 1 = the limiter did nothing) and {clipped}, a count of samples cut off.
     Dictionary read_meter();
     float get_source_level(int id) const;
+    float get_source_peak(int id);  // its highest sample since the last call (before distance and walls)
     Dictionary get_stats() const;
 
     // ── The sequencer ────────────────────────────────────────────────────────────────────────────────────
