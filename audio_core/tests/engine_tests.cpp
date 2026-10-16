@@ -1335,6 +1335,49 @@ int main(int argc, char** argv) {
         check(deep[2] > deep[0] + 12.0 && deep[3] > deep[1] + 10.0, "the bass amps go deeper than the guitar amps",
               fmt("45 Hz: guitar combo %.0f dB, bass combo %.0f dB", deep[0], deep[2]) + fmt(", guitar stack %.0f dB, bass stack %.0f dB", deep[1], deep[3]));
 
+        // Any head with any cabinet, and either bypassed.
+        auto voiced = [](std::vector<float> signal, AmpHead head, bool head_on, AmpCabinet cabinet, bool cabinet_on) {
+            AmpModel amp;
+            amp.init(InstrumentKind::GuitarCombo, 48000.0f);
+            amp.setHead(head, head_on);
+            amp.setCabinet(cabinet, cabinet_on);
+            for (size_t i = 0; i < signal.size(); i += 128) amp.process(signal.data() + i, int(std::min<size_t>(128, signal.size() - i)));
+            signal.erase(signal.begin(), signal.begin() + 4800);
+            return signal;
+        };
+        auto rmsDb = [](const std::vector<float>& x) {
+            return db(std::sqrt(std::inner_product(x.begin(), x.end(), x.begin(), 0.0) / double(x.size())));
+        };
+        const char* head_names[kAmpHeads] = {"clean", "crunch", "high gain", "bass round", "bass punch"};
+        const AmpCabinet usual[kAmpHeads] = {AmpCabinet::OpenBack1x12, AmpCabinet::OpenBack1x12, AmpCabinet::Closed4x12,
+                                             AmpCabinet::Bass1x15, AmpCabinet::Bass8x10};
+        std::string head_levels;
+        bool heads_even = true, all_sound = true;
+        for (int h = 0; h < kAmpHeads; ++h) {
+            const std::vector<float> string_in = pluckedString(h >= 3 ? 55.0 : 110.0, 2.0, 0.1f);
+            const double level = rmsDb(voiced(string_in, AmpHead(h), true, usual[h], true));
+            heads_even = heads_even && std::fabs(level + 18.0) < 2.0;
+            head_levels += std::string(" ") + head_names[h] + fmt(" %.1f;", level);
+            for (int c = 0; c < kAmpCabinets; ++c) {
+                const double any = rmsDb(voiced(string_in, AmpHead(h), true, AmpCabinet(c), true));
+                if (!(any > -32.0 && any < -8.0)) all_sound = false;
+            }
+        }
+        check(heads_even && all_sound, "every head goes with every cabinet, the five heads about as loud as each other through their usual cabinets",
+              "dBFS RMS:" + head_levels);
+        const std::vector<float> clean_note = sine;  // 220 Hz at 0.1
+        const std::vector<float> no_head = voiced(clean_note, AmpHead::HighGain, false, AmpCabinet::OpenBack1x12, true);
+        std::vector<float> both_off = voiced(clean_note, AmpHead::HighGain, false, AmpCabinet::Closed4x12, false);
+        std::vector<float> clean_tail(clean_note.begin() + 4800, clean_note.end());
+        double low_n, high_n, low_flat, high_flat, low_cab, high_cab;
+        bandEnergy(noise, 48000.0f, low_n, high_n);
+        bandEnergy(voiced(noise, AmpHead::Crunch, false, AmpCabinet::Closed4x12, false), 48000.0f, low_flat, high_flat);
+        bandEnergy(voiced(noise, AmpHead::Crunch, false, AmpCabinet::Closed4x12, true), 48000.0f, low_cab, high_cab);
+        check(distortion(no_head) < 0.01 && std::fabs(rmsDb(no_head) - rmsDb(clean_tail)) < 3.0 && both_off == clean_tail &&
+                  std::fabs(10 * std::log10(high_flat / high_n)) < 1.0 && 10 * std::log10(high_cab / high_n) < -10.0,
+              "bypassed, the head leaves the guitar clean for the cabinet; bypassed too, the cabinet is flat, and the amp passes it untouched",
+              fmt("highs through the bypassed cabinet %+.1f dB, through the 4x12 %.0f dB", 10 * std::log10(high_flat / high_n), 10 * std::log10(high_cab / high_n)));
+
         // In the engine: a guitar into a combo, looped, then the guitar stops and the loop carries on through the amp.
         Room room;
         room.soloOnly(-1);

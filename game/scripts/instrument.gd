@@ -37,6 +37,10 @@ var meter_rms := 0.0
 var peak_hold := 0.0
 var is_amp := false    # a guitar or bass amp, with knobs and a loop pedal
 var amp_controls := {"gain": 5.0, "bass": 5.0, "mid": 5.0, "treble": 5.0, "presence": 5.0, "master": 5.0}
+var amp_head := ""      # an amp's head and cabinet (catalog.gd lists them), and whether each is in use
+var amp_cabinet := ""
+var head_on := true
+var cabinet_on := true
 var looper := {}       # what its loop pedal is doing, from the audio core: state "none" if it has none (amps only)
 var pedals := []       # its effect pedals, in signal order, from the audio core: [{kind, on, controls, plugin_name...}]
 var tuner := {}        # what its tuner hears while one is on: {pitched, note, cents, frequency}; empty otherwise
@@ -72,6 +76,8 @@ func setup(spec: Dictionary, audio: SoundRoomAudio) -> void:
 	playable = not spec.get("live_input", false)
 	default_octave = spec.get("octave", 0)
 	is_amp = spec.get("amp", false)
+	amp_head = spec.get("head", "")
+	amp_cabinet = spec.get("cabinet", "")
 	name = display_name
 	position = Vector3(spec.position.x, source_height, spec.position.z)
 
@@ -80,19 +86,12 @@ func setup(spec: Dictionary, audio: SoundRoomAudio) -> void:
 	if source_id < 0:
 		return  # the room is full; whoever asked for this instrument gives up on it
 
-	var built: Dictionary = Models.build(kind, color)
-	_model = built.node
-	_model.position.y = -source_height  # the model is drawn from the floor up
-	add_child(_model)
-	_accent = built.accent
-	_pedal_spot = built.get("pedal_spot", Vector3.ZERO)
 	_pedal_row = Node3D.new()
-	_model.add_child(_pedal_row)
+	_build_model()
 
 	_light = OmniLight3D.new()
 	_light.light_color = color
 	_light.omni_range = 4.0
-	_light.position = Vector3(0, top - source_height + 0.15, 0.6)  # above and in front, lighting it from the player's side
 	add_child(_light)
 
 	_label = Label3D.new()
@@ -102,7 +101,6 @@ func setup(spec: Dictionary, audio: SoundRoomAudio) -> void:
 	_label.pixel_size = 0.004
 	_label.outline_size = 10
 	_label.modulate = color.lightened(0.35)
-	_label.position = Vector3(0, top - source_height + 0.3, 0)
 	add_child(_label)
 	# A green "i" under the name while it takes input, as a DAW marks a track whose input is on.
 	_input_badge = Label3D.new()
@@ -112,7 +110,6 @@ func setup(spec: Dictionary, audio: SoundRoomAudio) -> void:
 	_input_badge.pixel_size = 0.004
 	_input_badge.outline_size = 12
 	_input_badge.modulate = INPUT_GREEN
-	_input_badge.position = _label.position - Vector3(0, 0.15, 0)
 	_input_badge.visible = false
 	add_child(_input_badge)
 	_loop_label = Label3D.new()  # an amp's loop pedal: recording, looping, overdubbing
@@ -120,19 +117,56 @@ func setup(spec: Dictionary, audio: SoundRoomAudio) -> void:
 	_loop_label.font_size = 30
 	_loop_label.pixel_size = 0.004
 	_loop_label.outline_size = 8
-	_loop_label.position = _label.position - Vector3(0, 0.3, 0)
 	_loop_label.visible = false
 	add_child(_loop_label)
 
 	# Something solid to bump into, on the default layer only (sound passes through instruments).
 	var body := StaticBody3D.new()
 	_collider = CollisionShape3D.new()
-	var box := BoxShape3D.new()
-	box.size = Vector3(footprint.x * 0.85, top, footprint.y * 0.85)
-	_collider.shape = box
-	_collider.position.y = top / 2 - source_height
+	_collider.shape = BoxShape3D.new()
 	body.add_child(_collider)
 	add_child(body)
+	_place_parts()
+
+
+## Its model, made again when an amp changes cabinet: how tall it stands and the floor it covers follow, and with
+## them where its name, its light and its pedals go.
+func _build_model() -> void:
+	if _model != null:
+		_model.remove_child(_pedal_row)
+		_model.queue_free()
+	var built: Dictionary = Models.build(kind, color, amp_cabinet)
+	_model = built.node
+	_model.position.y = -source_height  # the model is drawn from the floor up
+	add_child(_model)
+	_accent = built.accent
+	top = built.get("top", top)
+	footprint = built.get("footprint", footprint)
+	_pedal_spot = built.get("pedal_spot", Vector3.ZERO)
+	_model.add_child(_pedal_row)
+	_pedal_signature = "-"  # the pedals line up again in front of it
+
+
+func _place_parts() -> void:
+	_light.position = Vector3(0, top - source_height + 0.15, 0.6)  # above and in front, lighting it from the player's side
+	_label.position = Vector3(0, top - source_height + 0.3, 0)
+	_input_badge.position = _label.position - Vector3(0, 0.15, 0)
+	_loop_label.position = _label.position - Vector3(0, 0.3, 0)
+	(_collider.shape as BoxShape3D).size = Vector3(footprint.x * 0.85, top, footprint.y * 0.85)
+	_collider.position.y = top / 2 - source_height
+
+
+## An amp's head and cabinet, and whether each is in use. A new cabinet is drawn as well as heard.
+func set_voice(head: String, use_head: bool, cabinet: String, use_cabinet: bool) -> void:
+	amp_head = head
+	head_on = use_head
+	_audio.set_amp_head(source_id, head, use_head)
+	_audio.set_amp_cabinet(source_id, cabinet, use_cabinet)
+	cabinet_on = use_cabinet
+	if cabinet != amp_cabinet:
+		amp_cabinet = cabinet
+		_build_model()
+		_place_parts()
 
 
 func _process(delta: float) -> void:

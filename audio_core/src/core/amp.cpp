@@ -48,51 +48,99 @@ void peak(Biquad& f, float sr, float hz, float q, float db) {
 
 }  // namespace
 
-void AmpModel::init(InstrumentKind kind, float sample_rate) {
-    kind_ = kind;
-    sr_ = sample_rate;
+AmpHead defaultHead(InstrumentKind kind) {
     switch (kind) {
-        case InstrumentKind::GuitarStack:
-            v_ = {90.0f, 0.75f, 52.0f, 2, 180.0f, 700.0f, 2800.0f, 4500.0f, 0.139f};
-            break;
-        case InstrumentKind::BassCombo:
-            v_ = {30.0f, 0.0f, 24.0f, 1, 70.0f, 450.0f, 2200.0f, 3500.0f, 0.582f};
-            break;
-        case InstrumentKind::BassStack:
-            v_ = {35.0f, 0.2f, 32.0f, 1, 80.0f, 500.0f, 2500.0f, 4000.0f, 0.327f};
-            break;
-        default:  // the guitar combo
-            v_ = {80.0f, 0.4f, 36.0f, 1, 200.0f, 650.0f, 3000.0f, 5000.0f, 0.254f};
-            break;
+        case InstrumentKind::GuitarStack: return AmpHead::HighGain;
+        case InstrumentKind::BassCombo: return AmpHead::BassRound;
+        case InstrumentKind::BassStack: return AmpHead::BassPunch;
+        default: return AmpHead::Crunch;
     }
+}
+
+AmpCabinet defaultCabinet(InstrumentKind kind) {
+    switch (kind) {
+        case InstrumentKind::GuitarStack: return AmpCabinet::Closed4x12;
+        case InstrumentKind::BassCombo: return AmpCabinet::Bass1x15;
+        case InstrumentKind::BassStack: return AmpCabinet::Bass8x10;
+        default: return AmpCabinet::OpenBack1x12;
+    }
+}
+
+void AmpModel::init(InstrumentKind kind, float sample_rate) {
+    sr_ = sample_rate;
     for (auto* f : {&input_cut_, &tight_cut_, &interstage_, &up_[0], &up_[1], &down_[0], &down_[1], &bass_, &mid_, &treble_, &presence_})
         f->reset();
-    input_cut_.set(Biquad::Highpass, sr_, v_.input_cut, 0.707f);
-    tight_cut_.set(Biquad::Highpass, sr_ * 2, 650.0f, 0.6f);
-    interstage_.set(Biquad::Lowpass, sr_ * 2, 7000.0f, 0.6f);
     for (int i = 0; i < 2; ++i) {  // fourth-order low-passes just under the original Nyquist frequency
         up_[i].set(Biquad::Lowpass, sr_ * 2, sr_ * 0.45f, i == 0 ? 0.54f : 1.31f);
         down_[i].set(Biquad::Lowpass, sr_ * 2, sr_ * 0.45f, i == 0 ? 0.54f : 1.31f);
     }
-    // The speaker cabinet: what the cone and the box let through.
     for (auto& f : cabinet_) f.reset();
-    switch (kind) {
-        case InstrumentKind::GuitarStack:  // closed 4x12: a thump in the lows, a bite at 2-3 kHz, nothing above 5 kHz
+    setHead(defaultHead(kind), true);
+    setCabinet(defaultCabinet(kind), true);
+    master_now_ = master_;
+}
+
+void AmpModel::setHead(AmpHead head, bool on) {
+    head_ = head;
+    head_on_ = on;
+    // {input cut, tight, drive at 10, stages, bass, mid, treble, presence, trim}: the trims leave a plucked string at
+    // -20 dBFS coming out at about -18 dBFS with the knobs at 5, through the head's usual cabinet.
+    switch (head) {
+        case AmpHead::Clean:     v_ = {70.0f, 0.15f, 22.0f, 1, 140.0f, 550.0f, 3200.0f, 5000.0f, 0.444f}; break;
+        case AmpHead::HighGain:  v_ = {90.0f, 0.75f, 52.0f, 2, 180.0f, 700.0f, 2800.0f, 4500.0f, 0.139f}; break;
+        case AmpHead::BassRound: v_ = {30.0f, 0.0f, 24.0f, 1, 70.0f, 450.0f, 2200.0f, 3500.0f, 0.582f}; break;
+        case AmpHead::BassPunch: v_ = {35.0f, 0.2f, 32.0f, 1, 80.0f, 500.0f, 2500.0f, 4000.0f, 0.327f}; break;
+        default:                 v_ = {80.0f, 0.4f, 36.0f, 1, 200.0f, 650.0f, 3000.0f, 5000.0f, 0.254f}; break;
+    }
+    input_cut_.set(Biquad::Highpass, sr_, v_.input_cut, 0.707f);
+    tight_cut_.set(Biquad::Highpass, sr_ * 2, 650.0f, 0.6f);
+    interstage_.set(Biquad::Lowpass, sr_ * 2, 7000.0f, 0.6f);
+    updateFilters();
+}
+
+void AmpModel::setCabinet(AmpCabinet cabinet, bool on) {
+    cabinet_kind_ = cabinet;
+    cabinet_on_ = on;
+    voiceCabinet();
+}
+
+// What each cabinet's speakers let through, as heard in front of them: the low end the box gives (a closed back
+// holds more of it, an open back less), the speakers' breakup peak in the upper mids, and how fast they fall away above
+// it. Peaks are kept to the few decibels a speaker really has, without a close microphone's exaggeration.
+void AmpModel::voiceCabinet() {
+    switch (cabinet_kind_) {
+        case AmpCabinet::Closed4x12:
             cabinet_[0].set(Biquad::Highpass, sr_, 75.0f, 0.9f);
-            peak(cabinet_[1], sr_, 110.0f, 1.2f, 4.0f);
-            peak(cabinet_[2], sr_, 2400.0f, 1.0f, 3.0f);
+            peak(cabinet_[1], sr_, 110.0f, 1.2f, 3.0f);
+            peak(cabinet_[2], sr_, 2400.0f, 1.0f, 2.5f);
             cabinet_[3].set(Biquad::Lowpass, sr_, 4800.0f, 0.75f);
             cabinet_[4].set(Biquad::Lowpass, sr_, 5200.0f, 0.6f);
             cabinet_stages_ = 5;
             break;
-        case InstrumentKind::BassCombo:  // one 15": deep, soft on top
+        case AmpCabinet::OpenBack2x12:
+            cabinet_[0].set(Biquad::Highpass, sr_, 85.0f, 0.75f);
+            peak(cabinet_[1], sr_, 130.0f, 1.0f, 2.0f);
+            peak(cabinet_[2], sr_, 2500.0f, 1.0f, 2.5f);
+            cabinet_[3].set(Biquad::Lowpass, sr_, 5200.0f, 0.75f);
+            cabinet_[4].set(Biquad::Lowpass, sr_, 5800.0f, 0.6f);
+            cabinet_stages_ = 5;
+            break;
+        case AmpCabinet::Bass1x15:
             cabinet_[0].set(Biquad::Highpass, sr_, 38.0f, 0.8f);
             peak(cabinet_[1], sr_, 80.0f, 1.0f, 2.0f);
             cabinet_[2].set(Biquad::Lowpass, sr_, 3200.0f, 0.7f);
             cabinet_[3].set(Biquad::Lowpass, sr_, 3600.0f, 0.6f);
             cabinet_stages_ = 4;
             break;
-        case InstrumentKind::BassStack:  // eight 10s: tight lows, a little more top
+        case AmpCabinet::Bass4x10:
+            cabinet_[0].set(Biquad::Highpass, sr_, 50.0f, 0.8f);
+            peak(cabinet_[1], sr_, 110.0f, 1.0f, 2.0f);
+            peak(cabinet_[2], sr_, 1800.0f, 1.0f, 2.0f);
+            cabinet_[3].set(Biquad::Lowpass, sr_, 5500.0f, 0.7f);
+            cabinet_[4].set(Biquad::Lowpass, sr_, 7000.0f, 0.6f);
+            cabinet_stages_ = 5;
+            break;
+        case AmpCabinet::Bass8x10:
             cabinet_[0].set(Biquad::Highpass, sr_, 45.0f, 0.8f);
             peak(cabinet_[1], sr_, 100.0f, 1.0f, 3.0f);
             peak(cabinet_[2], sr_, 1500.0f, 1.0f, 2.0f);
@@ -100,7 +148,7 @@ void AmpModel::init(InstrumentKind kind, float sample_rate) {
             cabinet_[4].set(Biquad::Lowpass, sr_, 6500.0f, 0.6f);
             cabinet_stages_ = 5;
             break;
-        default:  // open-back 1x12: lighter lows, a sweeter top
+        default:  // a 1x12 open back: lighter lows, a sweeter top
             cabinet_[0].set(Biquad::Highpass, sr_, 95.0f, 0.7f);
             peak(cabinet_[1], sr_, 150.0f, 1.0f, 2.0f);
             peak(cabinet_[2], sr_, 2500.0f, 1.0f, 3.0f);
@@ -109,8 +157,6 @@ void AmpModel::init(InstrumentKind kind, float sample_rate) {
             cabinet_stages_ = 5;
             break;
     }
-    updateFilters();
-    master_now_ = master_;
 }
 
 void AmpModel::setControl(AmpControl control, float value) {
@@ -145,13 +191,15 @@ float AmpModel::drive(float x) {
 
 void AmpModel::process(float* io, int n) {
     for (int i = 0; i < n; ++i) {
-        float x = input_cut_.process(io[i]);
-        x = drive(x);
-        x = treble_.process(mid_.process(bass_.process(x)));
-        x = presence_.process(x);
-        for (int c = 0; c < cabinet_stages_; ++c) x = cabinet_[size_t(c)].process(x);
-        master_now_ += (master_ - master_now_) * 0.002f;
-        io[i] = x * v_.out_trim * master_now_;
+        float x = io[i];
+        if (head_on_) {
+            x = drive(input_cut_.process(x));
+            x = presence_.process(treble_.process(mid_.process(bass_.process(x)))) * v_.out_trim;
+        }
+        if (cabinet_on_)
+            for (int c = 0; c < cabinet_stages_; ++c) x = cabinet_[size_t(c)].process(x);
+        master_now_ += (master_ - master_now_) * 0.002f;  // the master is the amp's volume, with or without its head
+        io[i] = x * master_now_;
     }
 }
 

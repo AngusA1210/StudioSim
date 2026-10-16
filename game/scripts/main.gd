@@ -397,6 +397,12 @@ func _follow_speaker_inputs() -> void:
 
 # ── Amps ────────────────────────────────────────────────────────────────────────────────────────────────────
 
+## An amp's head and cabinet (catalog.gd lists them), and whether each is in use: bypassed, a head passes the signal
+## straight to the cabinet, so that a plug-in amp on a pedal can be the head, and a cabinet is a flat full-range speaker.
+func set_amp_voice(inst, head: String, use_head: bool, cabinet: String, use_cabinet: bool) -> void:
+	inst.set_voice(head, use_head, cabinet, use_cabinet)
+
+
 ## One of an amp's knobs ("gain", "bass", "mid", "treble", "presence", "master"), 0 to 10.
 func set_amp_control(inst, control: String, value: float) -> void:
 	inst.amp_controls[control] = clampf(value, 0.0, 10.0)

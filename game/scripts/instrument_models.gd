@@ -11,10 +11,21 @@ extends RefCounted
 const KEY_WHITE := 0.0235  # width of a white key, in metres
 
 static var _shared := {}  # finishes every model uses, made once
+# The cabinets an amp can have, as they look: the box, and whether it stands on casters.
+const CABINETS := {
+	"1x12": {"size": Vector3(0.62, 0.48, 0.25), "casters": false},
+	"2x12": {"size": Vector3(0.74, 0.5, 0.27), "casters": false},
+	"4x12": {"size": Vector3(0.76, 0.76, 0.36), "casters": false},
+	"1x15": {"size": Vector3(0.56, 0.7, 0.42), "casters": true},
+	"4x10": {"size": Vector3(0.6, 0.62, 0.42), "casters": true},
+	"8x10": {"size": Vector3(0.6, 1.3, 0.45), "casters": false},
+}
 
 
-## Returns {node: Node3D, accent: StandardMaterial3D} and, for an amp, where its pedals stand, {pedal_spot: Vector3}.
-static func build(kind: String, color: Color) -> Dictionary:
+## Returns {node: Node3D, accent: StandardMaterial3D} and, for an amp, how tall it stands and the floor it covers
+## {top: float, footprint: Vector2} and where its pedals stand {pedal_spot: Vector3}. An amp is drawn with `cabinet`:
+## a combo has its controls across the top of it, a stack its head standing on it.
+static func build(kind: String, color: Color, cabinet := "") -> Dictionary:
 	var node := Node3D.new()
 	var accent := StandardMaterial3D.new()
 	accent.albedo_color = color.darkened(0.35)
@@ -23,20 +34,20 @@ static func build(kind: String, color: Color) -> Dictionary:
 	accent.emission = color
 	var built := {"node": node, "accent": accent}
 	match kind:
-		"guitar_combo":
-			_amp_box(node, accent, Vector3(0.62, 0.48, 0.25), false, 1)
-			built.pedal_spot = Vector3(0, 0, 0.42)
-		"guitar_stack":
-			_amp_box(node, accent, Vector3(0.76, 0.76, 0.36), false, 4)  # the 4x12 cabinet
-			_amp_head(node, accent, Vector3(0.74, 0.25, 0.27), 0.76)
-			built.pedal_spot = Vector3(0, 0, 0.5)
-		"bass_combo":
-			_amp_box(node, accent, Vector3(0.56, 0.7, 0.42), true, 1)
-			built.pedal_spot = Vector3(0, 0, 0.52)
-		"bass_stack":
-			_amp_box(node, accent, Vector3(0.6, 1.3, 0.45), false, 8)  # the 8x10 cabinet
-			_amp_head(node, accent, Vector3(0.62, 0.24, 0.32), 1.3)
-			built.pedal_spot = Vector3(0, 0, 0.55)
+		"guitar_combo", "guitar_stack", "bass_combo", "bass_stack":
+			var defaults := {"guitar_combo": "1x12", "guitar_stack": "4x12", "bass_combo": "1x15", "bass_stack": "8x10"}
+			var look: Dictionary = CABINETS.get(cabinet, CABINETS[defaults[kind]])
+			var size: Vector3 = look.size
+			var combo := kind.ends_with("_combo")
+			_amp_box(node, accent, size, look.casters, combo)
+			var lift := 0.05 if look.casters else 0.015
+			built.top = lift + size.y
+			if not combo:  # a head standing on its cabinet
+				var head := Vector3(size.x - 0.02, 0.25, minf(size.z - 0.06, 0.32))
+				_amp_head(node, accent, head, lift + size.y - 0.015)
+				built.top += head.y + 0.06
+			built.footprint = Vector2(size.x, size.z)
+			built.pedal_spot = Vector3(0, 0, size.z / 2 + 0.3)
 		"drums":
 			_drum_kit(node, accent)
 		"bass":
@@ -226,19 +237,19 @@ static func _speaker(node: Node3D, accent: Material) -> void:
 	_tripod(node, Vector3(0, 0.62, 0), 0.42, chrome)
 
 
-## A guitar or bass amp's box: tolex all round, grille cloth on the front, metal corners, and (for a combo) the
-## control panel along the top. `speakers` only sets how the grille is divided: one big panel, or a cabinet's look.
-static func _amp_box(node: Node3D, accent: Material, size: Vector3, casters: bool, speakers: int) -> void:
+## A guitar or bass amp's box: tolex all round, grille cloth on the front, metal corners, and for a combo the control
+## panel along the top.
+static func _amp_box(node: Node3D, accent: Material, size: Vector3, casters: bool, combo: bool) -> void:
 	var black := _finish("black")
 	var grille := _finish("grille")
 	var chrome := _finish("chrome")
 	var lift := 0.05 if casters else 0.015
 	_box(node, size, black, Vector3(0, lift + size.y / 2, 0))
-	var face_height := size.y - (0.11 if speakers == 1 else 0.06)
+	var face_height := size.y - (0.11 if combo else 0.06)
 	_box(node, Vector3(size.x - 0.06, face_height - 0.04, 0.01), grille,
 		Vector3(0, lift + 0.03 + (face_height - 0.04) / 2, size.z / 2 + 0.002))
 	_box(node, Vector3(size.x - 0.04, 0.012, 0.012), accent, Vector3(0, lift + 0.03 + face_height - 0.03, size.z / 2 + 0.006))  # piping
-	if speakers == 1:  # a combo: the panel across the top front, with its knobs
+	if combo:  # the panel across the top front, with its knobs
 		_box(node, Vector3(size.x - 0.04, 0.07, 0.012), _finish("panel"), Vector3(0, lift + size.y - 0.045, size.z / 2 + 0.002))
 		for k in 6:
 			_cylinder(node, 0.014, 0.02, _finish("knob_white"), Vector3(-0.2 + k * 0.07, lift + size.y - 0.045, size.z / 2 + 0.014), Vector3(PI / 2, 0, 0))

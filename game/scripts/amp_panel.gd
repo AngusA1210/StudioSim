@@ -1,5 +1,8 @@
 extends CanvasLayer
-## An amp's panel (Enter at an amp): its knobs and input, and the board of pedals on the floor in front of it.
+## An amp's panel (Enter at an amp): its head and cabinet, its knobs and input, and the board of pedals on the floor
+## in front of it. Any head goes with any cabinet, and either can be bypassed: without its head, the amp plays what
+## reaches it straight through the cabinet (a plug-in amp on a Plug-in pedal can be the head); without its cabinet it
+## is a flat full-range speaker.
 ##
 ## The board runs the way the signal does: from the input through the pedals in order, then the amp. Click a pedal to
 ## set it up underneath; "+ Pedal" adds one at the end of the line. 1 to 8 stamp on the pedals, here and facing the
@@ -39,6 +42,11 @@ var _panel: PanelContainer
 var _title: Label
 var _faceplate: StyleBoxFlat
 var _knobs := {}
+var _head_choice: OptionButton
+var _head_on: CheckButton
+var _cabinet_choice: OptionButton
+var _cabinet_on: CheckButton
+var _voice_note: Label
 var _input_switch: CheckButton
 var _source: OptionButton
 
@@ -180,6 +188,21 @@ func _refresh() -> void:
 	for control in _knobs:
 		if not _knobs[control]._dragging:
 			_knobs[control].set_value_no_signal(inst.amp_controls[control])
+		_knobs[control].modulate.a = 1.0 if inst.head_on or control == "master" else 0.35  # the head's knobs, bypassed with it
+	_head_choice.select(_index_of(Catalog.AMP_HEADS, inst.amp_head))
+	_cabinet_choice.select(_index_of(Catalog.AMP_CABINETS, inst.amp_cabinet))
+	_head_on.set_pressed_no_signal(inst.head_on)
+	_head_on.text = "In use" if inst.head_on else "Bypassed"
+	_cabinet_on.set_pressed_no_signal(inst.cabinet_on)
+	_cabinet_on.text = "In use" if inst.cabinet_on else "Bypassed"
+	var notes := []
+	if not inst.head_on:
+		notes.append("No head: what reaches it goes straight to the cabinet. A plug-in amp on a Plug-in pedal can be the head.")
+	if not inst.cabinet_on:
+		notes.append("No cabinet: a flat, full-range speaker, for a plug-in amp with its own cabinet.")
+	if notes.is_empty():
+		notes.append(Catalog.AMP_HEADS[_head_choice.selected][2] + " " + Catalog.AMP_CABINETS[_cabinet_choice.selected][2])
+	_voice_note.text = " ".join(notes)
 	_input_switch.set_pressed_no_signal(inst.input_on)
 	_input_switch.text = "Input on" if inst.input_on else "Input off"
 	_source.select(clampi(inst.input_channel + 1, 0, _source.item_count - 1))
@@ -483,6 +506,32 @@ func _build() -> void:
 	close_button.pressed.connect(close)
 	header.add_child(close_button)
 
+	# The head and the cabinet, each with its switch.
+	var voice := HBoxContainer.new()
+	voice.add_theme_constant_override("separation", 10)
+	box.add_child(voice)
+	_head_choice = _voice_row(voice, "HEAD", Catalog.AMP_HEADS)
+	_head_on = CheckButton.new()
+	_head_on.tooltip_text = "Bypass the head: the signal goes straight to the cabinet"
+	voice.add_child(_head_on)
+	var gap := Control.new()
+	gap.custom_minimum_size.x = 18
+	voice.add_child(gap)
+	_cabinet_choice = _voice_row(voice, "CABINET", Catalog.AMP_CABINETS)
+	_cabinet_on = CheckButton.new()
+	_cabinet_on.tooltip_text = "Bypass the cabinet: a flat, full-range speaker"
+	voice.add_child(_cabinet_on)
+	_head_choice.item_selected.connect(func(_i: int) -> void: _set_voice())
+	_cabinet_choice.item_selected.connect(func(_i: int) -> void: _set_voice())
+	_head_on.toggled.connect(func(_on: bool) -> void: _set_voice())
+	_cabinet_on.toggled.connect(func(_on: bool) -> void: _set_voice())
+	_voice_note = Label.new()
+	_voice_note.add_theme_color_override("font_color", DIM)
+	_voice_note.add_theme_font_size_override("font_size", 12)
+	_voice_note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_voice_note.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	voice.add_child(_voice_note)
+
 	# The amp's own panel: black, edged in its colour, with a row of knobs.
 	var plate := PanelContainer.new()
 	_faceplate = StyleBoxFlat.new()
@@ -772,6 +821,32 @@ func _build_loop_page() -> HBoxContainer:
 	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	right.add_child(note)
 	return pedal_row
+
+
+func _voice_row(parent: Control, title: String, choices: Array) -> OptionButton:
+	var label := Label.new()
+	label.text = title
+	label.add_theme_color_override("font_color", DIM)
+	label.add_theme_font_size_override("font_size", 12)
+	parent.add_child(label)
+	var choice := OptionButton.new()
+	for entry in choices:
+		choice.add_item(entry[1])
+	choice.custom_minimum_size.x = 150
+	parent.add_child(choice)
+	return choice
+
+
+func _index_of(choices: Array, name: String) -> int:
+	for i in choices.size():
+		if choices[i][0] == name:
+			return i
+	return 0
+
+
+func _set_voice() -> void:
+	app.set_amp_voice(inst, Catalog.AMP_HEADS[_head_choice.selected][0], _head_on.button_pressed,
+		Catalog.AMP_CABINETS[_cabinet_choice.selected][0], _cabinet_on.button_pressed)
 
 
 func _button(parent: Control, on_pressed: Callable) -> Button:

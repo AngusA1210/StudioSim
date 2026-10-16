@@ -24,20 +24,38 @@ const KINDS := {
 	# the loop pedal among them, on the floor in front.
 	"guitar_combo": {"name": "Guitar Combo", "about": "A 1x12 combo for guitar: clean to crunch. With room for pedals.",
 		"color": Color(0.95, 0.85, 0.62), "top": 0.56, "footprint": Vector2(0.64, 0.3), "height": 0.3, "gain": 1.0, "send": 0.5,
-		"live_input": true, "amp": true},
+		"live_input": true, "amp": true, "head": "crunch", "cabinet": "1x12"},
 	"guitar_stack": {"name": "Guitar Stack", "about": "A high-gain head on a 4x12 cabinet. With room for pedals.",
 		"color": Color(0.95, 0.32, 0.32), "top": 1.1, "footprint": Vector2(0.78, 0.4), "height": 0.4, "gain": 1.0, "send": 0.5,
-		"live_input": true, "amp": true},
+		"live_input": true, "amp": true, "head": "high_gain", "cabinet": "4x12"},
 	"bass_combo": {"name": "Bass Combo", "about": "A 1x15 combo for bass: deep and round. With room for pedals.",
 		"color": Color(0.5, 0.88, 0.45), "top": 0.8, "footprint": Vector2(0.58, 0.45), "height": 0.38, "gain": 1.0, "send": 0.4,
-		"live_input": true, "amp": true},
+		"live_input": true, "amp": true, "head": "bass_round", "cabinet": "1x15"},
 	"bass_stack": {"name": "Bass Stack", "about": "A head on an 8x10 cabinet: punchy, with more drive. With room for pedals.",
 		"color": Color(0.82, 0.86, 0.95), "top": 1.62, "footprint": Vector2(0.62, 0.48), "height": 0.7, "gain": 1.0, "send": 0.4,
-		"live_input": true, "amp": true},
+		"live_input": true, "amp": true, "head": "bass_punch", "cabinet": "8x10"},
 }
 
 # An amp's knobs, in the order they sit on its panel.
 const AMP_CONTROLS := ["gain", "bass", "mid", "treble", "presence", "master"]
+
+# An amp's heads and cabinets (audio_core/src/core/amp.h): any head with any cabinet, and either can be bypassed.
+# [what the audio core calls it, its name, a line about it]
+const AMP_HEADS := [
+	["clean", "Clean", "Lots of headroom: clean and bright until it is pushed hard."],
+	["crunch", "Crunch", "Clean at low gain, breaking up into crunch as Gain goes up."],
+	["high_gain", "High Gain", "Two gain stages and tight lows, for heavy rhythm and lead."],
+	["bass_round", "Bass: Round", "Deep and round, with gentle drive."],
+	["bass_punch", "Bass: Punch", "Punchy, with more top end, and more drive to give."],
+]
+const AMP_CABINETS := [
+	["1x12", "1x12 open back", "One 12-inch speaker in an open back: lighter lows, a sweet top."],
+	["2x12", "2x12 open back", "Two 12s, open-backed: fuller than the 1x12, still airy."],
+	["4x12", "4x12 closed back", "Four 12s in a closed box: a firm low thump and a midrange bite."],
+	["1x15", "1x15 bass", "One 15-inch: deep and soft on top."],
+	["4x10", "4x10 bass", "Four 10s: tight, punchy lows and more top end."],
+	["8x10", "8x10 bass", "Eight 10s: big lows and a growl in the mids."],
+]
 
 # The effect pedals an amp's board can hold, in the order the pedal menu lists them (audio_core/src/core/pedals.h has
 # what each does). Each control is [name, readout, where it starts]: the readout says how its setting reads in real

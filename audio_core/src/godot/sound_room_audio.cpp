@@ -161,6 +161,18 @@ void SoundRoomAudio::set_amp_control(int id, const String& control, float value)
         if (control == kNames[c] && engine_) engine_->setAmpControl(id, sr::AmpControl(c), value);
 }
 
+void SoundRoomAudio::set_amp_head(int id, const String& head, bool on) {
+    static const char* const kNames[sr::kAmpHeads] = {"clean", "crunch", "high_gain", "bass_round", "bass_punch"};
+    for (int h = 0; h < sr::kAmpHeads; ++h)
+        if (head == kNames[h] && engine_) engine_->setAmpHead(id, sr::AmpHead(h), on);
+}
+
+void SoundRoomAudio::set_amp_cabinet(int id, const String& cabinet, bool on) {
+    static const char* const kNames[sr::kAmpCabinets] = {"1x12", "2x12", "4x12", "1x15", "4x10", "8x10"};
+    for (int c = 0; c < sr::kAmpCabinets; ++c)
+        if (cabinet == kNames[c] && engine_) engine_->setAmpCabinet(id, sr::AmpCabinet(c), on);
+}
+
 bool SoundRoomAudio::looper(int id, const String& action) {
     static const char* const kNames[] = {"press", "stop", "play", "undo", "redo", "clear"};
     for (int a = 0; a < 6; ++a)
@@ -466,6 +478,8 @@ void SoundRoomAudio::_bind_methods() {
     ClassDB::bind_method(D_METHOD("set_source_input_channel", "id", "channel"), &SoundRoomAudio::set_source_input_channel);
     ClassDB::bind_method(D_METHOD("set_source_input", "id", "on"), &SoundRoomAudio::set_source_input);
     ClassDB::bind_method(D_METHOD("set_amp_control", "id", "control", "value"), &SoundRoomAudio::set_amp_control);
+    ClassDB::bind_method(D_METHOD("set_amp_head", "id", "head", "on"), &SoundRoomAudio::set_amp_head);
+    ClassDB::bind_method(D_METHOD("set_amp_cabinet", "id", "cabinet", "on"), &SoundRoomAudio::set_amp_cabinet);
     ClassDB::bind_method(D_METHOD("looper", "id", "action"), &SoundRoomAudio::looper);
     ClassDB::bind_method(D_METHOD("get_looper", "id"), &SoundRoomAudio::get_looper);
     ClassDB::bind_method(D_METHOD("add_pedal", "id", "kind", "at"), &SoundRoomAudio::add_pedal);

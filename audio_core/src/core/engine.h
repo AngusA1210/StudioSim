@@ -173,6 +173,10 @@ public:
     // ── Amps ─────────────────────────────────────────────────────────────────────────────────────────────
     static constexpr double kLoopSeconds = 90.0;  // the longest loop a pedal holds
     void setAmpControl(int id, AmpControl control, float value);  // a knob, 0 to 10
+    // Which head and cabinet an amp has, and whether each is in use (bypassed, a head passes the signal straight to the
+    // cabinet, and a cabinet becomes a flat full-range speaker). An amp starts with its kind's own.
+    void setAmpHead(int id, AmpHead head, bool on);
+    void setAmpCabinet(int id, AmpCabinet cabinet, bool on);
     // The loop pedal on an amp's board (a PedalKind::Looper; see addPedal), whose controls are its level (5 = as
     // recorded), Sync (recordings start and end on bar lines while the patterns run) and whether finishing the first
     // recording goes straight into overdubbing. The first Press gives it its memory (two buffers of kLoopSeconds),
@@ -285,7 +289,7 @@ private:
             NoteOn, NoteOff, AllNotesOff, Binaural, Reverb, MasterVolume, SourceInput,
             PatternNoteSet, PatternNoteRemove, PatternClear, PatternSteps, SourceLoop, SourceVolume,
             SequencerRunning, Tempo, Swing, Click, ClickVolume, Reverb2, SourceGain, Falloff, LimiterOn,
-            AmpKnob, LooperMemory, LooperAct, PedalBoardSet, PedalOn, PedalControl,
+            AmpKnob, AmpHeadSet, AmpCabinetSet, LooperMemory, LooperAct, PedalBoardSet, PedalOn, PedalControl,
         } type = AddSource;
         int id = 0;
         float v[9] = {};

@@ -69,6 +69,11 @@ public:
     // ── Amps ─────────────────────────────────────────────────────────────────────────────────────────────
     // control: "gain", "bass", "mid", "treble", "presence" or "master"; value 0 to 10 as on the panel.
     void set_amp_control(int id, const String& control, float value);
+    // Which head and cabinet an amp uses, and whether each is in use.
+    // head: "clean", "crunch", "high_gain", "bass_round" or "bass_punch";
+    // cabinet: "1x12", "2x12", "4x12", "1x15", "4x10" or "8x10".
+    void set_amp_head(int id, const String& head, bool on);
+    void set_amp_cabinet(int id, const String& cabinet, bool on);
     // The loop pedal on an amp's board (a "looper" pedal; its controls are its level, Sync, and Overdub after
     // recording). action: "press" (the footswitch: record, play, overdub), "stop", "play", "undo", "redo" or "clear".
     // False if the amp has no loop pedal.

@@ -147,6 +147,9 @@ struct AudioEngine::Source {
     bool input_on = false;  // see setSourceInput; kept by both threads (the game's copy survives a reconfigure)
     // Amps: the knobs (the game thread's copy, put back if the amp is rebuilt).
     std::array<float, kAmpControls> amp_controls{5, 5, 5, 5, 5, 5};
+    AmpHead amp_head = AmpHead::Crunch;
+    AmpCabinet amp_cabinet = AmpCabinet::OpenBack1x12;
+    bool head_on = true, cabinet_on = true;
     // An amp's effect pedals, the loop pedal among them if it has one. They live here rather than in the amp, so that
     // a loop survives a change of buffer size. The game thread owns them, in order, with what it last set on each; the audio thread
     // plays through `board`, its own copy of the order, which a PedalBoardSet command replaces. Each order sent has
@@ -247,6 +250,8 @@ void AudioEngine::connect(Source& s) {
     if (!isAmp(s.kind)) return;
     auto* amp = static_cast<Amp*>(s.instrument.get());
     amp->connect(&s.board, bar_timing_);
+    amp->setHead(s.amp_head, s.head_on);
+    amp->setCabinet(s.amp_cabinet, s.cabinet_on);
     for (int c = 0; c < kAmpControls; ++c) amp->setControl(AmpControl(c), s.amp_controls[size_t(c)]);
 }
 
@@ -462,6 +467,22 @@ LooperPedal* AudioEngine::looperOf(const Source& s) const {
     for (const auto& slot : s.pedals)
         if (slot.pedal->kind() == PedalKind::Looper) return static_cast<LooperPedal*>(slot.pedal.get());
     return nullptr;
+}
+
+void AudioEngine::setAmpHead(int id, AmpHead head, bool on) {
+    Source* s = owned(id);
+    if (!s || !isAmp(s->kind)) return;
+    s->amp_head = head;
+    s->head_on = on;
+    Command c; c.type = Command::AmpHeadSet; c.id = id; c.v[0] = float(int(head)); c.v[1] = on ? 1.0f : 0.0f; push(c);
+}
+
+void AudioEngine::setAmpCabinet(int id, AmpCabinet cabinet, bool on) {
+    Source* s = owned(id);
+    if (!s || !isAmp(s->kind)) return;
+    s->amp_cabinet = cabinet;
+    s->cabinet_on = on;
+    Command c; c.type = Command::AmpCabinetSet; c.id = id; c.v[0] = float(int(cabinet)); c.v[1] = on ? 1.0f : 0.0f; push(c);
 }
 
 bool AudioEngine::looperAction(int id, Looper::Action action) {
@@ -809,6 +830,8 @@ int AudioEngine::addSource(InstrumentKind kind, Vec3 position, float gain, float
     auto src = std::make_unique<Source>();
     src->id = int(slot);
     src->kind = kind;
+    src->amp_head = defaultHead(kind);
+    src->amp_cabinet = defaultCabinet(kind);
     src->instrument = makeInstrument(kind);
     connect(*src);
     if (!src->spatializer.init(steam_, nullptr)) return -1;
@@ -1230,6 +1253,12 @@ void AudioEngine::drainCommands() {
                 break;
             case Command::ClickVolume:
                 click_volume_ = c.v[0];
+                break;
+            case Command::AmpHeadSet:
+                if (s && isAmp(s->kind)) static_cast<Amp*>(s->instrument.get())->setHead(AmpHead(int(c.v[0])), c.v[1] > 0.5f);
+                break;
+            case Command::AmpCabinetSet:
+                if (s && isAmp(s->kind)) static_cast<Amp*>(s->instrument.get())->setCabinet(AmpCabinet(int(c.v[0])), c.v[1] > 0.5f);
                 break;
             case Command::AmpKnob:
                 if (s && isAmp(s->kind)) static_cast<Amp*>(s->instrument.get())->setControl(AmpControl(int(c.v[0])), c.v[1]);

@@ -561,6 +561,28 @@ func _run() -> void:
 	view.push_input(let_go)
 	await frames(2)
 	check(absf(amp.amp_controls.gain - 8.0) < 0.2, "dragging the Gain knob up turns it up", "%.2f" % amp.amp_controls.gain)
+	var combo_top: float = amp.top
+	check(panel._head_choice.get_item_text(panel._head_choice.selected) == "Crunch" and panel._cabinet_choice.get_item_text(panel._cabinet_choice.selected) == "1x12 open back",
+		"the combo starts with a Crunch head in a 1x12 open-back cabinet")
+	panel._cabinet_choice.select(2)
+	panel._cabinet_choice.item_selected.emit(2)
+	panel._head_choice.select(2)
+	panel._head_choice.item_selected.emit(2)
+	await frames(3)
+	check(amp.amp_cabinet == "4x12" and amp.amp_head == "high_gain" and amp.top > combo_top + 0.2 and amp.footprint.x > 0.7,
+		"a High Gain head and a 4x12 can be swapped in, and the amp is drawn with the bigger cabinet", "%.2f m tall" % amp.top)
+	panel._head_on.button_pressed = false
+	panel._cabinet_on.button_pressed = false
+	await frames(3)
+	check(not amp.head_on and not amp.cabinet_on and panel._knobs.gain.modulate.a < 0.5 and panel._knobs.master.modulate.a == 1.0 and
+		panel._voice_note.text.begins_with("No head"), "either can be bypassed: the head's knobs go dim, the master stays", panel._voice_note.text)
+	panel._head_on.button_pressed = true
+	panel._cabinet_on.button_pressed = true
+	panel._cabinet_choice.select(0)
+	panel._cabinet_choice.item_selected.emit(0)
+	panel._head_choice.select(1)
+	panel._head_choice.item_selected.emit(1)
+	await frames(2)
 	await click(panel._footswitch.get_global_rect().get_center())
 	check(amp.looper.get("state", "") == "playing", "the pedal's footswitch button plays it again")
 	await tap(KEY_J)

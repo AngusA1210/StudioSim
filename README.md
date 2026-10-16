@@ -96,16 +96,29 @@ starts switched off, so an open microphone never meets a pair of speakers by sur
 
 ### Amps, pedals and the loop pedal
 
-| Amp | What it is |
-| --- | --- |
-| Guitar Combo | one 12" speaker in an open-back cabinet: clean to crunchy |
-| Guitar Stack | a high-gain head on a closed 4x12: two gain stages, tight lows |
-| Bass Combo | one 15" speaker: deep and round, with gentle drive |
-| Bass Stack | a head on an 8x10: punchy, with more top end and more drive |
+An amp is a **head** and a **cabinet**, and any head goes with any cabinet. The four in the instrument menu start as a
+Crunch head in a 1x12 combo (Guitar Combo), a High Gain head on a 4x12 (Guitar Stack), a Bass Round 1x15 combo (Bass
+Combo) and a Bass Punch head on an 8x10 (Bass Stack); the amp panel (Enter) changes either, and the amp in the room is
+drawn with the cabinet it has.
 
-Each has the knobs of a real amp, 0 to 10: **Gain** (how hard the preamp is driven, from clean into distortion),
+| Head | | Cabinet | |
+| --- | --- | --- | --- |
+| Clean | lots of headroom, clean and bright | 1x12 open back | lighter lows, a sweet top |
+| Crunch | clean at low gain, crunch as Gain goes up | 2x12 open back | fuller, still airy |
+| High Gain | two gain stages, tight lows | 4x12 closed back | a firm low thump and a midrange bite |
+| Bass: Round | deep and round, gentle drive | 1x15 bass | deep, soft on top |
+| Bass: Punch | punchy, more top end and drive | 4x10 bass | tight lows, more top |
+| | | 8x10 bass | big lows, a growl in the mids |
+
+The cabinets are how the speakers sound in the room, as you hear them standing in front of the amp, rather than how a
+microphone pressed against the cone hears them: no close-miking's boomy lows or bright peak, only the speakers' own
+response. Either part can be **bypassed**. Without its head, the amp plays whatever reaches it straight through the
+cabinet, so an amp plug-in on a Plug-in pedal can be the head; without its cabinet, it is a flat, full-range speaker,
+for a plug-in that brings its own cabinet.
+
+The head has the knobs of a real amp, 0 to 10: **Gain** (how hard the preamp is driven, from clean into distortion),
 **Bass**, **Middle** and **Treble** (flat at 5), **Presence** (the top end the power amp lets through) and **Master**
-(the amp's volume: 5 is unity, 10 is +12 dB). The speaker cabinet's own tone comes after them. Enter, facing an amp,
+(the amp's volume: 5 is unity, 10 is +12 dB, and it works with the head bypassed too). Enter, facing an amp,
 opens its panel: drag a knob up or down (Shift for fine moves), turn the scroll wheel over it, or double-click it for
 5. The panel also has the amp's input switch and which hardware input it plays. Plug a guitar or bass straight into
 the interface's instrument input; the amp is the only processing it needs. Wear headphones.
@@ -174,10 +187,15 @@ they would inside a DAW, so one that crashes takes SoundRoom with it, and like t
 aren't saved yet. Each instrument is a single point of sound in the room, so a plug-in's stereo output is heard as
 one channel, from where the instrument stands.
 
-**Amp simulators** (TONE3000 and other amp and cab models) belong on a **Speaker**'s inserts rather than on one of
-SoundRoom's amps, which would add their own preamp and cabinet on top. The Speaker plays its input just as it comes
-in, so with the simulator on its first insert, the Speaker is the amp: put it where the amp should stand, pick the
-interface input the guitar is plugged into, and switch its input on.
+**Amp simulators** (TONE3000 and other amp and cabinet models) work in two ways:
+
+- **As the head of one of SoundRoom's amps**: put the simulator on the amp's Plug-in pedal, bypass the amp's head, and
+  keep its cabinet. This suits a model of an amp alone, and gives you the pedals in front of it and a cabinet heard as
+  it would be in the room. A model that includes a miked cabinet carries that microphone's sound with it; bypass the
+  amp's cabinet for those, or use an amp-only model and let SoundRoom's cabinet do the rest.
+- **On a Speaker**: the Speaker plays its input as it comes in, so with the simulator on its first insert the Speaker
+  is the amp, sounding from where it stands, full range. Put it where the amp should stand, pick the interface input
+  the guitar is plugged into, and switch its input on.
 
 ## The mix window
 
