@@ -1,8 +1,11 @@
 extends CanvasLayer
 ## The mix window (Tab), laid out like a mixing desk: a channel strip for every instrument side by side, the master
-## strip on the right. A strip has the instrument's input at the top (which hardware input, for a Speaker), buttons
-## for input, mute and solo, a fader with its meter beside it, the fader's level and the highest peak beneath them,
-## and the instrument's name in its colour at the foot. As in Pro Tools, the peak readout holds the highest peak
+## strip on the right. A strip has its inserts at the top, then the instrument's input (which hardware input, for a
+## Speaker or an amp), buttons for input, mute and solo, a fader with its meter beside it, the fader's level and the
+## highest peak beneath them, and the instrument's name in its colour at the foot.
+## The inserts work as Pro Tools' do: click an empty one to choose a plug-in (its window opens), click a full one to
+## open or close its window, Cmd-click (Ctrl-click) to bypass it, and right-click for the rest. A bypassed insert is
+## blue. They play on the instrument's sound in order, before its fader. As in Pro Tools, the peak readout holds the highest peak
 ## until it is clicked (Alt-click clears them all), and clicking a meter does the same.
 ## It docks along the bottom of the screen so the room stays in view, and the music keeps playing.
 
@@ -23,11 +26,14 @@ var audio: SoundRoomAudio
 var _root: Control
 var _panel: PanelContainer
 var _strip_row: HBoxContainer
-var _strips: Array = []  # {inst, fader, meter, value, peak, input, mute, solo, source}
+var _strips: Array = []  # {inst, fader, meter, value, peak, input, mute, solo, source, inserts: [{button, style}]}
+var _insert_menu: PopupMenu  # what a right-click on a full insert offers
+var _menu_for := []  # [instrument, slot] that menu is open for
 var _signature := ""
 var _input_channels := -1
 var _master := {}
 var _status: Label
+var _problem_until := 0  # a plug-in that wouldn't load is reported in the status line for a few seconds
 
 
 func setup(the_app) -> void:
@@ -50,12 +56,19 @@ func open() -> void:
 	_refresh()
 
 
+## Closing puts away the inserts' windows: in the room the mouse looks around rather than pointing.
 func close() -> void:
 	_root.visible = false
+	_insert_menu.hide()
+	app.plugin_browser.hide()
+	for inst in app.instruments:
+		app.hide_insert_editors(inst)
 	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 
 
 func _input(event: InputEvent) -> void:
+	if app.plugin_browser.visible:  # the keys are for its search box
+		return
 	if is_open() and event is InputEventKey and event.pressed and not event.echo and event.physical_keycode in [KEY_TAB, KEY_ESCAPE]:
 		close()
 		get_viewport().set_input_as_handled()
@@ -123,8 +136,12 @@ func _build() -> void:
 	desk.add_child(VSeparator.new())
 	desk.add_child(_build_master())
 
+	_insert_menu = PopupMenu.new()
+	_insert_menu.id_pressed.connect(_on_insert_menu_chosen)
+	_root.add_child(_insert_menu)
+
 	var hint := Label.new()
-	hint.text = "Drag a fader (Shift for fine moves), or double-click or Alt-click it for 0 dB. Under each fader: its level, and the highest peak since you last clicked it (Alt-click clears them all).   I  input on: the keyboard plays it, or a Speaker or amp plays its input.   M  mute.   S  solo."
+	hint.text = "Inserts: click an empty one for a plug-in, a full one for its window, Cmd-click to bypass it (blue), right-click for more.   Drag a fader (Shift for fine moves), or double-click or Alt-click it for 0 dB. Under each fader: its level, and the highest peak since you last clicked it (Alt-click clears them all).   I  input on: the keyboard plays it, or a Speaker or amp plays its input.   M  mute.   S  solo."
 	hint.add_theme_font_size_override("font_size", 12)
 	hint.add_theme_color_override("font_color", DIM)
 	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -134,6 +151,9 @@ func _build() -> void:
 func _build_master() -> PanelContainer:
 	var strip := _strip_panel(STRIP_WIDTH + 14)
 	var box: VBoxContainer = strip.get_child(0)
+	var level_with_inserts := Control.new()  # so the faders line up with the instruments'
+	level_with_inserts.custom_minimum_size.y = _inserts_height()
+	box.add_child(level_with_inserts)
 	_small(box, "OUTPUT")
 	var limiter := _toggle("LIMIT", Color(0.55, 0.78, 1.0))
 	limiter.tooltip_text = "On: the mix can't go over full scale on its way into the master fader. Off: the plain sum of the mix. Either way, what leaves the master fader over full scale is cut off."
@@ -156,6 +176,7 @@ func _build_master() -> PanelContainer:
 func _build_strip(inst) -> Dictionary:
 	var strip := _strip_panel(STRIP_WIDTH)
 	var box: VBoxContainer = strip.get_child(0)
+	var inserts := _build_inserts(box, inst)
 	_small(box, "INPUT")
 	var source: Control
 	if inst.playable:
@@ -195,7 +216,41 @@ func _build_strip(inst) -> Dictionary:
 	box.add_child(_name_plate(inst.display_name, inst.color))
 	_strip_row.add_child(strip)
 	return {"inst": inst, "fader": pair.fader, "meter": pair.meter, "value": readouts.value, "peak": readouts.peak, "input": input,
-		"mute": mute, "solo": solo, "source": source}
+		"mute": mute, "solo": solo, "source": source, "inserts": inserts}
+
+
+const INSERT_HEIGHT := 19.0
+
+
+func _inserts_height() -> float:
+	return 14.0 + 6.0 + audio.get_max_inserts() * (INSERT_HEIGHT + 2.0)
+
+
+## A strip's insert slots, A to E as in Pro Tools.
+func _build_inserts(box: VBoxContainer, inst) -> Array:
+	_small(box, "INSERTS")
+	var column := VBoxContainer.new()
+	column.add_theme_constant_override("separation", 2)
+	box.add_child(column)
+	var slots := []
+	for slot in audio.get_max_inserts():
+		var button := Button.new()
+		button.focus_mode = Control.FOCUS_NONE
+		button.custom_minimum_size = Vector2(STRIP_WIDTH - 12, INSERT_HEIGHT)
+		button.clip_text = true
+		button.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		button.add_theme_font_size_override("font_size", 11)
+		var style := StyleBoxFlat.new()
+		style.set_corner_radius_all(3)
+		style.set_border_width_all(1)
+		style.content_margin_left = 4
+		style.content_margin_right = 4
+		for state in ["normal", "hover", "pressed", "hover_pressed"]:
+			button.add_theme_stylebox_override(state, style)
+		button.gui_input.connect(_on_insert_input.bind(inst, slot))
+		column.add_child(button)
+		slots.append({"button": button, "style": style})
+	return slots
 
 
 func _strip_panel(width: float) -> PanelContainer:
@@ -352,6 +407,7 @@ func _refresh() -> void:
 			strip.source.select(clampi(inst.input_channel + 1, 0, strip.source.item_count - 1))
 		strip.meter.feed([inst.meter_peak], [inst.meter_rms])
 		_show_peak(strip.peak, inst.peak_hold)
+		_show_inserts(strip.inserts, inst.inserts)
 
 	var m: Dictionary = app.meter
 	_master.meter.feed([m.get("peak_l", 0.0), m.get("peak_r", 0.0)], [m.get("rms_l", 0.0), m.get("rms_r", 0.0)])
@@ -360,7 +416,9 @@ func _refresh() -> void:
 	_master.value.text = _db_text(settings.master_volume_db)
 	_show_peak(_master.peak, app.master_peak_hold)
 	_master.limiter.set_pressed_no_signal(settings.limiter)
-	if app.meter_clipped:
+	if Time.get_ticks_msec() < _problem_until:
+		pass
+	elif app.meter_clipped:
 		_status.text = "Clipping: the output is going over full scale. Bring the master or an instrument down."
 		_status.add_theme_color_override("font_color", LevelMeter.RED)
 	elif app.meter_reduction_db > 0.1:
@@ -373,6 +431,28 @@ func _refresh() -> void:
 
 func _db_text(db: float) -> String:
 	return "-inf" if db <= Fader.SILENT + 0.05 else "%+.1f" % db
+
+
+## What each insert holds: empty, a plug-in (blue while bypassed), its border lit while its window is open.
+func _show_inserts(slots: Array, inserts: Array) -> void:
+	for slot in slots.size():
+		var insert: Dictionary = inserts[slot] if slot < inserts.size() else {}
+		var name: String = insert.get("plugin_name", "")
+		var button: Button = slots[slot].button
+		var style: StyleBoxFlat = slots[slot].style
+		button.text = name
+		button.tooltip_text = ("Insert %s: %s (%s). Click for its window, Cmd-click to bypass, right-click for more." % [
+			char(65 + slot), name, insert.get("plugin_maker", "")]) if name != "" else "Insert %s: click to choose a plug-in" % char(65 + slot)
+		if name == "":
+			style.bg_color = Color(0.1, 0.105, 0.12)
+		elif insert.get("on", true):
+			style.bg_color = Color(0.3, 0.32, 0.38)
+		else:
+			style.bg_color = Color(0.22, 0.36, 0.72)  # bypassed, in Pro Tools' blue
+		style.border_color = Color(1, 1, 1, 0.85) if insert.get("editor_open", false) else Color(0, 0, 0, 0.5)
+		var ink := Color(0.93, 0.94, 0.97) if name != "" else Color(0.5, 0.52, 0.58)
+		for state in ["font_color", "font_hover_color", "font_pressed_color"]:
+			button.add_theme_color_override(state, ink)
 
 
 ## A peak readout: the level in dBFS, red once anything has reached full scale.
@@ -412,6 +492,71 @@ func _on_source_selected(index: int, inst) -> void:
 
 func _on_limiter_toggled(on: bool) -> void:
 	app.set_limiter(on)
+
+
+func _on_insert_input(event: InputEvent, inst, slot: int) -> void:
+	if not (event is InputEventMouseButton) or not event.pressed:
+		return
+	var insert: Dictionary = inst.inserts[slot] if slot < inst.inserts.size() else {}
+	var full: bool = insert.get("plugin_name", "") != ""
+	var button: Button = _strip_for(inst).inserts[slot].button
+	if event.button_index == MOUSE_BUTTON_LEFT:
+		if not full:
+			_choose_insert(inst, slot, button)
+		elif event.meta_pressed or event.ctrl_pressed:  # Cmd-click bypasses, as in Pro Tools
+			app.set_insert_on(inst, slot, not insert.get("on", true))
+		else:
+			app.show_insert_editor(inst, slot, not insert.get("editor_open", false))
+	elif event.button_index == MOUSE_BUTTON_RIGHT and full:
+		_menu_for = [inst, slot]
+		_insert_menu.clear()
+		_insert_menu.add_item("Close its window" if insert.get("editor_open", false) else "Open its window", 0)
+		_insert_menu.add_item("Bypass off" if not insert.get("on", true) else "Bypass", 1)
+		_insert_menu.add_item("Replace with…", 2)
+		_insert_menu.add_separator()
+		_insert_menu.add_item("Remove", 3)
+		_insert_menu.position = Vector2i(button.get_screen_position() + Vector2(0, button.size.y))
+		_insert_menu.popup()
+	button.accept_event()
+
+
+func _on_insert_menu_chosen(id: int) -> void:
+	if _menu_for.is_empty() or not app.instruments.has(_menu_for[0]):
+		return
+	var inst = _menu_for[0]
+	var slot: int = _menu_for[1]
+	var insert: Dictionary = inst.inserts[slot]
+	match id:
+		0:
+			app.show_insert_editor(inst, slot, not insert.editor_open)
+		1:
+			app.set_insert_on(inst, slot, not insert.on)
+		2:
+			_choose_insert(inst, slot, _strip_for(inst).inserts[slot].button)
+		3:
+			app.clear_insert(inst, slot)
+
+
+## The plug-in browser, for one insert; what is chosen goes in it, and its window opens.
+func _choose_insert(inst, slot: int, near: Control) -> void:
+	app.plugin_browser.open_for("Insert %s on the %s" % [char(65 + slot), inst.display_name], app.available_plugins(),
+		near.get_screen_position() + Vector2(near.size.x + 6, 0), func(plugin: Dictionary) -> void:
+			if not app.instruments.has(inst):
+				return
+			var problem: String = app.set_insert(inst, slot, plugin.id)
+			if problem != "":
+				_status.text = "%s couldn't be loaded: %s." % [plugin.name, problem]
+				_status.add_theme_color_override("font_color", WARN)
+				_problem_until = Time.get_ticks_msec() + 5000
+			else:
+				app.show_insert_editor(inst, slot, true))
+
+
+func _strip_for(inst) -> Dictionary:
+	for strip in _strips:
+		if strip.inst == inst:
+			return strip
+	return {}
 
 
 func _on_peak_input(event: InputEvent, inst) -> void:

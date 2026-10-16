@@ -6,12 +6,15 @@
 //      build/engine_tests --device ["name" [buffer [left right]]]
 //                                    (lists audio devices, opens one silently, prints its latency)
 //      build/engine_tests --midi     (lists MIDI devices and reports the notes they send for 15 seconds)
+//      build/engine_tests --plugins  (lists the effect plug-ins installed, with what kind each seems to be)
 
 #include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <functional>
+#include <iterator>
+#include <tuple>
 #include <numeric>
 #include <string>
 #include <thread>
@@ -387,6 +390,11 @@ int main(int argc, char** argv) {
         return deviceProbe(config);
     }
     if (argc > 1 && std::string(argv[1]) == "--midi") return midiProbe(argc > 2 ? std::atoi(argv[2]) : 15);
+    if (argc > 1 && std::string(argv[1]) == "--plugins") {
+        for (const PluginDescription& p : PluginInstance::available())
+            std::printf("%-26s %-34s %s\n", p.category.c_str(), p.name.c_str(), p.maker.c_str());
+        return 0;
+    }
     std::printf("SoundRoom audio core: offline checks\n");
 
     {
@@ -1335,6 +1343,11 @@ int main(int argc, char** argv) {
         const int amp = room.engine.addSource(InstrumentKind::GuitarCombo, {0.0f, 0.3f, 2.0f}, 1.0f, 0.4f);
         room.engine.setSourceInput(amp, true);
         std::vector<float> guitar = pluckedString(110.0, 1.0, 0.1f);
+        const bool none_yet = !room.engine.looperStatus(amp).present && !room.engine.looperAction(amp, Looper::Press);
+        const int loop_at = room.engine.addPedal(amp, PedalKind::Looper);
+        const bool only_one = room.engine.addPedal(amp, PedalKind::Looper) < 0;
+        check(none_yet && loop_at == 0 && only_one && room.engine.looperStatus(amp).present && room.engine.looperStatus(amp).state == Looper::Empty,
+              "an amp starts without a loop pedal; one can be put on its board, but only one", "");
         renderSeconds(room.engine, 0.2);
         room.engine.looperAction(amp, Looper::Press);
         Render live = renderSeconds(room.engine, 1.0, [&](int64_t n) { return guitar[size_t(n) % guitar.size()]; });
@@ -1356,7 +1369,8 @@ int main(int argc, char** argv) {
         const LooperStatus kept = room.engine.looperStatus(amp);
         room.engine.configure(44100, 512, &err);  // a new sample rate can't
         const LooperStatus gone = room.engine.looperStatus(amp);
-        check(hushed.peak < 1e-4 && kept.state == Looper::Playing && gone.state == Looper::Empty && !room.engine.looperAction(room.drums, Looper::Press),
+        check(hushed.peak < 1e-4 && kept.state == Looper::Playing && gone.present && gone.state == Looper::Empty &&
+                  !room.engine.looperAction(room.drums, Looper::Press),
               "the amp's knobs act on the loop too; a loop survives a new buffer size but not a new sample rate", "");
     }
 
@@ -1365,7 +1379,7 @@ int main(int argc, char** argv) {
         constexpr float kRate = 48000.0f;
         // Through a pedal in blocks of 128, with some controls set: {control, value}.
         auto through = [&](Pedal& pedal, std::vector<float> x, double beat = 0.0) {
-            for (size_t i = 0; i < x.size(); i += 128) pedal.process(x.data() + i, int(std::min<size_t>(128, x.size() - i)), beat);
+            for (size_t i = 0; i < x.size(); i += 128) pedal.process(x.data() + i, int(std::min<size_t>(128, x.size() - i)), PedalTiming{beat, -1, 0});
             return x;
         };
         auto make = [&](PedalKind kind, std::initializer_list<std::pair<int, float>> settings = {}) {
@@ -1405,7 +1419,7 @@ int main(int argc, char** argv) {
         const std::vector<float> guitar = pluckedString(110.0, 2.0, 0.1f);
         for (int k = 0; k < kPedalKinds; ++k) {
             const PedalKind kind = PedalKind(k);
-            if (kind == PedalKind::Delay || kind == PedalKind::Reverb || kind == PedalKind::Plugin) continue;
+            if (kind == PedalKind::Delay || kind == PedalKind::Reverb || kind == PedalKind::Looper || kind == PedalKind::Plugin) continue;
             auto pedal = make(kind);
             pedal->setOn(false);
             if (through(*pedal, guitar) != guitar) {
@@ -1532,7 +1546,7 @@ int main(int argc, char** argv) {
             for (size_t i = 0; i < x.size(); i += 128) {
                 if (i >= off) pedal.setOn(false);
                 if (i == size_t(seconds * kRate / 2) && switch_off_at >= 0) x[i] = 1.0f;  // a second hit, once it is off
-                pedal.process(x.data() + i, int(std::min<size_t>(128, x.size() - i)), beat);
+                pedal.process(x.data() + i, int(std::min<size_t>(128, x.size() - i)), PedalTiming{beat, -1, 0});
             }
             return x;
         };
@@ -1577,7 +1591,7 @@ int main(int argc, char** argv) {
         for (size_t i = 0, block = 0; i < low.size(); i += 128, ++block) {
             if (block % 40 == 20) drive->setOn(block % 80 != 20);
             float before = i ? low[i - 1] : 0.0f;
-            drive->process(low.data() + i, 128, 0.0);
+            drive->process(low.data() + i, 128, PedalTiming{});
             for (size_t j = i; j < i + 128; ++j) {
                 const double step = std::fabs(low[j] - before);
                 before = low[j];
@@ -1635,10 +1649,11 @@ int main(int argc, char** argv) {
               "on the board, the tuner hushes the amp and reads the open E string; switched off, the amp sounds again",
               fmt("note %.0f, %+.1f cents", reading.note, reading.cents));
 
-        // The loop pedal comes after the effects, so a loop keeps the effects it was recorded through.
+        // A loop pedal after a tremolo records what comes out of it.
         const int tremolo_at = room.engine.addPedal(amp, PedalKind::Tremolo);
         room.engine.setPedalControl(amp, tremolo_at, 1, 10.0f);
         room.engine.setPedalControl(amp, tremolo_at, 2, 10.0f);
+        room.engine.addPedal(amp, PedalKind::Looper);
         room.engine.looperAction(amp, Looper::Press);
         play(1.0);
         room.engine.looperAction(amp, Looper::Press);
@@ -1652,9 +1667,12 @@ int main(int argc, char** argv) {
             low_w = std::min(low_w, r);
             high_w = std::max(high_w, r);
         }
-        check(high_w > 0.001 && low_w / high_w < 0.2, "the loop pedal records what comes out of the pedals: the loop keeps its tremolo after the tremolo is gone",
+        check(high_w > 0.001 && low_w / high_w < 0.2, "a loop pedal after a tremolo records what comes out of it: the loop keeps its tremolo after the tremolo is gone",
               fmt("quietest against loudest: %.2f", low_w / high_w));
-        room.engine.looperAction(amp, Looper::Clear);
+        room.engine.removePedal(amp, int(room.engine.pedals(amp).size()) - 1);
+        renderSeconds(room.engine, 0.3);
+        Render unlooped = renderSeconds(room.engine, 0.5);
+        check(!room.engine.looperStatus(amp).present && unlooped.peak < 1e-5, "taking the loop pedal off the board takes its loop with it", "");
 
         // A new sample rate: the pedals are made ready for it, and a delay still echoes after the same time.
         const int echo = room.engine.addPedal(amp, PedalKind::Delay);
@@ -1707,9 +1725,68 @@ int main(int argc, char** argv) {
               "the Plug-in pedal on an amp holds AUDelay, and the amp plays through it", load_error.empty() ? "loaded" : load_error);
         room.engine.removePedal(amp, slot);
         renderSeconds(room.engine, 0.1);
+
+        // Inserts on a channel: AUDelay on the drums, which then echo a second after each hit.
+        Room mix;
+        mix.quietRoom(mix.drums);
+        mix.face(0.5f, -2.0f, 0.0f);
+        std::string insert_error, bad_error;
+        const bool inserted = mix.engine.setInsert(mix.drums, 1, au_delay, &insert_error);
+        const bool bad = mix.engine.setInsert(mix.drums, 2, "AU:00000000:00000000:00000000", &bad_error) ||
+                         mix.engine.setInsert(mix.drums, AudioEngine::kMaxInserts, au_delay, &bad_error);
+        const std::vector<PedalStatus> slots = mix.engine.inserts(mix.drums);
+        auto hitAndListen = [&]() {
+            renderSeconds(mix.engine, 0.3);
+            mix.engine.noteOn(mix.drums, 36, 1.0f);
+            Render r = renderSeconds(mix.engine, 1.4);
+            double hit = 0, between = 0, echo = 0;
+            for (size_t i = 0; i < r.l.size(); ++i) {
+                const double t = double(i) / kRate, a = std::fabs(r.l[i]);
+                if (t < 0.3) hit = std::max(hit, a);
+                else if (t > 0.5 && t < 0.9) between = std::max(between, a);
+                else if (t > 0.95 && t < 1.3) echo = std::max(echo, a);
+            }
+            return std::make_tuple(hit, between, echo);
+        };
+        const auto [kick, between, echo_level] = hitAndListen();
+        check(inserted && !bad && slots.size() == size_t(AudioEngine::kMaxInserts) && slots[1].plugin.name == "AUDelay" && slots[0].plugin.id.empty() &&
+                  echo_level > 0.2 * kick && echo_level > 4.0 * between,
+              "a plug-in on a channel's insert plays on that instrument: the drums echo a second after the kick",
+              insert_error.empty() ? fmt("the kick at %.0f dBFS, its echo at %.0f dBFS", db(kick), db(echo_level)) : insert_error);
+        mix.engine.setInsertOn(mix.drums, 1, false);
+        const auto [hit2, between2, echo2] = hitAndListen();
+        mix.engine.setInsertOn(mix.drums, 1, true);
+        const bool cleared = mix.engine.clearInsert(mix.drums, 1) && !mix.engine.clearInsert(mix.drums, 1);
+        const auto [hit3, between3, echo3] = hitAndListen();
+        check(echo2 < 0.05 * hit2 && cleared && mix.engine.inserts(mix.drums)[1].plugin.id.empty() && echo3 < 0.05 * hit3 && hit3 > 0.5 * kick,
+              "bypassed, or taken out, it no longer echoes", "");
 #else
         check(plugins.empty(), "no plug-ins on this platform yet", "");
 #endif
+    }
+
+    {
+        std::printf("\nWhat kind of plug-in\n");
+        const char* const kSeen[][3] = {
+            {"UADx Lion 68 Super Lead Amp", "Universal Audio (UADx)", "Amps & cabinets"}, {"TONE3000", "TONE3000", "Amps & cabinets"},
+            {"UADx Dream 65 Reverb Amp", "Universal Audio (UADx)", "Amps & cabinets"}, {"Pro-Q 3", "FabFilter", "EQ"},
+            {"UADx 610-A Preamp and EQ", "Universal Audio (UADx)", "EQ"}, {"Pro-C 2", "FabFilter", "Dynamics"},
+            {"UADx 1176LN Rev E Compressor", "Universal Audio (UADx)", "Dynamics"}, {"EchoBoy", "Soundtoys", "Delay"},
+            {"UADx Galaxy Tape Echo", "Universal Audio (UADx)", "Delay"}, {"UADx Oxide Tape Recorder", "Universal Audio (UADx)", "Saturation & distortion"},
+            {"UADx Ampex ATR-102 Master Tape", "Universal Audio (UADx)", "Saturation & distortion"}, {"ValhallaSupermassive", "Valhalla DSP, LLC", "Reverb"},
+            {"RX 11 De-reverb", "iZotope", "Restoration"}, {"Little AlterBoy", "Soundtoys", "Pitch & vocal"}, {"PhaseMistress", "Soundtoys", "Modulation"},
+            {"AULowpass", "Apple", "Filter"}, {"UADx SSL E Channel Strip", "Universal Audio (UADx)", "Channel strips"}, {"Gateway", "Atkinson Advanced Modeling, LLC", "Other"},
+            {"Vocal EQ", "Antares", "EQ"}, {"Ozone 12", "iZotope", "Mastering"}, {"dearVR MIX", "Dear Reality", "Spatial"},
+        };
+        bool sorted = true;
+        std::string wrong;
+        for (const auto& seen : kSeen)
+            if (guessPluginCategory(seen[0], seen[1], {}) != seen[2]) {
+                sorted = false;
+                wrong += std::string(" ") + seen[0] + " -> " + guessPluginCategory(seen[0], seen[1], {}) + ";";
+            }
+        check(sorted && guessPluginCategory("Mystery Box", "Someone", {"Effects", "Reverb"}) == "Reverb",
+              "plug-ins are sorted by what they are, from their names (or their tags, where they have them)", sorted ? fmt("%.0f names", double(std::size(kSeen))) : wrong);
     }
 
     {

@@ -97,8 +97,9 @@ struct PedalStatus {
     bool editor_open = false;
 };
 
-// What a loop pedal is doing, for the game to show.
+// What an amp's loop pedal is doing, for the game to show.
 struct LooperStatus {
+    bool present = false;  // the amp has a loop pedal on its board
     Looper::State state = Looper::Empty;
     double length = 0, position = 0, capacity = 0;  // seconds
     bool can_undo = false, can_redo = false;
@@ -169,18 +170,18 @@ public:
     // ── Amps ─────────────────────────────────────────────────────────────────────────────────────────────
     static constexpr double kLoopSeconds = 90.0;  // the longest loop a pedal holds
     void setAmpControl(int id, AmpControl control, float value);  // a knob, 0 to 10
-    // The loop pedal in front of an amp. The first Press gives it its memory (two buffers of kLoopSeconds),
-    // allocated here on the calling thread. False if the source isn't an amp.
+    // The loop pedal on an amp's board (a PedalKind::Looper; see addPedal), whose controls are its level (5 = as
+    // recorded), Sync (recordings start and end on bar lines while the patterns run) and whether finishing the first
+    // recording goes straight into overdubbing. The first Press gives it its memory (two buffers of kLoopSeconds),
+    // allocated here on the calling thread. False if the amp has no loop pedal.
     bool looperAction(int id, Looper::Action action);
-    // Playback level (1 = as recorded); whether recordings start and end on bar lines while the patterns run; and
-    // whether finishing the first recording goes straight into overdubbing.
-    void setLooperOptions(int id, float level, bool sync, bool overdub_after_record);
     LooperStatus looperStatus(int id) const;
 
     // The effect pedals in front of an amp (pedals.h), up to kMaxPedals, numbered in the order the signal passes
     // through them. A new pedal is switched on, with its controls where they start. Each call takes effect at the next
     // block; pedals taken off the board are freed once the audio thread has let go of them.
-    int addPedal(int id, PedalKind kind, int at = -1);  // where it went, or -1 (not an amp, or the board is full)
+    // Where it went, or -1: not an amp, the board is full, or a second loop pedal.
+    int addPedal(int id, PedalKind kind, int at = -1);
     bool removePedal(int id, int index);
     bool movePedal(int id, int from, int to);
     void setPedalOn(int id, int index, bool on);
@@ -193,6 +194,17 @@ public:
     bool loadPedalPlugin(int id, int index, const std::string& plugin_id, std::string* error);
     // The plug-in's own window; `title` names it. False if there is no plug-in there.
     bool showPluginEditor(int id, int index, bool show, const std::string& title = "");
+
+    // ── Inserts ──────────────────────────────────────────────────────────────────────────────────────────
+    // Plug-ins on any source's channel, as in the inserts of a DAW's mix window: kMaxInserts slots, played in order
+    // on the instrument's sound before its fader (for an amp, after its pedals and the amp itself). Each slot holds a
+    // plug-in or nothing, and a plug-in can be bypassed. Game thread, which on macOS must be the main thread.
+    static constexpr int kMaxInserts = 5;
+    bool setInsert(int id, int slot, const std::string& plugin_id, std::string* error);  // replaces what was there
+    bool clearInsert(int id, int slot);
+    void setInsertOn(int id, int slot, bool on);  // off = bypassed
+    std::vector<PedalStatus> inserts(int id) const;  // one for each slot; an empty `plugin` where there is none
+    bool showInsertEditor(int id, int slot, bool show, const std::string& title = "");
     void setListener(Vec3 position, Vec3 ahead, Vec3 up);
     void noteOn(int id, int note, float velocity);
     void noteOff(int id, int note);
@@ -262,14 +274,16 @@ private:
             NoteOn, NoteOff, AllNotesOff, Binaural, Reverb, MasterVolume, SourceInput,
             PatternNoteSet, PatternNoteRemove, PatternClear, PatternSteps, SourceLoop,
             SequencerRunning, Tempo, Swing, Click, ClickVolume, Reverb2, SourceGain, Falloff, LimiterOn,
-            AmpKnob, LooperMemory, LooperAct, LooperOptions, PedalBoardSet, PedalOn, PedalControl,
+            AmpKnob, LooperMemory, LooperAct, PedalBoardSet, PedalOn, PedalControl,
         } type = AddSource;
         int id = 0;
         float v[9] = {};
         Source* source = nullptr;
         float* memory[2] = {nullptr, nullptr};  // LooperMemory
         int64_t count = 0;
-        Pedal* pedals[kMaxPedals] = {};  // PedalBoardSet: the new order (`count` of them); PedalOn, PedalControl: [0]
+        // PedalBoardSet: the new order (`count` of them; v[0] is 0 for the pedals, 1 for the inserts). PedalOn,
+        // PedalControl, LooperMemory and LooperAct: the pedal, [0].
+        Pedal* pedals[kMaxPedals] = {};
         uint32_t epoch = 0;
     };
 
@@ -280,7 +294,8 @@ private:
     void allocateBuffers();
     std::unique_ptr<Instrument> makeInstrument(InstrumentKind kind) const;
     void connect(Source& source);  // an amp's pedals and knobs, after its instrument is (re)built
-    bool sendBoard(Source& source); // hands the audio thread the amp's pedals in their new order
+    bool sendBoard(Source& source, bool inserts = false);  // hands the audio thread the pedals (or inserts) anew
+    LooperPedal* looperOf(const Source& source) const;     // the loop pedal on its board, if any
     void reapPedals();              // frees pedals the audio thread has let go of
     Source* owned(int id) const;  // the source with this id, unless it is on its way out
     void reap();                  // frees removed sources the audio thread has finished with

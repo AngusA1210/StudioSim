@@ -96,7 +96,7 @@ protected:
         hold_for_ = int(0.03f * sr_);
     }
     void clear() override { env_ = gain_ = 0.0f; }
-    void run(float* io, int n, double) override {
+    void run(float* io, int n, const PedalTiming&) override {
         for (int i = 0; i < n; ++i) {
             env_ = std::max(std::fabs(io[i]), env_ * follow_);
             if (env_ > open_at_) {
@@ -132,7 +132,7 @@ protected:
         blend_ = clampKnob(control(3)) / 10.0f;  // 10: all compressed; less mixes the untouched signal back in
     }
     void clear() override { env_ = 0.0f; }
-    void run(float* io, int n, double) override {
+    void run(float* io, int n, const PedalTiming&) override {
         constexpr float kKnee = 6.0f;
         const float slope = 1.0f - 1.0f / ratio_;
         for (int i = 0; i < n; ++i) {
@@ -173,7 +173,7 @@ protected:
         level_ = levelKnob(control(2)) * kTrim;
     }
     void clear() override { hump_.z = tone_.z = fizz_.z = 0.0f; }
-    void run(float* io, int n, double) override {
+    void run(float* io, int n, const PedalTiming&) override {
         for (int i = 0; i < n; ++i) {
             const float x = io[i];
             const float driven = os_.process(hump_.highpass(x) * gain_, [](float v) { return std::tanh(v); });
@@ -213,7 +213,7 @@ protected:
         input_.z = dark_.z = bright_.z = 0.0f;
         between_.reset();
     }
-    void run(float* io, int n, double) override {
+    void run(float* io, int n, const PedalTiming&) override {
         for (int i = 0; i < n; ++i) {
             const float y = os_.process(input_.highpass(io[i]) * gain_, [this](float v) {
                 v = v > 0.0f ? std::tanh(v) : 0.8f * std::tanh(v / 0.8f);  // the two halves clip a little differently
@@ -249,7 +249,7 @@ protected:
         countdown_ = 0;
     }
     void clear() override { env_ = ic1_ = ic2_ = 0.0f; }
-    void run(float* io, int n, double) override {
+    void run(float* io, int n, const PedalTiming&) override {
         constexpr float kBottom = 150.0f;
         for (int i = 0; i < n; ++i) {
             const float a = std::fabs(io[i]);
@@ -295,7 +295,7 @@ protected:
         mix_ = clampKnob(control(2)) / 10.0f;  // 5: half and half, the classic chorus; 10: only the wavering copy (vibrato)
     }
     void clear() override { line_.clear(); }
-    void run(float* io, int n, double) override {
+    void run(float* io, int n, const PedalTiming&) override {
         const float base = 0.007f * sr_;
         for (int i = 0; i < n; ++i) {
             phase_ = wrap01(phase_ + rate_);
@@ -324,7 +324,7 @@ protected:
         for (float& s : state_) s = 0.0f;
         last_ = 0.0f;
     }
-    void run(float* io, int n, double) override {
+    void run(float* io, int n, const PedalTiming&) override {
         constexpr float kBottom = 200.0f;
         for (int i = 0; i < n; ++i) {
             phase_ = wrap01(phase_ + rate_);
@@ -362,7 +362,7 @@ protected:
         shape_ = linKnob(control(2), 1.0f, 20.0f);  // from a smooth sine towards a square wave's hard chop
         norm_ = 1.0f / std::tanh(shape_);
     }
-    void run(float* io, int n, double) override {
+    void run(float* io, int n, const PedalTiming&) override {
         for (int i = 0; i < n; ++i) {
             phase_ = wrap01(phase_ + rate_);
             const float wave = std::tanh(shape_ * sineOf(phase_)) * norm_;
@@ -404,8 +404,9 @@ protected:
         sync_ = control(4) > 0.5f;
         glide_ = 1.0f - std::exp(-1.0f / (0.08f * sr_));
     }
-    void runTrails(float* io, int n, float feed_from, float feed_to, double beat_samples) override {
-        float target = sync_ && beat_samples > 0.0 ? float(beat_samples) * kBeats[size_t(division_)] : seconds_ * sr_;
+    void runTrails(float* io, int n, float feed_from, float feed_to, const PedalTiming& timing) override {
+        const double beat = timing.beat_samples;
+        float target = sync_ && beat > 0.0 ? float(beat) * kBeats[size_t(division_)] : seconds_ * sr_;
         target = std::clamp(target, 2.0f, kMaxSeconds * sr_);
         if (delay_ < 0.0f) delay_ = target;
         for (int i = 0; i < n; ++i) {
@@ -416,7 +417,7 @@ protected:
             io[i] += echo * mix_;
         }
     }
-    void run(float*, int, double) override {}
+    void run(float*, int, const PedalTiming&) override {}
 
 private:
     DelayLine line_;
@@ -456,7 +457,7 @@ protected:
         }
         wet_ = clampKnob(control(2)) / 10.0f * 0.5f / std::sqrt(rt60);  // a longer tail holds more energy
     }
-    void runTrails(float* io, int n, float feed_from, float feed_to, double) override {
+    void runTrails(float* io, int n, float feed_from, float feed_to, const PedalTiming&) override {
         constexpr float kInSign[kLines] = {1, -1, 1, 1, -1, 1, -1, -1};
         for (int i = 0; i < n; ++i) {
             float x = io[i] * (feed_from + (feed_to - feed_from) * float(i + 1) / float(n));
@@ -483,7 +484,7 @@ protected:
             io[i] += out * wet_;
         }
     }
-    void run(float*, int, double) override {}
+    void run(float*, int, const PedalTiming&) override {}
 
 private:
     static constexpr int kLines = 8;
@@ -513,6 +514,7 @@ PedalControls defaultPedalControls(PedalKind kind) {
         case PedalKind::Tremolo:        return {5, 6, 3, 0, 0};       // Rate, Depth, Shape
         case PedalKind::Delay:          return {5.5f, 4, 4, 5, 0};    // Time (290 ms), Repeats, Mix, Tone, Sync
         case PedalKind::Reverb:         return {5, 5, 3, 0, 0};       // Decay (1.5 s), Tone, Mix
+        case PedalKind::Looper:         return {5, 1, 0, 0, 0};       // Level, Sync, Overdub after recording
         default:                        return {0, 0, 0, 0, 0};
     }
 }
@@ -542,6 +544,7 @@ std::unique_ptr<Pedal> Pedal::make(PedalKind kind, float sample_rate) {
         case PedalKind::Tremolo:        pedal = std::make_unique<Tremolo>(); break;
         case PedalKind::Delay:          pedal = std::make_unique<Delay>(); break;
         case PedalKind::Reverb:         pedal = std::make_unique<Reverb>(); break;
+        case PedalKind::Looper:         pedal = std::make_unique<LooperPedal>(); break;
         case PedalKind::Plugin:         pedal = std::make_unique<PluginPedal>(); break;
         default: return nullptr;
     }
@@ -562,7 +565,7 @@ void Pedal::setControl(int index, float value) {
     changed_ = true;
 }
 
-void Pedal::process(float* io, int n, double beat_samples) {
+void Pedal::process(float* io, int n, const PedalTiming& timing) {
     started_ = true;
     if (changed_) {
         update();
@@ -572,20 +575,22 @@ void Pedal::process(float* io, int n, double beat_samples) {
     if (trails()) {
         const float from = share_;
         share_ = target > share_ ? std::min(share_ + step * float(n), 1.0f) : std::max(share_ - step * float(n), 0.0f);
-        runTrails(io, n, from, share_, beat_samples);
+        runTrails(io, n, from, share_, timing);
         return;
     }
     if (share_ == 0.0f && target == 0.0f) return;  // bypassed: the signal passes untouched
     if (share_ == 0.0f) clear();
     if (share_ == 1.0f && target == 1.0f) {
-        run(io, n, beat_samples);
+        run(io, n, timing);
         return;
     }
     float dry[kChunk];  // switching: crossfade between the untouched signal and the effect
     for (int done = 0; done < n;) {
         const int m = std::min(n - done, kChunk);
         std::copy(io + done, io + done + m, dry);
-        run(io + done, m, beat_samples);
+        PedalTiming part = timing;  // the next bar line, counted from this part of the block
+        if (part.next_bar >= 0) part.next_bar = std::max<int64_t>(part.next_bar - done, 0);
+        run(io + done, m, part);
         for (int i = 0; i < m; ++i) {
             share_ = target > share_ ? std::min(share_ + step, 1.0f) : std::max(share_ - step, 0.0f);
             io[done + i] = dry[i] + (io[done + i] - dry[i]) * share_;
@@ -615,7 +620,7 @@ void TunerPedal::clear() {
     phase_ = 0;
 }
 
-void TunerPedal::run(float* io, int n, double) {
+void TunerPedal::run(float* io, int n, const PedalTiming&) {
     uint32_t w = written_.load(std::memory_order_relaxed);
     const bool mute = control(0) > 0.5f;
     for (int i = 0; i < n; ++i) {
@@ -686,6 +691,41 @@ TunerReading detectPitch(const float* x, int n, float rate) {
     return r;
 }
 
+// ── The loop pedal ─────────────────────────────────────────────────────────────────────────────────────────
+
+LooperPedal::LooperPedal() : Pedal(PedalKind::Looper) {}
+
+void LooperPedal::prepare(float sample_rate) {
+    if (sample_rate != sr_ || heard_.empty()) {
+        looper_.reset();
+        memory_[0].reset();
+        memory_[1].reset();
+        capacity_ = 0;
+    }
+    Pedal::prepare(sample_rate);
+    heard_.assign(kMaxPedalBlock, 0.0f);
+}
+
+bool LooperPedal::allocate(double seconds) {
+    if (memory_[0]) return false;
+    capacity_ = int64_t(seconds * sr_);
+    memory_[0].reset(new float[size_t(capacity_)]());
+    memory_[1].reset(new float[size_t(capacity_)]());
+    return true;
+}
+
+void LooperPedal::update() {
+    looper_.setLevel(levelKnob(control(0)));
+    looper_.setSync(control(1) > 0.5f);
+    looper_.setDubAfterRecord(control(2) > 0.5f);
+}
+
+void LooperPedal::runTrails(float* io, int n, float, float, const PedalTiming& timing) {
+    n = std::min(n, int(heard_.size()));
+    std::copy(io, io + n, heard_.begin());
+    looper_.process(heard_.data(), io, n, timing.next_bar, timing.bar);  // adds the loop to what passes through
+}
+
 // ── The plug-in pedal ──────────────────────────────────────────────────────────────────────────────────────
 
 PluginPedal::PluginPedal(std::unique_ptr<PluginInstance> plugin) : Pedal(PedalKind::Plugin), plugin_(std::move(plugin)) {}
@@ -698,9 +738,9 @@ void PluginPedal::prepare(float sample_rate) {
     ready_ = plugin_ && plugin_->prepare(sample_rate, 4096, &error_);
 }
 
-void PluginPedal::run(float* io, int n, double beat_samples) {
+void PluginPedal::run(float* io, int n, const PedalTiming& timing) {
     if (!ready_) return;
-    if (beat_samples > 0.0) plugin_->setTempo(60.0 * sr_ / beat_samples);
+    if (timing.beat_samples > 0.0) plugin_->setTempo(60.0 * sr_ / timing.beat_samples);
     plugin_->process(io, n);
 }
 

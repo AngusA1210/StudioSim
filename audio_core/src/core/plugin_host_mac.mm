@@ -3,6 +3,7 @@
 
 #include "plugin_host.h"
 
+#import <AVFoundation/AVFoundation.h>
 #import <AppKit/AppKit.h>
 #import <AudioToolbox/AUCocoaUIView.h>
 #import <AudioToolbox/AudioToolbox.h>
@@ -50,6 +51,10 @@ PluginDescription describe(AudioComponent component) {
     const size_t colon = full.find(": ");
     out.maker = colon == std::string::npos ? "" : full.substr(0, colon);
     out.name = colon == std::string::npos ? full : full.substr(colon + 2);
+    std::vector<std::string> tags;  // what it says it is, if it says (few but Apple's do)
+    AVAudioUnitComponent* about = [[AVAudioUnitComponentManager sharedAudioUnitComponentManager] componentsMatchingDescription:d].firstObject;
+    for (NSString* tag in about.allTagNames) tags.push_back(tag.UTF8String ? tag.UTF8String : "");
+    out.category = guessPluginCategory(out.name, out.maker, tags);
     return out;
 }
 

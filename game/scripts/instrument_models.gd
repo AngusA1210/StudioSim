@@ -1,8 +1,8 @@
 extends RefCounted
 ## What each kind of instrument looks like, built from simple shapes: a drum kit, a monophonic bass synth, a
 ## modular synth for the pad, tubular bells, an electric piano, a PA speaker on a tripod, and guitar and bass amps
-## (combos, and heads on cabinets), each with its loop pedal on the floor in front. An amp's effect pedals are added
-## beside the loop pedal as they are put on its board (stomp_box).
+## (combos, and heads on cabinets). An amp's effect pedals stand on the floor in front of it as they are put on its
+## board (stomp_box, and loop_pedal for the loop pedal).
 ##
 ## Each model stands on the floor (y = 0) and faces +z. The parts drawn in the instrument's own colour use the
 ## `accent` material, which the instrument lights up as it plays. An amp's pedal has an `led` material too, which
@@ -13,8 +13,7 @@ const KEY_WHITE := 0.0235  # width of a white key, in metres
 static var _shared := {}  # finishes every model uses, made once
 
 
-## Returns {node: Node3D, accent: StandardMaterial3D} and, for an amp, {led: StandardMaterial3D} and where its loop
-## pedal stands, {pedal_spot: Vector3}.
+## Returns {node: Node3D, accent: StandardMaterial3D} and, for an amp, where its pedals stand, {pedal_spot: Vector3}.
 static func build(kind: String, color: Color) -> Dictionary:
 	var node := Node3D.new()
 	var accent := StandardMaterial3D.new()
@@ -50,8 +49,6 @@ static func build(kind: String, color: Color) -> Dictionary:
 			_electric_piano(node, accent)
 		"live":
 			_speaker(node, accent)
-	if built.has("pedal_spot"):
-		built.led = _loop_pedal(node, built.pedal_spot.z)
 	return built
 
 
@@ -270,19 +267,21 @@ static func _amp_head(node: Node3D, accent: Material, size: Vector3, on_top: flo
 	_box(node, Vector3(0.2, 0.03, 0.04), black, Vector3(0, on_top + size.y + 0.03, 0))
 
 
-## The loop pedal on the floor in front of an amp, `ahead` metres out. Returns its light's material.
-static func _loop_pedal(node: Node3D, ahead: float) -> StandardMaterial3D:
+## The loop pedal: a little larger than the others, with a ring of light round its level knob that shows what it is
+## doing. It stands on the floor at the origin, facing +z. Returns {node: Node3D, led: StandardMaterial3D}.
+static func loop_pedal() -> Dictionary:
+	var node := Node3D.new()
 	var body := _plain(Color(0.2, 0.22, 0.26))
 	body.metallic = 0.5
-	_box(node, Vector3(0.075, 0.045, 0.125), body, Vector3(0, 0.0225, ahead))
-	_cylinder(node, 0.013, 0.02, _finish("chrome"), Vector3(0, 0.055, ahead + 0.025))  # the footswitch
+	_box(node, Vector3(0.075, 0.045, 0.125), body, Vector3(0, 0.0225, 0))
+	_cylinder(node, 0.013, 0.02, _finish("chrome"), Vector3(0, 0.055, 0.025))  # the footswitch
 	var led := StandardMaterial3D.new()
 	led.albedo_color = Color(0.1, 0.1, 0.1)
 	led.emission_enabled = true
 	led.emission = Color(0, 0, 0)
-	_ring(node, 0.018, 0.026, led, Vector3(0, 0.046, ahead - 0.025))  # its light, round a small level knob
-	_cylinder(node, 0.012, 0.015, _finish("knob"), Vector3(0, 0.052, ahead - 0.025))
-	return led
+	_ring(node, 0.018, 0.026, led, Vector3(0, 0.046, -0.025))  # its light, round a small level knob
+	_cylinder(node, 0.012, 0.015, _finish("knob"), Vector3(0, 0.052, -0.025))
+	return {"node": node, "led": led}
 
 
 # ── Shared parts ────────────────────────────────────────────────────────────────────────────────────────────

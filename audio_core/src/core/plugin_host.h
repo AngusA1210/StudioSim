@@ -15,7 +15,11 @@ struct PluginDescription {
     std::string id;     // what to load it by: "AU:" and its type, subtype and maker codes, e.g. "AU:aufx:dely:appl"
     std::string name;   // e.g. "AUDelay"
     std::string maker;  // e.g. "Apple"
+    std::string category;  // what kind of effect it is, for grouping: "Reverb", "Amps & cabinets"... (a guess; see below)
 };
+
+// What kind of effect a plug-in is, from its name, its maker and any tags it carries (plugin_category.cpp).
+std::string guessPluginCategory(const std::string& name, const std::string& maker, const std::vector<std::string>& tags);
 
 class PluginInstance {
 public:

@@ -1,7 +1,7 @@
 #pragma once
 
 // Effect pedals, as stand on the floor between a guitar and its amp. An amp has a board of up to kMaxPedals, which
-// the signal passes through in order, then the loop pedal, then the amp. Each pedal has a footswitch (on, or bypassed:
+// the signal passes through in order before it reaches the amp. Each pedal has a footswitch (on, or bypassed:
 // the signal passes untouched) and up to kPedalControls controls: knobs from 0 to 10 as printed on the pedal, and
 // switches (0 or 1). The Plug-in pedal holds one of the effect plug-ins installed on the computer (plugin_host.h).
 //
@@ -16,8 +16,10 @@
 //   Tremolo          Rate, Depth, Shape: the volume pulsing, from a smooth sine to a hard chop
 //   Delay            Time, Repeats, Mix, Tone, Sync: echoes, darker with each repeat; Sync sets the time in beats
 //   Reverb           Decay, Tone, Mix: a room or hall
+//   Loop Pedal       Level, Sync, Overdub after recording: records what reaches it and plays it back (looper.h)
 //
-// Delay and Reverb let their echoes and tail ring on after they are switched off, as many real ones do.
+// Delay and Reverb let their echoes and tail ring on after they are switched off, as many real ones do. The loop
+// pedal has no bypass: its footswitch is the looper's own. An amp has at most one.
 //
 // A pedal's memory is allocated by prepare(), on the game thread, before it is handed to the audio thread (or while
 // the audio device is closed). After that only the audio thread touches it, to process it and turn its controls.
@@ -29,17 +31,26 @@
 #include <vector>
 
 #include "dsp.h"
+#include "looper.h"
 
 namespace sr {
 
 class PluginInstance;
 
 enum class PedalKind : int {
-    Tuner, Gate, Compressor, Overdrive, Fuzz, EnvelopeFilter, Chorus, Phaser, Tremolo, Delay, Reverb, Plugin, kCount
+    Tuner, Gate, Compressor, Overdrive, Fuzz, EnvelopeFilter, Chorus, Phaser, Tremolo, Delay, Reverb, Looper, Plugin, kCount
 };
 constexpr int kPedalKinds = int(PedalKind::kCount);
 constexpr int kPedalControls = 5;
 constexpr int kMaxPedals = 8;
+constexpr int kMaxPedalBlock = 4096;  // the longest block a pedal is given
+
+// Where the music is, for pedals that keep time with the room: how long a beat and a bar last at its tempo, and how
+// many samples from the start of this block the next bar line falls (-1 while the patterns are stopped).
+struct PedalTiming {
+    double beat_samples = 0;
+    int64_t next_bar = -1, bar = 0;
+};
 
 using PedalControls = std::array<float, kPedalControls>;
 PedalControls defaultPedalControls(PedalKind kind);  // where each control starts
@@ -74,19 +85,18 @@ public:
         if (!started_) share_ = on ? 1.0f : 0.0f;  // switched before it has played anything: no fade to make
     }
     void setControl(int index, float value);
-    // In place. `beat_samples` is how long a beat lasts at the room's tempo, for a pedal that keeps time with it.
-    void process(float* io, int n, double beat_samples);
+    void process(float* io, int n, const PedalTiming& timing);  // in place, n up to kMaxPedalBlock
 
 protected:
     explicit Pedal(PedalKind kind);
     float control(int index) const { return controls_[size_t(index)]; }
     virtual void update() {}  // the controls changed: work out what they mean (audio thread, before the next block)
     virtual void clear() {}   // coming back on after being bypassed: forget what it held
-    virtual void run(float* io, int n, double beat_samples) = 0;  // the effect itself, while on
+    virtual void run(float* io, int n, const PedalTiming& timing) = 0;  // the effect itself, while on
     // A pedal whose sound rings on after it is switched off takes care of its own bypass: what it hears is faded from
     // `feed_from` to `feed_to` over the block (1 = on, 0 = off), and what it makes is always added to the signal.
     virtual bool trails() const { return false; }
-    virtual void runTrails(float*, int, float, float, double) {}
+    virtual void runTrails(float*, int, float, float, const PedalTiming&) {}
 
     float sr_ = 48000.0f;
 
@@ -112,7 +122,7 @@ public:
 
 protected:
     void clear() override;
-    void run(float* io, int n, double beat_samples) override;
+    void run(float* io, int n, const PedalTiming& timing) override;
 
 private:
     static constexpr int kRing = 4096;
@@ -123,7 +133,35 @@ private:
     std::atomic<uint32_t> written_{0};
 };
 
-// The Plug-in pedal: an effect plug-in, or nothing yet (the signal passes through).
+// The loop pedal on a board: what reaches it is recorded, and the loop played back mixed in with it.
+class LooperPedal final : public Pedal {
+public:
+    LooperPedal();
+    // A new sample rate clears the loop, which would otherwise play at the wrong speed (game thread).
+    void prepare(float sample_rate) override;
+    Looper& looper() { return looper_; }
+    const Looper& looper() const { return looper_; }
+    // Somewhere to record, `seconds` long, given the first time it records (game thread; the audio thread is handed
+    // the buffers through a command). False if it has its memory already.
+    bool allocate(double seconds);
+    float* memory(int which) const { return memory_[which].get(); }
+    int64_t capacity() const { return capacity_; }
+
+protected:
+    void update() override;
+    bool trails() const override { return true; }  // never bypassed
+    void runTrails(float* io, int n, float, float, const PedalTiming& timing) override;
+    void run(float*, int, const PedalTiming&) override {}
+
+private:
+    Looper looper_;
+    std::unique_ptr<float[]> memory_[2];
+    int64_t capacity_ = 0;
+    std::vector<float> heard_;  // what reached it this block
+};
+
+// The Plug-in pedal: an effect plug-in, or nothing yet (the signal passes through). The mix window's inserts are
+// these too, one per slot, with the footswitch as the insert's bypass.
 class PluginPedal final : public Pedal {
 public:
     explicit PluginPedal(std::unique_ptr<PluginInstance> plugin = nullptr);
@@ -134,7 +172,7 @@ public:
     const std::string& error() const { return error_; }  // why it isn't ready
 
 protected:
-    void run(float* io, int n, double beat_samples) override;
+    void run(float* io, int n, const PedalTiming& timing) override;
 
 private:
     std::unique_ptr<PluginInstance> plugin_;

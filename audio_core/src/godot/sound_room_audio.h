@@ -68,16 +68,17 @@ public:
     // ── Amps ─────────────────────────────────────────────────────────────────────────────────────────────
     // control: "gain", "bass", "mid", "treble", "presence" or "master"; value 0 to 10 as on the panel.
     void set_amp_control(int id, const String& control, float value);
-    // The loop pedal in front of an amp. action: "press" (the footswitch: record, play, overdub), "stop", "play",
-    // "undo", "redo" or "clear". False if it isn't an amp.
+    // The loop pedal on an amp's board (a "looper" pedal; its controls are its level, Sync, and Overdub after
+    // recording). action: "press" (the footswitch: record, play, overdub), "stop", "play", "undo", "redo" or "clear".
+    // False if the amp has no loop pedal.
     bool looper(int id, const String& action);
-    void set_looper_options(int id, float level, bool sync, bool overdub_after_record);
-    // {state: "empty"|"waiting"|"recording"|"playing"|"overdubbing"|"stopped", length, position, capacity (seconds),
-    //  can_undo, can_redo}
+    // {state: "none" (no loop pedal)|"empty"|"waiting"|"recording"|"playing"|"overdubbing"|"stopped", length, position,
+    //  capacity (seconds), can_undo, can_redo}
     Dictionary get_looper(int id) const;
     // The effect pedals in front of an amp, numbered in the order the signal passes through them (the loop pedal comes
     // after them all). kind: "tuner", "gate", "compressor", "overdrive", "fuzz", "envelope_filter", "chorus", "phaser",
-    // "tremolo", "delay", "reverb" or "plugin". Returns where it went, or -1 (not an amp, or its board is full).
+    // "tremolo", "delay", "reverb", "looper" or "plugin". Returns where it went, or -1 (not an amp, its board is full,
+    // or a second loop pedal).
     int add_pedal(int id, const String& kind, int at);
     bool remove_pedal(int id, int index);
     bool move_pedal(int id, int from, int to);
@@ -87,11 +88,20 @@ public:
     Array get_pedals(int id) const;
     Dictionary get_tuner(int id) const;  // {listening, pitched, frequency, note (MIDI), cents}: the amp's first tuner
     int get_max_pedals() const;
-    // The effect plug-ins installed on this computer (Audio Units on macOS): [{id, name, maker}].
+    // The effect plug-ins installed on this computer (Audio Units on macOS): [{id, name, maker, category}], the
+    // category being what kind of effect it seems to be ("Reverb", "Amps & cabinets"...).
     Array get_plugins() const;
     // Loads one into a Plug-in pedal; false with the reason in get_error() if it can't.
     bool load_pedal_plugin(int id, int index, const String& plugin_id);
     bool show_plugin_editor(int id, int index, bool show, const String& title);  // the plug-in's own window
+    // A channel's inserts, as in a DAW's mix window: get_max_inserts() slots of plug-ins, played in order before the
+    // fader. [{on, plugin_id, plugin_name, plugin_maker, editor_open}], an empty plugin_id where a slot is free.
+    Array get_inserts(int id) const;
+    bool set_insert(int id, int slot, const String& plugin_id);  // false with the reason in get_error()
+    bool clear_insert(int id, int slot);
+    void set_insert_on(int id, int slot, bool on);  // off = bypassed
+    bool show_insert_editor(int id, int slot, bool show, const String& title);
+    int get_max_inserts() const;
     void set_listener(const Transform3D& transform);
     void note_on(int id, int note, float velocity);
     void note_off(int id, int note);

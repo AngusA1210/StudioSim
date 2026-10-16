@@ -10,15 +10,14 @@
 //
 // The drive stages run at twice the sample rate so the distortion doesn't fold harsh tones back down. The cabinets
 // are filters shaped like a speaker's response rather than recorded impulses, so they cost almost nothing.
-// In front of each amp are its effect pedals (pedals.h) and then a loop pedal (looper.h): the input goes through the
-// pedals, the loop pedal records what comes out of them, and the amp plays that and the loop together.
+// In front of each amp is a board of effect pedals (pedals.h), the loop pedal among them if it has one: the input
+// goes through them in order, and the amp plays what comes out.
 
 #include <array>
 #include <vector>
 
 #include "dsp.h"
 #include "instruments.h"
-#include "looper.h"
 #include "pedals.h"
 
 namespace sr {
@@ -57,18 +56,17 @@ private:
     int cabinet_stages_ = 0;
 };
 
-// An amp in the room: plays its hardware input (when its input is on) and its loop pedal, through the amp model.
+// An amp in the room: plays its hardware input (when its input is on) through its pedals and the amp model.
 class Amp : public Instrument {
 public:
     Amp(float sample_rate, InstrumentKind kind, const InputBus* bus, int max_block);
     void setInputChannel(int channel) override { channel_ = channel; }
     void setInputEnabled(bool on) override { enabled_ = on; }
     void setControl(AmpControl control, float value) { model_.setControl(control, value); }
-    // The pedals and the loop pedal belong to the source, so that they outlive the amp being rebuilt; `timing` is
-    // where the engine keeps the bar lines for this block (samples to the next one, or -1, and a bar's length).
-    void connect(const PedalBoard* board, Looper* looper, const int64_t* timing) {
+    // The pedals belong to the source, so that they outlive the amp being rebuilt; `timing` is where the engine
+    // keeps the bar lines for this block (samples to the next one, or -1, and a bar's length).
+    void connect(const PedalBoard* board, const int64_t* timing) {
         board_ = board;
-        looper_ = looper;
         timing_ = timing;
     }
     void render(float* out, int n) override;
@@ -77,11 +75,10 @@ private:
     AmpModel model_;
     const InputBus* bus_;
     const PedalBoard* board_ = nullptr;
-    Looper* looper_ = nullptr;
     const int64_t* timing_ = nullptr;
     int channel_ = -1;
     bool enabled_ = false;
-    std::vector<float> in_, signal_;
+    std::vector<float> in_;
 };
 
 }  // namespace sr

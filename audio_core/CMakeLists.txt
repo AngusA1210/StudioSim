@@ -44,6 +44,7 @@ add_library(sr_core STATIC
     src/core/amp.cpp
     src/core/looper.cpp
     src/core/pedals.cpp
+    src/core/plugin_category.cpp
     src/core/sequencer.cpp
     src/core/spatializer.cpp
     src/core/miniaudio_impl.c
@@ -54,7 +55,8 @@ if(APPLE)
     target_sources(sr_core PRIVATE src/core/midi_input_coremidi.cpp src/core/plugin_host_mac.mm)
     set_source_files_properties(src/core/plugin_host_mac.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
     target_link_libraries(sr_core PUBLIC "-framework CoreAudio" "-framework AudioToolbox" "-framework CoreFoundation"
-                                         "-framework CoreMIDI" "-framework AppKit" "-framework CoreAudioKit")
+                                         "-framework CoreMIDI" "-framework AppKit" "-framework CoreAudioKit"
+                                         "-framework AVFoundation")
 else()
     target_sources(sr_core PRIVATE src/core/midi_input_stub.cpp src/core/plugin_host_stub.cpp)
 endif()

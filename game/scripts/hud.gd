@@ -236,23 +236,24 @@ func _show_hint(vp: Vector2) -> void:
 		var t = player.target
 		title = t.display_name
 		tint = t.color.lightened(0.3)
-		if t.is_amp:  # an amp and its loop pedal
+		if t.is_amp:  # an amp, its pedals, and its loop pedal if it has one
 			var loop: Dictionary = t.looper
-			var state: String = loop.get("state", "empty")
+			var state: String = loop.get("state", "none")
 			rows.append(["I", "input off" if t.input_on else "input on"])
-			rows.append(["Enter", "amp, pedals and loop pedal"])
+			rows.append(["Enter", "amp and pedals"])
 			var count: int = t.pedals.size()
 			if count > 0:
-				rows.append(["1" if count == 1 else "1-%d" % count, "pedal on/off" if count == 1 else "pedals on/off"])
-			rows.append(["L", {"empty": "record a loop", "waiting": "cancel (waiting for the bar)", "recording": "close the loop",
-				"playing": "overdub", "overdubbing": "stop overdubbing", "stopped": "play the loop"}[state]])
+				rows.append(["1" if count == 1 else "1-%d" % count, "stamp on a pedal" if count == 1 else "stamp on the pedals"])
+			if state != "none":
+				rows.append(["L", {"empty": "record a loop", "waiting": "cancel (waiting for the bar)", "recording": "close the loop",
+					"playing": "overdub", "overdubbing": "stop overdubbing", "stopped": "play the loop"}[state]])
 			if state in ["playing", "overdubbing", "recording"]:
 				rows.append(["K", "stop the loop"])
 			if loop.get("can_undo", false):
 				rows.append(["U", "undo the last overdub"])
 			elif loop.get("can_redo", false):
 				rows.append(["U", "redo the overdub"])
-			if state not in ["empty", "waiting"]:
+			if state not in ["empty", "waiting", "none"]:
 				rows.append(["J", "clear the loop (press twice)"])
 			rows.append(["M", "unmute" if t.muted else "mute"])
 		elif t.playable:

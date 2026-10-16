@@ -481,13 +481,32 @@ func _run() -> void:
 	await tap(KEY_N)
 	await click(im._cards[6].get_global_rect().get_center())
 	var amp = player.carried
-	check(amp != null and amp.display_name == "Guitar Combo" and amp.is_amp and not amp.playable and amp._led != null,
-		"the instrument menu offers a guitar combo, with its loop pedal")
+	check(amp != null and amp.display_name == "Guitar Combo" and amp.is_amp and not amp.playable and amp.pedals.is_empty(),
+		"the instrument menu offers a guitar combo, its pedalboard empty")
 	await tap(KEY_G)
 	await frames(5)
+	var bare_card: Array = main.hud.hint_lines()
+	await tap(KEY_L)
+	await frames(2)
+	check(player.target == amp and bare_card.has("Enter amp and pedals") and not bare_card.has("L record a loop") and not bare_card.has("E play") and
+		amp.looper.get("state", "") == "none" and amp._led == null, "without a loop pedal its card offers the amp and pedals, and L does nothing",
+		" / ".join(bare_card))
+	await tap(KEY_ENTER)
+	await frames(3)
+	var panel = main.amp_panel
+	check(panel.is_open() and panel._tiles.is_empty() and panel._empty_page.visible, "its panel says the board is empty")
+	await click(panel._add_button.get_global_rect().get_center())
+	panel._add_menu.id_pressed.emit(load("res://scripts/catalog.gd").PEDAL_ORDER.find("looper"))
+	panel._add_menu.hide()
+	await frames(3)
+	check(amp.pedals.size() == 1 and amp.pedals[0].kind == "looper" and panel._loop_page.visible and panel._display.text == "EMPTY" and
+		panel._add_menu.is_item_disabled(load("res://scripts/catalog.gd").PEDAL_ORDER.find("looper")),
+		"+ Pedal puts a loop pedal on the board, and then offers no second one")
+	await tap(KEY_ENTER)
+	await frames(5)
 	var amp_card: Array = main.hud.hint_lines()
-	check(player.target == amp and amp_card.has("L record a loop") and amp_card.has("Enter amp, pedals and loop pedal") and not amp_card.has("E play"),
-		"its card offers the loop pedal and the knobs", " / ".join(amp_card))
+	check(not panel.is_open() and amp_card.has("L record a loop") and amp_card.has("1 stamp on a pedal") and amp._led != null and
+		amp._pedal_row.get_child_count() == 1, "now its card offers the loop pedal, and it stands on the floor", " / ".join(amp_card))
 	await tap(KEY_L)
 	await frames(3)
 	check(amp.input_on and amp.looper.get("state", "") == "waiting", "L arms the pedal: its input goes on, and with Sync it waits for the bar line",
@@ -518,7 +537,6 @@ func _run() -> void:
 	check(amp.looper.get("state", "") == "stopped" and amp._loop_label.text.contains("stopped"), "K stops the loop", amp._loop_label.text)
 	await tap(KEY_ENTER)
 	await frames(4)
-	var panel = main.amp_panel
 	check(panel.is_open() and panel.inst == amp and panel._display.text == "■ STOPPED" and panel._footswitch.text.begins_with("Play"),
 		"Enter opens the amp's panel: its knobs and the loop pedal", panel._display.text)
 	var gain_knob = panel._knobs.gain
@@ -562,8 +580,9 @@ func _run() -> void:
 	var order: Array = load("res://scripts/catalog.gd").PEDAL_ORDER
 	await tap(KEY_ENTER)
 	await frames(3)
-	check(panel.is_open() and panel._tiles.is_empty() and panel._loop_page.visible and panel._add_button.visible and panel._loop_tile.panel.visible,
-		"the amp's pedalboard starts empty, with the loop pedal at the end of it")
+	await click(panel._remove.get_global_rect().get_center())
+	check(panel.is_open() and panel._tiles.is_empty() and panel._empty_page.visible and panel._add_button.visible and amp.looper.state == "none",
+		"the loop pedal, empty, comes off the board at a press")
 	await click(panel._add_button.get_global_rect().get_center())
 	check(panel._add_menu.visible and panel._add_menu.item_count == order.size(), "+ Pedal offers every kind of pedal", "%d kinds" % panel._add_menu.item_count)
 	panel._add_menu.id_pressed.emit(order.find("overdrive"))
@@ -595,24 +614,37 @@ func _run() -> void:
 	panel._add_menu.id_pressed.emit(order.find("plugin"))
 	panel._add_menu.hide()
 	await frames(3)
-	check(amp.pedals.size() == 3 and panel._plugin_box.visible and panel._plugin_chooser.visible and panel._listed.size() > 0,
-		"a Plug-in pedal offers the effect plug-ins on this computer", "%d of them" % panel._listed.size())
-	panel._plugin_filter.text = "AUDelay"
-	panel._plugin_filter.text_changed.emit("AUDelay")
+	var browser = main.plugin_browser
+	var headings := []
+	for heading in browser._tree.get_root().get_children():
+		headings.append(heading.get_text(0).get_slice("   ", 0))
+	check(amp.pedals.size() == 3 and panel._plugin_box.visible and browser.visible and browser.plugins.size() > 0 and headings.has("Delay") and
+		headings.has("Reverb") and headings.find("Amps & cabinets") <= 0, "a Plug-in pedal opens the plug-in browser, grouped by kind of effect",
+		"%d plug-ins: %s" % [browser.plugins.size(), ", ".join(headings)])
+	browser._by_maker.button_pressed = true
 	await frames(2)
-	check(panel._listed.size() == 1 and panel._listed[0].maker == "Apple", "searching narrows the list", "%d found" % panel._listed.size())
-	panel._plugin_list.select(0)
-	await click(panel._plugin_load.get_global_rect().get_center())
+	var makers := []
+	for heading in browser._tree.get_root().get_children():
+		makers.append(heading.get_text(0).get_slice("   ", 0))
+	check(makers.has("Apple") and not makers.has("Delay"), "or by maker", ", ".join(makers))
+	browser._search.text = "audelay"
+	browser._search.text_changed.emit("audelay")
+	await frames(2)
+	var found: TreeItem = browser._tree.get_root().get_first_child()
+	check(browser._tree.get_root().get_child_count() == 1 and found.get_child_count() == 1 and not found.collapsed and
+		found.get_first_child().get_text(0) == "AUDelay", "searching narrows it to what matches")
+	browser._search.text_submitted.emit("audelay")
 	await frames(3)
-	check(amp.pedals[2].plugin_name == "AUDelay" and not panel._plugin_chooser.visible and panel._plugin_status.text.begins_with("AUDelay") and
-		panel._tiles[2].panel.get_child(0).get_child(1).text == "AUDelay", "loading it puts AUDelay on the board, before the amp", panel._plugin_status.text)
+	check(not browser.visible and amp.pedals[2].plugin_name == "AUDelay" and panel._plugin_status.text.begins_with("AUDelay") and
+		panel._tiles[2].label.text == "AUDelay", "choosing it puts AUDelay on the board, before the amp", panel._plugin_status.text)
+	browser._by_type.button_pressed = true
 	await click(panel._remove.get_global_rect().get_center())
 	check(amp.pedals.size() == 2 and panel.selected == 1, "a pedal can be taken off the board again")
 	await tap(KEY_ENTER)
 	await frames(4)
 	var with_pedals: Array = main.hud.hint_lines()
-	check(not panel.is_open() and with_pedals.has("1-2 pedals on/off") and amp._pedal_row.get_child_count() == 2,
-		"in the room the pedals stand beside the loop pedal, and the card offers 1 and 2 to stamp on them", " / ".join(with_pedals))
+	check(not panel.is_open() and with_pedals.has("1-2 stamp on the pedals") and amp._pedal_row.get_child_count() == 2,
+		"in the room the pedals stand in front of the amp, and the card offers 1 and 2 to stamp on them", " / ".join(with_pedals))
 	await tap(KEY_2)
 	await frames(2)
 	check(not amp.pedals[1].on and amp._pedal_leds[1].emission_energy_multiplier == 0.0, "2 switches the overdrive off from the room, and its light goes out")
@@ -661,6 +693,36 @@ func _run() -> void:
 	await frames(2)
 	check(drums.peak_hold < 0.00001 and drums_strip.peak.text == "-inf", "clicking the peak readout clears it, as in Pro Tools", drums_strip.peak.text)
 	main.set_muted(drums, false)
+	check(drums_strip.inserts.size() == audio.get_max_inserts() and audio.get_max_inserts() == 5 and drums_strip.inserts[0].button.text == "" and
+		mix._strips.back().inserts.size() == 5, "every strip has five inserts, empty to begin with")
+	await click(drums_strip.inserts[0].button.get_global_rect().get_center())
+	var picker = main.plugin_browser
+	check(picker.visible and picker._title.text == "Insert A on the Drums", "clicking an empty insert opens the plug-in browser for it", picker._title.text)
+	picker._search.text = "audelay"
+	picker._search.text_changed.emit("audelay")
+	picker._search.text_submitted.emit("audelay")
+	await frames(3)
+	check(not picker.visible and drums.inserts[0].plugin_name == "AUDelay" and drums_strip.inserts[0].button.text == "AUDelay" and
+		audio.get_inserts(drums.source_id)[0].plugin_name == "AUDelay", "choosing a plug-in puts it on the drums' first insert")
+	var cmd_click := InputEventMouseButton.new()
+	cmd_click.button_index = MOUSE_BUTTON_LEFT
+	cmd_click.pressed = true
+	cmd_click.meta_pressed = true
+	mix._on_insert_input(cmd_click, drums, 0)
+	await frames(2)
+	check(not drums.inserts[0].on and drums_strip.inserts[0].style.bg_color.b > 0.6, "Cmd-click bypasses it, and it turns blue")
+	mix._on_insert_input(cmd_click, drums, 0)
+	var right_click := InputEventMouseButton.new()
+	right_click.button_index = MOUSE_BUTTON_RIGHT
+	right_click.pressed = true
+	mix._on_insert_input(right_click, drums, 0)
+	await frames(2)
+	check(drums.inserts[0].on and mix._insert_menu.visible and mix._insert_menu.get_item_text(mix._insert_menu.get_item_index(3)) == "Remove",
+		"right-click offers its window, bypass, another plug-in, and taking it out")
+	mix._insert_menu.id_pressed.emit(3)
+	mix._insert_menu.hide()
+	await frames(2)
+	check(drums.inserts[0].plugin_name == "" and drums_strip.inserts[0].button.text == "", "and Remove takes it out")
 	var pad_strip: Dictionary = mix._strips[main.instruments.find(pad)]
 	pad.set_loop(false)
 	await seconds(1.5)

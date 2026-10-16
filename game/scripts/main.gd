@@ -29,6 +29,7 @@ const Sequencer := preload("res://scripts/sequencer.gd")
 const InstrumentMenu := preload("res://scripts/instrument_menu.gd")
 const Mixer := preload("res://scripts/mixer.gd")
 const AmpPanel := preload("res://scripts/amp_panel.gd")
+const PluginBrowser := preload("res://scripts/plugin_browser.gd")
 const Title := preload("res://scripts/title.gd")
 const Catalog := preload("res://scripts/catalog.gd")
 const Settings := preload("res://scripts/settings.gd")
@@ -59,7 +60,9 @@ var hud
 var menu
 var sequencer  # the pattern editor
 var mixer  # the mix window (Tab)
-var amp_panel  # an amp's knobs, effect pedals and loop pedal (Enter at an amp)
+var amp_panel  # an amp's knobs and its pedals (Enter at an amp)
+var plugin_browser  # the effect plug-ins on the computer, to choose one for an insert or a Plug-in pedal
+var _plugins = null  # what get_plugins() said, the first time anything asked
 var instrument_menu
 var title  # the title screen
 var room  # its size and the walls inside it
@@ -162,6 +165,8 @@ func _ready() -> void:
 	amp_panel = AmpPanel.new()
 	add_child(amp_panel)
 	amp_panel.setup(self)
+	plugin_browser = PluginBrowser.new()
+	add_child(plugin_browser)
 	instrument_menu = InstrumentMenu.new()
 	add_child(instrument_menu)
 	instrument_menu.setup(self)
@@ -364,21 +369,25 @@ func set_amp_control(inst, control: String, value: float) -> void:
 	audio.set_amp_control(inst.source_id, control, inst.amp_controls[control])
 
 
-## A loop pedal's buttons: "press" (the footswitch), "stop", "play", "undo", "redo", "clear". Starting a recording
-## switches the amp's input on, since there would be nothing to record otherwise.
+## An amp's loop pedal's buttons, if it has one: "press" (the footswitch), "stop", "play", "undo", "redo", "clear".
+## Starting a recording switches the amp's input on, since there would be nothing to record otherwise.
 func looper_action(inst, action: String) -> void:
-	if not inst.is_amp:
+	if not inst.is_amp or inst.looper.get("state", "none") == "none":
 		return
 	if action == "press" and inst.looper.get("state", "empty") == "empty" and not inst.input_on:
 		set_input(inst, true)
 	audio.looper(inst.source_id, action)
+	inst.looper = audio.get_looper(inst.source_id)
 
 
-func set_looper_options(inst, level: float, sync: bool, dub_after: bool) -> void:
-	inst.looper_level = clampf(level, 0.0, 2.0)
-	inst.looper_sync = sync
-	inst.looper_dub_after = dub_after
-	audio.set_looper_options(inst.source_id, inst.looper_level, sync, dub_after)
+## Stamping on an amp's pedal, as a foot would: it switches on or off, or for the loop pedal presses its footswitch.
+func stomp(inst, index: int) -> void:
+	if index < 0 or index >= inst.pedals.size():
+		return
+	if inst.pedals[index].kind == "looper":
+		looper_action(inst, "press")
+	else:
+		set_pedal_on(inst, index, not inst.pedals[index].on)
 
 
 ## Mute and solo, as on a mixing desk: while anything is soloed, everything else is silent.
@@ -387,12 +396,14 @@ func set_looper_options(inst, level: float, sync: bool, dub_after: bool) -> void
 func add_pedal(inst, kind: String, at := -1) -> int:
 	var index := audio.add_pedal(inst.source_id, kind, at)
 	inst.pedals = audio.get_pedals(inst.source_id)
+	inst.looper = audio.get_looper(inst.source_id)
 	return index
 
 
 func remove_pedal(inst, index: int) -> void:
 	audio.remove_pedal(inst.source_id, index)
 	inst.pedals = audio.get_pedals(inst.source_id)
+	inst.looper = audio.get_looper(inst.source_id)
 
 
 func move_pedal(inst, from: int, to: int) -> bool:
@@ -427,6 +438,48 @@ func show_plugin_editor(inst, index: int, show: bool) -> bool:
 		inst.display_name, index + 1])
 	inst.pedals = audio.get_pedals(inst.source_id)
 	return shown
+
+
+## The effect plug-ins installed, as the audio core lists them: looked up once, the first time they are wanted.
+func available_plugins() -> Array:
+	if _plugins == null:
+		_plugins = audio.get_plugins()
+	return _plugins
+
+
+## A channel's inserts, as in a DAW's mix window: a plug-in in each of a few slots, before the fader. Loading one
+## returns why it couldn't be loaded, or "".
+func set_insert(inst, slot: int, plugin_id: String) -> String:
+	var loaded := audio.set_insert(inst.source_id, slot, plugin_id)
+	inst.inserts = audio.get_inserts(inst.source_id)
+	return "" if loaded else audio.get_error()
+
+
+func clear_insert(inst, slot: int) -> void:
+	audio.clear_insert(inst.source_id, slot)
+	inst.inserts = audio.get_inserts(inst.source_id)
+
+
+func set_insert_on(inst, slot: int, on: bool) -> void:
+	audio.set_insert_on(inst.source_id, slot, on)
+	inst.inserts = audio.get_inserts(inst.source_id)
+
+
+## An insert's plug-in window, floating over the room. Not in automated runs, which have no windows to show it in.
+func show_insert_editor(inst, slot: int, show: bool) -> bool:
+	if show and DisplayServer.get_name() == "headless":
+		return false
+	var insert: Dictionary = inst.inserts[slot] if slot < inst.inserts.size() else {}
+	var shown := audio.show_insert_editor(inst.source_id, slot, show, "%s  ·  %s insert %s" % [insert.get("plugin_name", ""),
+		inst.display_name, char(65 + slot)])
+	inst.inserts = audio.get_inserts(inst.source_id)
+	return shown
+
+
+func hide_insert_editors(inst) -> void:
+	for i in inst.inserts.size():
+		if inst.inserts[i].editor_open:
+			show_insert_editor(inst, i, false)
 
 
 func hide_plugin_editors(inst) -> void:
@@ -553,8 +606,6 @@ func add_instrument(kind: String, at: Vector3, with_default_pattern := false):
 		inst.queue_free()
 		return null
 	instruments.append(inst)
-	if inst.is_amp:
-		set_looper_options(inst, inst.looper_level, inst.looper_sync, inst.looper_dub_after)
 	if with_default_pattern and inst.playable:
 		audio.load_default_pattern(inst.source_id)
 	return inst
@@ -572,6 +623,7 @@ func remove_instrument(inst) -> void:
 	if inst == speaker:
 		speaker = null
 	hide_plugin_editors(inst)
+	hide_insert_editors(inst)
 	audio.remove_source(inst.source_id)  # fades out over a few milliseconds
 	inst.queue_free()
 	_apply_channels()  # it may have been the one soloed

@@ -1,13 +1,12 @@
 extends CanvasLayer
-## An amp's panel (Enter at an amp): its knobs and input, the pedalboard on the floor in front of it, and the loop
-## pedal at the end of the board.
+## An amp's panel (Enter at an amp): its knobs and input, and the board of pedals on the floor in front of it.
 ##
-## The board runs the way the signal does: from the input through the effect pedals in order, into the loop pedal,
-## then the amp. Click a pedal (or the loop pedal) to set it up underneath; "+ Pedal" adds one at the end of the line.
-## 1 to 8 switch the pedals on and off, here and facing the amp in the room. The loop pedal works as a loop pedal does:
-## one footswitch records, closes the loop, and lays overdubs on top; there are Stop, Undo and Clear beside it, a level
-## for the loop, and Sync, which starts and ends recordings on bar lines while the patterns are running. L, K, U and J
-## do the same as its buttons, here and in the room.
+## The board runs the way the signal does: from the input through the pedals in order, then the amp. Click a pedal to
+## set it up underneath; "+ Pedal" adds one at the end of the line. 1 to 8 stamp on the pedals, here and facing the
+## amp in the room: a pedal switches on or off, and the loop pedal (an amp can have one) presses its footswitch.
+## The loop pedal works as a loop pedal does: one footswitch records, closes the loop, and lays overdubs on top; there
+## are Stop, Undo and Clear beside it, a level for the loop, and Sync, which starts and ends recordings on bar lines
+## while the patterns are running. L, K, U and J do the same as its buttons, here and in the room.
 
 const Knob := preload("res://scripts/knob.gd")
 const Catalog := preload("res://scripts/catalog.gd")
@@ -32,7 +31,7 @@ const NUMBER_KEYS := [KEY_1, KEY_2, KEY_3, KEY_4, KEY_5, KEY_6, KEY_7, KEY_8]
 var app
 var audio: SoundRoomAudio
 var inst = null
-var selected := -1  # the pedal being set up under the board; -1 is the loop pedal
+var selected := -1  # the pedal being set up under the board; -1 for none
 
 var _root: Control
 var _panel: PanelContainer
@@ -44,14 +43,14 @@ var _source: OptionButton
 
 # The board
 var _board: HBoxContainer
-var _tiles: Array = []  # a pedal's tile: {panel, style, led, color}
-var _loop_tile := {}
+var _tiles: Array = []  # a pedal's tile: {panel, style, led}
 var _add_button: Button
 var _add_arrow: Label
 var _add_menu: PopupMenu
 var _board_signature := "-"  # what the board was built for ("-": nothing yet)
 
-# Under the board: the loop pedal, or the pedal that is selected
+# Under the board: nothing chosen, the loop pedal, or another pedal; and what can be done to whichever it is
+var _empty_page: Label
 var _loop_page: Control
 var _pedal_page: VBoxContainer
 var _pedal_title: Label
@@ -59,10 +58,12 @@ var _pedal_about: Label
 var _pedal_controls: HBoxContainer
 var _controls: Array = []  # one per control: {node (a Knob or a CheckButton), readout}
 var _shown := ""  # the pedal the controls were made for: its place and kind
+var _footer: HBoxContainer
 var _pedal_switch: Button
 var _earlier: Button
 var _later: Button
 var _remove: Button
+var _remove_armed_until := 0
 var _tuner_box: VBoxContainer
 var _tuner_note: Label
 var _tuner_cents: Label
@@ -71,15 +72,8 @@ var _tuner_scale: Control
 var _plugin_box: VBoxContainer
 var _plugin_status: Label
 var _plugin_window: Button
-var _plugin_change: Button
-var _plugin_chooser: VBoxContainer
-var _plugin_filter: LineEdit
-var _plugin_list: ItemList
-var _plugin_load: Button
+var _plugin_choose: Button
 var _plugin_error: Label
-var _plugins: Array = []  # every effect plug-in installed: [{id, name, maker}]
-var _listed: Array = []   # the ones the list shows, after the search
-var _choosing := false
 
 # The loop pedal
 var _display: Label
@@ -109,7 +103,7 @@ func is_open() -> bool:
 
 func open(amp) -> void:
 	if inst != amp:
-		selected = -1
+		selected = 0 if not amp.pedals.is_empty() else -1
 	inst = amp
 	app.player.release_keys()
 	_root.visible = true
@@ -130,18 +124,20 @@ func open(amp) -> void:
 func close() -> void:
 	_root.visible = false
 	_add_menu.hide()
+	app.plugin_browser.hide()
 	if inst != null:
 		app.hide_plugin_editors(inst)
 	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 
 
+func has_looper() -> bool:
+	return inst != null and inst.looper.get("state", "none") != "none"
+
+
 func _input(event: InputEvent) -> void:
 	if not is_open() or not (event is InputEventKey) or not event.pressed or event.echo:
 		return
-	if get_viewport().gui_get_focus_owner() is LineEdit:  # typing a search: the keys are letters, not pedals
-		if event.physical_keycode == KEY_ESCAPE:
-			get_viewport().gui_release_focus()
-			get_viewport().set_input_as_handled()
+	if app.plugin_browser.visible:  # the keys are for its search box
 		return
 	var handled := true
 	var key: int = event.physical_keycode
@@ -151,26 +147,16 @@ func _input(event: InputEvent) -> void:
 		KEY_TAB:
 			close()
 			app.mixer.open()
-		KEY_L:
-			_on_footswitch()
-		KEY_K:
-			_on_stop()
-		KEY_U:
-			_on_undo()
-		KEY_J:
-			_on_clear()
+		KEY_L, KEY_K, KEY_U, KEY_J:
+			handled = has_looper()
+			if handled:
+				{KEY_L: _on_footswitch, KEY_K: _on_stop, KEY_U: _on_undo, KEY_J: _on_clear}[key].call()
 		_:
-			handled = NUMBER_KEYS.has(key) and _stomp(NUMBER_KEYS.find(key))
+			handled = NUMBER_KEYS.has(key) and NUMBER_KEYS.find(key) < inst.pedals.size()
+			if handled:
+				app.stomp(inst, NUMBER_KEYS.find(key))
 	if handled:
 		get_viewport().set_input_as_handled()
-
-
-## Switches pedal `index` on or off, as a foot would. False if there is no such pedal.
-func _stomp(index: int) -> bool:
-	if index < 0 or index >= inst.pedals.size():
-		return false
-	app.set_pedal_on(inst, index, not inst.pedals[index].on)
-	return true
 
 
 func _process(_delta: float) -> void:
@@ -188,14 +174,19 @@ func _refresh() -> void:
 	_input_switch.set_pressed_no_signal(inst.input_on)
 	_input_switch.text = "Input on" if inst.input_on else "Input off"
 	_source.select(clampi(inst.input_channel + 1, 0, _source.item_count - 1))
-	if selected >= inst.pedals.size():
-		selected = inst.pedals.size() - 1
+	selected = mini(selected, inst.pedals.size() - 1)
 	_refresh_board()
-	_loop_page.visible = selected < 0
-	_pedal_page.visible = selected >= 0
-	if selected >= 0:
+	var kind: String = inst.pedals[selected].kind if selected >= 0 else ""
+	_empty_page.visible = selected < 0
+	_loop_page.visible = kind == "looper"
+	_pedal_page.visible = kind != "" and kind != "looper"
+	_footer.visible = selected >= 0
+	if kind == "looper":
+		_refresh_loop()
+	elif kind != "":
 		_refresh_pedal()
-	_refresh_loop()
+	if selected >= 0:
+		_refresh_footer()
 
 
 # ── The board ───────────────────────────────────────────────────────────────────────────────────────────────
@@ -209,13 +200,16 @@ func _refresh_board() -> void:
 		_build_board()
 	for i in _tiles.size():
 		var tile: Dictionary = _tiles[i]
-		tile.led.color = LED_ON if inst.pedals[i].on else LED_OFF
+		var pedal: Dictionary = inst.pedals[i]
+		if pedal.kind == "looper":  # its light shows what the loop is doing
+			var state: String = inst.looper.get("state", "empty")
+			tile.led.color = STATES.get(state, STATES.empty)[1] if state != "empty" else LED_OFF
+		else:
+			tile.led.color = LED_ON if pedal.on else LED_OFF
 		tile.style.border_color = Color.WHITE if i == selected else Color(0, 0, 0, 0.6)
-	var state: String = inst.looper.get("state", "empty")
-	_loop_tile.led.color = STATES.get(state, STATES.empty)[1] if state != "empty" else LED_OFF
-	_loop_tile.style.border_color = Color.WHITE if selected < 0 else Color(0, 0, 0, 0.6)
 	_add_button.visible = inst.pedals.size() < audio.get_max_pedals()
 	_add_arrow.visible = _add_button.visible
+	_add_menu.set_item_disabled(Catalog.PEDAL_ORDER.find("looper"), has_looper())
 
 
 func _build_board() -> void:
@@ -236,14 +230,11 @@ func _build_board() -> void:
 	_add_button = Button.new()
 	_add_button.text = "+ Pedal"
 	_add_button.custom_minimum_size = Vector2(80, 86)
-	_add_button.tooltip_text = "Add an effect pedal at the end of the line, before the loop pedal"
+	_add_button.tooltip_text = "Add a pedal at the end of the line, just before the amp"
 	_add_button.pressed.connect(_on_add_pressed)
 	_board.add_child(_add_button)
 	_add_arrow = _arrow()
 	_board.add_child(_add_arrow)
-	_loop_tile = _tile("L", "Loop", Color(0.2, 0.22, 0.26), -1)
-	_board.add_child(_loop_tile.panel)
-	_board.add_child(_arrow())
 	_board.add_child(_end_label("AMP"))
 
 
@@ -286,10 +277,10 @@ func _tile(number: String, name: String, color: Color, index: int) -> Dictionary
 	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	label.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	label.custom_minimum_size.x = 70
-	label.add_theme_font_size_override("font_size", 12)
+	label.add_theme_font_size_override("font_size", 11)
 	label.add_theme_color_override("font_color", ink)
 	box.add_child(label)
-	return {"panel": panel, "style": style, "led": led}
+	return {"panel": panel, "style": style, "led": led, "label": label}
 
 
 func _arrow() -> Label:
@@ -318,7 +309,6 @@ func _refresh_pedal() -> void:
 	var shown := "%d:%s" % [selected, pedal.kind]
 	if shown != _shown:
 		_shown = shown
-		_choosing = false
 		_build_controls(pedal.kind)
 		_pedal_title.text = spec.name
 		_pedal_title.add_theme_color_override("font_color", spec.color.lightened(0.25))
@@ -334,16 +324,28 @@ func _refresh_pedal() -> void:
 				control.node.set_value_no_signal(value)
 			control.node.readout = Catalog.pedal_readout(control.readout, control.node.value, pedal.controls)
 			control.node.queue_redraw()
-	_pedal_switch.text = ("On   (%d)" if pedal.on else "Bypassed   (%d)") % (selected + 1)
-	_pedal_switch.set_pressed_no_signal(pedal.on)
-	_earlier.disabled = selected == 0
-	_later.disabled = selected >= inst.pedals.size() - 1
 	_tuner_box.visible = pedal.kind == "tuner"
 	if pedal.kind == "tuner":
 		_show_tuner(pedal.on)
 	_plugin_box.visible = pedal.kind == "plugin"
 	if pedal.kind == "plugin":
-		_show_plugin(pedal)
+		var has_plugin: bool = pedal.plugin_name != ""
+		_plugin_status.text = ("%s   ·   %s" % [pedal.plugin_name, pedal.plugin_maker]) if has_plugin else "No plug-in yet."
+		_plugin_window.visible = has_plugin
+		_plugin_window.text = "Close its window" if pedal.editor_open else "Open its window"
+		_plugin_choose.text = "Choose another…" if has_plugin else "Choose a plug-in…"
+
+
+## The footswitch (not for the loop pedal, whose footswitch is its own), and moving and taking off the board.
+func _refresh_footer() -> void:
+	var pedal: Dictionary = inst.pedals[selected]
+	_pedal_switch.visible = pedal.kind != "looper"
+	_pedal_switch.text = ("On   (%d)" if pedal.on else "Bypassed   (%d)") % (selected + 1)
+	_pedal_switch.set_pressed_no_signal(pedal.on)
+	_earlier.disabled = selected == 0
+	_later.disabled = selected >= inst.pedals.size() - 1
+	var armed := Time.get_ticks_msec() < _remove_armed_until
+	_remove.text = "Press again: the loop goes too" if armed else "Take off the board"
 
 
 ## The controls for a kind of pedal: a knob for each of its knobs, a switch for each switch.
@@ -378,15 +380,9 @@ func _build_controls(kind: String) -> void:
 
 func _show_tuner(listening: bool) -> void:
 	var reading: Dictionary = inst.tuner
-	if not listening:
+	if not listening or not reading.get("pitched", false):
 		_tuner_note.text = "-"
-		_tuner_cents.text = "Switch it on (%d) to tune" % (selected + 1)
-		_tuner_note.add_theme_color_override("font_color", DIM)
-		_tuner_needle.visible = false
-		return
-	if not reading.get("pitched", false):
-		_tuner_note.text = "-"
-		_tuner_cents.text = "Play a string"
+		_tuner_cents.text = "Play a string" if listening else "Switch it on (%d) to tune" % (selected + 1)
 		_tuner_note.add_theme_color_override("font_color", DIM)
 		_tuner_needle.visible = false
 		return
@@ -398,33 +394,6 @@ func _show_tuner(listening: bool) -> void:
 	_tuner_needle.visible = true
 	_tuner_needle.color = ink
 	_tuner_needle.position.x = (_tuner_scale.size.x - _tuner_needle.size.x) * (0.5 + clampf(cents, -50.0, 50.0) / 100.0)
-
-
-func _show_plugin(pedal: Dictionary) -> void:
-	var has_plugin: bool = pedal.plugin_name != ""
-	_plugin_status.text = ("%s   ·   %s" % [pedal.plugin_name, pedal.plugin_maker]) if has_plugin else "No plug-in yet: choose one of yours."
-	_plugin_window.visible = has_plugin and not _choosing
-	_plugin_window.text = "Close its window" if pedal.editor_open else "Open its window"
-	_plugin_change.visible = has_plugin and not _choosing
-	_plugin_chooser.visible = _choosing or not has_plugin
-	if _plugin_chooser.visible and _plugins.is_empty():
-		_plugins = audio.get_plugins()
-		_fill_plugin_list()
-	_plugin_load.disabled = _plugin_list.get_selected_items().is_empty()
-
-
-func _fill_plugin_list() -> void:
-	var words := _plugin_filter.text.strip_edges().to_lower()
-	_plugin_list.clear()
-	_listed.clear()
-	for p in _plugins:
-		var line := "%s   ·   %s" % [p.name, p.maker]
-		if words == "" or line.to_lower().contains(words):
-			_plugin_list.add_item(line)
-			_listed.append(p)
-	if _plugins.is_empty():
-		_plugin_list.add_item("No effect plug-ins are installed")
-		_plugin_list.set_item_disabled(0, true)
 
 
 # ── The loop pedal ──────────────────────────────────────────────────────────────────────────────────────────
@@ -446,7 +415,7 @@ func _refresh_loop() -> void:
 	else:
 		_time.text = _clock(length) if length > 0.0 else "-"
 		_progress.value = 0.0
-	_footswitch.text = "%s   (L)" % look[2]
+	_footswitch.text = "%s   (L or %d)" % [look[2], selected + 1]
 	_stop.text = "Play   (K)" if state == "stopped" else "Stop   (K)"
 	_stop.disabled = state in ["empty", "waiting"]
 	_undo.text = "Redo   (U)" if loop.get("can_redo", false) and not loop.get("can_undo", false) else "Undo   (U)"
@@ -454,10 +423,13 @@ func _refresh_loop() -> void:
 	var armed := Time.get_ticks_msec() < _clear_armed_until
 	_clear.text = "Press again to clear" if armed else "Clear   (J)"
 	_clear.disabled = state in ["empty", "waiting"]
+	var controls: Array = inst.pedals[selected].controls
 	if not _level._dragging:
-		_level.set_value_no_signal(inst.looper_level * 5.0)
-	_sync.set_pressed_no_signal(inst.looper_sync)
-	_after.select(1 if inst.looper_dub_after else 0)
+		_level.set_value_no_signal(controls[0])
+	_level.readout = Catalog.pedal_readout("level", _level.value)
+	_level.queue_redraw()
+	_sync.set_pressed_no_signal(controls[1] > 0.5)
+	_after.select(1 if controls[2] > 0.5 else 0)
 
 
 func _clock(seconds: float) -> String:
@@ -546,7 +518,7 @@ func _build() -> void:
 	heading.add_theme_font_size_override("font_size", 18)
 	board_heading.add_child(heading)
 	var board_note := Label.new()
-	board_note.text = "   Click a pedal to set it up.  1-8 switch the pedals on and off."
+	board_note.text = "   Click a pedal to set it up.  1-8 stamp on the pedals."
 	board_note.add_theme_color_override("font_color", DIM)
 	board_note.add_theme_font_size_override("font_size", 13)
 	board_note.size_flags_vertical = Control.SIZE_SHRINK_END
@@ -571,7 +543,7 @@ func _build() -> void:
 	_add_menu.id_pressed.connect(_on_add_chosen)
 	_root.add_child(_add_menu)
 
-	# What is selected on the board: the loop pedal, or one of the pedals.
+	# What is selected on the board.
 	var page_panel := PanelContainer.new()
 	var page_style := StyleBoxFlat.new()
 	page_style.bg_color = Color(0.17, 0.18, 0.21)
@@ -583,16 +555,28 @@ func _build() -> void:
 	page_panel.custom_minimum_size.y = 236
 	box.add_child(page_panel)
 	var pages := VBoxContainer.new()
+	pages.add_theme_constant_override("separation", 10)
 	page_panel.add_child(pages)
+	_empty_page = Label.new()
+	_empty_page.text = "No pedals yet. \"+ Pedal\" puts one on the board: a tuner, drive, modulation, delay and reverb, a loop pedal, or one of your plug-ins. They come in front of the amp, in the order they stand."
+	_empty_page.add_theme_color_override("font_color", DIM)
+	_empty_page.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_empty_page.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_empty_page.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_empty_page.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	pages.add_child(_empty_page)
 	_loop_page = _build_loop_page()
 	pages.add_child(_loop_page)
 	_pedal_page = _build_pedal_page()
 	pages.add_child(_pedal_page)
+	_footer = _build_footer()
+	pages.add_child(_footer)
 
 
 func _build_pedal_page() -> VBoxContainer:
 	var page := VBoxContainer.new()
 	page.add_theme_constant_override("separation", 10)
+	page.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	var top := HBoxContainer.new()
 	top.add_theme_constant_override("separation", 14)
 	page.add_child(top)
@@ -647,60 +631,35 @@ func _build_pedal_page() -> VBoxContainer:
 	_tuner_cents.add_theme_color_override("font_color", DIM)
 	_tuner_box.add_child(_tuner_cents)
 
-	# The Plug-in pedal: what it holds, its window, and the list to choose from.
+	# The Plug-in pedal: what it holds, its window, and the browser to choose one from.
 	_plugin_box = VBoxContainer.new()
 	_plugin_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_plugin_box.add_theme_constant_override("separation", 6)
+	_plugin_box.add_theme_constant_override("separation", 8)
 	middle.add_child(_plugin_box)
+	_plugin_status = Label.new()
+	_plugin_status.add_theme_font_size_override("font_size", 17)
+	_plugin_status.clip_text = true
+	_plugin_box.add_child(_plugin_status)
 	var plugin_row := HBoxContainer.new()
 	plugin_row.add_theme_constant_override("separation", 10)
 	_plugin_box.add_child(plugin_row)
-	_plugin_status = Label.new()
-	_plugin_status.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_plugin_status.clip_text = true
-	plugin_row.add_child(_plugin_status)
+	_plugin_choose = Button.new()
+	_plugin_choose.pressed.connect(_on_plugin_choose_pressed)
+	plugin_row.add_child(_plugin_choose)
 	_plugin_window = Button.new()
 	_plugin_window.pressed.connect(_on_plugin_window_pressed)
 	plugin_row.add_child(_plugin_window)
-	_plugin_change = Button.new()
-	_plugin_change.text = "Choose another"
-	_plugin_change.pressed.connect(_on_plugin_change_pressed)
-	plugin_row.add_child(_plugin_change)
-	_plugin_chooser = VBoxContainer.new()
-	_plugin_chooser.add_theme_constant_override("separation", 6)
-	_plugin_box.add_child(_plugin_chooser)
-	var search_row := HBoxContainer.new()
-	search_row.add_theme_constant_override("separation", 8)
-	_plugin_chooser.add_child(search_row)
-	_plugin_filter = LineEdit.new()
-	_plugin_filter.placeholder_text = "Search your plug-ins"
-	_plugin_filter.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_plugin_filter.text_changed.connect(_on_plugin_filter_changed)
-	_plugin_filter.text_submitted.connect(_on_plugin_filter_submitted)
-	search_row.add_child(_plugin_filter)
-	_plugin_load = Button.new()
-	_plugin_load.text = "Load"
-	_plugin_load.pressed.connect(_on_plugin_load_pressed)
-	search_row.add_child(_plugin_load)
-	_plugin_list = ItemList.new()
-	_plugin_list.custom_minimum_size.y = 96
-	_plugin_list.item_activated.connect(_on_plugin_activated)
-	_plugin_chooser.add_child(_plugin_list)
 	_plugin_error = Label.new()
 	_plugin_error.add_theme_color_override("font_color", WARN)
 	_plugin_error.add_theme_font_size_override("font_size", 12)
 	_plugin_error.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_plugin_box.add_child(_plugin_error)
-	var plugin_note := Label.new()
-	plugin_note.text = "Your Audio Unit plug-ins. Pro Tools-only (AAX) plug-ins can't be used here, but most makers install an AU version alongside."
-	plugin_note.add_theme_color_override("font_color", DIM)
-	plugin_note.add_theme_font_size_override("font_size", 12)
-	plugin_note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_plugin_chooser.add_child(plugin_note)
+	return page
 
+
+func _build_footer() -> HBoxContainer:
 	var bottom := HBoxContainer.new()
 	bottom.add_theme_constant_override("separation", 8)
-	page.add_child(bottom)
 	_pedal_switch = Button.new()
 	_pedal_switch.toggle_mode = true
 	_pedal_switch.custom_minimum_size = Vector2(180, 40)
@@ -721,21 +680,21 @@ func _build_pedal_page() -> VBoxContainer:
 	_later.pressed.connect(_on_move_pressed.bind(1))
 	bottom.add_child(_later)
 	_remove = Button.new()
-	_remove.text = "Take off the board"
 	_remove.pressed.connect(_on_remove_pressed)
 	bottom.add_child(_remove)
-	return page
+	return bottom
 
 
 func _build_loop_page() -> HBoxContainer:
 	var pedal_row := HBoxContainer.new()
 	pedal_row.add_theme_constant_override("separation", 18)
+	pedal_row.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	var left := VBoxContainer.new()
 	left.add_theme_constant_override("separation", 8)
 	left.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	pedal_row.add_child(left)
 	var title := Label.new()
-	title.text = "Loop pedal"
+	title.text = "Loop Pedal"
 	title.add_theme_font_size_override("font_size", 20)
 	left.add_child(title)
 	var screen := PanelContainer.new()  # the pedal's display
@@ -777,14 +736,14 @@ func _build_loop_page() -> HBoxContainer:
 	right.add_child(level_row)
 	_level = Knob.new()
 	_level.title = "LOOP LEVEL"
-	_level.value_changed.connect(_on_level_changed)
+	_level.value_changed.connect(_on_pedal_knob_changed.bind(0))
 	level_row.add_child(_level)
 	var options := VBoxContainer.new()
 	level_row.add_child(options)
 	_sync = CheckButton.new()
 	_sync.text = "Sync to the bars"
 	_sync.tooltip_text = "While the patterns are running, recording starts on the next bar line and the loop is a whole number of bars."
-	_sync.toggled.connect(_on_sync_toggled)
+	_sync.toggled.connect(_on_pedal_switch_toggled.bind(1))
 	options.add_child(_sync)
 	var after_label := Label.new()
 	after_label.text = "After recording"
@@ -794,10 +753,10 @@ func _build_loop_page() -> HBoxContainer:
 	_after = OptionButton.new()
 	_after.add_item("play the loop")
 	_after.add_item("overdub straight away")
-	_after.item_selected.connect(_on_after_selected)
+	_after.item_selected.connect(func(index: int) -> void: _on_pedal_switch_toggled(index == 1, 2))
 	options.add_child(_after)
 	var note := Label.new()
-	note.text = "It comes after the effect pedals and before the amp: a loop keeps the effects it was recorded through, and plays through the amp's knobs. Loops are kept until the sample rate changes, and aren't saved yet."
+	note.text = "It records what reaches it, so a loop keeps the effects before it on the board and plays through those after it, and through the amp. Loops are kept until the sample rate changes, and aren't saved yet."
 	note.add_theme_color_override("font_color", DIM)
 	note.add_theme_font_size_override("font_size", 12)
 	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -830,6 +789,7 @@ func _on_source_selected(index: int) -> void:
 func _on_tile_input(event: InputEvent, index: int) -> void:
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
 		selected = index
+		_remove_armed_until = 0
 		_refresh()
 
 
@@ -843,6 +803,8 @@ func _on_add_chosen(id: int) -> void:
 	if at >= 0:
 		selected = at
 		_refresh()
+		if Catalog.PEDAL_ORDER[id] == "plugin":  # straight to choosing what it holds
+			_on_plugin_choose_pressed()
 
 
 func _on_pedal_knob_changed(value: float, control: int) -> void:
@@ -863,55 +825,39 @@ func _on_move_pressed(step: int) -> void:
 		_refresh()
 
 
+## Taking a loop pedal that holds a loop off the board loses the loop, so that takes a second press.
 func _on_remove_pressed() -> void:
+	var holding: bool = inst.pedals[selected].kind == "looper" and inst.looper.get("state", "empty") != "empty"
+	if holding and Time.get_ticks_msec() >= _remove_armed_until:
+		_remove_armed_until = Time.get_ticks_msec() + 3000
+		return
+	_remove_armed_until = 0
 	app.remove_pedal(inst, selected)
 	selected = mini(selected, inst.pedals.size() - 1)
 	_refresh()
 
 
 func _on_plugin_window_pressed() -> void:
-	var pedal: Dictionary = inst.pedals[selected]
-	app.show_plugin_editor(inst, selected, not pedal.editor_open)
+	app.show_plugin_editor(inst, selected, not inst.pedals[selected].editor_open)
 
 
-func _on_plugin_change_pressed() -> void:
-	_choosing = true
+func _on_plugin_choose_pressed() -> void:
 	_plugin_error.text = ""
+	var index := selected
+	app.plugin_browser.open_for("A plug-in for pedal %d" % (index + 1), app.available_plugins(),
+		_plugin_choose.get_screen_position() + Vector2(0, 40), func(plugin: Dictionary) -> void: _load_plugin(index, plugin))
 
 
-func _on_plugin_filter_changed(_text: String) -> void:
-	_fill_plugin_list()
-
-
-func _on_plugin_filter_submitted(_text: String) -> void:
-	if _listed.size() > 0:
-		var picked: Array = _plugin_list.get_selected_items()
-		_load_plugin(picked[0] if not picked.is_empty() else 0)
-
-
-func _on_plugin_activated(index: int) -> void:
-	_load_plugin(index)
-
-
-func _on_plugin_load_pressed() -> void:
-	var picked: Array = _plugin_list.get_selected_items()
-	if not picked.is_empty():
-		_load_plugin(picked[0])
-
-
-## Loads the plug-in at this place in the list into the selected Plug-in pedal, and opens its window.
-func _load_plugin(index: int) -> void:
-	if index < 0 or index >= _listed.size():
+## Loads a plug-in into the Plug-in pedal at `index`, and opens its window.
+func _load_plugin(index: int, plugin: Dictionary) -> void:
+	if inst == null or index >= inst.pedals.size():
 		return
-	var plugin: Dictionary = _listed[index]
-	var problem: String = app.load_pedal_plugin(inst, selected, plugin.id)
+	var problem: String = app.load_pedal_plugin(inst, index, plugin.id)
 	if problem != "":
 		_plugin_error.text = "%s couldn't be loaded: %s." % [plugin.name, problem]
 		return
 	_plugin_error.text = ""
-	_choosing = false
-	get_viewport().gui_release_focus()
-	app.show_plugin_editor(inst, selected, true)
+	app.show_plugin_editor(inst, index, true)
 
 
 func _on_footswitch() -> void:
@@ -934,15 +880,3 @@ func _on_clear() -> void:
 		app.looper_action(inst, "clear")
 	else:
 		_clear_armed_until = Time.get_ticks_msec() + 3000
-
-
-func _on_level_changed(value: float) -> void:
-	app.set_looper_options(inst, value / 5.0, inst.looper_sync, inst.looper_dub_after)
-
-
-func _on_sync_toggled(on: bool) -> void:
-	app.set_looper_options(inst, inst.looper_level, on, inst.looper_dub_after)
-
-
-func _on_after_selected(index: int) -> void:
-	app.set_looper_options(inst, inst.looper_level, inst.looper_sync, index == 1)
