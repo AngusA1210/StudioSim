@@ -19,27 +19,20 @@ const IO_TAB := 3
 const MIDI_TAB := 4
 const SETTINGS_TAB := 5
 const CONTROLS_TAB := 6
-const CONTROLS := """Move                    W A S D   (Shift to run)
-Look                    mouse   (click to capture it)
-Carry an instrument     G or click, again to put it down
-Add an instrument       N
-Remove an instrument    Backspace twice, facing or carrying it
-Play an instrument      E when next to it, Q to stop
-                        A S D F G H J K L ;  white keys
-                        W E T Y U O P  black keys,  Z X  octave
-Its input on / off      I   (the MIDI keyboard plays every instrument
-                        whose input is on; a Speaker plays its input)
-Edit its pattern        Enter when next to it or playing it
-Its loop on / off       M   (for a Speaker: mute)
-The mix window          Tab
-Start / stop patterns   Space
-Metronome click         C
-Binaural on / off       B
-Reverb on / off         R
-Menu                    Esc"""
+const Bindings := preload("res://scripts/bindings.gd")
+const FIXED_KEYS := """Look about              the mouse (click to capture it)
+Back out of anything    Esc
+Walk and turn           the arrow keys, always (even while the letter keys are notes)
+An amp's pedals         1 to 8, facing the amp
+Notes                   A S D F G H J K L ;  white keys,  W E T Y U O P  black keys,
+                        at an instrument (E) or with the keyboard open (K). Those keys
+                        are notes then, and do nothing else until you get up or close it."""
 
 var app
 var audio: SoundRoomAudio
+var _key_buttons := {}  # action → its button on the Controls page
+var _waiting_for := ""  # the action whose new key is awaited
+var _keys_note: Label
 
 var _root: Control
 var _panel: PanelContainer
@@ -155,7 +148,12 @@ func close() -> void:
 
 
 func _input(event: InputEvent) -> void:
-	if is_open() and event is InputEventKey and event.pressed and not event.echo and event.physical_keycode == KEY_ESCAPE:
+	if not is_open() or not (event is InputEventKey) or not event.pressed or event.echo:
+		return
+	if _waiting_for != "":  # the Controls page is waiting for a key
+		_take_key(event.physical_keycode)
+		get_viewport().set_input_as_handled()
+	elif event.physical_keycode == KEY_ESCAPE:
 		close()
 		get_viewport().set_input_as_handled()
 
@@ -238,11 +236,74 @@ func _build() -> void:
 	_tabs.set_tab_title(IO_TAB, "I/O")
 	_build_midi_page(_page("MIDI"))
 	_build_settings_page(_page("Settings"))
-	var controls := Label.new()
-	controls.text = CONTROLS
-	controls.add_theme_font_override("font", _mono())
-	controls.add_theme_font_size_override("font_size", 14)
-	_page("Controls").add_child(controls)
+	_build_controls_page(_page("Controls"))
+
+
+## The keys: each action with its key, which a click lets you change.
+func _build_controls_page(page: VBoxContainer) -> void:
+	_heading(page, "Keys")
+	_note(page, "Click a key, then press the one you want instead. If another action had that key, the two swap. Esc cancels.")
+	for entry in Bindings.ACTIONS:
+		var button := Button.new()
+		button.custom_minimum_size.x = 150
+		button.focus_mode = Control.FOCUS_NONE
+		button.pressed.connect(_on_key_button_pressed.bind(entry[0]))
+		var row := _field(page, entry[1])
+		row.get_child(0).custom_minimum_size.x = 400  # the keys in one column
+		row.add_child(button)
+		_key_buttons[entry[0]] = button
+	var reset := Button.new()
+	reset.text = "Put every key back as it was"
+	reset.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	reset.pressed.connect(func() -> void:
+		app.reset_bindings()
+		_keys_note.text = "Every key is back as it began."
+		_show_keys())
+	page.add_child(reset)
+	_keys_note = _note(page, "")
+	page.add_child(HSeparator.new())
+	_heading(page, "Keys that don't change")
+	var fixed := Label.new()
+	fixed.text = FIXED_KEYS
+	fixed.add_theme_font_override("font", _mono())
+	fixed.add_theme_font_size_override("font_size", 13)
+	page.add_child(fixed)
+	_show_keys()
+
+
+func _show_keys() -> void:
+	for action in _key_buttons:
+		_key_buttons[action].text = "press a key…" if action == _waiting_for else app.bindings.label(action)
+
+
+func _on_key_button_pressed(action: String) -> void:
+	_waiting_for = action
+	_keys_note.text = "Press the key for \"%s\", or Esc to leave it as %s." % [_action_name(action), app.bindings.label(action)]
+	_show_keys()
+
+
+func _take_key(keycode: int) -> void:
+	var action := _waiting_for
+	_waiting_for = ""
+	if keycode == KEY_ESCAPE:
+		_keys_note.text = ""
+	elif Bindings.FIXED.has(keycode):
+		_keys_note.text = "%s is kept for %s." % [Bindings.name_of(keycode), Bindings.FIXED[keycode]]
+	else:
+		var swapped: String = app.set_binding(action, keycode)
+		_keys_note.text = "\"%s\" is now %s." % [_action_name(action), app.bindings.label(action)]
+		if swapped != "":
+			_keys_note.text += " \"%s\", which had it, is now %s." % [_action_name(swapped), app.bindings.label(swapped)]
+		if Bindings.NOTES.has(keycode):
+			_keys_note.text += " It is a note key too: while you play, it plays a note instead."
+	_show_keys()
+
+
+func _action_name(action: String) -> String:
+	for entry in Bindings.ACTIONS:
+		if entry[0] == action:
+			return entry[1]
+	return action
 
 
 func _build_metronome_page(page: VBoxContainer) -> void:

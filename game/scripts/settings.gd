@@ -28,6 +28,7 @@ var mouse_sensitivity := 1.0
 var show_stats := false
 var show_meter := true    # the master level meter on screen
 var pre_fader_meters := false  # the mix window's channel meters read before the fader, as Pro Tools' option does
+var bindings := {}  # the keys changed on the Controls page: action → physical keycode (see bindings.gd)
 var fullscreen := false
 var room_brightness := 1.0
 
@@ -65,6 +66,7 @@ func load_from_disk() -> void:
 	pre_fader_meters = file.get_value("display", "pre_fader_meters", pre_fader_meters)
 	fullscreen = file.get_value("display", "fullscreen", fullscreen)
 	room_brightness = clampf(file.get_value("display", "room_brightness", room_brightness), 0.5, 3.0)
+	bindings = file.get_value("controls", "keys", bindings)
 
 
 func save_to_disk() -> void:
@@ -93,4 +95,5 @@ func save_to_disk() -> void:
 	file.set_value("display", "pre_fader_meters", pre_fader_meters)
 	file.set_value("display", "fullscreen", fullscreen)
 	file.set_value("display", "room_brightness", room_brightness)
+	file.set_value("controls", "keys", bindings)
 	file.save(path)

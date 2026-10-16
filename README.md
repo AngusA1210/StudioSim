@@ -32,18 +32,19 @@ settings, and enter the room. The menu inside the room has a button to come back
 
 | Key | Action |
 | --- | --- |
-| W A S D, mouse | move, look (click to capture the mouse) |
+| W A S D, mouse | move, look (click to capture the mouse); the arrow keys walk and turn too |
 | Shift | run |
 | G or click | pick up the instrument you're facing, put it down (it turns to face you) |
 | N | the instrument menu: add an instrument to the room |
 | Backspace, twice | remove the instrument you're facing or carrying |
 | E | play the instrument you're next to; Q stops |
 | A S D F G H J K L ; | white keys while playing (W E T Y U O P are the black keys, Z/X change octave) |
+| K | the keyboard: the letter keys play every instrument whose input is on, from wherever you stand. The arrow keys walk and turn meanwhile; Q or Esc closes it |
 | I | that instrument's input on/off (see below) |
 | MIDI keyboard | plays every instrument whose input is on, with velocity (and the sustain pedal on the Keys); plug in any time |
 | Enter | open the pattern editor for the instrument you're next to or playing (at an amp: its knobs and pedals; at a Speaker: its volume and input) |
 | M | switch that instrument's loop off or on (for a Speaker or an amp: mute) |
-| L K U J | at an amp with a loop pedal: L the footswitch (record, close the loop, overdub), K stop or play, U undo or redo the last overdub, J twice to clear |
+| L O U J | at an amp with a loop pedal: L the footswitch (record, close the loop, overdub), O stop or play, U undo or redo the last overdub, J twice to clear |
 | 1 to 8 | at an amp, stamp on its pedals: each switches that pedal on or off (the loop pedal: its footswitch) |
 | Tab | the mix window (you can still walk about while it is open) |
 | Space | start or stop every instrument's pattern |
@@ -53,6 +54,11 @@ settings, and enter the room. The menu inside the room has a button to come back
 | R | room reverb on/off |
 
 Facing an instrument, a card at the right of the screen lists what each key does to it.
+
+Every key here can be changed on the **Controls** page of the menu: click an action's key, then press the new one
+(an action that had it takes the old key). Esc, the arrow keys, 1 to 8 and the note keys stay as they are. While you
+are at an instrument or have the keyboard open, the note keys are notes, and whatever else they are given waits until
+you get up or close it.
 
 ## Instruments
 

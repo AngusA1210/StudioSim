@@ -56,7 +56,8 @@ func create(kind: String):
 
 
 func _input(event: InputEvent) -> void:
-	if is_open() and event is InputEventKey and event.pressed and not event.echo and event.physical_keycode in [KEY_N, KEY_ESCAPE]:
+	if is_open() and event is InputEventKey and event.pressed and not event.echo and \
+			(event.physical_keycode == KEY_ESCAPE or app.bindings.action_for(event.physical_keycode) == "add"):
 		close()
 		get_viewport().set_input_as_handled()
 

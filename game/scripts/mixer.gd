@@ -77,7 +77,8 @@ func close() -> void:
 func _input(event: InputEvent) -> void:
 	if app.plugin_browser.visible:  # the keys are for its search box
 		return
-	if is_open() and event is InputEventKey and event.pressed and not event.echo and event.physical_keycode in [KEY_TAB, KEY_ESCAPE]:
+	if is_open() and event is InputEventKey and event.pressed and not event.echo and \
+			(event.physical_keycode == KEY_ESCAPE or app.bindings.action_for(event.physical_keycode) == "mixer"):
 		close()
 		get_viewport().set_input_as_handled()
 

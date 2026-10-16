@@ -15,12 +15,8 @@ const AIM_COS := 0.955  # within about 17° of where you're facing
 const CARRY_DISTANCE := 1.5
 const REMOVE_WINDOW_MS := 3000  # how long the second Backspace has to follow the first
 
-# Computer keyboard as a piano, the usual DAW layout. Values are semitones above the base C. The shortcuts that
-# have to work while playing (Q, Z, X, Tab, Enter, M, N, C, Space, Backspace, B, R, I) are deliberately not among these keys.
-const KEYMAP := {
-	KEY_A: 0, KEY_W: 1, KEY_S: 2, KEY_E: 3, KEY_D: 4, KEY_F: 5, KEY_T: 6, KEY_G: 7, KEY_Y: 8,
-	KEY_H: 9, KEY_U: 10, KEY_J: 11, KEY_K: 12, KEY_O: 13, KEY_L: 14, KEY_P: 15, KEY_SEMICOLON: 16,
-}
+const Bindings := preload("res://scripts/bindings.gd")  # the keys, and the computer keyboard as a piano (NOTES)
+const KEYMAP := Bindings.NOTES
 
 var app  # main.gd: settings and the audio core
 var audio: SoundRoomAudio
@@ -32,6 +28,8 @@ var target = null   # instrument you're aiming at
 var carried = null  # instrument you're carrying
 var playing = null  # instrument you're playing
 var octave := 0
+var typing := false  # the keyboard (K) is open: the letter keys play every instrument whose input is on
+var keyboard_octave := 0
 var held := {}      # physical key → [MIDI note sounding, the instruments it was sent to]
 var remove_pending = null  # instrument that Backspace was pressed on once; a second press removes it
 var _sat_input := false    # sitting down switched the input on, so getting up switches it off again
@@ -84,6 +82,8 @@ func start_playing(inst) -> void:
 	if playing == inst:
 		return
 	stop_playing()
+	if typing:
+		close_keyboard()
 	playing = inst
 	octave = inst.default_octave
 	var was_on: bool = inst.input_on
@@ -183,94 +183,118 @@ func _handle_key(event: InputEventKey) -> void:
 				audio.note_off(id, held[key][0])
 			held.erase(key)
 		return
+	if key == KEY_ESCAPE:  # always backs out: up from an instrument, the keyboard closed, or the menu
+		if playing != null:
+			stop_playing()
+		elif typing:
+			close_keyboard()
+		else:
+			app.menu.open()
+		return
+	var notes := playing != null or typing  # the letter keys are a piano
+	if notes and Bindings.NOTES.has(key):
+		_note_on(key)
+		return
 	# The instrument these keys act on: the one you are playing, or else the one you are facing.
 	var at = playing if playing != null else target
-	match key:
-		KEY_ESCAPE:
-			if playing != null:
-				stop_playing()
-			else:
-				app.menu.open()
-			return
-		KEY_TAB:
+	var keys = app.bindings
+	match keys.action_for(key):
+		"mixer":
 			app.mixer.open()
-			return
-		KEY_ENTER, KEY_KP_ENTER:
+		"edit":
 			if at != null and at.playable and (playing != null or can_play_target()):
 				app.sequencer.open(at)
 			elif at != null and at.is_amp and _distance_to(at) < PLAY_REACH + 0.5:
 				app.amp_panel.open(at)
 			elif at != null and not at.playable and _distance_to(at) < PLAY_REACH + 0.5:
 				app.speaker_panel.open(at)
-			return
-		KEY_N:
+		"add":
 			app.instrument_menu.open()
-			return
-		KEY_BACKSPACE, KEY_DELETE:
+		"remove":
 			_ask_to_remove(carried if carried != null else at)
-			return
-		KEY_M:  # an instrument's loop; a Speaker has none, so it mutes
+		"loop":  # an instrument's loop; a Speaker or an amp has none, so it mutes
 			if at != null and at.playable:
 				at.set_loop(not at.loop_on)
 			elif at != null:
 				app.set_muted(at, not at.muted)
-			return
-		KEY_SPACE:
+		"transport":
 			app.set_sequence_running(not app.sequence_running)
-			return
-		KEY_C:
+		"click":
 			app.set_click(not app.settings.click)
-			return
-		KEY_B:
+		"binaural":
 			app.set_binaural(not app.settings.binaural)
-			return
-		KEY_R:
+		"reverb":
 			app.set_reverb(not app.settings.reverb)
-			return
-		KEY_I:
+		"input":
 			if at != null:
 				app.set_input(at, not at.input_on)
-			return
-	if playing != null:
-		if key == KEY_Q:
-			stop_playing()
-		elif key == KEY_Z or key == KEY_X:
-			octave = clampi(octave + (1 if key == KEY_X else -1), -3, 3)
-		elif KEYMAP.has(key):
-			var note := 60 + 12 * octave + int(KEYMAP[key])
-			var ids := [playing.source_id]  # the instrument you're at, and any others whose input is on
-			for inst in app.armed_instruments():
-				if inst != playing:
-					ids.append(inst.source_id)
-			for id in ids:
-				audio.note_on(id, note, 0.8)
-			held[key] = [note, ids]
-		return
-	match key:
-		KEY_E:
-			if can_play_target():
+		"stop":
+			if playing != null:
+				stop_playing()
+			elif typing:
+				close_keyboard()
+		"octave_down", "octave_up":
+			if notes:
+				var step := 1 if keys.action_for(key) == "octave_up" else -1
+				if playing != null:
+					octave = clampi(octave + step, -3, 3)
+				else:
+					keyboard_octave = clampi(keyboard_octave + step, -3, 3)
+		"keyboard":
+			if not notes:
+				open_keyboard()
+		"play":
+			if not notes and can_play_target():
 				start_playing(target)
-		KEY_G:
-			_grab_or_drop()
-		KEY_L, KEY_K, KEY_U, KEY_J:  # an amp's loop pedal, if it has one
-			if target != null and target.is_amp and target.looper.get("state", "none") != "none":
-				_loop_pedal(target, key)
-		KEY_1, KEY_2, KEY_3, KEY_4, KEY_5, KEY_6, KEY_7, KEY_8:  # stamping on an amp's pedals
-			if target != null and target.is_amp:
+		"carry":
+			if not notes:
+				_grab_or_drop()
+		"loop_switch", "loop_stop", "loop_undo", "loop_clear":  # an amp's loop pedal, if it has one
+			if not notes and target != null and target.is_amp and target.looper.get("state", "none") != "none":
+				_loop_pedal(target, keys.action_for(key))
+		_:
+			if not notes and key >= KEY_1 and key <= KEY_8 and target != null and target.is_amp:  # stamping on its pedals
 				app.stomp(target, key - KEY_1)
 
 
-## The loop pedal's buttons as keys: L the footswitch, K stop or play, U undo or redo, J clear (twice).
-func _loop_pedal(amp, key: int) -> void:
+## A note on the computer keyboard: to the instrument you're at and every other instrument whose input is on, or with
+## the keyboard open, to every instrument whose input is on.
+func _note_on(key: int) -> void:
+	var base: int = octave if playing != null else keyboard_octave
+	var note := 60 + 12 * base + int(Bindings.NOTES[key])
+	var ids := [playing.source_id] if playing != null else []
+	for inst in app.armed_instruments():
+		if inst != playing:
+			ids.append(inst.source_id)
+	for id in ids:
+		audio.note_on(id, note, 0.8)
+	held[key] = [note, ids]
+
+
+## The keyboard (K): the letter keys play every instrument whose input is on, from wherever you are. The arrow keys
+## walk and turn meanwhile, and the mouse still looks about.
+func open_keyboard() -> void:
+	if playing != null:
+		return
+	typing = true
+
+
+func close_keyboard() -> void:
+	release_keys()
+	typing = false
+
+
+## The loop pedal's buttons as keys: the footswitch, stop or play, undo or redo, clear (twice).
+func _loop_pedal(amp, action: String) -> void:
 	var loop: Dictionary = amp.looper
-	match key:
-		KEY_L:
+	match action:
+		"loop_switch":
 			app.looper_action(amp, "press")
-		KEY_K:
+		"loop_stop":
 			app.looper_action(amp, "play" if loop.get("state", "") == "stopped" else "stop")
-		KEY_U:
+		"loop_undo":
 			app.looper_action(amp, "undo" if loop.get("can_undo", false) else "redo")
-		KEY_J:
+		"loop_clear":
 			if clear_pending == amp and Time.get_ticks_msec() < _clear_deadline:
 				clear_pending = null
 				app.looper_action(amp, "clear")
@@ -284,9 +308,8 @@ func _physics_process(delta: float) -> void:
 	var strafe := 0.0
 	var turn := 0.0
 	if _can_move():
-		if playing == null:  # while playing, these keys are notes
-			forward += float(Input.is_physical_key_pressed(KEY_W)) - float(Input.is_physical_key_pressed(KEY_S))
-			strafe += float(Input.is_physical_key_pressed(KEY_D)) - float(Input.is_physical_key_pressed(KEY_A))
+		forward += _held("forward") - _held("back")
+		strafe += _held("right") - _held("left")
 		forward += float(Input.is_physical_key_pressed(KEY_UP)) - float(Input.is_physical_key_pressed(KEY_DOWN))
 		turn += float(Input.is_physical_key_pressed(KEY_LEFT)) - float(Input.is_physical_key_pressed(KEY_RIGHT))
 	if turn != 0.0:
@@ -295,7 +318,7 @@ func _physics_process(delta: float) -> void:
 
 	var basis_flat := Basis(Vector3.UP, yaw)
 	var wish := basis_flat * Vector3(strafe, 0.0, -forward)
-	var speed := RUN_SPEED if Input.is_physical_key_pressed(KEY_SHIFT) else WALK_SPEED
+	var speed := RUN_SPEED if app.bindings.is_down("run") else WALK_SPEED
 	if wish.length() > 1.0:
 		wish = wish.normalized()
 	velocity.x = wish.x * speed
@@ -326,6 +349,14 @@ func _process(_delta: float) -> void:
 		if aimed != null:
 			aimed.set_highlighted(true)
 		target = aimed
+
+
+## 1 if a movement key is held, 0 if not, or if it is a note key and the letter keys are notes just now.
+func _held(action: String) -> float:
+	var keycode: int = app.bindings.key(action)
+	if (playing != null or typing) and Bindings.NOTES.has(keycode):
+		return 0.0
+	return float(Input.is_physical_key_pressed(keycode))
 
 
 ## Removing takes two presses, so a slip of the finger doesn't cost an instrument and its pattern.

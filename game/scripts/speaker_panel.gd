@@ -65,9 +65,11 @@ func close() -> void:
 
 
 func _input(event: InputEvent) -> void:
-	if is_open() and event is InputEventKey and event.pressed and not event.echo and \
-			event.physical_keycode in [KEY_ESCAPE, KEY_ENTER, KEY_KP_ENTER, KEY_TAB]:
-		var to_mixer: bool = event.physical_keycode == KEY_TAB
+	if not is_open() or not (event is InputEventKey) or not event.pressed or event.echo:
+		return
+	var action: String = "edit" if event.physical_keycode == KEY_ESCAPE else app.bindings.action_for(event.physical_keycode)
+	if action in ["edit", "mixer"]:
+		var to_mixer: bool = action == "mixer"
 		close()
 		if to_mixer and not app.mixer.is_open():
 			app.mixer.open()
@@ -91,7 +93,8 @@ func _refresh() -> void:
 	for insert in inst.inserts:
 		if insert.plugin_name != "":
 			names.append(insert.plugin_name + ("" if insert.on else " (bypassed)"))
-	_inserts.text = "Inserts: " + (", ".join(names) if not names.is_empty() else "none. An amp simulator goes on one (Tab, then the strip's first insert); the Speaker then sounds as that amp.")
+	_inserts.text = "Inserts: " + (", ".join(names) if not names.is_empty() else \
+		"none. An amp simulator goes on one (%s for the mix window, then the strip's first insert); the Speaker then sounds as that amp." % app.bindings.label("mixer"))
 
 
 func _build() -> void:

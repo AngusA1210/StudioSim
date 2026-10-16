@@ -146,20 +146,24 @@ func _input(event: InputEvent) -> void:
 		return
 	var handled := true
 	var key: int = event.physical_keycode
-	match key:
-		KEY_ESCAPE, KEY_ENTER, KEY_KP_ENTER:
+	var action: String = "edit" if key == KEY_ESCAPE else app.bindings.action_for(key)
+	match action:
+		"edit":
 			close()
-		KEY_TAB:
+		"mixer":
 			close()
-			app.mixer.open()
-		KEY_L, KEY_K, KEY_U, KEY_J:
-			handled = has_looper()
-			if handled:
-				{KEY_L: _on_footswitch, KEY_K: _on_stop, KEY_U: _on_undo, KEY_J: _on_clear}[key].call()
+			if not app.mixer.is_open():
+				app.mixer.open()
 		_:
-			handled = NUMBER_KEYS.has(key) and NUMBER_KEYS.find(key) < inst.pedals.size()
-			if handled:
-				app.stomp(inst, NUMBER_KEYS.find(key))
+			var loop_keys := {"loop_switch": _on_footswitch, "loop_stop": _on_stop, "loop_undo": _on_undo, "loop_clear": _on_clear}
+			if loop_keys.has(action):
+				handled = has_looper()
+				if handled:
+					loop_keys[action].call()
+			else:
+				handled = NUMBER_KEYS.has(key) and NUMBER_KEYS.find(key) < inst.pedals.size()
+				if handled:
+					app.stomp(inst, NUMBER_KEYS.find(key))
 	if handled:
 		get_viewport().set_input_as_handled()
 
@@ -420,13 +424,14 @@ func _refresh_loop() -> void:
 	else:
 		_time.text = _clock(length) if length > 0.0 else "-"
 		_progress.value = 0.0
-	_footswitch.text = "%s   (L or %d)" % [look[2], selected + 1]
-	_stop.text = "Play   (K)" if state == "stopped" else "Stop   (K)"
+	var keys = app.bindings
+	_footswitch.text = "%s   (%s or %d)" % [look[2], keys.label("loop_switch"), selected + 1]
+	_stop.text = ("Play   (%s)" if state == "stopped" else "Stop   (%s)") % keys.label("loop_stop")
 	_stop.disabled = state in ["empty", "waiting"]
-	_undo.text = "Redo   (U)" if loop.get("can_redo", false) and not loop.get("can_undo", false) else "Undo   (U)"
+	_undo.text = ("Redo   (%s)" if loop.get("can_redo", false) and not loop.get("can_undo", false) else "Undo   (%s)") % keys.label("loop_undo")
 	_undo.disabled = not (loop.get("can_undo", false) or loop.get("can_redo", false))
 	var armed := Time.get_ticks_msec() < _clear_armed_until
-	_clear.text = "Press again to clear" if armed else "Clear   (J)"
+	_clear.text = "Press again to clear" if armed else "Clear   (%s)" % keys.label("loop_clear")
 	_clear.disabled = state in ["empty", "waiting"]
 	var controls: Array = inst.pedals[selected].controls
 	if not _level._dragging:

@@ -31,6 +31,7 @@ const Mixer := preload("res://scripts/mixer.gd")
 const AmpPanel := preload("res://scripts/amp_panel.gd")
 const PluginBrowser := preload("res://scripts/plugin_browser.gd")
 const SpeakerPanel := preload("res://scripts/speaker_panel.gd")
+const Bindings := preload("res://scripts/bindings.gd")
 const Title := preload("res://scripts/title.gd")
 const Catalog := preload("res://scripts/catalog.gd")
 const Settings := preload("res://scripts/settings.gd")
@@ -64,6 +65,7 @@ var mixer  # the mix window (Tab)
 var amp_panel  # an amp's knobs and its pedals (Enter at an amp)
 var plugin_browser  # the effect plug-ins on the computer, to choose one for an insert or a Plug-in pedal
 var speaker_panel  # a Speaker's volume and input (Enter at a Speaker)
+var bindings  # the keys, as set on the Controls page
 var _plugins = null  # what get_plugins() said, the first time anything asked
 var instrument_menu
 var title  # the title screen
@@ -98,6 +100,7 @@ func _ready() -> void:
 	_parse_options()
 	settings.persist = not options.has("silent")
 	settings.load_from_disk()
+	bindings = Bindings.new(settings.bindings)
 	if options.has("text-scale"):
 		settings.text_scale = float(options["text-scale"])
 
@@ -245,6 +248,20 @@ func clear_peak(inst) -> void:
 		master_peak_hold = 0.0
 	else:
 		inst.peak_hold = 0.0
+
+
+## Gives an action a new key (the Controls page). Whatever had that key takes the action's old one; returns it, or "".
+func set_binding(action: String, keycode: int) -> String:
+	var swapped: String = bindings.bind(action, keycode)
+	settings.bindings = bindings.changed()
+	settings.save_to_disk()
+	return swapped
+
+
+func reset_bindings() -> void:
+	bindings.reset()
+	settings.bindings = {}
+	settings.save_to_disk()
 
 
 ## The mix window's channel meters before the fader or after it. The peaks held so far were measured the other way.

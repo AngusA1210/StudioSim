@@ -96,19 +96,20 @@ func close() -> void:
 func _input(event: InputEvent) -> void:
 	if not is_open() or not (event is InputEventKey) or not event.pressed or event.echo:
 		return
-	match event.physical_keycode:
-		KEY_ESCAPE:
+	var action: String = "escape" if event.physical_keycode == KEY_ESCAPE else app.bindings.action_for(event.physical_keycode)
+	match action:
+		"escape":
 			close()
 			get_viewport().set_input_as_handled()
-		KEY_ENTER, KEY_KP_ENTER:
+		"edit":
 			if not (get_viewport().gui_get_focus_owner() is LineEdit):  # Enter in the tempo box sets the tempo
 				close()
 				get_viewport().set_input_as_handled()
-		KEY_TAB:  # straight over to the mix window
+		"mixer":  # straight over to the mix window
 			close()
 			app.mixer.open()
 			get_viewport().set_input_as_handled()
-		KEY_SPACE:
+		"transport":
 			if not (get_viewport().gui_get_focus_owner() is LineEdit):
 				app.set_sequence_running(not app.sequence_running)
 				get_viewport().set_input_as_handled()

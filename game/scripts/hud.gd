@@ -42,7 +42,7 @@ var _piano: PanelContainer
 var _piano_title: Label
 var _piano_help: Label
 var _piano_keys := {}  # physical key → {rect, idle colour, piece label, semitone, white}
-var _piano_for = null  # the instrument the keyboard is labelled for
+var _piano_for := ""  # what the keyboard is labelled for: an instrument (its id), or "keyboard"
 var _frame := 0
 
 
@@ -190,8 +190,10 @@ func _process(_delta: float) -> void:
 	_show_hint(vp)
 
 	# One line of guidance: how to start, or where the menu is.
-	var playing: bool = player.playing != null
-	_prompt.text = "Click to look around  ·  Esc  menu and settings" if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED else "Esc  menu  ·  Tab  mix window  ·  N  add an instrument"
+	var keys = app.bindings
+	var playing: bool = player.playing != null or player.typing
+	_prompt.text = "Click to look around  ·  Esc  menu and settings" if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED else \
+		"Esc  menu  ·  %s  mix window  ·  %s  add an instrument  ·  %s  keyboard" % [keys.label("mixer"), keys.label("add"), keys.label("keyboard")]
 	_prompt_panel.visible = not playing
 	_prompt_panel.reset_size()
 	if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
@@ -200,19 +202,42 @@ func _process(_delta: float) -> void:
 		_prompt_panel.position = Vector2(14, vp.y - _prompt_panel.size.y - 14)
 
 	_piano.visible = playing
-	if playing:
+	var octaves := "%s %s  octave" % [keys.label("octave_down"), keys.label("octave_up")]
+	if player.playing != null:
 		var inst = player.playing
-		if inst != _piano_for:
+		if _piano_for != str(inst.get_instance_id()):
 			_label_piano(inst)
 		_piano_title.text = "Playing the %s" % inst.display_name
-		var octave := "" if inst.kind == "drums" else "Z X  octave (lowest key C%d)  ·  " % (4 + player.octave)
-		_piano_help.text = "Q  stop  ·  %sEnter  pattern  ·  I  input %s  ·  M  loop %s" % [octave, "off" if inst.input_on else "on",
-			"on" if not inst.loop_on else "off"]
-		_piano.reset_size()
-		_piano.position = Vector2((vp.x - _piano.size.x) / 2, vp.y - _piano.size.y - 18)
-		for key in _piano_keys:
-			var entry: Dictionary = _piano_keys[key]
-			entry.rect.color = inst.color.lightened(0.15) if player.held.has(key) else entry.idle
+		var octave := "" if inst.kind == "drums" else "%s (lowest key C%d)  ·  " % [octaves, 4 + player.octave]
+		_piano_help.text = "%s  stop  ·  %s%s  pattern  ·  %s  input %s  ·  %s  loop %s" % [keys.label("stop"), octave, keys.label("edit"),
+			keys.label("input"), "off" if inst.input_on else "on", keys.label("loop"), "on" if not inst.loop_on else "off"]
+		_light_piano(inst.color)
+	elif player.typing:
+		# The keyboard: every instrument whose input is on, wherever they stand.
+		var armed: Array = app.armed_instruments()
+		var drums_only := not armed.is_empty()
+		var names := []
+		for inst in armed:
+			names.append(inst.display_name)
+			drums_only = drums_only and inst.kind == "drums"
+		var lead = armed[0] if not armed.is_empty() else null
+		if _piano_for != (str(lead.get_instance_id()) if drums_only else "keyboard"):
+			_label_piano(lead if drums_only else null)
+		_piano_title.text = ("Keyboard  →  " + ", ".join(names)) if not armed.is_empty() else \
+			"Keyboard: no instrument's input is on. Face one and press %s." % keys.label("input")
+		_piano_title.add_theme_color_override("font_color", lead.color.lightened(0.3) if lead != null else WARN)
+		_piano_help.text = "%s or Esc  close  ·  %s (lowest key C%d)  ·  arrows  walk and turn  ·  %s  input of what you face" % [
+			keys.label("stop"), octaves, 4 + player.keyboard_octave, keys.label("input")]
+		_light_piano(lead.color if lead != null else Color(0.6, 0.62, 0.68))
+
+
+func _light_piano(lit: Color) -> void:
+	var vp := get_viewport().get_visible_rect().size
+	_piano.reset_size()
+	_piano.position = Vector2((vp.x - _piano.size.x) / 2, vp.y - _piano.size.y - 18)
+	for key in _piano_keys:
+		var entry: Dictionary = _piano_keys[key]
+		entry.rect.color = lit.lightened(0.15) if player.held.has(key) else entry.idle
 
 
 ## The instruction card beside the crosshair: for what you're facing, what you're carrying, or a removal to confirm.
@@ -220,18 +245,19 @@ func _show_hint(vp: Vector2) -> void:
 	var title := ""
 	var tint := Color.WHITE
 	var rows := []  # [key, action]; an empty key draws a line, for the removal at the bottom
+	var keys = app.bindings
 	if player.remove_pending != null:
 		title = "Remove %s?" % player.remove_pending.display_name
 		tint = WARN
-		rows = [["Backspace", "yes, remove it"], ["look away", "keep it"]]
+		rows = [[keys.label("remove"), "yes, remove it"], ["look away", "keep it"]]
 	elif player.carried != null:
 		title = "Carrying %s" % player.carried.display_name
 		tint = player.carried.color.lightened(0.3)
-		rows = [["G or click", "put it down"], ["", ""], ["Backspace", "remove"]]
+		rows = [["%s or click" % keys.label("carry"), "put it down"], ["", ""], [keys.label("remove"), "remove"]]
 	elif player.clear_pending != null:
 		title = "Clear %s's loop?" % player.clear_pending.display_name
 		tint = WARN
-		rows = [["J", "yes, clear it"], ["look away", "keep it"]]
+		rows = [[keys.label("loop_clear"), "yes, clear it"], ["look away", "keep it"]]
 	elif player.target != null and player.playing == null:
 		var t = player.target
 		title = t.display_name
@@ -239,35 +265,35 @@ func _show_hint(vp: Vector2) -> void:
 		if t.is_amp:  # an amp, its pedals, and its loop pedal if it has one
 			var loop: Dictionary = t.looper
 			var state: String = loop.get("state", "none")
-			rows.append(["I", "input off" if t.input_on else "input on"])
-			rows.append(["Enter", "amp and pedals"])
+			rows.append([keys.label("input"), "input off" if t.input_on else "input on"])
+			rows.append([keys.label("edit"), "amp and pedals"])
 			var count: int = t.pedals.size()
 			if count > 0:
 				rows.append(["1" if count == 1 else "1-%d" % count, "stamp on a pedal" if count == 1 else "stamp on the pedals"])
 			if state != "none":
-				rows.append(["L", {"empty": "record a loop", "waiting": "cancel (waiting for the bar)", "recording": "close the loop",
+				rows.append([keys.label("loop_switch"), {"empty": "record a loop", "waiting": "cancel (waiting for the bar)", "recording": "close the loop",
 					"playing": "overdub", "overdubbing": "stop overdubbing", "stopped": "play the loop"}[state]])
 			if state in ["playing", "overdubbing", "recording"]:
-				rows.append(["K", "stop the loop"])
+				rows.append([keys.label("loop_stop"), "stop the loop"])
 			if loop.get("can_undo", false):
-				rows.append(["U", "undo the last overdub"])
+				rows.append([keys.label("loop_undo"), "undo the last overdub"])
 			elif loop.get("can_redo", false):
-				rows.append(["U", "redo the overdub"])
+				rows.append([keys.label("loop_undo"), "redo the overdub"])
 			if state not in ["empty", "waiting", "none"]:
-				rows.append(["J", "clear the loop (press twice)"])
-			rows.append(["M", "unmute" if t.muted else "mute"])
+				rows.append([keys.label("loop_clear"), "clear the loop (press twice)"])
+			rows.append([keys.label("loop"), "unmute" if t.muted else "mute"])
 		elif t.playable:
-			rows.append(["E", "play" if player.can_play_target() else "play (step closer)"])
-			rows.append(["Enter", "edit its pattern"])
-			rows.append(["I", "input off" if t.input_on else "input on"])
-			rows.append(["M", "loop on" if not t.loop_on else "loop off"])
+			rows.append([keys.label("play"), "play" if player.can_play_target() else "play (step closer)"])
+			rows.append([keys.label("edit"), "edit its pattern"])
+			rows.append([keys.label("input"), "input off" if t.input_on else "input on"])
+			rows.append([keys.label("loop"), "loop on" if not t.loop_on else "loop off"])
 		elif not t.is_amp:
-			rows.append(["I", "input off" if t.input_on else "input on"])
-			rows.append(["Enter", "volume and input"])
-			rows.append(["M", "unmute" if t.muted else "mute"])
-		rows.append(["G", "carry"])
+			rows.append([keys.label("input"), "input off" if t.input_on else "input on"])
+			rows.append([keys.label("edit"), "volume and input"])
+			rows.append([keys.label("loop"), "unmute" if t.muted else "mute"])
+		rows.append([keys.label("carry"), "carry"])
 		rows.append(["", ""])
-		rows.append(["Backspace", "remove (press twice)"])
+		rows.append([keys.label("remove"), "remove (press twice)"])
 	_hint_panel.visible = title != ""
 	if title == "":
 		return
@@ -372,13 +398,16 @@ func _piano_key(parent: Control, key: int, letter: String, pos: Vector2, size: V
 
 
 ## At the drums each key is a drum, so say which; at anything else the keys are just notes.
+## Names the keys for an instrument: a drum kit's pieces, or nothing beyond the notes (null: the keyboard).
 func _label_piano(inst) -> void:
-	_piano_for = inst
-	_piano_title.add_theme_color_override("font_color", inst.color.lightened(0.3))
+	_piano_for = str(inst.get_instance_id()) if inst != null else "keyboard"
+	var drums: bool = inst != null and inst.kind == "drums"
+	if inst != null:
+		_piano_title.add_theme_color_override("font_color", inst.color.lightened(0.3))
 	for key in _piano_keys:
 		var entry: Dictionary = _piano_keys[key]
-		entry.piece.visible = inst.kind == "drums"
-		if inst.kind == "drums":
+		entry.piece.visible = drums
+		if drums:
 			var names: Array = DRUM_LABELS.get(audio.get_drum_piece_name(60 + int(entry.semitone)), ["", ""])
 			entry.piece.text = names[0] if entry.white else names[1]
 

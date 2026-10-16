@@ -533,9 +533,9 @@ func _run() -> void:
 	await tap(KEY_U)
 	await frames(3)
 	check(amp.looper.get("can_redo", false) and not amp.looper.get("can_undo", false), "U undoes it")
-	await tap(KEY_K)
+	await tap(KEY_O)
 	await frames(3)
-	check(amp.looper.get("state", "") == "stopped" and amp._loop_label.text.contains("stopped"), "K stops the loop", amp._loop_label.text)
+	check(amp.looper.get("state", "") == "stopped" and amp._loop_label.text.contains("stopped"), "O stops the loop", amp._loop_label.text)
 	await tap(KEY_ENTER)
 	await frames(4)
 	check(panel.is_open() and panel.inst == amp and panel._display.text == "■ STOPPED" and panel._footswitch.text.begins_with("Play"),
@@ -880,6 +880,57 @@ func _run() -> void:
 	check(not main.instruments.has(spare) and mix._strip_for(spare).is_empty(), "and then takes it out of the room and the mix window")
 	await tap(KEY_TAB)
 	check(not mix.is_open(), "Tab closes the mix window")
+
+	print("The keyboard, and changing keys")
+	var bass_synth = main.find_instrument("bass")
+	player.stop_playing()
+	player.place(Vector3(0.0, 0.0, 3.6), PI)  # facing away from everything
+	await frames(3)
+	await tap(KEY_K)
+	await frames(2)
+	check(player.typing and main.hud._piano.visible and main.hud._piano_title.text.begins_with("Keyboard: no instrument's input is on"),
+		"K opens the keyboard, which says when no instrument's input is on", main.hud._piano_title.text)
+	main.set_input(bass_synth, true)
+	await frames(2)
+	key(KEY_A)
+	await frames(2)
+	check(main.hud._piano_title.text == "Keyboard  →  Bass" and player.held.has(KEY_A) and player.held[KEY_A][1] == [bass_synth.source_id],
+		"with the bass's input on, the keyboard plays it from across the room", main.hud._piano_title.text)
+	key(KEY_A, false)
+	var here: Vector3 = player.global_position
+	for keycode in [KEY_W, KEY_UP]:
+		var walk_key := InputEventKey.new()
+		walk_key.physical_keycode = keycode
+		walk_key.pressed = true
+		Input.parse_input_event(walk_key)
+		await seconds(0.3)
+		var walk_up := walk_key.duplicate()
+		walk_up.pressed = false
+		Input.parse_input_event(walk_up)
+		await frames(2)
+		if keycode == KEY_W:
+			check(player.global_position.distance_to(here) < 0.05, "W is a note while the keyboard is open, so it doesn't walk")
+	check(player.global_position.distance_to(here) > 0.3, "but the arrow keys still walk", "%.2f m" % player.global_position.distance_to(here))
+	await tap(KEY_Q)
+	check(not player.typing and not main.hud._piano.visible, "Q closes the keyboard")
+	main.set_input(bass_synth, false)
+	main.menu.open(main.menu.CONTROLS_TAB)
+	await frames(3)
+	main.menu._tabs.get_child(main.menu.CONTROLS_TAB).ensure_control_visible(main.menu._key_buttons.mixer)  # scrolled to it
+	await frames(3)
+	await click(main.menu._key_buttons.mixer.get_global_rect().get_center())
+	check(main.menu._key_buttons.mixer.text == "press a key…", "on the Controls page, clicking a key waits for a new one")
+	await tap(KEY_C)
+	check(main.bindings.key("mixer") == KEY_C and main.bindings.key("click") == KEY_TAB and main.menu._key_buttons.mixer.text == "C" and
+		main.menu._keys_note.text.contains("Metronome click"), "pressing C gives it to the mix window, and the click takes Tab", main.menu._keys_note.text)
+	await tap(KEY_ESCAPE)
+	await frames(2)
+	await tap(KEY_C)
+	await frames(2)
+	check(mix.is_open() and main.bindings.label("mixer") == "C", "C now opens the mix window")
+	await tap(KEY_C)
+	main.reset_bindings()
+	check(main.bindings.key("mixer") == KEY_TAB and main.bindings.key("click") == KEY_C, "and the keys can all be put back")
 
 	menu.open(menu.SETTINGS_TAB)
 	await frames(3)
