@@ -240,7 +240,10 @@ func _show_hint(vp: Vector2) -> void:
 			var loop: Dictionary = t.looper
 			var state: String = loop.get("state", "empty")
 			rows.append(["I", "input off" if t.input_on else "input on"])
-			rows.append(["Enter", "knobs and loop pedal"])
+			rows.append(["Enter", "amp, pedals and loop pedal"])
+			var count: int = t.pedals.size()
+			if count > 0:
+				rows.append(["1" if count == 1 else "1-%d" % count, "pedal on/off" if count == 1 else "pedals on/off"])
 			rows.append(["L", {"empty": "record a loop", "waiting": "cancel (waiting for the bar)", "recording": "close the loop",
 				"playing": "overdub", "overdubbing": "stop overdubbing", "stopped": "play the loop"}[state]])
 			if state in ["playing", "overdubbing", "recording"]:

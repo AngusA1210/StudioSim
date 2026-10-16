@@ -21,6 +21,8 @@
 #include "amp.h"
 #include "engine.h"
 #include "looper.h"
+#include "pedals.h"
+#include "plugin_host.h"
 #include "room_geometry.h"
 
 #ifdef __APPLE__
@@ -1356,6 +1358,358 @@ int main(int argc, char** argv) {
         const LooperStatus gone = room.engine.looperStatus(amp);
         check(hushed.peak < 1e-4 && kept.state == Looper::Playing && gone.state == Looper::Empty && !room.engine.looperAction(room.drums, Looper::Press),
               "the amp's knobs act on the loop too; a loop survives a new buffer size but not a new sample rate", "");
+    }
+
+    {
+        std::printf("\nEffect pedals\n");
+        constexpr float kRate = 48000.0f;
+        // Through a pedal in blocks of 128, with some controls set: {control, value}.
+        auto through = [&](Pedal& pedal, std::vector<float> x, double beat = 0.0) {
+            for (size_t i = 0; i < x.size(); i += 128) pedal.process(x.data() + i, int(std::min<size_t>(128, x.size() - i)), beat);
+            return x;
+        };
+        auto make = [&](PedalKind kind, std::initializer_list<std::pair<int, float>> settings = {}) {
+            auto pedal = Pedal::make(kind, kRate);
+            for (auto [control, value] : settings) pedal->setControl(control, value);
+            return pedal;
+        };
+        auto sine = [&](double hz, double seconds, float level) {
+            std::vector<float> x(size_t(seconds * kRate));
+            for (size_t i = 0; i < x.size(); ++i) x[i] = level * float(std::sin(6.2831853 * hz * double(i) / kRate));
+            return x;
+        };
+        auto rmsOf = [](const std::vector<float>& x, size_t from, size_t to) {
+            double e = 0;
+            for (size_t i = from; i < to && i < x.size(); ++i) e += double(x[i]) * x[i];
+            return std::sqrt(e / double(std::max<size_t>(1, std::min(to, x.size()) - from)));
+        };
+        // How much a steady tone's level wavers: the quietest and loudest 10 ms windows, after the first half second.
+        auto waver = [&](const std::vector<float>& x) {
+            double low = 1e9, high = 0;
+            for (size_t at = size_t(kRate / 2); at + 480 <= x.size(); at += 480) {
+                const double r = rmsOf(x, at, at + 480);
+                low = std::min(low, r);
+                high = std::max(high, r);
+            }
+            return low / high;
+        };
+        auto harmonics = [&](const std::vector<float>& x, double hz) {
+            double h = 0;
+            for (int k = 2; k <= 6; ++k) h += tonePower(x, hz * k, kRate);
+            return std::sqrt(h / tonePower(x, hz, kRate));
+        };
+
+        // Switched off, a pedal leaves the signal exactly as it was.
+        bool untouched = true;
+        std::string which;
+        const std::vector<float> guitar = pluckedString(110.0, 2.0, 0.1f);
+        for (int k = 0; k < kPedalKinds; ++k) {
+            const PedalKind kind = PedalKind(k);
+            if (kind == PedalKind::Delay || kind == PedalKind::Reverb || kind == PedalKind::Plugin) continue;
+            auto pedal = make(kind);
+            pedal->setOn(false);
+            if (through(*pedal, guitar) != guitar) {
+                untouched = false;
+                which += fmt(" %.0f", k);
+            }
+        }
+        check(untouched, "a pedal switched off passes the guitar through untouched", untouched ? "true bypass, every stock pedal" : "changed by" + which);
+
+        // The tuner.
+        std::string notes;
+        bool in_tune = true;
+        for (double hz : {30.87, 41.20, 82.41, 110.0, 196.0, 329.63, 440.0 * std::pow(2.0, 15.0 / 1200.0)}) {
+            std::vector<float> tone(static_cast<size_t>(kRate * 0.5));
+            for (size_t i = 0; i < tone.size(); ++i)  // a string's tone: a fundamental and fading harmonics
+                for (int h = 1; h <= 6; ++h) tone[i] += 0.05f / float(h) * float(std::sin(6.2831853 * hz * h * double(i) / kRate + h));
+            auto tuner = Pedal::make(PedalKind::Tuner, kRate);
+            std::vector<float> heard = through(*tuner, tone);
+            const TunerReading r = static_cast<TunerPedal*>(tuner.get())->read();
+            const double expected = 1200.0 * std::log2(hz / 440.0);
+            const double off = (r.note - 69) * 100.0 + r.cents - expected;
+            if (!r.pitched || std::fabs(off) > 1.0 || rmsOf(heard, 0, heard.size()) > 1e-6) in_tune = false;
+            notes += fmt(" %.2f Hz: %.0f", hz, r.note) + fmt(" %+.1f cents;", r.cents);
+        }
+        check(in_tune, "the tuner names the note to within a cent, from a five-string bass's low B up, and mutes while it listens", notes);
+        auto open_tuner = make(PedalKind::Tuner, {{0, 0.0f}});
+        std::vector<float> quiet(size_t(kRate * 0.3), 0.00001f);
+        const bool passes = through(*open_tuner, guitar) == guitar;
+        through(*open_tuner, quiet);
+        check(passes && !static_cast<TunerPedal*>(open_tuner.get())->read().pitched, "with Mute off it lets the guitar through, and silence has no pitch", "");
+
+        // Dynamics.
+        auto gate = make(PedalKind::Gate);
+        std::vector<float> hiss(size_t(kRate * 2));
+        Rng noise;
+        for (float& v : hiss) v = 0.0003f * noise.next();  // about -75 dBFS
+        std::vector<float> note_then_hiss = guitar;
+        note_then_hiss.resize(size_t(kRate * 0.5));
+        note_then_hiss.insert(note_then_hiss.end(), hiss.begin(), hiss.end());
+        std::vector<float> gated = through(*gate, note_then_hiss);
+        const double kept = rmsOf(gated, 0, size_t(kRate * 0.4)) / rmsOf(note_then_hiss, 0, size_t(kRate * 0.4));
+        const double hiss_left = rmsOf(gated, size_t(kRate * 1.5), gated.size());
+        check(kept > 0.97 && hiss_left < 1e-6, "the noise gate lets a note through and shuts out the hiss after it",
+              fmt("the note at %.2f of its level, the hiss %.0f dB down", kept, db(hiss_left) - db(rmsOf(hiss, 0, hiss.size()))));
+
+        auto comp = make(PedalKind::Compressor);
+        std::vector<float> loud_soft = sine(220.0, 0.6, 0.5f), soft = sine(220.0, 0.6, 0.03f);
+        loud_soft.insert(loud_soft.end(), soft.begin(), soft.end());
+        std::vector<float> squeezed = through(*comp, loud_soft);
+        const size_t half = size_t(kRate * 0.6);
+        const double before_db = db(rmsOf(loud_soft, half / 2, half)) - db(rmsOf(loud_soft, half + half / 2, 2 * half));
+        const double after_db = db(rmsOf(squeezed, half / 2, half)) - db(rmsOf(squeezed, half + half / 2, 2 * half));
+        check(before_db > 20.0 && after_db < 10.0, "the compressor evens out loud and soft playing",
+              fmt("%.0f dB between them going in, %.0f dB coming out", before_db, after_db));
+
+        // Drive.
+        const std::vector<float> note = sine(220.0, 1.0, 0.1f);
+        auto mild = make(PedalKind::Overdrive, {{0, 0.0f}}), hard = make(PedalKind::Overdrive, {{0, 10.0f}});
+        const double od_low = harmonics(through(*mild, note, 0.0), 220.0), od_high = harmonics(through(*hard, note, 0.0), 220.0);
+        auto fuzz = make(PedalKind::Fuzz);
+        const double fz = harmonics(through(*fuzz, note), 220.0);
+        check(od_high > od_low + 0.1 && od_high > 0.15 && fz > od_high, "Drive takes the overdrive from nearly clean to distortion; the fuzz is fuzzier still",
+              fmt("harmonics against the note: overdrive %.0f %% to %.0f %%, fuzz %.0f %%", 100 * od_low, 100 * od_high, 100 * fz));
+        std::string level_text;
+        bool level_matched = true;
+        for (PedalKind kind : {PedalKind::Overdrive, PedalKind::Fuzz, PedalKind::Compressor}) {
+            auto pedal = make(kind);
+            std::vector<float> out = through(*pedal, guitar);
+            const double change = db(rmsOf(out, 4800, out.size())) - db(rmsOf(guitar, 4800, guitar.size()));
+            if (std::fabs(change) > 4.0) level_matched = false;
+            level_text += fmt(" %+.1f dB", change);
+        }
+        check(level_matched, "with Level at 5, the overdrive, fuzz and compressor play a guitar back at about the level it came in", level_text);
+
+        // Filter and modulation.
+        auto saw = [&](float level) {
+            std::vector<float> x(static_cast<size_t>(kRate));
+            SawOsc osc;
+            osc.setFreq(110.0f, kRate);
+            for (float& v : x) v = level * osc.next();
+            return x;
+        };
+        auto brightness = [&](const std::vector<float>& x) {
+            Biquad hp[2];
+            for (auto& f : hp) f.set(Biquad::Highpass, kRate, 1000.0f, 0.707f);
+            double high = 0, all = 0;
+            for (size_t i = size_t(kRate / 4); i < x.size(); ++i) {
+                const float h = hp[1].process(hp[0].process(x[i]));
+                high += double(h) * h;
+                all += double(x[i]) * x[i];
+            }
+            return high / all;
+        };
+        auto wah_soft = make(PedalKind::EnvelopeFilter), wah_hard = make(PedalKind::EnvelopeFilter);
+        const double soft_bright = brightness(through(*wah_soft, saw(0.01f))), hard_bright = brightness(through(*wah_hard, saw(0.3f)));
+        check(hard_bright > 4.0 * soft_bright, "the envelope filter opens up the harder it is played",
+              fmt("share above 1 kHz: %.1f %% played softly, %.1f %% played hard", 100 * soft_bright, 100 * hard_bright));
+        const std::vector<float> steady = sine(1000.0, 3.0, 0.1f);
+        auto chorus = make(PedalKind::Chorus), dry_chorus = make(PedalKind::Chorus, {{2, 0.0f}});
+        auto phaser = make(PedalKind::Phaser);
+        auto tremolo = make(PedalKind::Tremolo, {{1, 10.0f}, {2, 0.0f}});
+        const double ch = waver(through(*chorus, steady)), ph = waver(through(*phaser, sine(800.0, 3.0, 0.1f)));
+        std::vector<float> trem = through(*tremolo, steady);
+        const double tr = waver(trem);
+        int dips = 0;  // the tremolo's rate: count the troughs in two seconds
+        bool falling = false;
+        double last = 1e9;
+        for (size_t at = size_t(kRate); at + 240 <= size_t(kRate * 3); at += 240) {
+            const double r = rmsOf(trem, at, at + 240);
+            if (falling && r > last) ++dips;
+            falling = r < last;
+            last = r;
+        }
+        const double expected_rate = 1.0 * std::pow(12.0, 0.5);  // Rate at 5, between 1 and 12 Hz
+        check(ch < 0.95 && through(*dry_chorus, steady) == steady && ph < 0.6 && tr < 0.05 && std::fabs(dips / 2.0 - expected_rate) < 0.6,
+              "chorus, phaser and tremolo make a steady note waver; the tremolo at its rate, all the way down with Depth at 10",
+              fmt("quietest against loudest: chorus %.2f, phaser %.2f, tremolo %.2f", ch, ph, tr) + fmt(" pulsing at %.1f Hz", dips / 2.0));
+
+        // Time.
+        auto impulseResponse = [&](Pedal& pedal, double seconds, double beat = 0.0, double switch_off_at = -1.0) {
+            std::vector<float> x(size_t(seconds * kRate), 0.0f);
+            x[0] = 1.0f;
+            const size_t off = switch_off_at < 0 ? x.size() : size_t(switch_off_at * kRate);
+            for (size_t i = 0; i < x.size(); i += 128) {
+                if (i >= off) pedal.setOn(false);
+                if (i == size_t(seconds * kRate / 2) && switch_off_at >= 0) x[i] = 1.0f;  // a second hit, once it is off
+                pedal.process(x.data() + i, int(std::min<size_t>(128, x.size() - i)), beat);
+            }
+            return x;
+        };
+        auto loudest = [](const std::vector<float>& x, size_t from, size_t to) {
+            size_t at = from;
+            for (size_t i = from; i < to && i < x.size(); ++i)
+                if (std::fabs(x[i]) > std::fabs(x[at])) at = i;
+            return at;
+        };
+        auto delay = make(PedalKind::Delay);
+        std::vector<float> echoes = impulseResponse(*delay, 1.5);
+        const double set_time = 0.04 * std::pow(1.5 / 0.04, 0.55);  // Time at 5.5
+        const size_t first = loudest(echoes, 100, echoes.size()), second = loudest(echoes, first + 200, echoes.size());
+        check(std::fabs(double(first) / kRate - set_time) < 0.002 && std::fabs(double(second) / kRate - 2 * set_time) < 0.003 &&
+                  std::fabs(echoes[second]) < std::fabs(echoes[first]),
+              "the delay echoes at its Time, each repeat quieter", fmt("echoes at %.0f and %.0f ms, set to %.0f ms", 1000.0 * first / kRate, 1000.0 * second / kRate, 1000.0 * set_time));
+        auto synced = make(PedalKind::Delay, {{4, 1.0f}, {0, 5.0f / 7.0f * 10.0f}});  // Sync, a quarter note
+        auto dotted = make(PedalKind::Delay, {{4, 1.0f}, {0, 3.0f / 7.0f * 10.0f}});  // a dotted eighth
+        const double beat = 0.5 * kRate;  // 120 BPM
+        const size_t quarter = loudest(impulseResponse(*synced, 1.0, beat), 100, size_t(kRate)), dotted_at = loudest(impulseResponse(*dotted, 1.0, beat), 100, size_t(kRate));
+        check(std::fabs(double(quarter) / kRate - 0.5) < 0.002 && std::fabs(double(dotted_at) / kRate - 0.375) < 0.002,
+              "with Sync on it keeps time with the room: a quarter note and a dotted eighth at 120 BPM",
+              fmt("%.0f ms and %.0f ms", 1000.0 * quarter / kRate, 1000.0 * dotted_at / kRate));
+        auto trailing = make(PedalKind::Delay);
+        std::vector<float> trail = impulseResponse(*trailing, 1.2, 0.0, 0.1);  // switched off before the echo comes
+        const size_t late = loudest(trail, 100, size_t(0.59 * kRate));
+        check(std::fabs(double(late) / kRate - set_time) < 0.002 && rmsOf(trail, size_t(0.6 * kRate) + 100, trail.size()) < 0.25 * rmsOf(trail, 100, size_t(0.59 * kRate)),
+              "switched off, its echoes ring on, but nothing new goes in", "");
+        auto reverb = make(PedalKind::Reverb);
+        std::vector<float> tail = impulseResponse(*reverb, 3.0);
+        double early = 0, later = 0;
+        for (size_t i = size_t(0.1 * kRate); i < size_t(0.3 * kRate); ++i) early += double(tail[i]) * tail[i];
+        for (size_t i = size_t(0.6 * kRate); i < size_t(0.8 * kRate); ++i) later += double(tail[i]) * tail[i];
+        const double rt60 = 0.5 / ((10 * std::log10(early / later)) / 60.0), set_decay = 0.3 * std::pow(8.0 / 0.3, 0.5);
+        check(early > 0 && std::fabs(rt60 / set_decay - 1.0) < 0.35, "the reverb's tail dies away over its Decay",
+              fmt("about %.1f s to fall 60 dB, set to %.1f s", rt60, set_decay));
+
+        // Switching on and off is click-free.
+        auto drive = make(PedalKind::Overdrive, {{0, 10.0f}});
+        std::vector<float> low = sine(82.0, 2.0, 0.2f);
+        double steady_step = 0, switching_step = 0;
+        for (size_t i = 0, block = 0; i < low.size(); i += 128, ++block) {
+            if (block % 40 == 20) drive->setOn(block % 80 != 20);
+            float before = i ? low[i - 1] : 0.0f;
+            drive->process(low.data() + i, 128, 0.0);
+            for (size_t j = i; j < i + 128; ++j) {
+                const double step = std::fabs(low[j] - before);
+                before = low[j];
+                (block % 40 >= 20 && block % 40 < 25 ? switching_step : steady_step) = std::max(block % 40 >= 20 && block % 40 < 25 ? switching_step : steady_step, step);
+            }
+        }
+        check(switching_step <= 1.2 * steady_step, "stamping a pedal on and off makes no click",
+              fmt("biggest step from one sample to the next: %.3f while switching, %.3f otherwise", switching_step, steady_step));
+
+        // On an amp, in the engine.
+        Room room;
+        room.soloOnly(-1);
+        room.engine.setReverb(false);
+        room.engine.setSequencerRunning(false);
+        const int amp = room.engine.addSource(InstrumentKind::GuitarCombo, {0.0f, 0.3f, 2.0f}, 1.0f, 0.4f);
+        room.engine.setSourceInput(amp, true);
+        const int od = room.engine.addPedal(amp, PedalKind::Overdrive);
+        const int tuner_at = room.engine.addPedal(amp, PedalKind::Tuner, 0);
+        const int dl = room.engine.addPedal(amp, PedalKind::Delay);
+        std::vector<PedalStatus> board = room.engine.pedals(amp);
+        check(od == 0 && tuner_at == 0 && dl == 2 && board.size() == 3 && board[0].kind == PedalKind::Tuner && board[1].kind == PedalKind::Overdrive &&
+                  board[2].kind == PedalKind::Delay && board[1].on && board[1].controls[0] == 5.0f && room.engine.addPedal(room.drums, PedalKind::Fuzz) < 0,
+              "an amp's pedals go where they are put, switched on, and only amps have them", "");
+        room.engine.setPedalOn(amp, 0, false);  // the tuner off for now
+        room.engine.movePedal(amp, 2, 1);
+        room.engine.setPedalControl(amp, 2, 0, 12.0f);
+        board = room.engine.pedals(amp);
+        check(board[1].kind == PedalKind::Delay && board[2].kind == PedalKind::Overdrive && board[2].controls[0] == 10.0f && !board[0].on,
+              "they can be moved along the board, and their knobs stop at 10", "");
+        for (int k = 3; k < kMaxPedals; ++k) room.engine.addPedal(amp, PedalKind::Chorus);
+        const bool full = room.engine.addPedal(amp, PedalKind::Chorus) < 0;
+        for (int k = kMaxPedals - 1; k >= 3; --k) room.engine.removePedal(amp, k);
+        room.engine.removePedal(amp, 1);  // the delay
+        check(full && room.engine.pedals(amp).size() == 2, "a board holds 8 pedals, and they can be taken off again", "");
+
+        std::vector<float> e_string(size_t(kRate * 2));
+        for (size_t i = 0; i < e_string.size(); ++i)
+            for (int h = 1; h <= 4; ++h) e_string[i] += 0.04f / float(h) * float(std::sin(6.2831853 * 82.41 * h * double(i) / kRate));
+        int64_t played = 0;
+        auto play = [&](double seconds) {
+            Render r = renderSeconds(room.engine, seconds, [&](int64_t n) { return e_string[size_t(played + n) % e_string.size()]; });
+            played += int64_t(r.l.size());
+            return r;
+        };
+        play(0.5);
+        Render loud = play(0.5);
+        room.engine.setPedalOn(amp, 0, true);
+        play(0.3);
+        Render tuning = play(0.5);
+        const TunerReading reading = room.engine.tuner(amp);
+        room.engine.setPedalOn(amp, 0, false);
+        play(0.3);
+        Render back = play(0.5);
+        check(reading.listening && reading.pitched && reading.note == 40 && std::fabs(reading.cents) < 3.0 && tuning.peak < 1e-5 && back.rms_l > 0.5 * loud.rms_l,
+              "on the board, the tuner hushes the amp and reads the open E string; switched off, the amp sounds again",
+              fmt("note %.0f, %+.1f cents", reading.note, reading.cents));
+
+        // The loop pedal comes after the effects, so a loop keeps the effects it was recorded through.
+        const int tremolo_at = room.engine.addPedal(amp, PedalKind::Tremolo);
+        room.engine.setPedalControl(amp, tremolo_at, 1, 10.0f);
+        room.engine.setPedalControl(amp, tremolo_at, 2, 10.0f);
+        room.engine.looperAction(amp, Looper::Press);
+        play(1.0);
+        room.engine.looperAction(amp, Looper::Press);
+        room.engine.removePedal(amp, tremolo_at);
+        room.engine.setSourceInput(amp, false);
+        renderSeconds(room.engine, 0.3);
+        Render looped = renderSeconds(room.engine, 2.0);
+        double low_w = 1e9, high_w = 0;
+        for (size_t at = 0; at + 480 <= looped.l.size(); at += 480) {
+            const double r = rmsOf(looped.l, at, at + 480);
+            low_w = std::min(low_w, r);
+            high_w = std::max(high_w, r);
+        }
+        check(high_w > 0.001 && low_w / high_w < 0.2, "the loop pedal records what comes out of the pedals: the loop keeps its tremolo after the tremolo is gone",
+              fmt("quietest against loudest: %.2f", low_w / high_w));
+        room.engine.looperAction(amp, Looper::Clear);
+
+        // A new sample rate: the pedals are made ready for it, and a delay still echoes after the same time.
+        const int echo = room.engine.addPedal(amp, PedalKind::Delay);
+        room.engine.setPedalOn(amp, 0, false);
+        std::string err;
+        room.engine.configure(44100, 256, &err);
+        room.engine.setSourceInput(amp, true);
+        bool hit = true;
+        Render ping = renderSeconds(room.engine, 1.0, [&](int64_t n) {
+            const bool now = hit && n == 0;
+            hit = false;
+            return now ? 0.5f : 0.0f;
+        });
+        size_t direct = 0, repeat = 0;
+        for (size_t i = 0; i < ping.l.size(); ++i)
+            if (std::fabs(ping.l[i]) > std::fabs(ping.l[direct])) direct = i;
+        for (size_t i = direct + 2205; i < ping.l.size(); ++i)
+            if (std::fabs(ping.l[i]) > std::fabs(ping.l[repeat])) repeat = i;
+        check(echo == 2 && std::fabs(double(repeat - direct) / 44100.0 - set_time) < 0.01, "after a change of sample rate, the delay echoes after the same time",
+              fmt("%.0f ms at 44.1 kHz", 1000.0 * double(repeat - direct) / 44100.0));
+        room.engine.configure(48000, 128, &err);
+
+        // Plug-ins: Apple's own AUDelay, which every Mac has.
+        const std::vector<PluginDescription> plugins = AudioEngine::effectPlugins();
+#ifdef __APPLE__
+        const std::string au_delay = "AU:61756678:64656c79:6170706c";  // aufx dely appl
+        bool listed = false;
+        for (const auto& p : plugins)
+            if (p.id == au_delay && p.name == "AUDelay" && p.maker == "Apple") listed = true;
+        check(listed, "the effect plug-ins installed on this Mac are listed, Apple's AUDelay among them", fmt("%.0f effect plug-ins", double(plugins.size())));
+        std::string why;
+        std::unique_ptr<PluginInstance> au = PluginInstance::load(au_delay, &why);
+        const bool prepared = au && au->prepare(48000.0, 4096, &why);
+        std::vector<float> click(size_t(kRate * 1.3), 0.0f);
+        click[0] = 1.0f;
+        if (prepared)
+            for (size_t i = 0; i < click.size(); i += 128) au->process(click.data() + i, int(std::min<size_t>(128, click.size() - i)));
+        const size_t au_echo = loudest(click, 2000, click.size());
+        check(prepared && std::fabs(double(au_echo) / kRate - 1.0) < 0.01 && std::fabs(click[au_echo]) > 0.05,
+              "a plug-in loads and plays: AUDelay echoes a click a second later, as it is set to", prepared ? fmt("echo at %.3f s", double(au_echo) / kRate) : why);
+        const int slot = room.engine.addPedal(amp, PedalKind::Plugin, 0);
+        std::string load_error, wrong_error;
+        const bool loaded = room.engine.loadPedalPlugin(amp, slot, au_delay, &load_error);
+        const bool wrong = room.engine.loadPedalPlugin(amp, slot, "AU:00000000:00000000:00000000", &wrong_error);
+        const bool not_a_plugin_pedal = room.engine.loadPedalPlugin(amp, 1, au_delay, &wrong_error);
+        board = room.engine.pedals(amp);
+        Render with_plugin = renderSeconds(room.engine, 0.5, [&](int64_t n) { return e_string[size_t(n) % e_string.size()]; });
+        check(loaded && !wrong && !not_a_plugin_pedal && board[0].kind == PedalKind::Plugin && board[0].plugin.name == "AUDelay" && with_plugin.finite &&
+                  with_plugin.rms_l > 0.001,
+              "the Plug-in pedal on an amp holds AUDelay, and the amp plays through it", load_error.empty() ? "loaded" : load_error);
+        room.engine.removePedal(amp, slot);
+        renderSeconds(room.engine, 0.1);
+#else
+        check(plugins.empty(), "no plug-ins on this platform yet", "");
+#endif
     }
 
     {

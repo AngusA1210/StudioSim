@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 3.22)
 project(soundroom_audio LANGUAGES C CXX)
+if(APPLE)
+    enable_language(OBJCXX)  # hosting Audio Units and showing their windows
+endif()
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -40,6 +43,7 @@ add_library(sr_core STATIC
     src/core/room_geometry.cpp
     src/core/amp.cpp
     src/core/looper.cpp
+    src/core/pedals.cpp
     src/core/sequencer.cpp
     src/core/spatializer.cpp
     src/core/miniaudio_impl.c
@@ -47,11 +51,12 @@ add_library(sr_core STATIC
 target_include_directories(sr_core PUBLIC src/core thirdparty/miniaudio)
 target_link_libraries(sr_core PUBLIC phonon)
 if(APPLE)
-    target_sources(sr_core PRIVATE src/core/midi_input_coremidi.cpp)
+    target_sources(sr_core PRIVATE src/core/midi_input_coremidi.cpp src/core/plugin_host_mac.mm)
+    set_source_files_properties(src/core/plugin_host_mac.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
     target_link_libraries(sr_core PUBLIC "-framework CoreAudio" "-framework AudioToolbox" "-framework CoreFoundation"
-                                         "-framework CoreMIDI")
+                                         "-framework CoreMIDI" "-framework AppKit" "-framework CoreAudioKit")
 else()
-    target_sources(sr_core PRIVATE src/core/midi_input_stub.cpp)
+    target_sources(sr_core PRIVATE src/core/midi_input_stub.cpp src/core/plugin_host_stub.cpp)
 endif()
 if(NOT MSVC)
     target_compile_options(sr_core PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra>)

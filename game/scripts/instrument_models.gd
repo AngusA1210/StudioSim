@@ -1,7 +1,8 @@
 extends RefCounted
 ## What each kind of instrument looks like, built from simple shapes: a drum kit, a monophonic bass synth, a
 ## modular synth for the pad, tubular bells, an electric piano, a PA speaker on a tripod, and guitar and bass amps
-## (combos, and heads on cabinets), each with its loop pedal on the floor in front.
+## (combos, and heads on cabinets), each with its loop pedal on the floor in front. An amp's effect pedals are added
+## beside the loop pedal as they are put on its board (stomp_box).
 ##
 ## Each model stands on the floor (y = 0) and faces +z. The parts drawn in the instrument's own colour use the
 ## `accent` material, which the instrument lights up as it plays. An amp's pedal has an `led` material too, which
@@ -12,7 +13,8 @@ const KEY_WHITE := 0.0235  # width of a white key, in metres
 static var _shared := {}  # finishes every model uses, made once
 
 
-## Returns {node: Node3D, accent: StandardMaterial3D} and, for an amp, {led: StandardMaterial3D}.
+## Returns {node: Node3D, accent: StandardMaterial3D} and, for an amp, {led: StandardMaterial3D} and where its loop
+## pedal stands, {pedal_spot: Vector3}.
 static func build(kind: String, color: Color) -> Dictionary:
 	var node := Node3D.new()
 	var accent := StandardMaterial3D.new()
@@ -24,18 +26,18 @@ static func build(kind: String, color: Color) -> Dictionary:
 	match kind:
 		"guitar_combo":
 			_amp_box(node, accent, Vector3(0.62, 0.48, 0.25), false, 1)
-			built.led = _loop_pedal(node, 0.42)
+			built.pedal_spot = Vector3(0, 0, 0.42)
 		"guitar_stack":
 			_amp_box(node, accent, Vector3(0.76, 0.76, 0.36), false, 4)  # the 4x12 cabinet
 			_amp_head(node, accent, Vector3(0.74, 0.25, 0.27), 0.76)
-			built.led = _loop_pedal(node, 0.5)
+			built.pedal_spot = Vector3(0, 0, 0.5)
 		"bass_combo":
 			_amp_box(node, accent, Vector3(0.56, 0.7, 0.42), true, 1)
-			built.led = _loop_pedal(node, 0.52)
+			built.pedal_spot = Vector3(0, 0, 0.52)
 		"bass_stack":
 			_amp_box(node, accent, Vector3(0.6, 1.3, 0.45), false, 8)  # the 8x10 cabinet
 			_amp_head(node, accent, Vector3(0.62, 0.24, 0.32), 1.3)
-			built.led = _loop_pedal(node, 0.55)
+			built.pedal_spot = Vector3(0, 0, 0.55)
 		"drums":
 			_drum_kit(node, accent)
 		"bass":
@@ -48,7 +50,30 @@ static func build(kind: String, color: Color) -> Dictionary:
 			_electric_piano(node, accent)
 		"live":
 			_speaker(node, accent)
+	if built.has("pedal_spot"):
+		built.led = _loop_pedal(node, built.pedal_spot.z)
 	return built
+
+
+## An effect pedal for an amp's board: a small box painted in its colour, with a footswitch at the front, a row of
+## `knobs` at the back, and a light that is lit while it is on. It stands on the floor at the origin, facing +z.
+## Returns {node: Node3D, led: StandardMaterial3D}.
+static func stomp_box(color: Color, knobs: int) -> Dictionary:
+	var node := Node3D.new()
+	var paint := _plain(color)
+	paint.metallic = 0.4
+	paint.roughness = 0.35
+	_box(node, Vector3(0.068, 0.042, 0.112), paint, Vector3(0, 0.021, 0))
+	_cylinder(node, 0.011, 0.02, _finish("chrome"), Vector3(0, 0.05, 0.024))  # the footswitch
+	for k in knobs:
+		_cylinder(node, 0.0065, 0.012, _finish("knob"), Vector3((k - (knobs - 1) / 2.0) * 0.019, 0.047, -0.03))
+	var led := StandardMaterial3D.new()
+	led.albedo_color = Color(0.12, 0.04, 0.04)
+	led.emission_enabled = true
+	led.emission = Color(1.0, 0.18, 0.12)
+	led.emission_energy_multiplier = 0.0
+	_sphere(node, 0.0045, led, Vector3(0, 0.043, -0.006))
+	return {"node": node, "led": led}
 
 
 # ── The instruments ─────────────────────────────────────────────────────────────────────────────────────────

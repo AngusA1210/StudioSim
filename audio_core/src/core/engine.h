@@ -19,6 +19,8 @@
 #include "looper.h"
 #include "midi_input.h"
 #include "mix.h"
+#include "pedals.h"
+#include "plugin_host.h"
 #include "room_geometry.h"
 #include "sequencer.h"
 #include "spatializer.h"
@@ -83,6 +85,16 @@ struct MeterReading {
     float rms_l = 0, rms_r = 0;    // the average level over the last third of a second or so
     float limiter_gain = 1;        // the lowest gain the limiter applied (1 = it did nothing)
     uint32_t clipped = 0;          // samples that went over full scale and were cut off
+};
+
+// One of the effect pedals in front of an amp, for the game to show.
+struct PedalStatus {
+    PedalKind kind = PedalKind::Overdrive;
+    bool on = true;
+    PedalControls controls{};
+    // The Plug-in pedal: what it holds (empty: nothing yet), and whether its window is open.
+    PluginDescription plugin;
+    bool editor_open = false;
 };
 
 // What a loop pedal is doing, for the game to show.
@@ -164,6 +176,23 @@ public:
     // whether finishing the first recording goes straight into overdubbing.
     void setLooperOptions(int id, float level, bool sync, bool overdub_after_record);
     LooperStatus looperStatus(int id) const;
+
+    // The effect pedals in front of an amp (pedals.h), up to kMaxPedals, numbered in the order the signal passes
+    // through them. A new pedal is switched on, with its controls where they start. Each call takes effect at the next
+    // block; pedals taken off the board are freed once the audio thread has let go of them.
+    int addPedal(int id, PedalKind kind, int at = -1);  // where it went, or -1 (not an amp, or the board is full)
+    bool removePedal(int id, int index);
+    bool movePedal(int id, int from, int to);
+    void setPedalOn(int id, int index, bool on);
+    void setPedalControl(int id, int index, int control, float value);
+    std::vector<PedalStatus> pedals(int id) const;
+    TunerReading tuner(int id) const;  // what the amp's first tuner hears, while it is on
+    // Plug-ins (plugin_host.h): every effect plug-in installed, and loading one into a Plug-in pedal, replacing what
+    // it held. Both on the game thread, which on macOS must be the main thread. False, with the reason, if it fails.
+    static std::vector<PluginDescription> effectPlugins() { return PluginInstance::available(); }
+    bool loadPedalPlugin(int id, int index, const std::string& plugin_id, std::string* error);
+    // The plug-in's own window; `title` names it. False if there is no plug-in there.
+    bool showPluginEditor(int id, int index, bool show, const std::string& title = "");
     void setListener(Vec3 position, Vec3 ahead, Vec3 up);
     void noteOn(int id, int note, float velocity);
     void noteOff(int id, int note);
@@ -233,13 +262,15 @@ private:
             NoteOn, NoteOff, AllNotesOff, Binaural, Reverb, MasterVolume, SourceInput,
             PatternNoteSet, PatternNoteRemove, PatternClear, PatternSteps, SourceLoop,
             SequencerRunning, Tempo, Swing, Click, ClickVolume, Reverb2, SourceGain, Falloff, LimiterOn,
-            AmpKnob, LooperMemory, LooperAct, LooperOptions,
+            AmpKnob, LooperMemory, LooperAct, LooperOptions, PedalBoardSet, PedalOn, PedalControl,
         } type = AddSource;
         int id = 0;
         float v[9] = {};
         Source* source = nullptr;
         float* memory[2] = {nullptr, nullptr};  // LooperMemory
         int64_t count = 0;
+        Pedal* pedals[kMaxPedals] = {};  // PedalBoardSet: the new order (`count` of them); PedalOn, PedalControl: [0]
+        uint32_t epoch = 0;
     };
 
     void push(const Command& c);
@@ -248,7 +279,9 @@ private:
     void renderBlock();
     void allocateBuffers();
     std::unique_ptr<Instrument> makeInstrument(InstrumentKind kind) const;
-    void connect(Source& source);  // an amp's loop pedal and knobs, after its instrument is (re)built
+    void connect(Source& source);  // an amp's pedals and knobs, after its instrument is (re)built
+    bool sendBoard(Source& source); // hands the audio thread the amp's pedals in their new order
+    void reapPedals();              // frees pedals the audio thread has let go of
     Source* owned(int id) const;  // the source with this id, unless it is on its way out
     void reap();                  // frees removed sources the audio thread has finished with
     void updatePath(Source& source);  // works out how its sound reaches the listener and tells the audio thread

@@ -75,6 +75,23 @@ public:
     // {state: "empty"|"waiting"|"recording"|"playing"|"overdubbing"|"stopped", length, position, capacity (seconds),
     //  can_undo, can_redo}
     Dictionary get_looper(int id) const;
+    // The effect pedals in front of an amp, numbered in the order the signal passes through them (the loop pedal comes
+    // after them all). kind: "tuner", "gate", "compressor", "overdrive", "fuzz", "envelope_filter", "chorus", "phaser",
+    // "tremolo", "delay", "reverb" or "plugin". Returns where it went, or -1 (not an amp, or its board is full).
+    int add_pedal(int id, const String& kind, int at);
+    bool remove_pedal(int id, int index);
+    bool move_pedal(int id, int from, int to);
+    void set_pedal_on(int id, int index, bool on);
+    void set_pedal_control(int id, int index, int control, float value);  // knobs 0 to 10, switches 0 or 1
+    // [{kind, on, controls: [5 numbers], plugin_id, plugin_name, plugin_maker, editor_open}]
+    Array get_pedals(int id) const;
+    Dictionary get_tuner(int id) const;  // {listening, pitched, frequency, note (MIDI), cents}: the amp's first tuner
+    int get_max_pedals() const;
+    // The effect plug-ins installed on this computer (Audio Units on macOS): [{id, name, maker}].
+    Array get_plugins() const;
+    // Loads one into a Plug-in pedal; false with the reason in get_error() if it can't.
+    bool load_pedal_plugin(int id, int index, const String& plugin_id);
+    bool show_plugin_editor(int id, int index, bool show, const String& title);  // the plug-in's own window
     void set_listener(const Transform3D& transform);
     void note_on(int id, int note, float velocity);
     void note_off(int id, int note);

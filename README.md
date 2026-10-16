@@ -41,9 +41,10 @@ settings, and enter the room. The menu inside the room has a button to come back
 | A S D F G H J K L ; | white keys while playing (W E T Y U O P are the black keys, Z/X change octave) |
 | I | that instrument's input on/off (see below) |
 | MIDI keyboard | plays every instrument whose input is on, with velocity (and the sustain pedal on the Keys); plug in any time |
-| Enter | open the pattern editor for the instrument you're next to or playing (at an amp: its knobs and loop pedal) |
+| Enter | open the pattern editor for the instrument you're next to or playing (at an amp: its panel, with its knobs, pedals and loop pedal) |
 | M | switch that instrument's loop off or on (for a Speaker or an amp: mute) |
 | L K U J | at an amp, its loop pedal: L the footswitch (record, close the loop, overdub), K stop or play, U undo or redo the last overdub, J twice to clear |
+| 1 to 8 | at an amp, stamp on its effect pedals: each switches that pedal on or off |
 | Tab | the mix window |
 | Space | start or stop every instrument's pattern |
 | C | metronome click on/off |
@@ -60,7 +61,8 @@ There are two families of instrument, and the instrument menu (N) adds either to
 - **MIDI instruments** (drums, bass, pad, bells, keys) are played from the computer keyboard or a MIDI controller,
   and each can loop a pattern on the sequencer.
 - **Live inputs** bring a microphone, or an instrument plugged into the audio interface, into the room: the Speaker,
-  which plays an input just as it comes in, and four guitar and bass amplifiers, each with a loop pedal (see below).
+  which plays an input just as it comes in, and four guitar and bass amplifiers, each with a board of effect pedals
+  and a loop pedal (see below).
 
 Each is drawn as its real counterpart, standing on the floor: a drum kit, a bass synthesizer, a modular synthesizer
 for the pad, tubular bells, an electric piano, a PA speaker on a tripod, and the amps with their pedals in front of
@@ -84,7 +86,7 @@ at. Switch an input on yourself (I, or the I button in the mix window) and it st
 computer keyboard plays the instrument you are sitting at, along with any others whose input is on. Every input
 starts switched off, so an open microphone never meets a pair of speakers by surprise.
 
-### Amps and the loop pedal
+### Amps, pedals and the loop pedal
 
 | Amp | What it is |
 | --- | --- |
@@ -100,14 +102,51 @@ opens its panel: drag a knob up or down (Shift for fine moves), turn the scroll 
 5. The panel also has the amp's input switch and which hardware input it plays. Plug a guitar or bass straight into
 the interface's instrument input; the amp is the only processing it needs. Wear headphones.
 
-Every amp has a loop pedal on the floor in front of it, which records the guitar as audio (not notes) on its way into
-the amp, so a loop always plays through the amp's current knobs. It works like a single-track looper pedal:
+#### Effect pedals
+
+The amp panel's **Pedalboard** runs the way the signal does: from the input through up to eight effect pedals, into the
+loop pedal, then the amp. **+ Pedal** adds one at the end of the line; click a pedal to set it up underneath, where
+its knobs read in real units (decibels, milliseconds, hertz), **Earlier** and **Later** move it along the board, and
+its footswitch, or its number key (1 to 8, in the panel or facing the amp in the room), switches it on or off. A
+pedal switched off passes the guitar through untouched. The pedals stand on the floor beside the loop pedal, each
+with a light that is lit while it is on.
+
+| Pedal | Controls | What it does |
+| --- | --- | --- |
+| Tuner | Mute | Shows the note and how many cents sharp or flat, on the panel and over the amp, to within a cent, from a five-string bass's low B up. Mutes the guitar while it is on, unless Mute is off. |
+| Noise Gate | Threshold, Release | Shuts out the hiss and hum between notes. |
+| Compressor | Sustain, Attack, Level, Blend | Evens out loud and soft playing; Blend mixes the untouched signal back in. |
+| Overdrive | Drive, Tone, Level | A warm, mid-heavy drive that keeps the lows tight, for pushing an amp harder. |
+| Fuzz | Sustain, Tone, Volume | Two clipping stages and a tone that sweeps through a scooped middle. |
+| Envelope Filter | Sensitivity, Range, Resonance, Band-pass | An auto-wah: the filter opens the harder you play. Off, the switch gives a low-pass, for funk bass. |
+| Chorus | Rate, Depth, Mix | A slowly wavering copy beside the guitar; Mix at 10 is vibrato. |
+| Phaser | Rate, Depth, Resonance | Notches swept up and down. |
+| Tremolo | Rate, Depth, Shape | The volume pulsing, from a smooth throb to a hard chop. |
+| Delay | Time, Repeats, Mix, Tone, Sync | Echoes that darken with each repeat. With Sync on, Time picks a note value (a sixteenth up to a half, triplets and dotted notes too) at the room's tempo. |
+| Reverb | Decay, Tone, Mix | A room or hall before the amp. |
+| Plug-in | (its own window) | One of the effect plug-ins installed on your Mac (see below). |
+
+Delay and Reverb let their echoes and tail ring on after they are switched off, as many real ones do. The loop pedal
+comes after all of them, so a loop keeps the effects it was recorded through.
+
+**Plug-ins.** The Plug-in pedal lists the effect plug-ins installed on your Mac as Audio Units: the format plug-in
+makers install alongside their Pro Tools (AAX) and VST3 versions. Search the list, load one, and its own window opens,
+floating over the room (Open/Close its window on the panel; closing the amp panel puts it away). It gets the room's
+tempo, for plug-ins that keep time. A plug-in that only comes as AAX can't be used, since only Pro Tools can host
+those. Plug-ins run inside SoundRoom as they would inside a DAW, so one that crashes takes SoundRoom with it, and like
+the rest of the room, a plug-in's settings aren't saved yet.
+
+#### The loop pedal
+
+Every amp has a loop pedal on the floor in front of it, which records the guitar as audio (not notes) as it comes off
+the pedalboard on its way into the amp, so a loop always plays through the amp's current knobs. It works like a
+single-track looper pedal:
 
 - **L, the footswitch**: the first press starts recording, the second closes the loop and plays it, and from then on
   each press starts or stops an overdub laid on top. Pressing it on an empty pedal switches the amp's input on.
 - **K** stops the loop, or plays it again from the top. **U** undoes the last overdub, and redoes it. **J**, pressed
   twice, clears the loop.
-- The amp panel has the same controls as buttons, a display of what the pedal is doing and where it is in the loop,
+- On the amp panel (click the Loop at the end of the board) it has the same controls as buttons, a display of what the pedal is doing and where it is in the loop,
   and its options: **Loop level**, **Sync to the bars** (on at first: while the patterns are running, recording
   starts on the next bar line and a loop is a whole number of bars, so it stays in time with them; with the
   patterns stopped, or Sync off, it starts and ends the moment you press) and **After recording** (play the loop, or
@@ -212,13 +251,15 @@ game/                      Godot project: the room, player, instruments, HUD, me
   scripts/room.gd          the room's floor, ceiling and walls, built to whatever size and layout is set
   scripts/instrument_models.gd   what each instrument looks like, built from simple shapes
   scripts/mixer.gd         the mix window: channel strips, faders (fader.gd) and meters (level_meter.gd)
-  scripts/amp_panel.gd     an amp's knobs (knob.gd) and its loop pedal
+  scripts/amp_panel.gd     an amp's knobs (knob.gd), its pedalboard, and its loop pedal
 audio_core/
   src/core/                the audio engine, plain C++ with no Godot dependency
     engine.*               device, command queue, mixing, the shared clock
     instruments.*          synthesized drums, bass, pad, bells and keys (each playable live or by pattern), live input
     amp.*                  the guitar and bass amps: preamp drive (oversampled), tone stack, presence, cabinet
     looper.*               the loop pedal: record, overdub, undo/redo, synced to the bars
+    pedals.*               the effect pedals in front of an amp: tuner, gate, compressor, drives, modulation, delay, reverb
+    plugin_host*           the effect plug-ins installed on the computer: Audio Units on macOS, and their windows
     sequencer.*            the clock (tempo, swing), pattern notes, and the default groove, scheduled to the exact sample
     spatializer.*          Steam Audio: distance, air absorption, wall filtering, binaural (HRTF)
     room_geometry.*        the walls: which way round them sound reaches the listener, and how much further that is
@@ -227,7 +268,7 @@ audio_core/
     mix.*                  room reverb (feedback delay network, sized to the room) and output limiter
                            (the output meter and the distance law live in engine.* and spatializer.*)
   src/godot/               the Godot extension wrapping the engine (SoundRoomAudio node)
-  tests/engine_tests.cpp   offline checks: levels, binaural direction, walls, latency, MIDI, live input, sequencer, amps, loop pedal
+  tests/engine_tests.cpp   offline checks: levels, binaural direction, walls, latency, MIDI, live input, sequencer, amps, pedals, plug-ins, loop pedal
 game/tests/ui_check.gd     the game driven by pretend keys and clicks: title, playing, patterns, instruments, amps, room, menus
 prototypes/sound-room/     the original browser prototype, for reference
 tools/                     build and dependency scripts
@@ -251,15 +292,17 @@ Diagnostics that don't need the game:
 
 Done so far: the native audio pipeline, instruments that can be added, placed and removed and each played from the
 keyboard or a MIDI controller, a pattern sequencer with tempo, swing and a metronome, live audio input through
-Speakers, guitar and bass amps with loop pedals, a title screen, and a room whose size and walls can be changed,
-with sound bending round the walls and a reverb that follows the size.
+Speakers, guitar and bass amps with effect pedals, a plug-in pedal and a loop pedal each, a title screen, a mix
+window laid out like a DAW's, and a room whose size and walls can be changed, with sound bending round the walls and
+a reverb that follows the size.
 
 To do, roughly in this order:
 
 1. **Templates**: save and load a room's dimensions and walls, its instrument layout, and their sequences (and the
    tempo). Choosing one will go on the title screen.
 2. **Recording.**
-3. **Plug-in hosting**, if it proves practical.
+3. **Plug-ins on every track**: the Plug-in pedal hosts Audio Units in front of an amp; next, inserts on any channel
+   of the mix window, and their settings saved with the room. VST3 too, perhaps, and Windows.
 4. **Multiplayer**, the final goal: a session server, a networked clock, note events and low-latency audio streams.
 
 Also wanted along the way: MIDI on Windows and Linux, and VR through OpenXR.

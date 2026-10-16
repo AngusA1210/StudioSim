@@ -242,6 +242,10 @@ func _handle_key(event: InputEventKey) -> void:
 		KEY_L, KEY_K, KEY_U, KEY_J:  # an amp's loop pedal
 			if target != null and target.is_amp:
 				_loop_pedal(target, key)
+		KEY_1, KEY_2, KEY_3, KEY_4, KEY_5, KEY_6, KEY_7, KEY_8:  # stamping on an amp's effect pedals
+			var index: int = key - KEY_1
+			if target != null and target.is_amp and index < target.pedals.size():
+				app.set_pedal_on(target, index, not target.pedals[index].on)
 
 
 ## The loop pedal's buttons as keys: L the footswitch, K stop or play, U undo or redo, J clear (twice).

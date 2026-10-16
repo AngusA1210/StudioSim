@@ -59,7 +59,7 @@ var hud
 var menu
 var sequencer  # the pattern editor
 var mixer  # the mix window (Tab)
-var amp_panel  # an amp's knobs and loop pedal (Enter at an amp)
+var amp_panel  # an amp's knobs, effect pedals and loop pedal (Enter at an amp)
 var instrument_menu
 var title  # the title screen
 var room  # its size and the walls inside it
@@ -382,6 +382,59 @@ func set_looper_options(inst, level: float, sync: bool, dub_after: bool) -> void
 
 
 ## Mute and solo, as on a mixing desk: while anything is soloed, everything else is silent.
+## An amp's effect pedals (the amp panel sets them up; 1-8 in the room switch them). The instrument's `pedals` is
+## brought up to date at once, rather than waiting for its next frame.
+func add_pedal(inst, kind: String, at := -1) -> int:
+	var index := audio.add_pedal(inst.source_id, kind, at)
+	inst.pedals = audio.get_pedals(inst.source_id)
+	return index
+
+
+func remove_pedal(inst, index: int) -> void:
+	audio.remove_pedal(inst.source_id, index)
+	inst.pedals = audio.get_pedals(inst.source_id)
+
+
+func move_pedal(inst, from: int, to: int) -> bool:
+	var moved := audio.move_pedal(inst.source_id, from, to)
+	inst.pedals = audio.get_pedals(inst.source_id)
+	return moved
+
+
+func set_pedal_on(inst, index: int, on: bool) -> void:
+	audio.set_pedal_on(inst.source_id, index, on)
+	inst.pedals = audio.get_pedals(inst.source_id)
+
+
+func set_pedal_control(inst, index: int, control: int, value: float) -> void:
+	audio.set_pedal_control(inst.source_id, index, control, value)
+	inst.pedals = audio.get_pedals(inst.source_id)
+
+
+## Loads one of the computer's effect plug-ins into a Plug-in pedal. Returns why it couldn't, or "".
+func load_pedal_plugin(inst, index: int, plugin_id: String) -> String:
+	var loaded := audio.load_pedal_plugin(inst.source_id, index, plugin_id)
+	inst.pedals = audio.get_pedals(inst.source_id)
+	return "" if loaded else audio.get_error()
+
+
+## A plug-in's own window, floating over the room. Not in automated runs, which have no windows to show it in.
+func show_plugin_editor(inst, index: int, show: bool) -> bool:
+	if show and DisplayServer.get_name() == "headless":
+		return false
+	var pedal: Dictionary = inst.pedals[index] if index < inst.pedals.size() else {}
+	var shown := audio.show_plugin_editor(inst.source_id, index, show, "%s  ·  %s pedal %d" % [pedal.get("plugin_name", ""),
+		inst.display_name, index + 1])
+	inst.pedals = audio.get_pedals(inst.source_id)
+	return shown
+
+
+func hide_plugin_editors(inst) -> void:
+	for i in inst.pedals.size():
+		if inst.pedals[i].kind == "plugin" and inst.pedals[i].editor_open:
+			show_plugin_editor(inst, i, false)
+
+
 func set_muted(inst, on: bool) -> void:
 	inst.muted = on
 	_apply_channels()
@@ -518,6 +571,7 @@ func remove_instrument(inst) -> void:
 	instruments.erase(inst)
 	if inst == speaker:
 		speaker = null
+	hide_plugin_editors(inst)
 	audio.remove_source(inst.source_id)  # fades out over a few milliseconds
 	inst.queue_free()
 	_apply_channels()  # it may have been the one soloed

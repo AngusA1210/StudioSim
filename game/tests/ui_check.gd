@@ -66,6 +66,29 @@ func click(pos: Vector2, button := MOUSE_BUTTON_LEFT) -> void:
 	await frames(2)
 
 
+## Turns a knob by dragging it up (or down, for negative) by so many pixels.
+func turn(knob: Control, pixels: float) -> void:
+	var at: Vector2 = knob.get_global_rect().get_center() - Vector2(0, 20)
+	var grab := InputEventMouseButton.new()
+	grab.position = at
+	grab.global_position = at
+	grab.button_index = MOUSE_BUTTON_LEFT
+	grab.pressed = true
+	view.push_input(grab)
+	await frames(1)
+	var move := InputEventMouseMotion.new()
+	move.position = at + Vector2(0, -pixels)
+	move.global_position = move.position
+	move.relative = Vector2(0, -pixels)
+	move.button_mask = MOUSE_BUTTON_MASK_LEFT
+	view.push_input(move)
+	await frames(1)
+	var let_go := grab.duplicate()
+	let_go.pressed = false
+	view.push_input(let_go)
+	await frames(2)
+
+
 ## Presses the mouse at one point of the floor plan (in metres) and lets go at another.
 func drag(plan, from: Vector2, to: Vector2) -> void:
 	var origin: Vector2 = plan.get_global_rect().position
@@ -463,7 +486,7 @@ func _run() -> void:
 	await tap(KEY_G)
 	await frames(5)
 	var amp_card: Array = main.hud.hint_lines()
-	check(player.target == amp and amp_card.has("L record a loop") and amp_card.has("Enter knobs and loop pedal") and not amp_card.has("E play"),
+	check(player.target == amp and amp_card.has("L record a loop") and amp_card.has("Enter amp, pedals and loop pedal") and not amp_card.has("E play"),
 		"its card offers the loop pedal and the knobs", " / ".join(amp_card))
 	await tap(KEY_L)
 	await frames(3)
@@ -534,6 +557,65 @@ func _run() -> void:
 	await tap(KEY_J)
 	await frames(2)
 	check(amp.looper.get("state", "") == "empty" and player.clear_pending == null, "a pedal waiting for the bar can be cancelled, and has nothing to clear")
+
+	print("Effect pedals")
+	var order: Array = load("res://scripts/catalog.gd").PEDAL_ORDER
+	await tap(KEY_ENTER)
+	await frames(3)
+	check(panel.is_open() and panel._tiles.is_empty() and panel._loop_page.visible and panel._add_button.visible and panel._loop_tile.panel.visible,
+		"the amp's pedalboard starts empty, with the loop pedal at the end of it")
+	await click(panel._add_button.get_global_rect().get_center())
+	check(panel._add_menu.visible and panel._add_menu.item_count == order.size(), "+ Pedal offers every kind of pedal", "%d kinds" % panel._add_menu.item_count)
+	panel._add_menu.id_pressed.emit(order.find("overdrive"))
+	panel._add_menu.hide()
+	await frames(3)
+	check(amp.pedals.size() == 1 and amp.pedals[0].kind == "overdrive" and amp.pedals[0].on and panel.selected == 0 and panel._pedal_page.visible and
+		not panel._loop_page.visible and panel._pedal_title.text == "Overdrive" and panel._controls.size() == 3,
+		"choosing the overdrive puts one on the board, switched on, with its three knobs showing")
+	check(panel._controls[1].node.readout == "2.2 kHz" and panel._controls[2].node.readout == "+0.0 dB",
+		"its knobs read in real units: the tone in hertz, the level in decibels", "%s, %s" % [panel._controls[1].node.readout, panel._controls[2].node.readout])
+	await turn(panel._controls[0].node, 45.0)
+	check(absf(amp.pedals[0].controls[0] - 8.0) < 0.2, "turning Drive up turns it up in the audio core", "%.2f" % amp.pedals[0].controls[0])
+	await tap(KEY_1)
+	await frames(2)
+	check(not amp.pedals[0].on and panel._pedal_switch.text.begins_with("Bypassed") and panel._tiles[0].led.color == panel.LED_OFF,
+		"1 stamps on the first pedal: bypassed, its light off", panel._pedal_switch.text)
+	await click(panel._pedal_switch.get_global_rect().get_center())
+	check(amp.pedals[0].on, "and its footswitch switches it back on")
+	await click(panel._add_button.get_global_rect().get_center())
+	panel._add_menu.id_pressed.emit(order.find("tuner"))
+	panel._add_menu.hide()
+	await frames(3)
+	await click(panel._earlier.get_global_rect().get_center())
+	check(amp.pedals.size() == 2 and amp.pedals[0].kind == "tuner" and amp.pedals[1].kind == "overdrive" and panel.selected == 0 and panel._tuner_box.visible,
+		"a tuner added at the end can be moved to the front of the line")
+	check(amp.tuner.get("listening", false) and not amp.tuner.get("pitched", true) and panel._tuner_cents.text == "Play a string" and amp._loop_label.text.begins_with("TUNER"),
+		"switched on, it listens for a note, on the panel and over the amp", amp._loop_label.text.replace("\n", " / "))
+	await click(panel._add_button.get_global_rect().get_center())
+	panel._add_menu.id_pressed.emit(order.find("plugin"))
+	panel._add_menu.hide()
+	await frames(3)
+	check(amp.pedals.size() == 3 and panel._plugin_box.visible and panel._plugin_chooser.visible and panel._listed.size() > 0,
+		"a Plug-in pedal offers the effect plug-ins on this computer", "%d of them" % panel._listed.size())
+	panel._plugin_filter.text = "AUDelay"
+	panel._plugin_filter.text_changed.emit("AUDelay")
+	await frames(2)
+	check(panel._listed.size() == 1 and panel._listed[0].maker == "Apple", "searching narrows the list", "%d found" % panel._listed.size())
+	panel._plugin_list.select(0)
+	await click(panel._plugin_load.get_global_rect().get_center())
+	await frames(3)
+	check(amp.pedals[2].plugin_name == "AUDelay" and not panel._plugin_chooser.visible and panel._plugin_status.text.begins_with("AUDelay") and
+		panel._tiles[2].panel.get_child(0).get_child(1).text == "AUDelay", "loading it puts AUDelay on the board, before the amp", panel._plugin_status.text)
+	await click(panel._remove.get_global_rect().get_center())
+	check(amp.pedals.size() == 2 and panel.selected == 1, "a pedal can be taken off the board again")
+	await tap(KEY_ENTER)
+	await frames(4)
+	var with_pedals: Array = main.hud.hint_lines()
+	check(not panel.is_open() and with_pedals.has("1-2 pedals on/off") and amp._pedal_row.get_child_count() == 2,
+		"in the room the pedals stand beside the loop pedal, and the card offers 1 and 2 to stamp on them", " / ".join(with_pedals))
+	await tap(KEY_2)
+	await frames(2)
+	check(not amp.pedals[1].on and amp._pedal_leds[1].emission_energy_multiplier == 0.0, "2 switches the overdrive off from the room, and its light goes out")
 	main.set_input(amp, false)
 	main.remove_instrument(amp)
 	main.set_tempo(100.0)

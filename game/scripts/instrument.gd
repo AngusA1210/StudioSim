@@ -3,6 +3,7 @@ extends Node3D
 ## It stands on the floor; the node's origin is where the sound comes from, `source_height` above the floor.
 
 const Models := preload("res://scripts/instrument_models.gd")
+const Catalog := preload("res://scripts/catalog.gd")
 const INPUT_GREEN := Color(0.36, 0.9, 0.5)
 # How an amp's loop pedal shows what it is doing: on the pedal's light, and under the amp's name.
 const LOOP_LOOKS := {
@@ -36,6 +37,8 @@ var peak_hold := 0.0
 var is_amp := false    # a guitar or bass amp, with knobs and a loop pedal
 var amp_controls := {"gain": 5.0, "bass": 5.0, "mid": 5.0, "treble": 5.0, "presence": 5.0, "master": 5.0}
 var looper := {}       # what its loop pedal is doing, from the audio core (amps only)
+var pedals := []       # its effect pedals, in signal order, from the audio core: [{kind, on, controls, plugin_name...}]
+var tuner := {}        # what its tuner hears while one is on: {pitched, note, cents, frequency}; empty otherwise
 var looper_level := 1.0
 var looper_sync := true
 var looper_dub_after := false
@@ -52,6 +55,10 @@ var _label: Label3D
 var _input_badge: Label3D
 var _loop_label: Label3D
 var _led: StandardMaterial3D
+var _pedal_spot := Vector3.ZERO  # where the loop pedal stands; the effect pedals line up beside it
+var _pedal_row: Node3D
+var _pedal_leds: Array = []
+var _pedal_signature := ""
 var _collider: CollisionShape3D
 
 
@@ -80,6 +87,9 @@ func setup(spec: Dictionary, audio: SoundRoomAudio) -> void:
 	add_child(_model)
 	_accent = built.accent
 	_led = built.get("led")
+	_pedal_spot = built.get("pedal_spot", Vector3.ZERO)
+	_pedal_row = Node3D.new()
+	_model.add_child(_pedal_row)
 
 	_light = OmniLight3D.new()
 	_light.light_color = color
@@ -136,7 +146,36 @@ func _process(delta: float) -> void:
 	_accent.emission_energy_multiplier = (0.12 + 1.5 * glow) * on
 	_light.light_energy = (0.1 + 1.6 * glow) * on
 	if is_amp:
+		_show_pedals()
 		_show_looper()
+
+
+## An amp's effect pedals, as the audio core has them, on the floor in a row beside the loop pedal (the first in line
+## farthest from it), each lit while it is on; and what the tuner hears while one is on.
+func _show_pedals() -> void:
+	pedals = _audio.get_pedals(source_id)
+	var signature := ""
+	for p in pedals:
+		signature += p.kind + "|"
+	if signature != _pedal_signature:
+		_pedal_signature = signature
+		for child in _pedal_row.get_children():
+			child.queue_free()
+		_pedal_leds.clear()
+		for i in pedals.size():
+			var spec: Dictionary = Catalog.PEDALS[pedals[i].kind]
+			var knobs := 0
+			for control in spec.controls:
+				knobs += 0 if control[1] == "switch" else 1
+			var box: Dictionary = Models.stomp_box(spec.color, knobs)
+			box.node.position = _pedal_spot + Vector3(0.088 * (pedals.size() - i), 0.0, 0.0)
+			_pedal_row.add_child(box.node)
+			_pedal_leds.append(box.led)
+	var tuning := false
+	for i in pedals.size():
+		_pedal_leds[i].emission_energy_multiplier = 2.5 if pedals[i].on else 0.0
+		tuning = tuning or (pedals[i].on and pedals[i].kind == "tuner")
+	tuner = _audio.get_tuner(source_id) if tuning else {}
 
 
 func _show_looper() -> void:
@@ -146,8 +185,14 @@ func _show_looper() -> void:
 	var text: String = look[0]
 	if state in ["recording", "playing", "overdubbing"]:
 		text += "  %.1f s" % (looper.length if state == "recording" else looper.position)
+	var ink: Color = look[1]
+	if not tuner.is_empty():  # tuning: the note and how far off it is, over whatever the loop is doing
+		var off: float = tuner.get("cents", 0.0)
+		var note := "TUNER  %s  %+.0f ¢" % [Catalog.note_name(tuner.note), off] if tuner.get("pitched", false) else "TUNER  -"
+		text = note + ("\n" + text if text != "" else "")
+		ink = Color(0.4, 0.9, 0.5) if tuner.get("pitched", false) and absf(off) < 3.0 else Color(1.0, 0.75, 0.3)
 	_loop_label.text = text
-	_loop_label.modulate = look[1]
+	_loop_label.modulate = ink
 	_loop_label.visible = text != "" and _label.visible
 	_led.emission = look[1]
 	_led.emission_energy_multiplier = 0.0 if state == "empty" else (2.5 if state in ["recording", "overdubbing"] else 1.5)

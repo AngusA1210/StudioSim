@@ -1,6 +1,7 @@
 extends Control
-## A rotary knob, as on an amp's panel: 0 to 10 round three quarters of a turn, its name underneath. Drag up or down
-## to turn it (Shift for fine moves), use the scroll wheel, or double-click it to put it back where it started.
+## A rotary knob, as on an amp's panel: 0 to 10 round three quarters of a turn, its name underneath and its setting
+## under that (`readout`, if set, says it in real units instead). Drag up or down to turn it (Shift for fine moves),
+## use the scroll wheel, or double-click or Alt-click it to put it back where it started.
 
 signal value_changed(value: float)
 
@@ -11,6 +12,7 @@ const RADIUS := 21.0
 var title := ""
 var value := 5.0
 var resting := 5.0  # where a double-click puts it
+var readout := ""
 var ink := Color(0.9, 0.9, 0.92)
 var _dragging := false
 
@@ -37,15 +39,16 @@ func _draw() -> void:
 	var turn := ARC_START + ARC_SWEEP * value / 10.0
 	draw_line(centre, centre + Vector2(cos(turn), sin(turn)) * (RADIUS - 3), ink, 3.0)
 	draw_string(font, Vector2(0, RADIUS * 2 + 26), title, HORIZONTAL_ALIGNMENT_CENTER, size.x, 11, Color(1, 1, 1, 0.8))
-	draw_string(font, Vector2(0, RADIUS * 2 + 41), "%.1f" % value, HORIZONTAL_ALIGNMENT_CENTER, size.x, 11, Color(1, 1, 1, 0.5))
+	draw_string(font, Vector2(0, RADIUS * 2 + 41), readout if readout != "" else "%.1f" % value, HORIZONTAL_ALIGNMENT_CENTER, size.x, 11,
+		Color(1, 1, 1, 0.5))
 
 
 func _gui_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton:
 		if event.button_index == MOUSE_BUTTON_LEFT:
-			if event.pressed and event.double_click:
+			if event.pressed and (event.double_click or event.alt_pressed):
 				_turn_to(resting)
-			_dragging = event.pressed
+			_dragging = event.pressed and not event.alt_pressed
 			queue_redraw()
 			accept_event()
 		elif event.pressed and event.button_index in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN]:

@@ -12,6 +12,9 @@ sr::Vec3 vec(const Vector3& v) { return sr::Vec3{float(v.x), float(v.y), float(v
 String str(const std::string& s) { return String::utf8(s.c_str()); }
 std::string str(const String& s) { return std::string(s.utf8().get_data()); }
 
+const char* const kPedalNames[sr::kPedalKinds] = {"tuner", "gate", "compressor", "overdrive", "fuzz", "envelope_filter",
+                                                  "chorus", "phaser", "tremolo", "delay", "reverb", "plugin"};
+
 Array deviceList(const std::vector<sr::AudioDeviceInfo>& devices) {
     Array out;
     for (const auto& d : devices) {
@@ -181,6 +184,72 @@ Dictionary SoundRoomAudio::get_looper(int id) const {
     d["can_undo"] = st.can_undo;
     d["can_redo"] = st.can_redo;
     return d;
+}
+
+int SoundRoomAudio::add_pedal(int id, const String& kind, int at) {
+    for (int k = 0; k < sr::kPedalKinds; ++k)
+        if (kind == kPedalNames[k]) return engine_ ? engine_->addPedal(id, sr::PedalKind(k), at) : -1;
+    return -1;
+}
+bool SoundRoomAudio::remove_pedal(int id, int index) { return engine_ && engine_->removePedal(id, index); }
+bool SoundRoomAudio::move_pedal(int id, int from, int to) { return engine_ && engine_->movePedal(id, from, to); }
+void SoundRoomAudio::set_pedal_on(int id, int index, bool on) { if (engine_) engine_->setPedalOn(id, index, on); }
+void SoundRoomAudio::set_pedal_control(int id, int index, int control, float value) {
+    if (engine_) engine_->setPedalControl(id, index, control, value);
+}
+int SoundRoomAudio::get_max_pedals() const { return sr::kMaxPedals; }
+
+Array SoundRoomAudio::get_pedals(int id) const {
+    Array out;
+    if (!engine_) return out;
+    for (const sr::PedalStatus& p : engine_->pedals(id)) {
+        Dictionary d;
+        d["kind"] = String(kPedalNames[int(p.kind)]);
+        d["on"] = p.on;
+        Array controls;
+        for (float v : p.controls) controls.push_back(v);
+        d["controls"] = controls;
+        d["plugin_id"] = str(p.plugin.id);
+        d["plugin_name"] = str(p.plugin.name);
+        d["plugin_maker"] = str(p.plugin.maker);
+        d["editor_open"] = p.editor_open;
+        out.push_back(d);
+    }
+    return out;
+}
+
+Dictionary SoundRoomAudio::get_tuner(int id) const {
+    Dictionary d;
+    const sr::TunerReading r = engine_ ? engine_->tuner(id) : sr::TunerReading{};
+    d["listening"] = r.listening;
+    d["pitched"] = r.pitched;
+    d["frequency"] = r.frequency;
+    d["note"] = r.note;
+    d["cents"] = r.cents;
+    return d;
+}
+
+Array SoundRoomAudio::get_plugins() const {
+    Array out;
+    for (const sr::PluginDescription& p : sr::AudioEngine::effectPlugins()) {
+        Dictionary d;
+        d["id"] = str(p.id);
+        d["name"] = str(p.name);
+        d["maker"] = str(p.maker);
+        out.push_back(d);
+    }
+    return out;
+}
+
+bool SoundRoomAudio::load_pedal_plugin(int id, int index, const String& plugin_id) {
+    std::string err;
+    if (engine_ && engine_->loadPedalPlugin(id, index, str(plugin_id), &err)) return true;
+    error_ = str(err.empty() ? std::string("the audio engine isn't running") : err);
+    return false;
+}
+
+bool SoundRoomAudio::show_plugin_editor(int id, int index, bool show, const String& title) {
+    return engine_ && engine_->showPluginEditor(id, index, show, str(title));
 }
 
 void SoundRoomAudio::set_listener(const Transform3D& t) {
@@ -364,6 +433,17 @@ void SoundRoomAudio::_bind_methods() {
     ClassDB::bind_method(D_METHOD("looper", "id", "action"), &SoundRoomAudio::looper);
     ClassDB::bind_method(D_METHOD("set_looper_options", "id", "level", "sync", "overdub_after_record"), &SoundRoomAudio::set_looper_options);
     ClassDB::bind_method(D_METHOD("get_looper", "id"), &SoundRoomAudio::get_looper);
+    ClassDB::bind_method(D_METHOD("add_pedal", "id", "kind", "at"), &SoundRoomAudio::add_pedal);
+    ClassDB::bind_method(D_METHOD("remove_pedal", "id", "index"), &SoundRoomAudio::remove_pedal);
+    ClassDB::bind_method(D_METHOD("move_pedal", "id", "from", "to"), &SoundRoomAudio::move_pedal);
+    ClassDB::bind_method(D_METHOD("set_pedal_on", "id", "index", "on"), &SoundRoomAudio::set_pedal_on);
+    ClassDB::bind_method(D_METHOD("set_pedal_control", "id", "index", "control", "value"), &SoundRoomAudio::set_pedal_control);
+    ClassDB::bind_method(D_METHOD("get_pedals", "id"), &SoundRoomAudio::get_pedals);
+    ClassDB::bind_method(D_METHOD("get_tuner", "id"), &SoundRoomAudio::get_tuner);
+    ClassDB::bind_method(D_METHOD("get_max_pedals"), &SoundRoomAudio::get_max_pedals);
+    ClassDB::bind_method(D_METHOD("get_plugins"), &SoundRoomAudio::get_plugins);
+    ClassDB::bind_method(D_METHOD("load_pedal_plugin", "id", "index", "plugin_id"), &SoundRoomAudio::load_pedal_plugin);
+    ClassDB::bind_method(D_METHOD("show_plugin_editor", "id", "index", "show", "title"), &SoundRoomAudio::show_plugin_editor);
     ClassDB::bind_method(D_METHOD("set_listener", "transform"), &SoundRoomAudio::set_listener);
     ClassDB::bind_method(D_METHOD("note_on", "id", "note", "velocity"), &SoundRoomAudio::note_on);
     ClassDB::bind_method(D_METHOD("note_off", "id", "note"), &SoundRoomAudio::note_off);

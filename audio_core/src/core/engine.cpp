@@ -149,6 +149,19 @@ struct AudioEngine::Source {
     std::array<float, kAmpControls> amp_controls{5, 5, 5, 5, 5, 5};
     Looper looper;
     std::unique_ptr<float[]> loop_memory[2];
+    // An amp's effect pedals. The game thread owns them, in order, with what it last set on each; the audio thread
+    // plays through `board`, its own copy of the order, which a PedalBoardSet command replaces. Each order sent has
+    // a number; a pedal taken off the board waits in `retired` until the audio thread has applied an order without it.
+    struct PedalSlot {
+        std::unique_ptr<Pedal> pedal;
+        bool on = true;
+        PedalControls controls{};
+    };
+    std::vector<PedalSlot> pedals;
+    std::vector<std::pair<std::unique_ptr<Pedal>, uint32_t>> retired;
+    uint32_t board_sent = 0;
+    std::atomic<uint32_t> board_applied{0};
+    PedalBoard board;
     // The pattern the sequencer plays on this source. These belong to the audio thread...
     std::array<PatternNote, kMaxPatternNotes> notes;
     int note_count = 0, steps = kMaxPatternSteps;
@@ -229,7 +242,7 @@ std::unique_ptr<Instrument> AudioEngine::makeInstrument(InstrumentKind kind) con
 void AudioEngine::connect(Source& s) {
     if (!isAmp(s.kind)) return;
     auto* amp = static_cast<Amp*>(s.instrument.get());
-    amp->connect(&s.looper, bar_timing_);
+    amp->connect(&s.board, &s.looper, bar_timing_);
     for (int c = 0; c < kAmpControls; ++c) amp->setControl(AmpControl(c), s.amp_controls[size_t(c)]);
 }
 
@@ -248,6 +261,9 @@ bool AudioEngine::configure(int sample_rate, int block_size, std::string* error)
         return false;
     }
     if (sample_rate == sr_ && block_size == block_) return true;
+    // The audio thread is stopped: apply whatever it hasn't yet, so that nothing waiting in the queue refers to memory
+    // freed below.
+    drainCommands();
     const double ratio = double(sample_rate) / sr_;
     sr_ = sample_rate;
     block_ = block_size;
@@ -279,6 +295,8 @@ bool AudioEngine::configure(int sample_rate, int block_size, std::string* error)
             s->loop_memory[0].reset();
             s->loop_memory[1].reset();
         }
+        if (ratio != 1.0)
+            for (auto& slot : s->pedals) slot.pedal->prepare(float(sr_));
         s->mono.assign(size_t(block_), 0.0f);
         if (!s->spatializer.init(steam_, error)) return false;
     }
@@ -474,6 +492,159 @@ LooperStatus AudioEngine::looperStatus(int id) const {
     return out;
 }
 
+// ── Pedals (game thread) ───────────────────────────────────────────────────────────────────────────────────
+bool AudioEngine::sendBoard(Source& s) {
+    Command c; c.type = Command::PedalBoardSet; c.id = s.id;
+    for (size_t i = 0; i < s.pedals.size(); ++i) c.pedals[i] = s.pedals[i].pedal.get();
+    c.count = int64_t(s.pedals.size());
+    c.epoch = s.board_sent + 1;
+    if (!commands_.push(c)) return false;
+    s.board_sent = c.epoch;
+    return true;
+}
+
+void AudioEngine::reapPedals() {
+    for (auto& s : owned_) {
+        if (!s || s->retired.empty()) continue;
+        const uint32_t applied = s->board_applied.load(std::memory_order_acquire);
+        s->retired.erase(std::remove_if(s->retired.begin(), s->retired.end(), [&](const auto& r) { return r.second <= applied; }),
+                         s->retired.end());
+    }
+}
+
+int AudioEngine::addPedal(int id, PedalKind kind, int at) {
+    reapPedals();
+    Source* s = owned(id);
+    if (!s || !isAmp(s->kind) || int(s->pedals.size()) >= kMaxPedals) return -1;
+    Source::PedalSlot slot;
+    slot.pedal = Pedal::make(kind, float(sr_));
+    if (!slot.pedal) return -1;
+    slot.controls = defaultPedalControls(kind);
+    if (at < 0 || at > int(s->pedals.size())) at = int(s->pedals.size());
+    s->pedals.insert(s->pedals.begin() + at, std::move(slot));
+    if (!sendBoard(*s)) {
+        s->pedals.erase(s->pedals.begin() + at);
+        return -1;
+    }
+    return at;
+}
+
+bool AudioEngine::removePedal(int id, int index) {
+    reapPedals();
+    Source* s = owned(id);
+    if (!s || index < 0 || index >= int(s->pedals.size())) return false;
+    Source::PedalSlot slot = std::move(s->pedals[size_t(index)]);
+    s->pedals.erase(s->pedals.begin() + index);
+    if (!sendBoard(*s)) {
+        s->pedals.insert(s->pedals.begin() + index, std::move(slot));
+        return false;
+    }
+    if (slot.pedal->kind() == PedalKind::Plugin)
+        if (PluginInstance* plugin = static_cast<PluginPedal*>(slot.pedal.get())->plugin()) plugin->hideEditor();
+    s->retired.emplace_back(std::move(slot.pedal), s->board_sent);
+    return true;
+}
+
+bool AudioEngine::movePedal(int id, int from, int to) {
+    Source* s = owned(id);
+    const int count = s ? int(s->pedals.size()) : 0;
+    if (!s || from < 0 || from >= count || to < 0 || to >= count) return false;
+    if (from == to) return true;
+    auto first = s->pedals.begin();
+    if (from < to) std::rotate(first + from, first + from + 1, first + to + 1);
+    else std::rotate(first + to, first + from, first + from + 1);
+    if (sendBoard(*s)) return true;
+    if (from < to) std::rotate(first + from, first + to, first + to + 1);  // put it back
+    else std::rotate(first + to, first + to + 1, first + from + 1);
+    return false;
+}
+
+void AudioEngine::setPedalOn(int id, int index, bool on) {
+    Source* s = owned(id);
+    if (!s || index < 0 || index >= int(s->pedals.size())) return;
+    auto& slot = s->pedals[size_t(index)];
+    slot.on = on;
+    Command c; c.type = Command::PedalOn; c.id = id; c.pedals[0] = slot.pedal.get(); c.v[0] = on ? 1.0f : 0.0f; push(c);
+}
+
+void AudioEngine::setPedalControl(int id, int index, int control, float value) {
+    Source* s = owned(id);
+    if (!s || index < 0 || index >= int(s->pedals.size()) || control < 0 || control >= kPedalControls) return;
+    auto& slot = s->pedals[size_t(index)];
+    slot.controls[size_t(control)] = std::clamp(value, 0.0f, 10.0f);
+    Command c; c.type = Command::PedalControl; c.id = id; c.pedals[0] = slot.pedal.get();
+    c.v[0] = float(control); c.v[1] = slot.controls[size_t(control)];
+    push(c);
+}
+
+std::vector<PedalStatus> AudioEngine::pedals(int id) const {
+    std::vector<PedalStatus> out;
+    const Source* s = owned(id);
+    if (!s) return out;
+    for (const auto& slot : s->pedals) {
+        PedalStatus p;
+        p.kind = slot.pedal->kind();
+        p.on = slot.on;
+        p.controls = slot.controls;
+        if (p.kind == PedalKind::Plugin)
+            if (const PluginInstance* plugin = static_cast<const PluginPedal*>(slot.pedal.get())->plugin()) {
+                p.plugin = plugin->description();
+                p.editor_open = plugin->editorVisible();
+            }
+        out.push_back(p);
+    }
+    return out;
+}
+
+TunerReading AudioEngine::tuner(int id) const {
+    const Source* s = owned(id);
+    if (s)
+        for (const auto& slot : s->pedals)
+            if (slot.on && slot.pedal->kind() == PedalKind::Tuner) return static_cast<const TunerPedal*>(slot.pedal.get())->read();
+    return {};
+}
+
+bool AudioEngine::loadPedalPlugin(int id, int index, const std::string& plugin_id, std::string* error) {
+    reapPedals();
+    Source* s = owned(id);
+    if (!s || index < 0 || index >= int(s->pedals.size()) || s->pedals[size_t(index)].pedal->kind() != PedalKind::Plugin) {
+        if (error) *error = "there is no Plug-in pedal there";
+        return false;
+    }
+    std::unique_ptr<PluginInstance> plugin = PluginInstance::load(plugin_id, error);
+    if (!plugin) return false;
+    auto pedal = std::make_unique<PluginPedal>(std::move(plugin));
+    pedal->prepare(float(sr_));
+    if (!pedal->ready()) {
+        if (error) *error = pedal->error();
+        return false;
+    }
+    auto& slot = s->pedals[size_t(index)];
+    pedal->setOn(slot.on);
+    std::unique_ptr<Pedal> old = std::move(slot.pedal);
+    slot.pedal = std::move(pedal);
+    if (!sendBoard(*s)) {
+        slot.pedal = std::move(old);
+        if (error) *error = "the audio engine is busy: try again";
+        return false;
+    }
+    if (PluginInstance* previous = static_cast<PluginPedal*>(old.get())->plugin()) previous->hideEditor();
+    s->retired.emplace_back(std::move(old), s->board_sent);
+    return true;
+}
+
+bool AudioEngine::showPluginEditor(int id, int index, bool show, const std::string& title) {
+    Source* s = owned(id);
+    if (!s || index < 0 || index >= int(s->pedals.size()) || s->pedals[size_t(index)].pedal->kind() != PedalKind::Plugin) return false;
+    PluginInstance* plugin = static_cast<PluginPedal*>(s->pedals[size_t(index)].pedal.get())->plugin();
+    if (!plugin) return false;
+    if (!show) {
+        plugin->hideEditor();
+        return true;
+    }
+    return plugin->showEditor(title.empty() ? plugin->description().name : title);
+}
+
 void AudioEngine::setSourceInput(int id, bool on) {
     if (Source* s = owned(id)) s->input_on = on;
     Command c; c.type = Command::SourceInput; c.id = id; c.v[0] = on ? 1.0f : 0.0f; push(c);
@@ -627,6 +798,7 @@ void AudioEngine::setListener(Vec3 p, Vec3 ahead, Vec3 up) {
         updatePaths();
     }
     roomSettled();  // the game calls this every frame, which makes it the place to let the reverb catch up
+    reapPedals();   // and to free pedals taken off a board
 }
 void AudioEngine::noteOn(int id, int note, float velocity) {
     Command c; c.type = Command::NoteOn; c.id = id; c.v[0] = float(note); c.v[1] = velocity; push(c);
@@ -917,6 +1089,19 @@ void AudioEngine::drainCommands() {
                 break;
             case Command::LooperAct:
                 if (s) s->looper.act(Looper::Action(int(c.v[0])));
+                break;
+            case Command::PedalBoardSet:
+                if (s) {
+                    for (int i = 0; i < int(c.count); ++i) s->board.pedals[size_t(i)] = c.pedals[i];
+                    s->board.count = int(c.count);
+                    s->board_applied.store(c.epoch, std::memory_order_release);  // the pedals it left out may now be freed
+                }
+                break;
+            case Command::PedalOn:
+                if (s) c.pedals[0]->setOn(c.v[0] > 0.5f);
+                break;
+            case Command::PedalControl:
+                if (s) c.pedals[0]->setControl(int(c.v[0]), c.v[1]);
                 break;
             case Command::LooperOptions:
                 if (s) {

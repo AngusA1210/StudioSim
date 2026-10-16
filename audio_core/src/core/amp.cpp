@@ -170,6 +170,10 @@ void Amp::render(float* out, int n) {
             for (int i = 0; i < n; ++i) in_[size_t(i)] += in[i];
         }
     }
+    if (board_) {  // through the pedals, in order
+        const double beat = timing_ ? double(timing_[1]) / 4.0 : 0.0;
+        for (int p = 0; p < board_->count; ++p) board_->pedals[size_t(p)]->process(in_.data(), n, beat);
+    }
     std::copy(in_.begin(), in_.begin() + n, signal_.begin());  // the live signal...
     if (looper_) looper_->process(in_.data(), signal_.data(), n, timing_ ? timing_[0] : -1, timing_ ? timing_[1] : 0);  // ...and the loop
     model_.process(signal_.data(), n);

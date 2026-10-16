@@ -10,7 +10,8 @@
 //
 // The drive stages run at twice the sample rate so the distortion doesn't fold harsh tones back down. The cabinets
 // are filters shaped like a speaker's response rather than recorded impulses, so they cost almost nothing.
-// A loop pedal (looper.h) sits in front of each amp; the amp plays the live input and the loop together.
+// In front of each amp are its effect pedals (pedals.h) and then a loop pedal (looper.h): the input goes through the
+// pedals, the loop pedal records what comes out of them, and the amp plays that and the loop together.
 
 #include <array>
 #include <vector>
@@ -18,6 +19,7 @@
 #include "dsp.h"
 #include "instruments.h"
 #include "looper.h"
+#include "pedals.h"
 
 namespace sr {
 
@@ -62,9 +64,10 @@ public:
     void setInputChannel(int channel) override { channel_ = channel; }
     void setInputEnabled(bool on) override { enabled_ = on; }
     void setControl(AmpControl control, float value) { model_.setControl(control, value); }
-    // The loop pedal belongs to the source, so that it outlives the amp being rebuilt; `timing` is where the engine
-    // keeps the bar lines for this block (samples to the next one, or -1, and a bar's length).
-    void connect(Looper* looper, const int64_t* timing) {
+    // The pedals and the loop pedal belong to the source, so that they outlive the amp being rebuilt; `timing` is
+    // where the engine keeps the bar lines for this block (samples to the next one, or -1, and a bar's length).
+    void connect(const PedalBoard* board, Looper* looper, const int64_t* timing) {
+        board_ = board;
         looper_ = looper;
         timing_ = timing;
     }
@@ -73,6 +76,7 @@ public:
 private:
     AmpModel model_;
     const InputBus* bus_;
+    const PedalBoard* board_ = nullptr;
     Looper* looper_ = nullptr;
     const int64_t* timing_ = nullptr;
     int channel_ = -1;
