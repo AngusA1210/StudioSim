@@ -41,11 +41,11 @@ settings, and enter the room. The menu inside the room has a button to come back
 | A S D F G H J K L ; | white keys while playing (W E T Y U O P are the black keys, Z/X change octave) |
 | I | that instrument's input on/off (see below) |
 | MIDI keyboard | plays every instrument whose input is on, with velocity (and the sustain pedal on the Keys); plug in any time |
-| Enter | open the pattern editor for the instrument you're next to or playing (at an amp: its panel, with its knobs and its pedals) |
+| Enter | open the pattern editor for the instrument you're next to or playing (at an amp: its knobs and pedals; at a Speaker: its volume and input) |
 | M | switch that instrument's loop off or on (for a Speaker or an amp: mute) |
 | L K U J | at an amp with a loop pedal: L the footswitch (record, close the loop, overdub), K stop or play, U undo or redo the last overdub, J twice to clear |
 | 1 to 8 | at an amp, stamp on its pedals: each switches that pedal on or off (the loop pedal: its footswitch) |
-| Tab | the mix window |
+| Tab | the mix window (you can still walk about while it is open) |
 | Space | start or stop every instrument's pattern |
 | C | metronome click on/off |
 | Esc | the menu (see below), including the room's size and walls; the music keeps playing while it's open |
@@ -71,7 +71,9 @@ them. The parts in the instrument's colour light up as it plays.
 Pick one and it appears in your hands: walk it to where it should stand and click to put it down. A new MIDI
 instrument starts with an empty pattern, so it is silent until you play it or write it a pattern (the pattern editor
 can load the default one). A new Speaker plays the hardware input chosen in the menu, which can be changed later in
-its mix window strip or on the I/O page; several Speakers can each play a different input. A second instrument of a kind is numbered and a
+its mix window strip or on the I/O page; several Speakers can each play a different input. A Speaker's own
+**volume** (Enter at it, or click its name in the mix window) goes up to +24 dB, as on a big powered PA speaker, so that
+it can fill a large room; it comes after the Speaker's inserts and before its fader. A second instrument of a kind is numbered and a
 paler colour, to tell them apart. Like the tempo and the patterns, the instruments you add are not saved yet.
 
 ### Inputs
@@ -176,6 +178,9 @@ interface input the guitar is plugged into, and switch its input on.
 Tab opens the mix window, docked along the bottom of the screen so the room stays in view. It is laid out like a
 mixing desk: a channel strip for every instrument, side by side, and the master strip on the right.
 
+- **Names**: click a strip's name to open the instrument's own window (an amp's knobs and pedals, a pattern, a
+  Speaker's panel); the mix window comes back when it closes. Right-click the name to remove the instrument from the
+  room.
 - **Inserts** at the top of each strip, A to E, as in Pro Tools: plug-ins played in order on the instrument's sound
   before its fader (on an amp, after its pedals and the amp). Click an empty one to choose a plug-in, a full one to
   open or close its window, Cmd-click (or Ctrl-click) to bypass it, which turns it blue, and right-click to replace or
@@ -186,6 +191,8 @@ mixing desk: a channel strip for every instrument, side by side, and the master 
   Drag one to move it (Shift for fine moves), turn the scroll wheel to nudge it, or double-click or Alt-click it for
   0 dB. 0 dB is the level the instrument was made at, heard from right beside it, and the strip's meter reads it at
   that level, as a DAW's track meter reads what the track sends to the master.
+- **Pre-fader meters** (in the window's header): the channel meters read before the fader, after the inserts, as
+  Pro Tools' pre-fader metering does. Off, they read after it.
 - **Peak readouts**: as in Pro Tools, the number beside each fader's level holds the highest peak (in dBFS) until
   you click it, and turns red once anything reaches full scale. Clicking a meter clears it too; Alt-click clears
   every one, the master's included.
@@ -325,7 +332,9 @@ To do, roughly in this order:
 2. **Recording.**
 3. **More plug-ins**: inserts on the master, plug-in settings saved with the room (with templates), and perhaps VST3
    and Windows.
-4. **Multiplayer**, the final goal: a session server, a networked clock, note events and low-latency audio streams.
+4. **The room's sound**: a reverb amount you can set, then wall materials, each absorbing and diffusing sound in its
+   own way, which shape how the room's reverb rings.
+5. **Multiplayer**, the final goal: a session server, a networked clock, note events and low-latency audio streams.
 
 Also wanted along the way: MIDI on Windows and Linux, and VR through OpenXR.
 

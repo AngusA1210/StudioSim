@@ -140,7 +140,7 @@ func setup(the_app) -> void:
 func _process(_delta: float) -> void:
 	_frame += 1
 	var covered := false
-	for panel in [app.title, app.menu, app.sequencer, app.mixer, app.amp_panel, app.instrument_menu]:
+	for panel in [app.title, app.menu, app.sequencer, app.mixer, app.amp_panel, app.speaker_panel, app.instrument_menu]:
 		covered = covered or (panel != null and panel.is_open())
 	_root.visible = not covered
 	if covered:
@@ -191,7 +191,7 @@ func _process(_delta: float) -> void:
 
 	# One line of guidance: how to start, or where the menu is.
 	var playing: bool = player.playing != null
-	_prompt.text = "Click to look around  ·  Esc  menu and settings" if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED else "Esc  menu  ·  N  add an instrument"
+	_prompt.text = "Click to look around  ·  Esc  menu and settings" if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED else "Esc  menu  ·  Tab  mix window  ·  N  add an instrument"
 	_prompt_panel.visible = not playing
 	_prompt_panel.reset_size()
 	if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
@@ -263,6 +263,7 @@ func _show_hint(vp: Vector2) -> void:
 			rows.append(["M", "loop on" if not t.loop_on else "loop off"])
 		elif not t.is_amp:
 			rows.append(["I", "input off" if t.input_on else "input on"])
+			rows.append(["Enter", "volume and input"])
 			rows.append(["M", "unmute" if t.muted else "mute"])
 		rows.append(["G", "carry"])
 		rows.append(["", ""])

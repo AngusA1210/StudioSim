@@ -53,6 +53,7 @@ public:
     void set_source_position(int id, const Vector3& position);
     bool is_source_blocked(int id) const;  // a wall stands between it and the listener
     void set_source_gain(int id, float gain);  // its level within the reference distance; 1 = as it was added
+    void set_source_volume(int id, float gain);  // its own volume, after its inserts and before its fader (a Speaker's)
     // The room's inside size (width, height, depth) in metres and the walls standing in it, each
     // {a: Vector2, b: Vector2, thickness: float, height: float} with a and b on the floor plan (x, z).
     // The audio core works out how sound gets round the walls, and how long and loudly a room that size rings.
@@ -115,8 +116,10 @@ public:
     // The output meter since it was last read: {peak_l, peak_r, rms_l, rms_r, limiter_gain} as linear levels
     // (1 = full scale; limiter_gain 1 = the limiter did nothing) and {clipped}, a count of samples cut off.
     Dictionary read_meter();
-    float get_source_level(int id) const;
-    float get_source_peak(int id);  // its highest sample since the last call (before distance and walls)
+    // A source's channel meter, before distance and walls: RMS of its last block, and its highest sample since the last
+    // call. After its fader, or with pre_fader before it (after its inserts).
+    float get_source_level(int id, bool pre_fader = false) const;
+    float get_source_peak(int id, bool pre_fader = false);
     Dictionary get_stats() const;
 
     // ── The sequencer ────────────────────────────────────────────────────────────────────────────────────

@@ -30,6 +30,7 @@ const InstrumentMenu := preload("res://scripts/instrument_menu.gd")
 const Mixer := preload("res://scripts/mixer.gd")
 const AmpPanel := preload("res://scripts/amp_panel.gd")
 const PluginBrowser := preload("res://scripts/plugin_browser.gd")
+const SpeakerPanel := preload("res://scripts/speaker_panel.gd")
 const Title := preload("res://scripts/title.gd")
 const Catalog := preload("res://scripts/catalog.gd")
 const Settings := preload("res://scripts/settings.gd")
@@ -62,6 +63,7 @@ var sequencer  # the pattern editor
 var mixer  # the mix window (Tab)
 var amp_panel  # an amp's knobs and its pedals (Enter at an amp)
 var plugin_browser  # the effect plug-ins on the computer, to choose one for an insert or a Plug-in pedal
+var speaker_panel  # a Speaker's volume and input (Enter at a Speaker)
 var _plugins = null  # what get_plugins() said, the first time anything asked
 var instrument_menu
 var title  # the title screen
@@ -165,6 +167,9 @@ func _ready() -> void:
 	amp_panel = AmpPanel.new()
 	add_child(amp_panel)
 	amp_panel.setup(self)
+	speaker_panel = SpeakerPanel.new()
+	add_child(speaker_panel)
+	speaker_panel.setup(self)
 	plugin_browser = PluginBrowser.new()
 	add_child(plugin_browser)
 	instrument_menu = InstrumentMenu.new()
@@ -217,9 +222,13 @@ func _process(delta: float) -> void:
 func _read_meter(delta: float) -> void:
 	meter = audio.read_meter()
 	master_peak_hold = maxf(master_peak_hold, maxf(meter.get("peak_l", 0.0), meter.get("peak_r", 0.0)))
-	for inst in instruments:  # each channel as it reaches the master: after its fader, before distance and the master's
-		inst.meter_peak = audio.get_source_peak(inst.source_id) * CHANNEL_TRIM
-		inst.meter_rms = audio.get_source_level(inst.source_id) * CHANNEL_TRIM
+	# Each channel as it reaches the master: after its fader, before distance and the master's. Or before its fader,
+	# scaled so that the two agree with the fader at 0 dB.
+	var pre: bool = settings.pre_fader_meters
+	for inst in instruments:
+		var scale: float = CHANNEL_TRIM * (inst.normal_gain() if pre else 1.0)
+		inst.meter_peak = audio.get_source_peak(inst.source_id, pre) * scale
+		inst.meter_rms = audio.get_source_level(inst.source_id, pre) * scale
 		inst.peak_hold = maxf(inst.peak_hold, inst.meter_peak)
 	var reduction := -linear_to_db(maxf(meter.get("limiter_gain", 1.0), 0.001))
 	_reduction_age += delta
@@ -235,6 +244,14 @@ func clear_peak(inst) -> void:
 	if inst == null:
 		master_peak_hold = 0.0
 	else:
+		inst.peak_hold = 0.0
+
+
+## The mix window's channel meters before the fader or after it. The peaks held so far were measured the other way.
+func set_pre_fader_meters(on: bool) -> void:
+	settings.pre_fader_meters = on
+	settings.save_to_disk()
+	for inst in instruments:
 		inst.peak_hold = 0.0
 
 
@@ -571,7 +588,7 @@ func listener_position() -> Vector3:
 
 ## Back to the title screen. The room carries on as it is.
 func show_title() -> void:
-	for panel in [menu, sequencer, mixer, amp_panel, instrument_menu]:
+	for panel in [menu, sequencer, mixer, amp_panel, speaker_panel, instrument_menu]:
 		if panel.is_open():
 			panel.close()
 	player.stop_playing()
@@ -618,6 +635,8 @@ func remove_instrument(inst) -> void:
 		sequencer.close()
 	if amp_panel.is_open() and amp_panel.inst == inst:
 		amp_panel.close()
+	if speaker_panel.is_open() and speaker_panel.inst == inst:
+		speaker_panel.close()
 	player.forget(inst)
 	instruments.erase(inst)
 	if inst == speaker:
@@ -656,6 +675,12 @@ func set_master_volume_db(db: float) -> void:
 	settings.master_volume_db = db
 	_apply_master_volume()
 	settings.save_to_disk()
+
+
+## A Speaker's own volume (its panel), in decibels: after its inserts, before its fader. -80 is off.
+func set_speaker_volume(inst, db: float) -> void:
+	inst.volume_db = clampf(db, -80.0, SpeakerPanel.MAX_DB)
+	audio.set_source_volume(inst.source_id, 0.0 if inst.volume_db <= -79.0 else db_to_linear(inst.volume_db))
 
 
 ## An instrument's fader, in decibels above or below its normal level.

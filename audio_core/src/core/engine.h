@@ -143,6 +143,9 @@ public:
     void setSourcePosition(int id, Vec3 position);
     bool sourceBlocked(int id) const;  // a wall stands between it and the listener
     void setSourceGain(int id, float gain);  // its level, as heard within the reference distance (1 = as added)
+    // The instrument's own volume in the room, after its inserts and before its fader: a Speaker's level knob, as on a
+    // powered PA speaker. 1 = as it comes in.
+    void setSourceVolume(int id, float gain);
 
     // ── The room ─────────────────────────────────────────────────────────────────────────────────────────
     // The room's inside dimensions in metres and the walls standing in it. The engine works out how each source's
@@ -251,8 +254,11 @@ public:
     void setMidiDeviceEnabled(const std::string& name, bool enabled) { midi_.setEnabled(name, enabled); }
     uint32_t midiEventCount() const { return midi_events_.load(std::memory_order_relaxed); }
 
-    float sourceLevel(int id) const;  // RMS of the source's last block, before distance and walls
-    float sourcePeak(int id);         // the highest sample since the last call, likewise; reading it starts again
+    // A source's channel meter: the RMS of its last block, and its highest sample since the last call (reading it
+    // starts again), before distance and walls. After its fader and mute, or with `pre_fader` before them (and after
+    // its inserts), as a DAW's pre-fader metering shows.
+    float sourceLevel(int id, bool pre_fader = false) const;
+    float sourcePeak(int id, bool pre_fader = false);
     EngineStats stats() const;
     int sampleRate() const { return sr_; }
     int blockSize() const { return block_; }
@@ -272,7 +278,7 @@ private:
         enum Type : uint8_t {
             AddSource, RemoveSource, SourcePosition, SourceDirectPath, SourceMuted, SourceInputChannel, Listener,
             NoteOn, NoteOff, AllNotesOff, Binaural, Reverb, MasterVolume, SourceInput,
-            PatternNoteSet, PatternNoteRemove, PatternClear, PatternSteps, SourceLoop,
+            PatternNoteSet, PatternNoteRemove, PatternClear, PatternSteps, SourceLoop, SourceVolume,
             SequencerRunning, Tempo, Swing, Click, ClickVolume, Reverb2, SourceGain, Falloff, LimiterOn,
             AmpKnob, LooperMemory, LooperAct, PedalBoardSet, PedalOn, PedalControl,
         } type = AddSource;
@@ -364,7 +370,7 @@ private:
     int64_t bar_timing_[2] = {-1, 0};  // for the loop pedals: samples from this block's start to the next bar line, a bar
 
     // Shared between threads
-    std::array<std::atomic<float>, kSourceSlots> levels_{}, peaks_{};
+    std::array<std::atomic<float>, kSourceSlots> levels_{}, peaks_{}, pre_levels_{}, pre_peaks_{};
     std::atomic<float> cpu_load_{0.0f};
     std::atomic<uint64_t> blocks_{0};
     std::atomic<int> out_left_{0}, out_right_{1};

@@ -509,8 +509,9 @@ func _run() -> void:
 		amp._pedal_row.get_child_count() == 1, "now its card offers the loop pedal, and it stands on the floor", " / ".join(amp_card))
 	await tap(KEY_L)
 	await frames(3)
-	check(amp.input_on and amp.looper.get("state", "") == "waiting", "L arms the pedal: its input goes on, and with Sync it waits for the bar line",
-		amp.looper.get("state", ""))
+	# With Sync it waits for the next bar line, unless one fell in the frames just gone.
+	var armed: bool = amp.looper.get("state", "") == "waiting" or (amp.looper.get("state", "") == "recording" and amp.looper.get("length", 1.0) < 0.06)
+	check(amp.input_on and armed, "L arms the pedal: its input goes on, and with Sync it waits for the bar line", amp.looper.get("state", ""))
 	var waited := 0.0
 	while amp.looper.get("state", "") == "waiting" and waited < 1.5:
 		await seconds(0.02)
@@ -657,12 +658,24 @@ func _run() -> void:
 	player.place(Vector3(from.x, 0.0, from.z), 0.0)
 	await frames(5)
 	var speaker_card: Array = main.hud.hint_lines()
-	check(player.target == speaker and speaker_card == ["Speaker", "I input on", "M mute", "G carry", "Backspace remove (press twice)"],
-		"the Speaker's card offers input and mute, but not playing", " / ".join(speaker_card))
+	check(player.target == speaker and speaker_card == ["Speaker", "I input on", "Enter volume and input", "M mute", "G carry",
+		"Backspace remove (press twice)"], "the Speaker's card offers input, its panel and mute, but not playing", " / ".join(speaker_card))
 	await tap(KEY_M)
 	check(speaker.muted, "M mutes it")
 	await tap(KEY_E)
 	check(player.playing == null and not seq.is_open(), "E does nothing at the Speaker: it isn't played")
+	await tap(KEY_M)
+	await tap(KEY_ENTER)
+	await frames(3)
+	var speaker_panel = main.speaker_panel
+	check(speaker_panel.is_open() and speaker_panel.inst == speaker and speaker_panel._volume.readout == "+0.0 dB",
+		"Enter opens the Speaker's panel, its volume at 0 dB", speaker_panel._volume.readout)
+	await turn(speaker_panel._volume, 75.0)  # 5 knob steps: right to the top
+	check(absf(speaker.volume_db - 24.0) < 0.6 and speaker_panel._volume.readout == "+24.0 dB",
+		"its volume goes up to +24 dB, as a big PA speaker's would", speaker_panel._volume.readout)
+	main.set_speaker_volume(speaker, 0.0)
+	await tap(KEY_ENTER)
+	check(not speaker_panel.is_open(), "Enter closes it")
 	await tap(KEY_ESCAPE)
 	check(main.menu.is_open() and main.menu._tabs.get_tab_title(0) == "Metronome", "Esc opens the menu, Metronome page first", main.menu._tabs.get_tab_title(main.menu._tabs.current_tab))
 	main.menu._tempo_slider.value = 100
@@ -788,8 +801,8 @@ func _run() -> void:
 	var limiting: float = main.meter_reduction_db
 	mix._on_master_changed(-10.0)
 	await seconds(1.6)
-	check(absf(main.meter_reduction_db - limiting) < 2.0 and main.meter_reduction_db > 1.0,
-		"the limiter comes before the master fader: bringing the master down doesn't ease it", "%.1f dB, then %.1f dB" % [limiting, main.meter_reduction_db])
+	check(limiting > 1.0 and main.meter_reduction_db > 1.0,  # 10 dB down would have ended limiting after the fader
+		"the limiter comes before the master fader: bringing the master down 10 dB doesn't ease it", "%.1f dB, then %.1f dB" % [limiting, main.meter_reduction_db])
 	mix._on_master_changed(0.0)
 	await click(mix._master.limiter.get_global_rect().get_center())
 	await seconds(1.5)
@@ -810,6 +823,51 @@ func _run() -> void:
 	await frames(3)
 	check(held_loud > 0.5 and main.master_peak_hold < 0.5 and drums.peak_hold < 0.5 and pad.peak_hold < held_loud,
 		"Alt-clicking a peak readout clears them all, the master's too", "master held %.2f, now %.2f" % [held_loud, main.master_peak_hold])
+	# Metering before the fader: the pad turned down 20 dB still reads as loud before its fader.
+	mix._on_fader_changed(-20.0, pad)
+	await seconds(0.3)
+	main.clear_peak(pad)
+	await seconds(1.0)
+	var after_fader: float = pad.peak_hold
+	mix._pre_fader.button_pressed = true
+	await seconds(1.0)
+	var before_fader: float = pad.peak_hold
+	check(main.settings.pre_fader_meters and before_fader > after_fader * 5.0, "Pre-fader meters read the channel before its fader",
+		"%.1f dB after the fader, %.1f dB before" % [linear_to_db(after_fader), linear_to_db(before_fader)])
+	mix._pre_fader.button_pressed = false
+	mix._on_fader_changed(0.0, pad)
+	# Walking about with the mix window open.
+	var standing: Vector3 = player.global_position
+	var w := InputEventKey.new()  # movement reads the keyboard's state, so tell Input itself
+	w.physical_keycode = KEY_W
+	w.pressed = true
+	Input.parse_input_event(w)
+	await seconds(0.4)
+	w = w.duplicate()
+	w.pressed = false
+	Input.parse_input_event(w)
+	await frames(2)
+	check(mix.is_open() and player.global_position.distance_to(standing) > 0.3, "you can walk about with the mix window open",
+		"%.2f m" % player.global_position.distance_to(standing))
+	player.place(standing, player.yaw)
+	# A strip's name opens the instrument's own window, and the mix window comes back when it closes.
+	await click(mix._strip_for(drums).plate.get_global_rect().get_center())
+	check(seq.is_open() and seq.inst == drums and not mix.is_open(), "clicking a strip's name opens the instrument's window: the drums' pattern")
+	await tap(KEY_ESCAPE)
+	await frames(3)
+	check(not seq.is_open() and mix.is_open(), "and closing it comes back to the mix window")
+	var spare = main.add_instrument("bells", Vector3(2.0, 0.0, 2.0))
+	await frames(3)
+	await click(mix._strip_for(spare).plate.get_global_rect().get_center(), MOUSE_BUTTON_RIGHT)
+	check(mix._name_menu.visible and mix._name_menu.get_item_text(mix._name_menu.get_item_index(1)).begins_with("Remove the Bells 2"),
+		"right-clicking a strip's name offers to remove the instrument", mix._name_menu.get_item_text(mix._name_menu.get_item_index(1)))
+	mix._name_menu.id_pressed.emit(1)
+	mix._name_menu.hide()
+	await frames(2)
+	check(mix._confirm.visible and main.instruments.has(spare), "which asks first")
+	mix._confirm.get_ok_button().pressed.emit()
+	await frames(3)
+	check(not main.instruments.has(spare) and mix._strip_for(spare).is_empty(), "and then takes it out of the room and the mix window")
 	await tap(KEY_TAB)
 	check(not mix.is_open(), "Tab closes the mix window")
 

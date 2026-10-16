@@ -305,8 +305,9 @@ Dictionary SoundRoomAudio::read_meter() {
     d["clipped"] = int64_t(m.clipped);
     return d;
 }
-float SoundRoomAudio::get_source_level(int id) const { return engine_ ? engine_->sourceLevel(id) : 0.0f; }
-float SoundRoomAudio::get_source_peak(int id) { return engine_ ? engine_->sourcePeak(id) : 0.0f; }
+void SoundRoomAudio::set_source_volume(int id, float gain) { if (engine_) engine_->setSourceVolume(id, gain); }
+float SoundRoomAudio::get_source_level(int id, bool pre_fader) const { return engine_ ? engine_->sourceLevel(id, pre_fader) : 0.0f; }
+float SoundRoomAudio::get_source_peak(int id, bool pre_fader) { return engine_ ? engine_->sourcePeak(id, pre_fader) : 0.0f; }
 
 Dictionary SoundRoomAudio::get_stats() const {
     Dictionary d;
@@ -486,8 +487,9 @@ void SoundRoomAudio::_bind_methods() {
     ClassDB::bind_method(D_METHOD("set_distance_falloff", "db_per_doubling"), &SoundRoomAudio::set_distance_falloff);
     ClassDB::bind_method(D_METHOD("set_limiter", "on"), &SoundRoomAudio::set_limiter);
     ClassDB::bind_method(D_METHOD("read_meter"), &SoundRoomAudio::read_meter);
-    ClassDB::bind_method(D_METHOD("get_source_level", "id"), &SoundRoomAudio::get_source_level);
-    ClassDB::bind_method(D_METHOD("get_source_peak", "id"), &SoundRoomAudio::get_source_peak);
+    ClassDB::bind_method(D_METHOD("get_source_level", "id", "pre_fader"), &SoundRoomAudio::get_source_level, DEFVAL(false));
+    ClassDB::bind_method(D_METHOD("get_source_peak", "id", "pre_fader"), &SoundRoomAudio::get_source_peak, DEFVAL(false));
+    ClassDB::bind_method(D_METHOD("set_source_volume", "id", "gain"), &SoundRoomAudio::set_source_volume);
     ClassDB::bind_method(D_METHOD("get_stats"), &SoundRoomAudio::get_stats);
 
     ClassDB::bind_method(D_METHOD("load_default_pattern", "id"), &SoundRoomAudio::load_default_pattern);

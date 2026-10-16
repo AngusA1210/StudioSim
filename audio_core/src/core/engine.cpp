@@ -141,6 +141,7 @@ struct AudioEngine::Source {
     SourceSpatializer spatializer;
     std::vector<float> mono;
     float gain = 1.0f, gain_target = 1.0f, send = 1.0f;
+    float volume = 1.0f, volume_target = 1.0f;  // its own volume, before the fader (setSourceVolume)
     float mute_target = 1.0f, mute_gain = 1.0f;
     int input_channel = LiveInput::kAllInputs;
     bool input_on = false;  // see setSourceInput; kept by both threads (the game's copy survives a reconfigure)
@@ -202,7 +203,8 @@ AudioEngine::AudioEngine(const EngineConfig& config)
       room_rt60_(kReferenceDecay), room_level_(kReverbLevel), falloff_target_(kDefaultFalloffDb / 6.0f),
       falloff_(kDefaultFalloffDb / 6.0f), reverb_level_(kReverbLevel), block_pos_(config.block_size) {
     for (auto& l : levels_) l.store(0.0f);
-    for (auto& p : peaks_) p.store(0.0f);
+    for (auto* meters : {&peaks_, &pre_levels_, &pre_peaks_})
+        for (auto& p : *meters) p.store(0.0f);
     allocateBuffers();
     sequencer_.setSampleRate(sr_);
     for (auto& reverb : reverbs_) buildReverb(reverb, float(sr_), room_rt60_, room_size_);
@@ -803,6 +805,10 @@ void AudioEngine::setSourcePosition(int id, Vec3 p) {
     updatePath(*s);
 }
 
+void AudioEngine::setSourceVolume(int id, float gain) {
+    Command c; c.type = Command::SourceVolume; c.id = id; c.v[0] = std::clamp(gain, 0.0f, 100.0f); push(c);
+}
+
 void AudioEngine::setSourceGain(int id, float gain) {
     Command c; c.type = Command::SourceGain; c.id = id; c.v[0] = std::clamp(gain, 0.0f, 100.0f); push(c);
 }
@@ -1025,12 +1031,14 @@ TransportState AudioEngine::transport() const {
     return t;
 }
 
-float AudioEngine::sourceLevel(int id) const {
-    return id >= 0 && id < kSourceSlots ? levels_[size_t(id)].load(std::memory_order_relaxed) : 0.0f;
+float AudioEngine::sourceLevel(int id, bool pre_fader) const {
+    if (id < 0 || id >= kSourceSlots) return 0.0f;
+    return (pre_fader ? pre_levels_ : levels_)[size_t(id)].load(std::memory_order_relaxed);
 }
 
-float AudioEngine::sourcePeak(int id) {
-    return id >= 0 && id < kSourceSlots ? peaks_[size_t(id)].exchange(0.0f, std::memory_order_relaxed) : 0.0f;
+float AudioEngine::sourcePeak(int id, bool pre_fader) {
+    if (id < 0 || id >= kSourceSlots) return 0.0f;
+    return (pre_fader ? pre_peaks_ : peaks_)[size_t(id)].exchange(0.0f, std::memory_order_relaxed);
 }
 
 EngineStats AudioEngine::stats() const {
@@ -1196,6 +1204,9 @@ void AudioEngine::drainCommands() {
                 break;
             case Command::SourceGain:
                 if (s) s->gain_target = c.v[0];
+                break;
+            case Command::SourceVolume:
+                if (s) s->volume_target = c.v[0];
                 break;
             case Command::Falloff:
                 falloff_target_ = c.v[0];
@@ -1371,9 +1382,13 @@ void AudioEngine::renderBlock() {
             for (int p = 0; p < s->insert_board.count; ++p) s->insert_board.pedals[size_t(p)]->process(mono, block_, timing);
         }
 
-        double energy = 0.0;
-        float peak = 0.0f;
+        double energy = 0.0, pre_energy = 0.0;
+        float peak = 0.0f, pre_peak = 0.0f;
         for (int i = 0; i < block_; ++i) {
+            s->volume += (s->volume_target - s->volume) * mute_coef;
+            mono[i] *= s->volume;
+            pre_energy += double(mono[i]) * mono[i];  // what reaches the fader
+            pre_peak = std::max(pre_peak, std::fabs(mono[i]));
             s->mute_gain += (s->mute_target - s->mute_gain) * mute_coef;
             s->gain += (s->gain_target - s->gain) * mute_coef;
             mono[i] *= s->gain * s->mute_gain;
@@ -1383,6 +1398,9 @@ void AudioEngine::renderBlock() {
         }
         levels_[size_t(s->id)].store(float(std::sqrt(energy / block_)), std::memory_order_relaxed);
         if (peak > peaks_[size_t(s->id)].load(std::memory_order_relaxed)) peaks_[size_t(s->id)].store(peak, std::memory_order_relaxed);
+        pre_levels_[size_t(s->id)].store(float(std::sqrt(pre_energy / block_)), std::memory_order_relaxed);
+        if (pre_peak > pre_peaks_[size_t(s->id)].load(std::memory_order_relaxed))
+            pre_peaks_[size_t(s->id)].store(pre_peak, std::memory_order_relaxed);
 
         s->via = lerp(s->via, s->via_target, glide);
         s->extra += (s->extra_target - s->extra) * wall_glide;
@@ -1402,6 +1420,8 @@ void AudioEngine::renderBlock() {
             sources_[index] = nullptr;
             levels_[index].store(0.0f, std::memory_order_relaxed);
             peaks_[index].store(0.0f, std::memory_order_relaxed);
+            pre_levels_[index].store(0.0f, std::memory_order_relaxed);
+            pre_peaks_[index].store(0.0f, std::memory_order_relaxed);
             s->released.store(true, std::memory_order_release);  // must be the last thing this thread does with it
         }
     }

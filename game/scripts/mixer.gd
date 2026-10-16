@@ -5,7 +5,9 @@ extends CanvasLayer
 ## highest peak beneath them, and the instrument's name in its colour at the foot.
 ## The inserts work as Pro Tools' do: click an empty one to choose a plug-in (its window opens), click a full one to
 ## open or close its window, Cmd-click (Ctrl-click) to bypass it, and right-click for the rest. A bypassed insert is
-## blue. They play on the instrument's sound in order, before its fader. As in Pro Tools, the peak readout holds the highest peak
+## blue. They play on the instrument's sound in order, before its fader.
+## Click a strip's name to open the instrument's own window (an amp's panel and pedals, a pattern, a Speaker's panel),
+## right-click it to remove the instrument from the room. You can walk about while the window is open. As in Pro Tools, the peak readout holds the highest peak
 ## until it is clicked (Alt-click clears them all), and clicking a meter does the same.
 ## It docks along the bottom of the screen so the room stays in view, and the music keeps playing.
 
@@ -26,9 +28,13 @@ var audio: SoundRoomAudio
 var _root: Control
 var _panel: PanelContainer
 var _strip_row: HBoxContainer
-var _strips: Array = []  # {inst, fader, meter, value, peak, input, mute, solo, source, inserts: [{button, style}]}
+var _strips: Array = []  # {inst, fader, meter, value, peak, input, mute, solo, source, inserts: [{button, style}], plate}
 var _insert_menu: PopupMenu  # what a right-click on a full insert offers
 var _menu_for := []  # [instrument, slot] that menu is open for
+var _name_menu: PopupMenu  # what a right-click on a strip's name offers
+var _name_menu_for = null
+var _confirm: ConfirmationDialog  # removing an instrument
+var _pre_fader: CheckButton
 var _signature := ""
 var _input_channels := -1
 var _master := {}
@@ -116,6 +122,12 @@ func _build() -> void:
 	_status.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_status.clip_text = true
 	header.add_child(_status)
+	_pre_fader = CheckButton.new()
+	_pre_fader.text = "Pre-fader meters"
+	_pre_fader.focus_mode = Control.FOCUS_NONE
+	_pre_fader.tooltip_text = "The channel meters show the signal before the fader (after the inserts), as Pro Tools' pre-fader metering does."
+	_pre_fader.toggled.connect(func(on: bool) -> void: app.set_pre_fader_meters(on))
+	header.add_child(_pre_fader)
 	var close_button := Button.new()
 	close_button.text = "Close  (Tab)"
 	close_button.pressed.connect(close)
@@ -139,6 +151,13 @@ func _build() -> void:
 	_insert_menu = PopupMenu.new()
 	_insert_menu.id_pressed.connect(_on_insert_menu_chosen)
 	_root.add_child(_insert_menu)
+	_name_menu = PopupMenu.new()
+	_name_menu.id_pressed.connect(_on_name_menu_chosen)
+	_root.add_child(_name_menu)
+	_confirm = ConfirmationDialog.new()
+	_confirm.ok_button_text = "Remove"
+	_confirm.confirmed.connect(_on_remove_confirmed)
+	_root.add_child(_confirm)
 
 	var hint := Label.new()
 	hint.text = "Inserts: click an empty one for a plug-in, a full one for its window, Cmd-click to bypass it (blue), right-click for more.   Drag a fader (Shift for fine moves), or double-click or Alt-click it for 0 dB. Under each fader: its level, and the highest peak since you last clicked it (Alt-click clears them all).   I  input on: the keyboard plays it, or a Speaker or amp plays its input.   M  mute.   S  solo."
@@ -167,7 +186,7 @@ func _build_master() -> PanelContainer:
 	var pair := _fader_and_meter(box, 2, null)
 	pair.fader.value_changed.connect(_on_master_changed)
 	var readouts := _readouts(box, null)
-	box.add_child(_name_plate("Master", Color(0.75, 0.77, 0.82)))
+	box.add_child(_name_plate("Master", Color(0.75, 0.77, 0.82), null))
 	_master = {"fader": pair.fader, "meter": pair.meter, "value": readouts.value, "peak": readouts.peak, "limiter": limiter}
 	return strip
 
@@ -213,10 +232,11 @@ func _build_strip(inst) -> Dictionary:
 	var pair := _fader_and_meter(box, 1, inst)
 	pair.fader.value_changed.connect(_on_fader_changed.bind(inst))
 	var readouts := _readouts(box, inst)
-	box.add_child(_name_plate(inst.display_name, inst.color))
+	var plate := _name_plate(inst.display_name, inst.color, inst)
+	box.add_child(plate)
 	_strip_row.add_child(strip)
 	return {"inst": inst, "fader": pair.fader, "meter": pair.meter, "value": readouts.value, "peak": readouts.peak, "input": input,
-		"mute": mute, "solo": solo, "source": source, "inserts": inserts}
+		"mute": mute, "solo": solo, "source": source, "inserts": inserts, "plate": plate}
 
 
 const INSERT_HEIGHT := 19.0
@@ -324,21 +344,37 @@ func _readouts(box: VBoxContainer, inst) -> Dictionary:
 	return {"value": value, "peak": peak}
 
 
-func _name_plate(text: String, color: Color) -> PanelContainer:
-	var plate := PanelContainer.new()
-	var style := StyleBoxFlat.new()
-	style.bg_color = color.darkened(0.45)
-	style.set_corner_radius_all(3)
-	style.set_content_margin_all(3)
-	plate.add_theme_stylebox_override("panel", style)
-	var label := Label.new()
-	label.text = text
-	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	label.clip_text = true
-	label.add_theme_font_size_override("font_size", 13)
-	label.add_theme_color_override("font_color", color.lightened(0.6))
-	plate.add_child(label)
+## The name at the foot of a strip, in the instrument's colour. For an instrument it is a button: click it to open the
+## instrument's own window, right-click it to remove the instrument.
+func _name_plate(text: String, color: Color, inst) -> Button:
+	var plate := Button.new()
+	plate.text = text
+	plate.focus_mode = Control.FOCUS_NONE
+	plate.clip_text = true
+	plate.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	plate.add_theme_font_size_override("font_size", 13)
+	for state in ["normal", "hover", "pressed", "hover_pressed", "disabled"]:
+		var style := StyleBoxFlat.new()
+		style.bg_color = color.darkened(0.45 if not state.begins_with("hover") else 0.3)
+		style.set_corner_radius_all(3)
+		style.set_content_margin_all(3)
+		plate.add_theme_stylebox_override(state, style)
+	for state in ["font_color", "font_hover_color", "font_pressed_color", "font_disabled_color"]:
+		plate.add_theme_color_override(state, color.lightened(0.6))
+	if inst == null:
+		plate.disabled = true
+		plate.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	else:
+		plate.tooltip_text = "Click to open the %s; right-click to remove it" % _editor_name(inst)
+		plate.gui_input.connect(_on_name_input.bind(inst, plate))
 	return plate
+
+
+## What clicking an instrument's name opens.
+func _editor_name(inst) -> String:
+	if inst.is_amp:
+		return "amp and its pedals"
+	return "pattern editor" if inst.playable else "Speaker's panel"
 
 
 func _small(box: VBoxContainer, text: String) -> void:
@@ -416,6 +452,7 @@ func _refresh() -> void:
 	_master.value.text = _db_text(settings.master_volume_db)
 	_show_peak(_master.peak, app.master_peak_hold)
 	_master.limiter.set_pressed_no_signal(settings.limiter)
+	_pre_fader.set_pressed_no_signal(settings.pre_fader_meters)
 	if Time.get_ticks_msec() < _problem_until:
 		pass
 	elif app.meter_clipped:
@@ -550,6 +587,52 @@ func _choose_insert(inst, slot: int, near: Control) -> void:
 				_problem_until = Time.get_ticks_msec() + 5000
 			else:
 				app.show_insert_editor(inst, slot, true))
+
+
+func _on_name_input(event: InputEvent, inst, plate: Button) -> void:
+	if not (event is InputEventMouseButton) or not event.pressed:
+		return
+	if event.button_index == MOUSE_BUTTON_LEFT:
+		open_editor(inst)
+	elif event.button_index == MOUSE_BUTTON_RIGHT:
+		_name_menu_for = inst
+		_name_menu.clear()
+		_name_menu.add_item("Open the %s" % _editor_name(inst), 0)
+		_name_menu.add_separator()
+		_name_menu.add_item("Remove the %s from the room…" % inst.display_name, 1)
+		_name_menu.position = Vector2i(plate.get_screen_position() - Vector2(0, 70))
+		_name_menu.popup()
+	plate.accept_event()
+
+
+## An instrument's own window, from its strip: the mix window gives way to it, and comes back when it closes.
+func open_editor(inst) -> void:
+	if not app.instruments.has(inst):
+		return
+	close()
+	if inst.is_amp:
+		app.amp_panel.open(inst, true)
+	elif inst.playable:
+		app.sequencer.open(inst, -1, true)
+	else:
+		app.speaker_panel.open(inst, true)
+
+
+func _on_name_menu_chosen(id: int) -> void:
+	var inst = _name_menu_for
+	if inst == null or not app.instruments.has(inst):
+		return
+	if id == 0:
+		open_editor(inst)
+	else:
+		_confirm.dialog_text = "Remove the %s from the room? Its pattern, pedals and plug-ins go with it." % inst.display_name
+		_confirm.popup_centered()
+
+
+func _on_remove_confirmed() -> void:
+	if _name_menu_for != null and app.instruments.has(_name_menu_for):
+		app.remove_instrument(_name_menu_for)
+	_name_menu_for = null
 
 
 func _strip_for(inst) -> Dictionary:

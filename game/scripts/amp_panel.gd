@@ -32,6 +32,7 @@ var app
 var audio: SoundRoomAudio
 var inst = null
 var selected := -1  # the pedal being set up under the board; -1 for none
+var _back_to_mixer := false  # opened from the mix window, which comes back when this closes
 
 var _root: Control
 var _panel: PanelContainer
@@ -101,7 +102,8 @@ func is_open() -> bool:
 	return _root.visible
 
 
-func open(amp) -> void:
+func open(amp, from_mixer := false) -> void:
+	_back_to_mixer = from_mixer
 	if inst != amp:
 		selected = 0 if not amp.pedals.is_empty() else -1
 	inst = amp
@@ -128,6 +130,9 @@ func close() -> void:
 	if inst != null:
 		app.hide_plugin_editors(inst)
 	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+	if _back_to_mixer:
+		_back_to_mixer = false
+		app.mixer.open()
 
 
 func has_looper() -> bool:

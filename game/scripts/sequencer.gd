@@ -30,6 +30,7 @@ var _notes: Array = []
 var _steps := 64
 var _note_length := 1.0
 var _sat_down := false  # opening the editor sat the player down at the instrument, so closing stands them up
+var _back_to_mixer := false  # opened from the mix window, which comes back when this closes
 var _center_in := 0     # frames until the grid scrolls to the notes (it has to be laid out first)
 
 var _root: Control
@@ -62,9 +63,10 @@ func is_open() -> bool:
 
 
 ## Opens the editor on an instrument's pattern, at the bar that is playing (or `at_bar`, counted from 0).
-func open(instrument, at_bar := -1) -> void:
+func open(instrument, at_bar := -1, from_mixer := false) -> void:
 	if instrument == null or not instrument.playable:
 		return
+	_back_to_mixer = from_mixer
 	inst = instrument
 	app.player.release_keys()
 	_sat_down = app.player.playing != inst
@@ -86,6 +88,9 @@ func close() -> void:
 	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 	if _sat_down:
 		app.player.stop_playing()
+	if _back_to_mixer:
+		_back_to_mixer = false
+		app.mixer.open()
 
 
 func _input(event: InputEvent) -> void:

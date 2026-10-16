@@ -27,6 +27,7 @@ var fov := 75.0
 var mouse_sensitivity := 1.0
 var show_stats := false
 var show_meter := true    # the master level meter on screen
+var pre_fader_meters := false  # the mix window's channel meters read before the fader, as Pro Tools' option does
 var fullscreen := false
 var room_brightness := 1.0
 
@@ -61,6 +62,7 @@ func load_from_disk() -> void:
 	mouse_sensitivity = clampf(file.get_value("display", "mouse_sensitivity", mouse_sensitivity), 0.2, 3.0)
 	show_stats = file.get_value("display", "show_stats", show_stats)
 	show_meter = file.get_value("display", "show_meter", show_meter)
+	pre_fader_meters = file.get_value("display", "pre_fader_meters", pre_fader_meters)
 	fullscreen = file.get_value("display", "fullscreen", fullscreen)
 	room_brightness = clampf(file.get_value("display", "room_brightness", room_brightness), 0.5, 3.0)
 
@@ -88,6 +90,7 @@ func save_to_disk() -> void:
 	file.set_value("display", "mouse_sensitivity", mouse_sensitivity)
 	file.set_value("display", "show_stats", show_stats)
 	file.set_value("display", "show_meter", show_meter)
+	file.set_value("display", "pre_fader_meters", pre_fader_meters)
 	file.set_value("display", "fullscreen", fullscreen)
 	file.set_value("display", "room_brightness", room_brightness)
 	file.save(path)

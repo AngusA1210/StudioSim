@@ -29,6 +29,7 @@ var loop_on := true    # playable instruments: whether the sequencer plays their
 var input_on := false  # it takes input: MIDI controllers play it, or a Speaker plays its hardware input
 var input_channel := -1  # live-input instruments: the hardware input they play (0-based), or -1 for all of them
 var level_db := 0.0    # its fader: how far above or below its normal level it is set
+var volume_db := 0.0   # a Speaker's own volume (its panel), before the fader
 # Its channel meter, as linear levels where 1 is full scale: this frame's peak and average, and the highest peak
 # since its peak readout was last cleared (read by the game each frame; see main.gd).
 var meter_peak := 0.0
@@ -222,6 +223,10 @@ func set_channel(is_muted: bool, is_soloed: bool, silent: bool) -> void:
 
 
 ## Its level: 0 dB is the level it was made at, heard from within a metre and a half.
+func normal_gain() -> float:  # what 0 dB on its fader stands for in the audio core
+	return _normal_gain
+
+
 func set_level_db(db: float) -> void:
 	level_db = db
 	_audio.set_source_gain(source_id, 0.0 if db <= -79.0 else _normal_gain * db_to_linear(db))

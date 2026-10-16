@@ -140,8 +140,19 @@ func forget(inst) -> void:
 
 
 ## The title screen, one of the menus or the pattern editor is up: the keyboard and mouse belong to it.
+## Walking about: with nothing open, or only the mix window, which docks along the bottom so the room stays in view
+## (unless something in it is being typed into).
+func _can_move() -> bool:
+	for panel in [app.title, app.menu, app.sequencer, app.amp_panel, app.speaker_panel, app.instrument_menu]:
+		if panel != null and panel.is_open():
+			return false
+	if app.plugin_browser != null and app.plugin_browser.visible:
+		return false
+	return not (get_viewport().gui_get_focus_owner() is LineEdit)
+
+
 func _ui_open() -> bool:
-	for panel in [app.title, app.menu, app.sequencer, app.mixer, app.amp_panel, app.instrument_menu]:
+	for panel in [app.title, app.menu, app.sequencer, app.mixer, app.amp_panel, app.speaker_panel, app.instrument_menu]:
 		if panel != null and panel.is_open():
 			return true
 	return false
@@ -189,6 +200,8 @@ func _handle_key(event: InputEventKey) -> void:
 				app.sequencer.open(at)
 			elif at != null and at.is_amp and _distance_to(at) < PLAY_REACH + 0.5:
 				app.amp_panel.open(at)
+			elif at != null and not at.playable and _distance_to(at) < PLAY_REACH + 0.5:
+				app.speaker_panel.open(at)
 			return
 		KEY_N:
 			app.instrument_menu.open()
@@ -270,7 +283,7 @@ func _physics_process(delta: float) -> void:
 	var forward := 0.0
 	var strafe := 0.0
 	var turn := 0.0
-	if not _ui_open():
+	if _can_move():
 		if playing == null:  # while playing, these keys are notes
 			forward += float(Input.is_physical_key_pressed(KEY_W)) - float(Input.is_physical_key_pressed(KEY_S))
 			strafe += float(Input.is_physical_key_pressed(KEY_D)) - float(Input.is_physical_key_pressed(KEY_A))
