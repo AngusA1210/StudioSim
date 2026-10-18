@@ -89,6 +89,7 @@ public:
         timing_ = timing;
     }
     void render(float* out, int n) override;
+    bool readInput(float* out, int n) const override;  // what is plugged in, before the pedals and the amp
 
 private:
     AmpModel model_;

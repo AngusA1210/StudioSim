@@ -208,16 +208,22 @@ Amp::Amp(float sample_rate, InstrumentKind kind, const InputBus* bus, int max_bl
     model_.init(kind, sample_rate);
 }
 
+bool Amp::readInput(float* out, int n) const {  // as the Speaker takes it in: one input, or all of them together
+    if (!bus_) return false;
+    const int first = channel_ < 0 ? 0 : channel_, last = channel_ < 0 ? bus_->active : channel_ + 1;
+    for (int c = first; c < last && c < bus_->active; ++c) {
+        const float* in = bus_->channel[size_t(c)].data();
+        for (int i = 0; i < n; ++i) out[i] += in[i];
+    }
+    return true;
+}
+
 void Amp::render(float* out, int n) {
     n = std::min(n, int(in_.size()));
     std::fill(in_.begin(), in_.begin() + n, 0.0f);
-    if (enabled_ && bus_) {  // what is plugged in, as for the Speaker: one input, or all of them together
-        const int first = channel_ < 0 ? 0 : channel_, last = channel_ < 0 ? bus_->active : channel_ + 1;
-        for (int c = first; c < last && c < bus_->active; ++c) {
-            const float* in = bus_->channel[size_t(c)].data();
-            for (int i = 0; i < n; ++i) in_[size_t(i)] += in[i];
-        }
-    }
+    if (enabled_) readInput(in_.data(), n);
+    if (playback_)  // a recording of the guitar, played back through the pedals and the amp again
+        for (int i = 0; i < n; ++i) in_[size_t(i)] += playback_[i];
     if (board_) {  // through the pedals, in order
         PedalTiming timing;
         if (timing_) timing = {double(timing_[1]) / 4.0, timing_[0], timing_[1]};

@@ -50,7 +50,9 @@ to the title, which then offers to go back into the room.
 | L O U J | at an amp with a loop pedal: L the footswitch (record, close the loop, overdub), O stop or play, U undo or redo the last overdub, J twice to clear |
 | 1 to 8 | at an amp, stamp on its pedals: each switches that pedal on or off (the loop pedal: its footswitch) |
 | Tab | the mix window (you can still walk about while it is open) |
-| Space | start or stop every instrument's pattern |
+| Space | start or stop every instrument's pattern (a Record room: play from the playhead, or stop) |
+| ⌘Space | a Record room: record the armed tracks from the playhead; again (or Space) to stop |
+| T | a Record room: the edit window (⌘= swaps it with the mix window) |
 | C | metronome click on/off |
 | Esc | the menu (see below), including the room's size and walls; the music keeps playing while it's open |
 | ⌘S | save the room |
@@ -239,7 +241,8 @@ Recorded audio will go there too once recording comes. Rooms go in the **Rooms**
 game runs from (here, `SoundRoom/Rooms`, beside `game/`) unless you choose another; git leaves it alone. A build made to
 hand out keeps them in `~/Music/SoundRoom` instead.
 
-- **New room…** (title screen): name the room, choose where it goes, pick a **template**, set its width, length and
+- **New room…** (title screen): name the room, choose where it goes, choose its **mode** (Jam or Record, see below),
+  pick a **template**, set its width, length and
   height (the template's to begin with), and tick what to bring over from the template: its walls, its instruments
   where they stand (and, for those, their patterns, their faders with mute and solo and the master fader, which is
   otherwise at 0 dB, the amp and Speaker settings,
@@ -258,6 +261,38 @@ hand out keeps them in `~/Music/SoundRoom` instead.
 **Templates** appear only when making a room. Two are built in: the default room, and an empty room with no
 instruments and no wall. Save a room as a template from the menu's Room button. Templates hold everything a room does,
 and are kept in `SoundRoom/Templates` as `.srtemplate` files.
+
+## Jam rooms and Record rooms
+
+A **Jam room** is a loop: every instrument's pattern goes round to the tempo, and Space starts them all again from
+the top or stops them. A **Record room** adds a timeline, and recording, as a DAW has them. Its patterns still loop
+(each from bar 1), and a new one plays the first four bars round, so it starts just as a Jam room does. The mode is
+chosen when a room is made (the last choice is remembered), and the Room button in the menu switches a room over
+either way later; nothing it holds is lost.
+
+In a Record room:
+
+- **The transport**: Space plays from the playhead and stops, the playhead going back to where it started (as Pro
+  Tools does). The screen's top right says where the music is (bar | beat), whether it is recording, and the loop.
+- **The edit window** (T, or the mix window's Edit window button): a row for each instrument, its name in its colour,
+  and its clips along the bars. On each track's header, **R** arms it for recording (and puts its input on, to be
+  heard and played), **I** its input, **M** mute and **S** solo. Above them the ruler: click it to put the playhead
+  there, drag along it to loop that range (Loop switches loop playback on and off). Clips snap to the grid (Bar,
+  Beat, 1/8, 1/16 or Off). Click one to choose it and drag it along its track or to another that takes its kind;
+  hold Option as you drop it for a copy; **⌘D** puts a second of it just after it; **Delete** takes it away. Scroll
+  to move about (Shift for along), ⌘ and the wheel (or a pinch) to zoom. Tab, or ⌘=, goes over to the mix window.
+- **Recording** (⌘Space, or Record): the armed tracks record from the playhead (or from where it is playing), loop
+  playback waiting meanwhile. An armed Speaker or amp records its hardware input as it comes in, before its pedals,
+  amp and inserts, to a WAV file (32-bit float) in the room's **Audio Files** folder, named after the track
+  (`Speaker_01.wav`, `Speaker_02.wav`...). Played back, a take goes through the pedals, amp and inserts again, as a
+  DAW plays a track back through its inserts (so an amp can be re-dialled after the playing). An armed instrument
+  records the notes played on it (MIDI controllers, the computer keyboard, the on-screen keyboard). Takes are moved
+  back by the latency of the sound coming out and going in, so they land where they were played. Stopping makes
+  each take a clip, covering whatever its track had there.
+- **Clips** are light: an audio clip is a part of its file (where it starts on the timeline, and where in the file and
+  for how long), as Pro Tools' clips refer to their parent file, so moving, copying or covering one never touches
+  the audio. Audio is placed in seconds (it stays where it was played if the tempo changes); MIDI in bars and beats
+  (it follows the tempo). They are all saved in the room's file.
 
 ## Presets
 
@@ -396,6 +431,8 @@ game/                      Godot project: the room, player, instruments, HUD, me
   scripts/session.gd       the open room: its file, saving, auto-save and backups
   scripts/rooms_page.gd    making a new room (from a template) and opening one
   scripts/library.gd       what a room holds, templates, instrument and plug-in presets, and copied settings
+  scripts/timeline.gd      a room's mode; a Record room's transport, recording and clips
+  scripts/edit_window.gd   the edit window (its tracks and clips drawn by timeline_view.gd)
   scripts/preset_menu.gd   the Presets menu of a plug-in or an instrument
 audio_core/
   src/core/                the audio engine, plain C++ with no Godot dependency
@@ -407,7 +444,8 @@ audio_core/
     pedals.*               the pedals in front of an amp: tuner, gate, compressor, drives, modulation, delay, reverb, looper
     plugin_host*           the effect plug-ins installed on the computer: Audio Units on macOS, their windows, presets
     plugin_category.cpp    what kind of effect a plug-in seems to be, from its name
-    sequencer.*            the clock (tempo, swing), pattern notes, and the default groove, scheduled to the exact sample
+    sequencer.*            the clock (tempo, swing, playing from a step, loop playback), pattern notes, and the default groove
+    recorder.* wav.*       recording: what armed tracks take in, written to WAV files on a thread of its own; reading them
     spatializer.*          Steam Audio: distance, air absorption, wall filtering, binaural (HRTF)
     room_geometry.*        the walls: which way round them sound reaches the listener, and how much further that is
     acoustics.h            how much each frequency band dims when sound bends around a wall edge
@@ -444,11 +482,15 @@ keyboard or a MIDI controller, a pattern sequencer with tempo, swing and a metro
 Speakers, guitar and bass amps with boards of effect pedals (a loop pedal and a plug-in pedal among them), a title
 screen, a mix window laid out like a DAW's with plug-in inserts on every channel, a room whose size and walls
 can be changed, with sound bending round the walls and a reverb that follows the size, rooms saved as sessions (with
-templates, auto-save and backups), and presets and copy and paste for plug-ins and instruments.
+templates, auto-save and backups), presets and copy and paste for plug-ins and instruments, and Record rooms: a
+timeline, an edit window, and recording audio and MIDI to clips.
 
 To do, roughly in this order:
 
-1. **Recording.**
+1. **More of the edit window**: trimming clips' ends and splitting them, fades and crossfades, automation, loop
+   recording (takes stacked to choose from), pre-roll and post-roll and a count-in, the sustain pedal in recorded
+   MIDI, editing a MIDI clip's notes, nudging, and audio read from disk as it plays (for long rooms; takes are held
+   in memory now). Perhaps later a free version with Jam rooms only, Record rooms coming with the full one.
 2. **More plug-ins**: inserts on the master, and perhaps VST3 and Windows.
 3. **The room's sound**: a reverb amount you can set, then wall materials, each absorbing and diffusing sound in its
    own way, which shape how the room's reverb rings.

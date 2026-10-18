@@ -292,7 +292,7 @@ func room_data() -> Dictionary:
 	for inst in app.instruments:
 		var entry := {"kind": inst.kind, "position": [inst.global_position.x, inst.global_position.z], "yaw": inst.rotation.y,
 			"level_db": inst.level_db, "muted": inst.muted, "soloed": inst.soloed, "input_channel": inst.input_channel,
-			"settings": instrument_settings(inst)}
+			"settings": instrument_settings(inst), "clips": inst.clips.duplicate(true)}
 		if inst.playable:
 			entry.loop_on = inst.loop_on
 			entry.steps = audio.get_pattern_steps(inst.source_id)
@@ -303,7 +303,8 @@ func room_data() -> Dictionary:
 		walls.append([wall.a.x, wall.a.y, wall.b.x, wall.b.y, wall.height])
 	var size: Vector3 = app.room.size
 	var stood: Vector3 = app.player.global_position
-	return {"soundroom": "room", "version": VERSION, "tempo": app.tempo, "swing": app.swing, "master_db": app.master_volume_db,
+	return {"soundroom": "room", "version": VERSION, "mode": app.timeline.mode, "timeline": app.timeline.to_data(),
+		"tempo": app.tempo, "swing": app.swing, "master_db": app.master_volume_db,
 		"room": {"size": [size.x, size.y, size.z], "walls": walls},
 		"player": {"position": [stood.x, stood.z], "yaw": app.player.yaw}, "instruments": instruments}
 
@@ -350,6 +351,10 @@ static func size_of(data: Dictionary) -> Vector3:
 func save_template(template_name: String) -> String:
 	var data := room_data()
 	data.soundroom = "template"
+	data.erase("mode")  # chosen when a room is made from it
+	data.erase("timeline")
+	for entry in data.instruments:
+		entry.erase("clips")  # recordings belong to their room (and its folder)
 	data.name = template_name
 	return write_file(templates_dir().path_join(_safe(template_name) + "." + TEMPLATE_EXT), data)
 
@@ -362,7 +367,7 @@ const CARRY := ["walls", "instruments", "patterns", "mix", "instrument_settings"
 ## the walls; the instruments altogether; their patterns; their faders, mute and solo; their own settings (an amp's
 ## head, cabinet, knobs and pedals, a Speaker's volume); the plug-ins on their inserts and pedals; the tempo and swing.
 ## `size`, if given, is the room's size instead of the one in `data`. Returns what couldn't be done, or "".
-func apply_room_data(data: Dictionary, carry := {}, size = null) -> String:
+func apply_room_data(data: Dictionary, carry := {}, size = null, mode := "") -> String:
 	var keep := func(what: String) -> bool: return bool(carry.get(what, true))
 	app.clear_room()
 	var room = app.room
@@ -405,12 +410,14 @@ func apply_room_data(data: Dictionary, carry := {}, size = null) -> String:
 		var problem := apply_instrument_settings(inst, entry.get("settings", {}), include)
 		if problem != "":
 			problems.append(problem)
+		inst.clips = entry.get("clips", []).duplicate(true) if keep.call("patterns") else []
 	app.settle_new_room()
 	var player: Dictionary = data.get("player", {})
 	var stood: Array = player.get("position", [])
 	if stood.size() == 2:
 		app.player.place(Vector3(float(stood[0]), 0.0, float(stood[1])), float(player.get("yaw", 0.0)))
 	app.settle_new_room()  # where you stand too, should the room be smaller than the one you stood in
+	app.timeline.load_from(data, mode)  # a Jam room's patterns, or a Record room's timeline, going
 	return "; ".join(problems)
 
 

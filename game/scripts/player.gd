@@ -189,7 +189,7 @@ func _can_move() -> bool:
 func _ui_open() -> bool:
 	if app.session != null and app.session.is_asking():
 		return true
-	for panel in [app.title, app.menu, app.sequencer, app.mixer, app.amp_panel, app.speaker_panel, app.instrument_menu, app.name_prompt,
+	for panel in [app.title, app.menu, app.sequencer, app.mixer, app.amp_panel, app.speaker_panel, app.instrument_menu, app.name_prompt, app.edit_window,
 			app.rooms_page]:
 		if panel != null and panel.is_open():
 			return true
@@ -269,7 +269,10 @@ func _handle_key(event: InputEventKey) -> void:
 			elif at != null:
 				app.set_muted(at, not at.muted)
 		"transport":
-			app.set_sequence_running(not app.sequence_running)
+			app.toggle_transport()
+		"edit_window":
+			if app.timeline.is_record():
+				app.edit_window.open()
 		"click":
 			app.set_click(not app.settings.click)
 		"binaural":

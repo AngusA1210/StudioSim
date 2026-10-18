@@ -39,6 +39,8 @@ const Room := preload("res://scripts/room.gd")
 const Library := preload("res://scripts/library.gd")
 const Session := preload("res://scripts/session.gd")
 const RoomsPage := preload("res://scripts/rooms_page.gd")
+const Timeline := preload("res://scripts/timeline.gd")
+const EditWindow := preload("res://scripts/edit_window.gd")
 const NamePrompt := preload("res://scripts/name_prompt.gd")
 
 # The instruments the room starts with, each playing its part of the default groove and turned to face where the
@@ -73,6 +75,8 @@ var bindings  # the keys, as set on the Controls page
 var library  # rooms' and templates' contents, presets, and settings copied to be pasted
 var session  # the room that is open: its file, saving, backups
 var rooms_page  # making a new room, or opening one
+var timeline  # the room's mode, and a Record room's transport, recording and clips
+var edit_window  # a Record room's tracks and clips along the timeline
 var name_prompt  # asks for a name, to save a template or a preset under
 var _plugins = null  # what get_plugins() said, the first time anything asked
 var _instrument_plugins = null  # and get_instrument_plugins()
@@ -137,6 +141,10 @@ func _ready() -> void:
 	session.name = "Session"
 	add_child(session)
 	session.setup(self)
+	timeline = Timeline.new()
+	timeline.name = "Timeline"
+	add_child(timeline)
+	timeline.setup(self)
 	load_default_room()  # behind the title screen, until a room is made or opened
 	if options.has("room"):
 		var dims: PackedStringArray = options.room.split(",")
@@ -189,6 +197,9 @@ func _ready() -> void:
 	rooms_page = RoomsPage.new()
 	add_child(rooms_page)
 	rooms_page.setup(self)
+	edit_window = EditWindow.new()
+	add_child(edit_window)
+	edit_window.setup(self)
 	name_prompt = NamePrompt.new()
 	add_child(name_prompt)
 	get_tree().auto_accept_quit = false  # quitting asks first whether to save the room
@@ -226,10 +237,30 @@ func _notification(what: int) -> void:
 
 ## Cmd-S (Ctrl-S) saves the room, from anywhere but a box being typed in.
 func _input(event: InputEvent) -> void:
-	if event is InputEventKey and event.pressed and not event.echo and event.physical_keycode == KEY_S and \
-			(event.meta_pressed or event.ctrl_pressed) and not name_prompt.is_open() and not rooms_page.is_open():
+	if not (event is InputEventKey and event.pressed and not event.echo) or name_prompt.is_open() or rooms_page.is_open():
+		return
+	var command: bool = event.meta_pressed or event.ctrl_pressed
+	if event.physical_keycode == KEY_S and command and not session.is_asking():
 		session.save_or_ask()
 		get_viewport().set_input_as_handled()
+		return
+	if (title != null and title.is_open()) or menu.is_open() or session.is_asking():
+		return
+	if event.physical_keycode == KEY_SPACE and command:
+		toggle_record()
+	elif event.physical_keycode == KEY_EQUAL and command and timeline.is_record():  # the mix window and the edit window, in turn
+		if edit_window.is_open():
+			edit_window.close()
+			mixer.open()
+		else:
+			if mixer.is_open():
+				mixer.close()
+			edit_window.open()
+	elif (mixer.is_open() or edit_window.is_open()) and bindings.action_for(event.physical_keycode) == "transport" and not command:
+		toggle_transport()  # Space works in the mix and edit windows too
+	else:
+		return
+	get_viewport().set_input_as_handled()
 
 
 func _process(delta: float) -> void:
@@ -686,8 +717,28 @@ func set_swing(amount: float) -> void:
 
 ## Starts or stops every instrument's pattern. Starting begins again from the first beat.
 func set_sequence_running(on: bool) -> void:
+	if timeline.is_record():  # the timeline's transport
+		if on != timeline.playing:
+			timeline.toggle_play()
+		return
 	sequence_running = on
 	audio.set_sequencer_running(on)
+
+
+## Space: in a Jam room, the patterns stopped or started again from the top; in a Record room, the timeline played from
+## the playhead or stopped.
+func toggle_transport() -> void:
+	if timeline.is_record():
+		timeline.toggle_play()
+	else:
+		set_sequence_running(not sequence_running)
+
+
+## Cmd-Space: recording, in a Record room.
+func toggle_record() -> void:
+	var problem: String = timeline.toggle_record()
+	if problem != "":
+		session.notice.emit("Can't record: %s" % problem)
 
 
 func set_click(on: bool) -> void:
@@ -711,7 +762,7 @@ func listener_position() -> Vector3:
 
 ## Back to the title screen. The room carries on as it is.
 func show_title() -> void:
-	for panel in [menu, sequencer, mixer, amp_panel, speaker_panel, instrument_menu]:
+	for panel in [menu, sequencer, mixer, amp_panel, speaker_panel, instrument_menu, edit_window]:
 		if panel.is_open():
 			panel.close()
 	player.stop_playing()
@@ -778,9 +829,6 @@ func settle_new_room() -> void:
 	if title != null and title.is_open():  # its names would drift behind the title's words
 		for inst in instruments:
 			inst.set_label_visible(false)
-	if sequence_running:
-		audio.set_sequencer_running(false)
-		audio.set_sequencer_running(true)
 
 
 ## A second of an instrument, as Pro Tools duplicates a track: the same kind, with its fader, mute and pattern, a
@@ -803,6 +851,8 @@ func duplicate_instrument(inst, at = null):
 	copy.rotation.y = inst.rotation.y
 	set_instrument_level(copy, inst.level_db)
 	set_muted(copy, inst.muted)
+	copy.clips = inst.clips.duplicate(true)
+	timeline.sync(copy)
 	if inst.playable:
 		audio.set_pattern_steps(copy.source_id, audio.get_pattern_steps(inst.source_id))
 		audio.set_pattern(copy.source_id, audio.get_pattern(inst.source_id))

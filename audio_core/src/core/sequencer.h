@@ -46,9 +46,17 @@ public:
     void retime(double sr, int64_t now);
     void setTempo(double bpm);
     void setSwing(double swing);
-    void start(int64_t now);  // from the first step
-    void stop() { running_ = false; }
+    void start(int64_t now, int64_t from_step = 0);  // from this step (sixteenths from the start of bar 1)
+    void stop(int64_t now);  // where the music had got to is kept, for position()
     bool running() const { return running_; }
+    // Loop playback: on reaching step `end`, the music goes back to `start`. Suspended (while recording), it runs on.
+    void setLoop(bool on, int64_t start, int64_t end);
+    void suspendLoop(bool suspended) { loop_suspended_ = suspended; }
+    // Where the music is at sample `at` (near the block being rendered), in steps from the start of bar 1, counting a
+    // jump back to the loop's start; while stopped, where it stopped.
+    double position(int64_t at) const;
+    double swing() const { return swing_; }
+    double stepSamples() const { return step_samples_; }
 
     // Reports every step that starts before `block_end` (and has not been reported yet).
     void process(int64_t block_end, StepSink& sink);
@@ -61,6 +69,10 @@ private:
     double step_samples_ = 0.0, next_step_time_ = 0.0;
     int64_t next_step_ = 0;
     bool running_ = true;
+    bool loop_on_ = false, loop_suspended_ = false;
+    int64_t loop_start_ = 0, loop_end_ = 0;
+    double wrapped_at_ = -1.0;  // when it last jumped back to the loop's start
+    double stopped_at_ = 0.0;   // where it stopped
 };
 
 }  // namespace sr

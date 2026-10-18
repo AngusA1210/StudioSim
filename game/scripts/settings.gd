@@ -35,6 +35,7 @@ var room_brightness := 1.0
 # Rooms
 var rooms_location := ""   # the folder new rooms go in; "" for SoundRoom/Rooms (see library.gd's home())
 var recent_rooms: Array = []  # the rooms opened or saved lately, the latest first (their files)
+var room_mode := "jam"     # what a new room is made as, to begin with: "jam" or "record" (the last chosen)
 var autosave := false      # save the open room every so often, while it has changes
 var autosave_minutes := 5
 var backups := true        # a copy of the room in its Room Backups folder every so often
@@ -78,6 +79,7 @@ func load_from_disk() -> void:
 	bindings = file.get_value("controls", "keys", bindings)
 	rooms_location = file.get_value("rooms", "location", rooms_location)
 	recent_rooms = file.get_value("rooms", "recent", recent_rooms)
+	room_mode = file.get_value("rooms", "mode", room_mode)
 	autosave = file.get_value("rooms", "autosave", autosave)
 	autosave_minutes = clampi(file.get_value("rooms", "autosave_minutes", autosave_minutes), 1, 60)
 	backups = file.get_value("rooms", "backups", backups)
@@ -114,6 +116,7 @@ func save_to_disk() -> void:
 	file.set_value("controls", "keys", bindings)
 	file.set_value("rooms", "location", rooms_location)
 	file.set_value("rooms", "recent", recent_rooms)
+	file.set_value("rooms", "mode", room_mode)
 	file.set_value("rooms", "autosave", autosave)
 	file.set_value("rooms", "autosave_minutes", autosave_minutes)
 	file.set_value("rooms", "backups", backups)

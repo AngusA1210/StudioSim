@@ -42,6 +42,8 @@ var _template_list: ItemList
 var _template_trash: Button
 var _size := {}  # "x", "y", "z" → SpinBox
 var _carry := {}  # key → CheckBox
+var _jam: Button   # what the room is made as: a Jam room or a Record room
+var _record: Button
 var _new_status: Label
 var _create: Button
 var _folder_dialog: FileDialog
@@ -70,6 +72,7 @@ func open_new() -> void:
 	_folder = app.session.location()
 	_folder_label.text = _folder.replace(OS.get_environment("HOME"), "~")
 	_name.text = _unused_name()
+	(_record if app.settings.room_mode == "record" else _jam).button_pressed = true
 	_fill_templates()
 	for key in _carry:
 		_carry[key].set_pressed_no_signal(true)
@@ -185,7 +188,10 @@ func create() -> void:
 	var size := Vector3(_size.x.value, _size.y.value, _size.z.value)
 	var template := _chosen_template()
 	app.session.then_if_saved(func() -> void:
-		var problem: String = app.session.create(the_name, _folder, template.path, carry, size)
+		var mode := "record" if _record.button_pressed else "jam"
+		app.settings.room_mode = mode
+		app.settings.save_to_disk()
+		var problem: String = app.session.create(the_name, _folder, template.path, carry, size, mode)
 		if not app.session.has_room() or app.session.room_name != the_name:
 			_new_status.text = "It couldn't be made: %s." % problem
 			return
@@ -385,6 +391,16 @@ func _build_new_page() -> Control:
 	right.add_theme_constant_override("separation", 8)
 	right.custom_minimum_size.x = 330
 	page.add_child(right)
+	_heading(right, "Mode")
+	var modes := HBoxContainer.new()
+	modes.add_theme_constant_override("separation", 8)
+	right.add_child(modes)
+	var mode_group := ButtonGroup.new()
+	_jam = _mode_button(modes, "Jam", mode_group,
+		"The patterns loop round to the tempo, as a jam does: start and stop them with Space")
+	_record = _mode_button(modes, "Record", mode_group,
+		"A timeline to record on, with the edit window (T): tracks recorded with Cmd-Space to the room's Audio Files folder, the first four bars looping to begin with")
+	right.add_child(HSeparator.new())
 	_heading(right, "Size")
 	for axis in [["x", "Width", Room.MIN_SIZE.x, Room.MAX_SIZE.x, 0.5], ["z", "Length", Room.MIN_SIZE.z, Room.MAX_SIZE.z, 0.5],
 			["y", "Height", Room.MIN_SIZE.y, Room.MAX_SIZE.y, 0.1]]:
@@ -487,6 +503,18 @@ func _on_open_pressed() -> void:
 	var room := _chosen_room()
 	if not room.is_empty():
 		open_room(room.path)
+
+
+func _mode_button(parent: Control, text: String, group: ButtonGroup, hint: String) -> Button:
+	var button := Button.new()
+	button.text = text
+	button.toggle_mode = true
+	button.button_group = group
+	button.focus_mode = Control.FOCUS_NONE
+	button.custom_minimum_size = Vector2(110, 32)
+	Hints.give(button, hint)
+	parent.add_child(button)
+	return button
 
 
 func _tab(parent: Control, text: String, group: ButtonGroup, on_pressed: Callable) -> Button:

@@ -47,9 +47,15 @@ public:
 
     virtual void setInputChannel(int /*channel*/) {}  // live input only
     virtual void setInputEnabled(bool /*on*/) {}      // live input only
+    // Live input only: what it takes in this block (its hardware input, before anything it does to it), for recording
+    // (false if it has none); and recorded audio played back in its place, a block at a time from `feed` (or none),
+    // heard through whatever the instrument does to its input, as a DAW plays a track back through its inserts.
+    virtual bool readInput(float* /*out*/, int /*n*/) const { return false; }
+    void setPlayback(const float* feed) { playback_ = feed; }
 
 protected:
     float sr_;
+    const float* playback_ = nullptr;
 };
 
 namespace voice {
@@ -315,12 +321,18 @@ public:
     void setInputChannel(int channel) override { channel_ = channel; }
     void setInputEnabled(bool on) override { enabled_ = on; }  // off: silent, whatever comes in
     void render(float* out, int n) override {
-        if (!bus_ || !enabled_) return;
+        if (playback_)
+            for (int i = 0; i < n; ++i) out[i] += playback_[i];
+        if (enabled_) readInput(out, n);
+    }
+    bool readInput(float* out, int n) const override {  // adds its input into `out`
+        if (!bus_) return false;
         const int first = channel_ < 0 ? 0 : channel_, last = channel_ < 0 ? bus_->active : channel_ + 1;
         for (int c = first; c < last && c < bus_->active; ++c) {
             const float* in = bus_->channel[size_t(c)].data();
             for (int i = 0; i < n; ++i) out[i] += in[i];
         }
+        return true;
     }
 
 private:

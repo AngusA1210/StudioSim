@@ -89,10 +89,29 @@ void Sequencer::setTempo(double bpm) {
 
 void Sequencer::setSwing(double swing) { swing_ = std::clamp(swing, 0.0, 0.6); }
 
-void Sequencer::start(int64_t now) {
+void Sequencer::start(int64_t now, int64_t from_step) {
     running_ = true;
-    next_step_ = 0;
+    next_step_ = std::max<int64_t>(from_step, 0);
     next_step_time_ = double(now) + 0.02 * sr_;
+    wrapped_at_ = -1.0;
+}
+
+void Sequencer::stop(int64_t now) {
+    if (running_) stopped_at_ = position(now);
+    running_ = false;
+}
+
+void Sequencer::setLoop(bool on, int64_t start, int64_t end) {
+    loop_on_ = on && end > start;
+    loop_start_ = start;
+    loop_end_ = end;
+}
+
+double Sequencer::position(int64_t at) const {
+    if (!running_ || step_samples_ <= 0.0) return stopped_at_;
+    double steps = double(next_step_) - (next_step_time_ - double(at)) / step_samples_;
+    if (wrapped_at_ >= 0.0 && double(at) < wrapped_at_ && loop_on_) steps += double(loop_end_ - loop_start_);  // just before the jump
+    return std::max(steps, 0.0);
 }
 
 int64_t Sequencer::nextBarAt(int64_t from) const {
@@ -111,6 +130,10 @@ void Sequencer::process(int64_t block_end, StepSink& sink) {
         sink.step(next_step_, next_step_time_ + (next_step_ % 2 ? step_samples_ * swing_ : 0.0), step_samples_);
         ++next_step_;
         next_step_time_ += step_samples_;
+        if (loop_on_ && !loop_suspended_ && next_step_ == loop_end_) {  // back to the loop's start
+            next_step_ = loop_start_;
+            wrapped_at_ = next_step_time_;
+        }
     }
 }
 

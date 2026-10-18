@@ -1558,5 +1558,111 @@ func _run() -> void:
 	await frames(2)
 	check(not session.is_asking() and is_equal_approx(main.tempo, 90.0), "and Cancel carries on")
 
+	print("Record rooms")
+	var timeline = main.timeline
+	main.show_title()
+	await frames(3)
+	await click(title.buttons.new.get_global_rect().get_center())
+	await frames(2)
+	check(rooms._jam.button_pressed and not rooms._record.button_pressed, "a new room is a Jam room unless Record is chosen")
+	rooms._name.text = "Recording room"
+	rooms._check_name()
+	rooms._record.button_pressed = true
+	rooms._template_list.select(0)
+	rooms._on_template_chosen()
+	await click(rooms._create.get_global_rect().get_center())
+	if session.is_asking():
+		session._confirm.custom_action.emit(&"discard")
+	await seconds(1.0)
+	check(session.room_name == "Recording room" and timeline.is_record() and timeline.playing and timeline.loop_on and timeline.loop_start == 0 and
+		timeline.loop_end == 64 and main.instruments.size() == 6 and main.settings.room_mode == "record",
+		"a Record room made from the default template starts as a Jam room does: playing, its first four bars going round")
+	await seconds(0.5)
+	check(timeline.position() > 0.5 and main.hud._beat.text.contains("⟳ 1–4"), "the screen shows where the music is, and the loop", main.hud._beat.text)
+	var keys_inst = main.find_instrument("keys")
+	var speaker_inst = main.speaker
+	await tap(KEY_T)
+	await frames(3)
+	var edit = main.edit_window
+	var view = edit.view
+	check(edit.is_open() and view.tracks().size() == 6 and not main.hud._root.visible, "T opens the edit window: a track for each instrument")
+	await tap(KEY_SPACE)
+	await frames(2)
+	check(not timeline.playing and is_equal_approx(timeline.playhead, 0.0), "Space stops, and the playhead goes back to where it started")
+	view.press(Vector2(view.x_of(32.0), 12))
+	view.release(Vector2(view.x_of(32.0), 12))
+	check(is_equal_approx(timeline.playhead, 32.0), "clicking the ruler puts the playhead there: bar 3", "%.1f" % timeline.playhead)
+	view.drag_to(Vector2(view.x_of(16.0), 12), Vector2(view.x_of(48.0), 12))
+	check(timeline.loop_on and timeline.loop_start == 16 and timeline.loop_end == 48, "dragging along the ruler loops that range: bars 2 and 3",
+		"%d to %d" % [timeline.loop_start, timeline.loop_end])
+	var keys_row: int = view.tracks().find(keys_inst)
+	view.press(Vector2(84, view.row_top(keys_row) + 34))
+	timeline.set_armed(speaker_inst, true)
+	check(keys_inst.armed and keys_inst.input_on and speaker_inst.armed, "R on a track's header arms it, and puts its input on to be played")
+	timeline.locate(0.0)
+	var record_key := InputEventKey.new()
+	record_key.physical_keycode = KEY_SPACE
+	record_key.keycode = KEY_SPACE
+	record_key.meta_pressed = true
+	record_key.pressed = true
+	view.get_viewport().push_input(record_key)
+	await seconds(0.4)
+	check(timeline.recording and timeline.playing and edit._record.text.contains("Recording"), "Cmd-Space records the armed tracks from the playhead")
+	main.audio.note_on(keys_inst.source_id, 64, 0.8)
+	await seconds(0.4)
+	main.audio.note_off(keys_inst.source_id, 64)
+	await seconds(0.3)
+	await tap(KEY_SPACE)
+	for wait in 20:
+		await frames(3)
+		if not keys_inst.clips.is_empty() and not speaker_inst.clips.is_empty():
+			break
+	var midi_clip: Dictionary = keys_inst.clips[0] if not keys_inst.clips.is_empty() else {}
+	var audio_clip: Dictionary = speaker_inst.clips[0] if not speaker_inst.clips.is_empty() else {}
+	var wav: String = session.room_folder().path_join("Audio Files/Speaker_01.wav")
+	check(not timeline.recording and not timeline.playing and is_equal_approx(timeline.playhead, 0.0) and midi_clip.get("kind", "") == "midi" and
+		midi_clip.notes.size() == 1 and int(midi_clip.notes[0].note) == 64 and audio_clip.get("file", "") == "Audio Files/Speaker_01.wav" and
+		FileAccess.file_exists(wav) and float(audio_clip.length) > 0.8, "stopping makes clips: the notes played on the keys, and the Speaker's take as a WAV in the room's Audio Files folder",
+		"%s, %s" % [str(midi_clip.get("notes", [])), wav])
+	check(audio_clip.get("file", "") != "" and timeline.peaks(audio_clip).size() > 50, "a take's waveform can be drawn")
+	var clip_start: float = float(midi_clip.start)
+	var clip_y: float = view.row_top(keys_row) + 30
+	view.drag_to(Vector2(view.x_of(clip_start + 1.0), clip_y), Vector2(view.x_of(clip_start + 17.2), clip_y))
+	check(keys_inst.clips.size() == 1 and is_equal_approx(float(keys_inst.clips[0].start), timeline.snap(clip_start + 16.2)),
+		"a clip dragged along its track moves, snapping to the grid", "%.2f" % float(keys_inst.clips[0].start))
+	var moved_start: float = float(keys_inst.clips[0].start)
+	view.drag_to(Vector2(view.x_of(moved_start + 1.0), clip_y), Vector2(view.x_of(moved_start + 33.0), clip_y), true)
+	check(keys_inst.clips.size() == 2, "dropped with Option held, it is copied")
+	view.selected = {"inst": keys_inst, "index": 1}
+	edit.duplicate_selected()
+	check(keys_inst.clips.size() == 3, "Cmd-D puts a second of the chosen clip just after it")
+	await tap(KEY_BACKSPACE)
+	check(keys_inst.clips.size() == 2 and view.selected.is_empty(), "Delete takes the chosen clip away")
+	var speaker_row: int = view.tracks().find(speaker_inst)
+	view.drag_to(Vector2(view.x_of(timeline.clip_steps(audio_clip).x + 1.0), view.row_top(speaker_row) + 30),
+		Vector2(view.x_of(timeline.clip_steps(audio_clip).x + 1.0), view.row_top(keys_row) + 30))
+	check(speaker_inst.clips.size() == 1 and keys_inst.clips.size() == 2, "an audio clip can't be dropped on an instrument's track")
+	await tap(KEY_T)
+	check(not edit.is_open(), "T closes it again")
+	session.save()
+	var record_file: String = session.path
+	main.show_title()
+	await frames(3)
+	await click(title.buttons.open.get_global_rect().get_center())
+	await frames(2)
+	var record_index: int = rooms._rooms.map(func(r): return r.path).find(record_file)
+	rooms._room_list.get_root().get_child(record_index).select(0)
+	await click(rooms._open.get_global_rect().get_center())
+	await seconds(1.0)
+	var reopened_keys = main.find_instrument("keys")
+	check(timeline.is_record() and reopened_keys.clips.size() == 2 and main.speaker.clips.size() == 1 and timeline.loop_start == 16,
+		"saved and opened again, the room is a Record room with its clips and loop")
+	timeline.set_mode("jam")
+	await frames(2)
+	await tap(KEY_T)
+	var refused: String = timeline.toggle_record()
+	check(not edit.is_open() and refused.begins_with("recording is for Record rooms"), "a Jam room has no edit window, and doesn't record", refused)
+	timeline.set_mode("record")
+
 	print("ALL PASSED" if failures == 0 else "%d FAILED" % failures)
 	quit(failures)

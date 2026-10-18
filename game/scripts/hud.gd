@@ -161,7 +161,7 @@ func _process(_delta: float) -> void:
 		_notice_panel.reset_size()
 		_notice_panel.position = Vector2(14, 14 + (_stats_panel.size.y + 8 if _stats_panel.visible and _root.visible else 0.0))
 	var covered := false
-	for panel in [app.title, app.menu, app.sequencer, app.mixer, app.amp_panel, app.speaker_panel, app.instrument_menu]:
+	for panel in [app.title, app.menu, app.sequencer, app.mixer, app.amp_panel, app.speaker_panel, app.instrument_menu, app.edit_window]:
 		covered = covered or (panel != null and panel.is_open())
 	_root.visible = not covered
 	if covered:
@@ -184,6 +184,16 @@ func _process(_delta: float) -> void:
 	for i in 4:
 		dots += "● " if i == beat else "○ "
 	_beat.text = "%s  %d BPM%s" % [dots if app.sequence_running else "■  stopped  · ", roundi(app.tempo), "  ·  click" if app.settings.click else ""]
+	var timeline = app.timeline
+	if timeline.is_record():  # a Record room: where the music is on the timeline, and whether it is recording
+		var at: float = timeline.position()
+		var state: String = "●  REC" if timeline.recording else ("▶" if timeline.playing else "■")
+		_beat.text = "%s   %d | %d   ·   %s%d BPM%s" % [state, int(at / 16.0) + 1, int(fmod(at, 16.0) / 4.0) + 1,
+			"⟳ %d–%d   ·   " % [timeline.loop_start / 16 + 1, timeline.loop_end / 16] if timeline.loop_on else "", roundi(app.tempo),
+			"  ·  click" if app.settings.click else ""]
+		_beat.add_theme_color_override("font_color", Color(1.0, 0.4, 0.38) if timeline.recording else DIM)
+	else:
+		_beat.add_theme_color_override("font_color", DIM)
 	_beat_panel.reset_size()
 	_beat_panel.position = Vector2(vp.x - _beat_panel.size.x - 14, 14)
 

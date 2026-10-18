@@ -85,15 +85,15 @@ func folder_around() -> String:
 
 ## Makes a new room from a template, carrying over what `carry` doesn't leave out (library.gd's CARRY), at `size`, and
 ## saves it in a folder of its own. Returns what went wrong, or "".
-func create(the_name: String, folder: String, template_path: String, carry := {}, size = null) -> String:
+func create(the_name: String, folder: String, template_path: String, carry := {}, size = null, mode := "jam") -> String:
 	var data: Dictionary = app.library.template_data(template_path)
 	if data.is_empty():
 		return "the template couldn't be read"
 	if exists(folder, the_name):
 		return "there is a room called that in that folder already"
-	var problem: String = app.library.apply_room_data(data, carry, size)
 	path = file_for(folder, the_name)
 	room_name = the_name
+	var problem: String = app.library.apply_room_data(data, carry, size, mode)
 	var unsaved := save()
 	return unsaved if unsaved != "" else problem
 
@@ -103,8 +103,8 @@ func open(file: String) -> String:
 	var data: Dictionary = app.library.read_room_file(file)
 	if data.is_empty():
 		return "it isn't a room SoundRoom can read"
+	path = file  # first, so that its recordings are found in its folder
 	var problem: String = app.library.apply_room_data(data)
-	path = file
 	room_name = str(data.get("name", file.get_file().get_basename()))
 	saved_at = FileAccess.get_modified_time(file)
 	_mark_saved()
@@ -267,6 +267,8 @@ func backups() -> Array:
 func _signature() -> String:
 	var data: Dictionary = app.library.room_data()
 	data.erase("player")
+	data.timeline.erase("playhead")  # neither where you stand nor where the music is counts as a change
+	data.timeline.erase("playing")
 	return JSON.stringify(data)
 
 

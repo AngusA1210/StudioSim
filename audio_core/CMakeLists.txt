@@ -45,6 +45,8 @@ add_library(sr_core STATIC
     src/core/looper.cpp
     src/core/pedals.cpp
     src/core/plugin_synth.cpp
+    src/core/recorder.cpp
+    src/core/wav.cpp
     src/core/plugin_category.cpp
     src/core/sequencer.cpp
     src/core/spatializer.cpp

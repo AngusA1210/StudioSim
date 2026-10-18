@@ -10,6 +10,7 @@
 #include <godot_cpp/variant/array.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
 #include <godot_cpp/variant/packed_byte_array.hpp>
+#include <godot_cpp/variant/packed_float32_array.hpp>
 #include <godot_cpp/variant/packed_string_array.hpp>
 #include <godot_cpp/variant/vector2.hpp>
 #include <godot_cpp/variant/string.hpp>
@@ -171,6 +172,25 @@ public:
     int get_pattern_steps(int id) const;
     void set_source_loop(int id, bool on);      // whether the sequencer plays this source's pattern
     void set_sequencer_running(bool on);
+    // The timeline (a Record room): playing from a step (sixteenths from the start of bar 1), loop playback over a
+    // range of steps, and where it is (in steps, as last rendered).
+    void play_from(double step);
+    void set_loop_range(bool on, int start_step, int end_step);
+    double get_timeline_position() const;
+    // A track's clips: notes [{step, length (steps), note, velocity}] and audio [{path, start, offset, length} (seconds)].
+    // False with the reason in get_error() if a file couldn't be read (the rest are used).
+    bool set_track(int id, const Array& notes, const Array& clips);
+    PackedFloat32Array get_audio_peaks(const String& path, double per_second);  // the loudest sample in each slice
+    double get_audio_seconds(const String& path);  // 0 if it can't be read
+    // Recording: arming a track; starting (`files` [[source id, WAV path]] for the armed Speakers and amps; the
+    // timeline plays on from where it is, or from `from_step` if it is stopped); stopping; and once the audio thread
+    // has stopped, what was taken: {start_step, end_step, step_seconds, audio: [{source, path, seconds, dropped}],
+    // notes: [{source, step, length, note, velocity}]}, or {} until then.
+    void set_record_arm(int id, bool armed);
+    bool start_recording(const Array& files, double from_step);
+    void stop_recording();
+    bool is_recording() const;
+    Dictionary take_recording();
     void set_tempo(float bpm);
     void set_swing(float amount);
     void set_click(bool on);                    // the metronome click

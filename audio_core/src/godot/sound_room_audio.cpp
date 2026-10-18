@@ -486,6 +486,86 @@ void SoundRoomAudio::set_pattern_steps(int id, int steps) { if (engine_) engine_
 int SoundRoomAudio::get_pattern_steps(int id) const { return engine_ ? engine_->patternSteps(id) : 0; }
 void SoundRoomAudio::set_source_loop(int id, bool on) { if (engine_) engine_->setSourceLoop(id, on); }
 void SoundRoomAudio::set_sequencer_running(bool on) { if (engine_) engine_->setSequencerRunning(on); }
+
+void SoundRoomAudio::play_from(double step) { if (engine_) engine_->playFrom(step); }
+void SoundRoomAudio::set_loop_range(bool on, int start_step, int end_step) { if (engine_) engine_->setLoopRange(on, start_step, end_step); }
+double SoundRoomAudio::get_timeline_position() const { return engine_ ? engine_->timelinePosition() : 0.0; }
+
+bool SoundRoomAudio::set_track(int id, const Array& notes, const Array& clips) {
+    if (!engine_) return false;
+    std::vector<sr::TimelineNote> n;
+    for (int64_t i = 0; i < notes.size(); ++i) {
+        const Dictionary d = notes[i];
+        n.push_back({double(d.get("step", 0.0)), float(d.get("length", 1.0)), int(d.get("note", 60)), float(d.get("velocity", 0.8))});
+    }
+    std::vector<sr::ClipSpec> c;
+    for (int64_t i = 0; i < clips.size(); ++i) {
+        const Dictionary d = clips[i];
+        c.push_back({str(String(d.get("path", ""))), double(d.get("start", 0.0)), double(d.get("offset", 0.0)), double(d.get("length", 0.0))});
+    }
+    std::string err;
+    if (engine_->setTrack(id, n, c, &err)) return true;
+    error_ = str(err);
+    return false;
+}
+
+PackedFloat32Array SoundRoomAudio::get_audio_peaks(const String& path, double per_second) {
+    PackedFloat32Array out;
+    if (engine_)
+        for (float v : engine_->audioPeaks(str(path), per_second)) out.push_back(v);
+    return out;
+}
+
+double SoundRoomAudio::get_audio_seconds(const String& path) { return engine_ ? engine_->audioSeconds(str(path)) : 0.0; }
+
+void SoundRoomAudio::set_record_arm(int id, bool armed) { if (engine_) engine_->setRecordArm(id, armed); }
+
+bool SoundRoomAudio::start_recording(const Array& files, double from_step) {
+    if (!engine_) return false;
+    std::vector<std::pair<int, std::string>> f;
+    for (int64_t i = 0; i < files.size(); ++i) {
+        const Array pair = files[i];
+        if (pair.size() >= 2) f.emplace_back(int(pair[0]), str(String(pair[1])));
+    }
+    std::string err;
+    if (engine_->startRecording(f, from_step, &err)) return true;
+    error_ = str(err);
+    return false;
+}
+
+void SoundRoomAudio::stop_recording() { if (engine_) engine_->stopRecording(); }
+bool SoundRoomAudio::is_recording() const { return engine_ && engine_->recording(); }
+
+Dictionary SoundRoomAudio::take_recording() {
+    Dictionary d;
+    sr::RecordingResult r;
+    if (!engine_ || !engine_->takeRecording(&r)) return d;
+    d["start_step"] = r.start_step;
+    d["end_step"] = r.end_step;
+    d["step_seconds"] = r.step_seconds;
+    Array audio;
+    for (const auto& a : r.audio) {
+        Dictionary e;
+        e["source"] = a.source;
+        e["path"] = str(a.path);
+        e["seconds"] = a.seconds;
+        e["dropped"] = int64_t(a.dropped);
+        audio.push_back(e);
+    }
+    d["audio"] = audio;
+    Array notes;
+    for (const auto& n : r.notes) {
+        Dictionary e;
+        e["source"] = n.source;
+        e["step"] = n.note.step;
+        e["length"] = n.note.length;
+        e["note"] = n.note.note;
+        e["velocity"] = n.note.velocity;
+        notes.push_back(e);
+    }
+    d["notes"] = notes;
+    return d;
+}
 void SoundRoomAudio::set_tempo(float bpm) { if (engine_) engine_->setTempo(bpm); }
 void SoundRoomAudio::set_swing(float amount) { if (engine_) engine_->setSwing(amount); }
 void SoundRoomAudio::set_click(bool on) { if (engine_) engine_->setClick(on); }
@@ -641,6 +721,17 @@ void SoundRoomAudio::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_pattern_steps", "id"), &SoundRoomAudio::get_pattern_steps);
     ClassDB::bind_method(D_METHOD("set_source_loop", "id", "on"), &SoundRoomAudio::set_source_loop);
     ClassDB::bind_method(D_METHOD("set_sequencer_running", "on"), &SoundRoomAudio::set_sequencer_running);
+    ClassDB::bind_method(D_METHOD("play_from", "step"), &SoundRoomAudio::play_from);
+    ClassDB::bind_method(D_METHOD("set_loop_range", "on", "start_step", "end_step"), &SoundRoomAudio::set_loop_range);
+    ClassDB::bind_method(D_METHOD("get_timeline_position"), &SoundRoomAudio::get_timeline_position);
+    ClassDB::bind_method(D_METHOD("set_track", "id", "notes", "clips"), &SoundRoomAudio::set_track);
+    ClassDB::bind_method(D_METHOD("get_audio_peaks", "path", "per_second"), &SoundRoomAudio::get_audio_peaks);
+    ClassDB::bind_method(D_METHOD("get_audio_seconds", "path"), &SoundRoomAudio::get_audio_seconds);
+    ClassDB::bind_method(D_METHOD("set_record_arm", "id", "armed"), &SoundRoomAudio::set_record_arm);
+    ClassDB::bind_method(D_METHOD("start_recording", "files", "from_step"), &SoundRoomAudio::start_recording);
+    ClassDB::bind_method(D_METHOD("stop_recording"), &SoundRoomAudio::stop_recording);
+    ClassDB::bind_method(D_METHOD("is_recording"), &SoundRoomAudio::is_recording);
+    ClassDB::bind_method(D_METHOD("take_recording"), &SoundRoomAudio::take_recording);
     ClassDB::bind_method(D_METHOD("set_tempo", "bpm"), &SoundRoomAudio::set_tempo);
     ClassDB::bind_method(D_METHOD("set_swing", "amount"), &SoundRoomAudio::set_swing);
     ClassDB::bind_method(D_METHOD("set_click", "on"), &SoundRoomAudio::set_click);

@@ -22,6 +22,8 @@
 #include "pedals.h"
 #include "plugin_host.h"
 #include "plugin_synth.h"
+#include "recorder.h"
+#include "wav.h"
 #include "room_geometry.h"
 #include "sequencer.h"
 #include "spatializer.h"
@@ -100,6 +102,38 @@ struct PedalStatus {
 
 // Where a plug-in is: on a Plug-in pedal, an insert, or a plug-in instrument (the instrument itself).
 enum class PluginPlace : uint8_t { Pedal, Insert, Instrument };
+
+// A Record room's timeline, as a DAW's edit window has it: each track's clips. Positions in a MIDI clip's notes are in
+// steps (sixteenths from the start of bar 1), so they follow the tempo; audio is placed in seconds, as recorded.
+struct TimelineNote {
+    double step = 0.0;
+    float length = 1.0f;  // steps
+    int note = 60;
+    float velocity = 0.8f;
+};
+// An audio clip: part of a WAV file (from `offset` seconds into it, `length` long), placed `start` seconds from the
+// start of bar 1. Many clips can share one file, as Pro Tools' clips refer to their parent file.
+struct ClipSpec {
+    std::string path;
+    double start = 0.0, offset = 0.0, length = 0.0;
+};
+// What a recording took: each audio track's file (begun `start_step` into the timeline), and the notes played on
+// each MIDI track, as steps on the timeline.
+struct RecordingResult {
+    double start_step = 0.0, end_step = 0.0, step_seconds = 0.0;  // where it began and ended, and how long a step lasted
+    struct Audio {
+        int source = -1;
+        std::string path;
+        double seconds = 0.0;
+        int64_t dropped = 0;
+    };
+    std::vector<Audio> audio;
+    struct Note {
+        int source = -1;
+        TimelineNote note;
+    };
+    std::vector<Note> notes;
+};
 
 // What an amp's loop pedal is doing, for the game to show.
 struct LooperStatus {
@@ -277,6 +311,32 @@ public:
     int patternSteps(int id) const;
     void setSourceLoop(int id, bool on);  // whether the sequencer plays this source's pattern
     void setSequencerRunning(bool on);    // stopping silences the patterns; starting begins again from the top
+
+    // ── The timeline (a Record room) ─────────────────────────────────────────────────────────────────────
+    // Playing from a step (sixteenths from the start of bar 1: the patterns follow, each from its own start every time
+    // round), stopping (setSequencerRunning(false)), and loop playback over a range of steps.
+    void playFrom(double step);
+    void setLoopRange(bool on, int start_step, int end_step);
+    double timelinePosition() const { return position_.load(std::memory_order_relaxed); }  // in steps, as last rendered
+    // A track's clips: notes to play (an instrument) and audio to play into it (a Speaker or an amp, through its pedals,
+    // amp and inserts as its input would be). Files are read (once each) on this thread. False, with the reason, if
+    // one couldn't be read; the rest are used.
+    bool setTrack(int id, const std::vector<TimelineNote>& notes, const std::vector<ClipSpec>& clips, std::string* error);
+    // An audio file's loudest sample in each `1 / per_second` of a second, for drawing its clips (read once and kept).
+    std::vector<float> audioPeaks(const std::string& path, double per_second);
+    double audioSeconds(const std::string& path);  // 0 if it can't be read
+
+    // ── Recording ────────────────────────────────────────────────────────────────────────────────────────
+    // Arming a track for recording. An armed Speaker or amp records its hardware input as it comes in (before its
+    // pedals, amp and inserts); an armed instrument records the notes played on it.
+    void setRecordArm(int id, bool armed);
+    // From the next block: the armed tracks record (audio to `files`, one per armed audio track: [source, path]),
+    // the timeline playing on from where it is, or from `from_step` if it is stopped. Loop playback waits meanwhile.
+    bool startRecording(const std::vector<std::pair<int, std::string>>& files, double from_step, std::string* error);
+    void stopRecording();  // from the next block; takeRecording then has it
+    bool recording() const { return recording_wanted_; }
+    // Once the audio thread has stopped recording: what it took, the files closed. False until then.
+    bool takeRecording(RecordingResult* out);
     void setTempo(double bpm);
     void setSwing(double amount);         // 0 = straight; off-beat sixteenths land this fraction of a step late
     void setClick(bool on);               // a metronome click on every beat, heard directly rather than in the room
@@ -317,6 +377,7 @@ private:
             PatternNoteSet, PatternNoteRemove, PatternClear, PatternSteps, SourceLoop, SourceVolume,
             SequencerRunning, Tempo, Swing, Click, ClickVolume, Reverb2, SourceGain, Falloff, LimiterOn,
             AmpKnob, AmpHeadSet, AmpCabinetSet, LooperMemory, LooperAct, PedalBoardSet, PedalOn, PedalControl, SynthPlugin,
+            TimelinePlay, TimelineLoop, TrackSet, RecordArm, RecordStart, RecordStop,
         } type = AddSource;
         int id = 0;
         float v[9] = {};
@@ -328,6 +389,7 @@ private:
         // (a PluginPedal holding it), or none.
         Pedal* pedals[kMaxPedals] = {};
         uint32_t epoch = 0;
+        void* data = nullptr;  // TrackSet: the track's timeline; RecordStart: the recorder
     };
 
     void push(const Command& c);
@@ -343,7 +405,9 @@ private:
     // A Plug-in pedal holding this plug-in, ready to play (and given these settings, if any); null, with the reason.
     std::unique_ptr<PluginPedal> makePluginPedal(const std::string& plugin_id, const std::vector<uint8_t>* state, std::string* error);
     bool placeInsert(Source& source, int slot, std::unique_ptr<PluginPedal> pedal, bool on, std::string* error);
-    void reapPedals();              // frees pedals the audio thread has let go of
+    void reapPedals();              // frees pedals (and tracks' timelines) the audio thread has let go of
+    void renderTimeline();          // this block's place on the timeline, and each track's recorded audio
+    std::shared_ptr<const AudioData> audioFile(const std::string& path, std::string* error);
     Source* owned(int id) const;  // the source with this id, unless it is on its way out
     void reap();                  // frees removed sources the audio thread has finished with
     void updatePath(Source& source);  // works out how its sound reaches the listener and tells the audio thread
@@ -359,6 +423,10 @@ private:
 
     // Game-thread state
     std::vector<std::unique_ptr<Source>> owned_;  // indexed by id; a removed source leaves an empty slot
+    std::vector<std::pair<std::string, std::shared_ptr<const AudioData>>> audio_files_;  // read once each
+    std::unique_ptr<Recorder> recorder_;
+    bool recording_wanted_ = false;
+    uint32_t record_epoch_ = 0;
     SpscQueue<Command> commands_{8192};
     std::unique_ptr<Device> device_;
     EngineStats device_stats_;
@@ -419,6 +487,21 @@ private:
     std::atomic<float> meter_peak_l_{0.0f}, meter_peak_r_{0.0f}, meter_rms_l_{0.0f}, meter_rms_r_{0.0f}, meter_gain_{1.0f};
     std::atomic<uint32_t> meter_clipped_{0};
     std::atomic<bool> reverb_changing_{false};  // set by the game thread with a new reverb, cleared when it has faded in
+    // The timeline and recording
+    std::atomic<double> position_{0.0};
+    std::vector<double> block_seconds_;  // each sample of this block's place on the timeline, in seconds (-1: stopped)
+    Recorder* recorder_rt_ = nullptr;  // the audio thread's view of recorder_, while recording
+    bool recording_ = false;
+    std::atomic<uint32_t> record_ack_{0};
+    std::atomic<double> record_start_{0.0}, record_end_{0.0}, record_step_seconds_{0.0};
+    struct Captured {
+        int source = -1, note = 0;
+        float velocity = 0.0f;
+        bool on = false;
+        double step = 0.0;
+    };
+    SpscQueue<Captured> captured_{8192};  // notes played on armed instruments while recording
+    std::vector<float> take_;  // what a track takes in, this block
 };
 
 }  // namespace sr

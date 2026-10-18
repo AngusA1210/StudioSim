@@ -166,6 +166,21 @@ struct AudioEngine::Source {
     PedalBoard insert_board;
     // A plug-in instrument's plug-in, held as a Plug-in pedal holds one, and handed to its PluginSynth the same way.
     PedalSlot synth;
+    // Its clips on the timeline (a Record room): the game thread's, and the copy the audio thread plays, replaced as
+    // pedal boards are (and the old one freed once the audio thread has let go of it).
+    struct Track {
+        std::vector<TimelineNote> notes;  // in order of their steps
+        struct Clip {
+            double start = 0.0, offset = 0.0, length = 0.0;
+            std::shared_ptr<const AudioData> audio;
+        };
+        std::vector<Clip> clips;
+    };
+    std::unique_ptr<Track> track;
+    Track* track_rt = nullptr;
+    std::vector<std::pair<std::unique_ptr<Track>, uint32_t>> retired_tracks;
+    bool armed = false;            // armed for recording (the audio thread's copy)
+    std::vector<float> playback;   // this block's recorded audio, played into it
     std::vector<std::pair<std::unique_ptr<Pedal>, uint32_t>> retired;
     uint32_t board_sent = 0;
     std::atomic<uint32_t> board_applied{0};
@@ -224,6 +239,8 @@ AudioEngine::~AudioEngine() {
 void AudioEngine::allocateBuffers() {
     for (auto* buf : {&mix_l_, &mix_r_, &send_, &rev_l_, &rev_r_, &rev2_l_, &rev2_r_, &click_}) buf->assign(size_t(block_), 0.0f);
     for (auto& ch : input_bus_.channel) ch.assign(size_t(block_), 0.0f);
+    block_seconds_.assign(size_t(block_), -1.0);
+    take_.assign(size_t(block_), 0.0f);
     for (auto* delay : {&send_delay_, &click_delay_}) delay->init(SourceSpatializer::binauralDelay(block_));
     input_fifo_.assign(kFifoFrames * InputBus::kMaxChannels, 0.0f);
     input_read_ = input_count_ = 0;
@@ -252,6 +269,8 @@ std::unique_ptr<Instrument> AudioEngine::makeInstrument(InstrumentKind kind) con
 }
 
 void AudioEngine::connect(Source& s) {
+    s.playback.assign(size_t(block_), 0.0f);
+    s.instrument->setPlayback(isLiveInput(s.kind) ? s.playback.data() : nullptr);
     if (s.kind == InstrumentKind::PluginSynth) {
         auto* holder = static_cast<PluginPedal*>(s.synth.pedal.get());
         static_cast<PluginSynth*>(s.instrument.get())->setPlugin(holder && holder->ready() ? holder->plugin() : nullptr);
@@ -546,11 +565,144 @@ bool AudioEngine::sendBoard(Source& s, bool inserts) {
 
 void AudioEngine::reapPedals() {
     for (auto& s : owned_) {
-        if (!s || s->retired.empty()) continue;
+        if (!s || (s->retired.empty() && s->retired_tracks.empty())) continue;
         const uint32_t applied = s->board_applied.load(std::memory_order_acquire);
         s->retired.erase(std::remove_if(s->retired.begin(), s->retired.end(), [&](const auto& r) { return r.second <= applied; }),
                          s->retired.end());
+        s->retired_tracks.erase(std::remove_if(s->retired_tracks.begin(), s->retired_tracks.end(),
+                                               [&](const auto& r) { return r.second <= applied; }),
+                                s->retired_tracks.end());
     }
+}
+
+// ── The timeline and recording (game thread) ───────────────────────────────────────────────────────────────
+void AudioEngine::playFrom(double step) {
+    Command c; c.type = Command::TimelinePlay; c.v[0] = float(std::max(step, 0.0)); push(c);
+    transport_.running = true;
+}
+
+void AudioEngine::setLoopRange(bool on, int start_step, int end_step) {
+    Command c; c.type = Command::TimelineLoop; c.v[0] = on ? 1.0f : 0.0f; c.v[1] = float(start_step); c.v[2] = float(end_step); push(c);
+}
+
+std::shared_ptr<const AudioData> AudioEngine::audioFile(const std::string& path, std::string* error) {
+    for (const auto& [known, data] : audio_files_)
+        if (known == path) return data;
+    auto data = std::make_shared<AudioData>();
+    if (!readWav(path, data.get(), error)) return nullptr;
+    audio_files_.emplace_back(path, data);
+    return data;
+}
+
+bool AudioEngine::setTrack(int id, const std::vector<TimelineNote>& notes, const std::vector<ClipSpec>& clips, std::string* error) {
+    reapPedals();
+    Source* s = owned(id);
+    if (!s) {
+        if (error) *error = "there is no such track";
+        return false;
+    }
+    auto track = std::make_unique<Source::Track>();
+    track->notes = notes;
+    std::sort(track->notes.begin(), track->notes.end(), [](const TimelineNote& a, const TimelineNote& b) { return a.step < b.step; });
+    bool all = true;
+    for (const ClipSpec& spec : clips) {
+        std::string why;
+        auto audio = audioFile(spec.path, &why);
+        if (!audio) {
+            if (error && all) *error = why;
+            all = false;
+            continue;
+        }
+        track->clips.push_back({spec.start, spec.offset, spec.length, audio});
+    }
+    Command c; c.type = Command::TrackSet; c.id = id; c.data = track.get(); c.epoch = s->board_sent + 1;
+    if (!commands_.push(c)) {
+        if (error) *error = "the audio engine is busy: try again";
+        return false;
+    }
+    s->board_sent = c.epoch;
+    if (s->track) s->retired_tracks.emplace_back(std::move(s->track), s->board_sent);
+    s->track = std::move(track);
+    return all;
+}
+
+std::vector<float> AudioEngine::audioPeaks(const std::string& path, double per_second) {
+    std::vector<float> out;
+    auto audio = audioFile(path, nullptr);
+    if (!audio || per_second <= 0.0) return out;
+    const size_t bucket = std::max<size_t>(1, size_t(audio->rate / per_second));
+    out.assign((audio->samples.size() + bucket - 1) / bucket, 0.0f);
+    for (size_t i = 0; i < audio->samples.size(); ++i) out[i / bucket] = std::max(out[i / bucket], std::fabs(audio->samples[i]));
+    return out;
+}
+
+double AudioEngine::audioSeconds(const std::string& path) {
+    auto audio = audioFile(path, nullptr);
+    return audio ? audio->seconds() : 0.0;
+}
+
+void AudioEngine::setRecordArm(int id, bool armed) {
+    Command c; c.type = Command::RecordArm; c.id = id; c.v[0] = armed ? 1.0f : 0.0f; push(c);
+}
+
+bool AudioEngine::startRecording(const std::vector<std::pair<int, std::string>>& files, double from_step, std::string* error) {
+    if (recording_wanted_ || recorder_) {
+        if (error) *error = "it is recording already";
+        return false;
+    }
+    auto recorder = std::make_unique<Recorder>();
+    if (!recorder->begin(files, sr_, error)) return false;
+    Captured stale;
+    while (captured_.pop(stale)) {}
+    Command c; c.type = Command::RecordStart; c.data = recorder.get(); c.v[0] = float(std::max(from_step, 0.0));
+    if (!commands_.push(c)) {
+        if (error) *error = "the audio engine is busy: try again";
+        return false;
+    }
+    recorder_ = std::move(recorder);
+    recording_wanted_ = true;
+    transport_.running = true;
+    return true;
+}
+
+void AudioEngine::stopRecording() {
+    if (!recording_wanted_) return;
+    Command c; c.type = Command::RecordStop; c.epoch = ++record_epoch_; push(c);
+    recording_wanted_ = false;
+}
+
+bool AudioEngine::takeRecording(RecordingResult* out) {
+    if (!recorder_ || recording_wanted_ || record_ack_.load(std::memory_order_acquire) < record_epoch_) return false;
+    recorder_->finish();
+    RecordingResult result;
+    result.start_step = record_start_.load();
+    result.end_step = record_end_.load();
+    result.step_seconds = record_step_seconds_.load();
+    for (const Recorder::Take& take : recorder_->takes())
+        result.audio.push_back({take.source, take.path, double(take.frames) / double(sr_), take.dropped});
+    // Each note from its key going down to its going up (or to the end of the recording, if it never did).
+    std::vector<std::pair<int, size_t>> open;  // (source * 128 + note) → its place in result.notes
+    Captured e;
+    while (captured_.pop(e)) {
+        const int key = e.source * 128 + e.note;
+        auto held = std::find_if(open.begin(), open.end(), [&](const auto& o) { return o.first == key; });
+        if (held != open.end()) {  // a note let go (or struck again while held)
+            TimelineNote& n = result.notes[held->second].note;
+            n.length = float(std::max(e.step - n.step, 0.05));
+            open.erase(held);
+        }
+        if (e.on) {
+            result.notes.push_back({e.source, TimelineNote{e.step, 1.0f, e.note, e.velocity}});
+            open.emplace_back(key, result.notes.size() - 1);
+        }
+    }
+    for (const auto& o : open) {
+        TimelineNote& n = result.notes[o.second].note;
+        n.length = float(std::max(result.end_step - n.step, 0.05));
+    }
+    recorder_.reset();
+    *out = std::move(result);
+    return true;
 }
 
 int AudioEngine::addPedal(int id, PedalKind kind, int at) {
@@ -1310,9 +1462,49 @@ void AudioEngine::drainCommands() {
                 break;
             case Command::NoteOn:
                 if (s) s->instrument->noteOn(int(c.v[0]), c.v[1]);
+                if (s && recording_ && s->armed && !isLiveInput(s->kind))
+                    captured_.push({s->id, int(c.v[0]), c.v[1], true, sequencer_.position(clock_)});
                 break;
             case Command::NoteOff:
                 if (s) s->instrument->noteOff(int(c.v[0]));
+                if (s && recording_ && s->armed && !isLiveInput(s->kind))
+                    captured_.push({s->id, int(c.v[0]), 0.0f, false, sequencer_.position(clock_)});
+                break;
+            case Command::TimelinePlay:
+                for (Source* each : sources_)
+                    if (each) each->instrument->stopSequenced();
+                sequencer_.start(clock_, int64_t(std::llround(c.v[0])));
+                break;
+            case Command::TimelineLoop:
+                sequencer_.setLoop(c.v[0] > 0.5f, int64_t(std::llround(c.v[1])), int64_t(std::llround(c.v[2])));
+                break;
+            case Command::TrackSet:
+                if (s) {
+                    s->track_rt = static_cast<Source::Track*>(c.data);
+                    s->board_applied.store(c.epoch, std::memory_order_release);
+                }
+                break;
+            case Command::RecordArm:
+                if (s) s->armed = c.v[0] > 0.5f;
+                break;
+            case Command::RecordStart:
+                if (!sequencer_.running()) {
+                    for (Source* each : sources_)
+                        if (each) each->instrument->stopSequenced();
+                    sequencer_.start(clock_, int64_t(std::llround(c.v[0])));
+                }
+                sequencer_.suspendLoop(true);
+                recorder_rt_ = static_cast<Recorder*>(c.data);
+                recording_ = true;
+                record_start_.store(sequencer_.position(clock_));
+                record_step_seconds_.store(sequencer_.stepSamples() / sr_);
+                break;
+            case Command::RecordStop:
+                if (recording_) record_end_.store(sequencer_.position(clock_));
+                recording_ = false;
+                recorder_rt_ = nullptr;
+                sequencer_.suspendLoop(false);
+                record_ack_.store(c.epoch, std::memory_order_release);
                 break;
             case Command::AllNotesOff:
                 if (s) s->instrument->allNotesOff();
@@ -1373,7 +1565,7 @@ void AudioEngine::drainCommands() {
                 if (c.v[0] > 0.5f) {
                     if (!sequencer_.running()) sequencer_.start(clock_);
                 } else {
-                    sequencer_.stop();
+                    sequencer_.stop(clock_);
                     step_.store(-1, std::memory_order_relaxed);
                     for (Source* each : sources_)
                         if (each) each->instrument->stopSequenced();
@@ -1455,8 +1647,14 @@ void AudioEngine::drainMidi() {
         for (Source* s : sources_) {  // every instrument with its input on
             if (!s || !s->input_on || isLiveInput(s->kind)) continue;
             switch (e.type) {
-                case MidiEvent::NoteOn:  s->instrument->noteOn(e.note, e.velocity); break;
-                case MidiEvent::NoteOff: s->instrument->noteOff(e.note); break;
+                case MidiEvent::NoteOn:
+                    s->instrument->noteOn(e.note, e.velocity);
+                    if (recording_ && s->armed) captured_.push({s->id, e.note, e.velocity, true, sequencer_.position(clock_)});
+                    break;
+                case MidiEvent::NoteOff:
+                    s->instrument->noteOff(e.note);
+                    if (recording_ && s->armed) captured_.push({s->id, e.note, 0.0f, false, sequencer_.position(clock_)});
+                    break;
                 case MidiEvent::Sustain: s->instrument->sustain(e.note != 0); break;
                 case MidiEvent::Control: s->instrument->controlChange(e.note, e.value); break;
                 case MidiEvent::PitchBend: s->instrument->pitchBend(e.bend); break;
@@ -1473,8 +1671,16 @@ void AudioEngine::step(int64_t index, double at, double step_samples) {
     step_.store(index, std::memory_order_relaxed);
     const int delay = delayFor(at);
     const float step_sec = float(step_samples / sr_);
+    const double straight = at - (index % 2 ? step_samples * sequencer_.swing() : 0.0);  // the step unswung
     for (Source* s : sources_) {
-        if (!s || !s->loop) continue;
+        if (!s) continue;
+        if (s->track_rt && !s->track_rt->notes.empty() && !isLiveInput(s->kind)) {  // its recorded notes, to the sample
+            const auto& notes = s->track_rt->notes;
+            auto n = std::lower_bound(notes.begin(), notes.end(), double(index), [](const TimelineNote& a, double v) { return a.step < v; });
+            for (; n != notes.end() && n->step < double(index + 1); ++n)
+                s->instrument->play(n->note, n->length * step_sec, n->velocity, delayFor(straight + (n->step - double(index)) * step_samples));
+        }
+        if (!s->loop) continue;
         const int local = int(index % s->steps);
         const float jitter = s->instrument->velocityJitter();
         for (int i = 0; i < s->note_count; ++i) {
@@ -1551,6 +1757,40 @@ void AudioEngine::render(const float* input, int input_channels, float* out, int
     }
 }
 
+// Where each sample of this block falls on the timeline; each track's recorded audio for the block, ready to be played
+// into it; and, while recording, what each armed Speaker and amp takes in, handed to the recorder.
+void AudioEngine::renderTimeline() {
+    const bool playing = sequencer_.running();
+    const double step_seconds = sequencer_.stepSamples() / sr_;
+    position_.store(sequencer_.position(clock_), std::memory_order_relaxed);
+    for (int i = 0; i < block_; ++i) block_seconds_[size_t(i)] = playing ? sequencer_.position(clock_ + i) * step_seconds : -1.0;
+    for (Source* s : sources_) {
+        if (!s || !isLiveInput(s->kind)) continue;
+        std::fill(s->playback.begin(), s->playback.end(), 0.0f);
+        if (recording_ && s->armed && recorder_rt_) {  // its input as it comes in, before the pedals, amp and inserts
+            std::fill(take_.begin(), take_.end(), 0.0f);
+            s->instrument->readInput(take_.data(), block_);
+            recorder_rt_->write(recorder_rt_->slotOf(s->id), take_.data(), block_);
+        }
+        // What it recorded before plays back, unless it is recording over it just now.
+        if (!playing || !s->track_rt || s->track_rt->clips.empty() || (recording_ && s->armed)) continue;
+        float* out = s->playback.data();
+        for (const auto& clip : s->track_rt->clips) {
+            const std::vector<float>& x = clip.audio->samples;
+            const double rate = clip.audio->rate;
+            for (int i = 0; i < block_; ++i) {
+                const double t = block_seconds_[size_t(i)] - clip.start;
+                if (t < 0.0 || t >= clip.length) continue;
+                const double at = (t + clip.offset) * rate;
+                const size_t k = size_t(at);
+                if (k + 1 >= x.size()) continue;
+                const float frac = float(at - double(k));
+                out[i] += x[k] + (x[k + 1] - x[k]) * frac;
+            }
+        }
+    }
+}
+
 void AudioEngine::renderBlock() {
     const auto t0 = std::chrono::steady_clock::now();
     drainCommands();
@@ -1574,6 +1814,7 @@ void AudioEngine::renderBlock() {
     std::fill(send_.begin(), send_.end(), 0.0f);
     std::fill(click_.begin(), click_.end(), 0.0f);
     sequencer_.process(clock_ + block_, *this);
+    renderTimeline();
     const int64_t next_bar = sequencer_.nextBarAt(clock_);
     bar_timing_[0] = next_bar < 0 ? -1 : next_bar - clock_;
     bar_timing_[1] = int64_t(std::llround(sequencer_.barSamples()));

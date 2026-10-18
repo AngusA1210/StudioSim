@@ -49,6 +49,8 @@ var pedals := []       # its effect pedals, in signal order, from the audio core
 var tuner := {}        # what its tuner hears while one is on: {pitched, note, cents, frequency}; empty otherwise
 var inserts := []      # its channel's plug-ins, one entry per insert slot: [{plugin_name, on, editor_open...}]
 var carried := false
+var clips := []        # its clips on a Record room's timeline (timeline.gd)
+var armed := false     # armed for recording
 var glow := 0.0
 
 var _audio: SoundRoomAudio

@@ -48,6 +48,7 @@ var _name_menu_for = null
 var _confirm: ConfirmationDialog  # removing an instrument
 var _meter_menu: PopupMenu  # what a right-click on a fader or meter offers: the meters before the fader or after it
 var _hint: Label  # the line at the foot: what the mouse is over
+var _to_edit: Button  # over to the edit window, in a Record room
 var _signature := ""
 var _input_channels := -1
 var _master := {}
@@ -106,6 +107,7 @@ func _process(_delta: float) -> void:
 	_panel.position = Vector2(12, vp.y - height - 12)
 	_panel.size = Vector2(vp.x - 24, height)
 	_refresh()
+	_to_edit.visible = app.timeline.is_record()
 	_hint.text = Hints.under_mouse(_panel)
 
 
@@ -141,6 +143,13 @@ func _build() -> void:
 	_status.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_status.clip_text = true
 	header.add_child(_status)
+	_to_edit = Button.new()
+	_to_edit.text = "Edit window  (T)"
+	_to_edit.focus_mode = Control.FOCUS_NONE
+	_to_edit.pressed.connect(func() -> void:
+		close()
+		app.edit_window.open())
+	header.add_child(_to_edit)
 	var close_button := Button.new()
 	close_button.text = "Close  (Tab)"
 	close_button.pressed.connect(close)

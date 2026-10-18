@@ -247,6 +247,8 @@ func _build() -> void:
 	_room_menu.get_popup().add_item("Save as template…", 1)
 	_room_menu.get_popup().add_separator()
 	_room_menu.get_popup().add_item("Show in Finder", 2)
+	_room_menu.get_popup().add_separator()
+	_room_menu.get_popup().add_item("Make it a Record room", 3)
 	_room_menu.get_popup().id_pressed.connect(_on_room_menu_chosen)
 	header.add_child(_room_menu)
 	_resume = Button.new()
@@ -732,6 +734,8 @@ func _refresh_room() -> void:
 	_save.visible = session.has_room() or (app.title == null or not app.title.is_open())
 	_room_menu.visible = _save.visible
 	_room_menu.get_popup().set_item_disabled(_room_menu.get_popup().get_item_index(2), not session.has_room())
+	_room_menu.get_popup().set_item_text(_room_menu.get_popup().get_item_index(3),
+		"Make it a Jam room" if app.timeline.is_record() else "Make it a Record room")
 	if Time.get_ticks_msec() < _status_until:
 		return
 	if not session.has_room():
@@ -755,6 +759,9 @@ func _show_status(text: String) -> void:
 func _on_room_menu_chosen(id: int) -> void:
 	var session = app.session
 	match id:
+		3:  # a Jam room becomes a Record room, or the other way
+			app.timeline.set_mode("jam" if app.timeline.is_record() else "record")
+			_show_status("Now a %s room" % ("Record" if app.timeline.is_record() else "Jam"))
 		0:
 			app.name_prompt.ask("Save the room as", (session.room_name + " copy") if session.has_room() else "Untitled room",
 				func(the_name: String) -> void:

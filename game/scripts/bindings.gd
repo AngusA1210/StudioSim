@@ -26,6 +26,7 @@ const ACTIONS := [
 	["duplicate", "Duplicate what you face, with all its settings", KEY_V],
 	["remove", "Remove what you face (twice)", KEY_BACKSPACE],
 	["mixer", "The mix window", KEY_TAB],
+	["edit_window", "The edit window (a Record room)", KEY_T],
 	["transport", "Start / stop the patterns", KEY_SPACE],
 	["click", "Metronome click", KEY_C],
 	["binaural", "Binaural on / off", KEY_B],

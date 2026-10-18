@@ -2099,6 +2099,105 @@ int main(int argc, char** argv) {
     }
 
     {
+        std::printf("\nThe timeline and recording\n");
+        const auto folder = std::filesystem::temp_directory_path() / "soundroom-recording-tests";
+        std::filesystem::remove_all(folder);
+        std::filesystem::create_directories(folder);
+
+        // Playing from a step, looping a range, and saying where it is.
+        Room room;
+        room.soloOnly(-1);
+        room.engine.setReverb(false);
+        room.engine.setTempo(120.0);  // a step is an eighth of a second
+        room.engine.setLoopRange(true, 0, 16);  // the first bar
+        room.engine.playFrom(8.0);
+        double highest = 0.0, lowest_after = 99.0;
+        bool came_round = false;
+        for (int b = 0; b < int(2.5 * 48000 / 128); ++b) {
+            renderSeconds(room.engine, 128.0 / 48000.0);
+            const double at = room.engine.timelinePosition();
+            if (highest > 15.0 && at < 2.0) came_round = true;
+            highest = std::max(highest, at);
+            if (came_round) lowest_after = std::min(lowest_after, at);
+        }
+        check(came_round && highest < 16.01 && lowest_after < 0.5, "the timeline plays from where it is put and loops round its range",
+              fmt("as far as step %.2f, then back to ", highest) + fmt("%.2f", lowest_after));
+        room.engine.setLoopRange(false, 0, 0);
+        room.engine.setSequencerRunning(false);
+        renderSeconds(room.engine, 0.05);
+
+        // Recorded notes play on their steps, to the sample, swing or no swing.
+        Room notes_room;
+        notes_room.quietRoom(notes_room.drums);
+        notes_room.engine.setSourceLoop(notes_room.drums, false);  // only what is on its track
+        notes_room.engine.setTempo(120.0);
+        notes_room.engine.setSwing(0.3);
+        std::string track_error;
+        const int hat = Drums::noteFor(Drums::HatClosed);  // short, so one can't be mistaken for the other
+        const bool set = notes_room.engine.setTrack(notes_room.drums, {{4.0, 1.0f, hat, 0.9f}, {6.5, 1.0f, hat, 0.9f}}, {}, &track_error);
+        renderSeconds(notes_room.engine, 0.1);  // the others' mutes settle
+        notes_room.engine.playFrom(0.0);
+        const Render hats = renderSeconds(notes_room.engine, 1.5);
+        const int first = onsetAfter(hats.l, 0), second = onsetAfter(hats.l, size_t(first + 4800));
+        const double apart = double(second - first) / 48000.0;
+        check(set && first > 0 && std::fabs(apart - 2.5 * 0.125) < 0.002, "recorded notes play on their steps, to the sample, swing or no swing",
+              fmt("%.4f s apart (", apart) + fmt("%.4f s written)", 2.5 * 0.125));
+
+        // Recording a Speaker: its input as it comes in, into a WAV file, while the timeline plays.
+        Room take;
+        take.quietRoom(take.speaker);
+        take.engine.setTempo(120.0);
+        take.engine.setRecordArm(take.speaker, true);
+        take.engine.setRecordArm(take.keys, true);
+        const std::string file = (folder / "Speaker_01.wav").string();
+        std::string record_error;
+        const bool started = take.engine.startRecording({{take.speaker, file}}, 16.0, &record_error);
+        int64_t played = 0;
+        auto tone = [&](int64_t) { return 0.25f * float(std::sin(6.2831853 * 440.0 * double(played++) / 48000.0)); };
+        renderSeconds(take.engine, 0.5, tone);
+        take.engine.noteOn(take.keys, 64, 0.7f);
+        renderSeconds(take.engine, 0.5, tone);
+        take.engine.noteOff(take.keys, 64);
+        renderSeconds(take.engine, 0.25, tone);
+        take.engine.stopRecording();
+        RecordingResult result;
+        bool taken = take.engine.takeRecording(&result);  // not until the audio thread has stopped
+        renderSeconds(take.engine, 0.01, tone);
+        taken = !taken && take.engine.takeRecording(&result);
+        AudioData read;
+        std::string read_error;
+        const bool readable = taken && !result.audio.empty() && readWav(result.audio[0].path, &read, &read_error);
+        double energy = 0.0;
+        for (float v : read.samples) energy += double(v) * v;
+        const double take_rms = read.samples.empty() ? 0.0 : std::sqrt(energy / double(read.samples.size()));
+        check(started && readable && std::fabs(read.seconds() - 1.25) < 0.02 && std::fabs(take_rms - 0.25 / std::sqrt(2.0)) < 0.01 &&
+                  std::fabs(result.start_step - 16.0) < 0.3 && result.audio[0].dropped == 0,
+              "an armed Speaker records its input, as it comes in, to a WAV file, from where the timeline was",
+              readable ? fmt("%.2f s, ", read.seconds()) + fmt("starting at step %.2f", result.start_step) : record_error + read_error);
+        const bool one_note = result.notes.size() == 1 && result.notes[0].source == take.keys && result.notes[0].note.note == 64;
+        check(one_note && std::fabs(result.notes[0].note.length * result.step_seconds - 0.5) < 0.01 &&
+                  std::fabs(result.notes[0].note.step - (result.start_step + 0.5 / result.step_seconds)) < 0.1,
+              "an armed instrument records the notes played on it, where and for as long as they were played",
+              one_note ? fmt("step %.2f, ", result.notes[0].note.step) + fmt("%.2f steps long", result.notes[0].note.length) : "no note");
+
+        // Played back, the recording goes through the Speaker as its input would, from where it was recorded.
+        take.engine.setRecordArm(take.speaker, false);
+        take.engine.setSequencerRunning(false);
+        renderSeconds(take.engine, 0.1);
+        const double start_seconds = result.start_step * result.step_seconds;
+        take.engine.setTrack(take.speaker, {}, {{result.audio[0].path, start_seconds, 0.0, result.audio[0].seconds}}, &track_error);
+        take.engine.playFrom(0.0);
+        const Render before = renderSeconds(take.engine, 1.5);  // steps 0 to 12: nothing yet
+        const Render during = renderSeconds(take.engine, 1.0);
+        const auto peaks = take.engine.audioPeaks(result.audio[0].path, 100.0);
+        check(before.peak < 1e-5 && during.rms_l > 0.005 && peaks.size() == size_t(std::lround(read.seconds() * 100.0)) &&
+                  std::fabs(peaks[10] - 0.25f) < 0.01f,
+              "played back from its clip, the take is heard from the Speaker where it was recorded, and its peaks can be drawn",
+              fmt("%.1f dBFS while it plays", db(during.rms_l)));
+        std::filesystem::remove_all(folder);
+    }
+
+    {
         std::printf("\nWhat kind of plug-in\n");
         const char* const kSeen[][3] = {
             {"UADx Lion 68 Super Lead Amp", "Universal Audio (UADx)", "Amps & cabinets"}, {"TONE3000", "TONE3000", "Amps & cabinets"},
