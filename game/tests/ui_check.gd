@@ -1367,6 +1367,28 @@ func _run() -> void:
 	check(window_level > 0.0005 and player.plugin_open == null and not main.hud._piano.visible,
 		"with it open the letter keys play it, and a click in the room puts it away", "%.4f" % window_level)
 	await tap(KEY_P)
+	var piano_key: Control = main.hud._piano_keys[KEY_F].rect
+	var at_key: Vector2 = piano_key.get_global_rect().get_center()
+	var key_press := InputEventMouseButton.new()
+	key_press.position = at_key
+	key_press.global_position = at_key
+	key_press.button_index = MOUSE_BUTTON_LEFT
+	key_press.pressed = true
+	view.push_input(key_press)
+	var clicked_level: float = await average_level(synth.source_id, 0.3)
+	var held_by_click: bool = player.held.has(KEY_F)
+	var key_release: InputEventMouseButton = key_press.duplicate()
+	key_release.pressed = false
+	view.push_input(key_release)
+	await frames(3)
+	check(clicked_level > 0.0005 and held_by_click and not player.held.has(KEY_F) and player.plugin_open == synth,
+		"clicking the on-screen keyboard plays it too, and leaves the window open", "%.4f" % clicked_level)
+	key(KEY_D)
+	await frames(2)
+	main.get_window().focus_exited.emit()  # as when a plug-in's window takes the keyboard
+	await frames(2)
+	check(player.held.is_empty(), "should the game lose the keyboard, the notes held are let go rather than left hanging")
+	key(KEY_D, false)
 	await tap(KEY_ESCAPE)
 	check(player.plugin_open == null and not main.menu.is_open(), "Esc puts it away too (rather than opening the menu)")
 	await tap(KEY_E)
@@ -1514,7 +1536,24 @@ func _run() -> void:
 		main.instruments.any(func(i): return i.kind == "garage_drums"), "the garage kit and the plug-in instrument come back with it")
 	main.set_tempo(90.0)
 	session.request_quit()
-	check(session.is_asking() and session._confirm.dialog_text.ends_with("before quitting?"), "quitting with changes asks whether to save them")
+	var asked_from: Vector3 = player.global_position
+	var asked_yaw: float = player.yaw
+	key(KEY_LEFT)
+	key(KEY_UP)
+	var arrows := InputEventKey.new()
+	arrows.physical_keycode = KEY_LEFT
+	arrows.pressed = true
+	Input.parse_input_event(arrows)
+	await seconds(0.3)
+	arrows = arrows.duplicate()
+	arrows.pressed = false
+	Input.parse_input_event(arrows)
+	key(KEY_LEFT, false)
+	key(KEY_UP, false)
+	await frames(2)
+	check(session.is_asking() and session._confirm.dialog_text.ends_with("before quitting?") and Input.mouse_mode == Input.MOUSE_MODE_VISIBLE and
+		player.global_position.is_equal_approx(asked_from) and is_equal_approx(player.yaw, asked_yaw),
+		"quitting with changes asks whether to save them, with the mouse free to answer and the arrows not turning you meanwhile")
 	session._confirm.get_cancel_button().pressed.emit()
 	await frames(2)
 	check(not session.is_asking() and is_equal_approx(main.tempo, 90.0), "and Cancel carries on")

@@ -24,6 +24,7 @@ var _since_save := 0.0
 var _since_backup := 0.0
 var _confirm: ConfirmationDialog  # "Save the changes to … ?"
 var _then := Callable()  # what to do once that is answered
+var _mouse_was := Input.MOUSE_MODE_VISIBLE  # given back once it is
 
 
 func setup(the_app) -> void:
@@ -39,7 +40,9 @@ func setup(the_app) -> void:
 		if action == &"discard":
 			_confirm.hide()
 			_carry_on())
-	_confirm.canceled.connect(func() -> void: _then = Callable())
+	_confirm.canceled.connect(func() -> void:
+		_then = Callable()
+		Input.mouse_mode = _mouse_was)
 	add_child(_confirm)
 
 
@@ -185,6 +188,9 @@ func then_if_saved(then: Callable, doing: String) -> void:
 		return
 	_then = then
 	_confirm.dialog_text = "Save the changes to \"%s\" before %s?" % [room_name, doing]
+	_mouse_was = Input.mouse_mode
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE  # to answer it with, from the room as anywhere
+	app.player.release_keys()
 	_confirm.popup_centered()
 
 

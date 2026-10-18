@@ -116,6 +116,7 @@ public:
     ~AudioUnitPlugin() override {
         if (window_) {
             if (resize_observer_) [[NSNotificationCenter defaultCenter] removeObserver:resize_observer_];
+            if (key_monitor_) [NSEvent removeMonitor:key_monitor_];
             [window_ orderOut:nil];
             window_.contentView = nil;
             window_ = nil;
@@ -270,6 +271,28 @@ public:
                                                                                    [window setContentSize:changed.frame.size];
                                                                              }];
             [window_ center];
+            // Many plug-ins take the keyboard when their window is clicked (they make themselves first responder), which
+            // would leave the game deaf to the keys (and a note held meanwhile stuck). Once the click is done, the
+            // keyboard goes back to the game, unless what was clicked is something to type in.
+            __weak NSPanel* watched = panel;
+            key_monitor_ = [NSEvent addLocalMonitorForEventsMatchingMask:(NSEventMaskLeftMouseUp | NSEventMaskRightMouseUp)
+                                                                 handler:^NSEvent*(NSEvent* event) {
+                                                                   if (event.window != watched) return event;
+                                                                   dispatch_async(dispatch_get_main_queue(), ^{
+                                                                     NSPanel* clicked = watched;
+                                                                     if (!clicked || !clicked.isKeyWindow) return;
+                                                                     const id responder = clicked.firstResponder;
+                                                                     if ([responder isKindOfClass:[NSTextView class]] ||
+                                                                         [responder isKindOfClass:[NSTextField class]])
+                                                                         return;  // being typed into
+                                                                     for (NSWindow* w in NSApp.orderedWindows)
+                                                                         if (![w isKindOfClass:[NSPanel class]] && w.isVisible && w.canBecomeKeyWindow) {
+                                                                             [w makeKeyWindow];
+                                                                             break;
+                                                                         }
+                                                                   });
+                                                                   return event;
+                                                                 }];
         }
         window_.title = [NSString stringWithUTF8String:title.c_str()] ?: @"Plug-in";
         [window_ orderFront:nil];  // in front, but leaving the keyboard with the game
@@ -450,6 +473,7 @@ private:
     NSWindow* window_ = nil;
     NSViewController* view_controller_ = nil;
     id resize_observer_ = nil;
+    id key_monitor_ = nil;
     void (^view_request_)(AUViewControllerBase*) = nil;
 };
 

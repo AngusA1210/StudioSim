@@ -95,8 +95,10 @@ pianos), chosen from the plug-in browser when you pick it, and takes that plug-i
 computer keyboard and its pattern play it like any instrument, sending it the sustain pedal, the mod wheel and the
 other controllers, and pitch bend as well. **P**, facing it, opens the plug-in's own window just above the on-screen
 keyboard: the letter keys play the instrument while you work the window with the mouse, and a click anywhere in the
-room (or Esc, or Q, or the window's close button) puts it away and gives the mouse back to looking about. The window
-leaves the keyboard with the room unless you click a box in it to type; in the mix window its
+room (or Esc, or Q, or the window's close button) puts it away and gives the mouse back to looking about. The
+on-screen keyboard can be clicked to play too. A plug-in that takes the keyboard when its window is clicked (UAD's do)
+hands it back to the game once the click is done, unless you clicked a box in it to type, and should the game lose
+the keyboard anyway, the notes held are let go rather than left hanging; in the mix window its
 strip shows the plug-in where others show their input: click it for the window, right-click it for another plug-in or
 its presets. It is saved with the room, its plug-in's settings and all.
 

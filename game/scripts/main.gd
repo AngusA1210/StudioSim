@@ -192,6 +192,9 @@ func _ready() -> void:
 	name_prompt = NamePrompt.new()
 	add_child(name_prompt)
 	get_tree().auto_accept_quit = false  # quitting asks first whether to save the room
+	# Should the game lose the keyboard (to a plug-in's window, say), let go of every note held: the keys' letting go
+	# would never arrive, and the notes would hang.
+	get_window().focus_exited.connect(func() -> void: player.release_keys())
 	_apply_display()
 	if not options.has("skip-title"):
 		title.open()

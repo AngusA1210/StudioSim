@@ -179,12 +179,16 @@ func _can_move() -> bool:
 	for panel in [app.title, app.menu, app.sequencer, app.amp_panel, app.speaker_panel, app.instrument_menu, app.name_prompt, app.rooms_page]:
 		if panel != null and panel.is_open():
 			return false
+	if app.session != null and app.session.is_asking():  # "Save the changes?": the arrows are for its buttons
+		return false
 	if app.plugin_browser != null and app.plugin_browser.visible:
 		return false
 	return not (get_viewport().gui_get_focus_owner() is LineEdit)
 
 
 func _ui_open() -> bool:
+	if app.session != null and app.session.is_asking():
+		return true
 	for panel in [app.title, app.menu, app.sequencer, app.mixer, app.amp_panel, app.speaker_panel, app.instrument_menu, app.name_prompt,
 			app.rooms_page]:
 		if panel != null and panel.is_open():
@@ -308,6 +312,19 @@ func _handle_key(event: InputEventKey) -> void:
 
 ## A note on the computer keyboard: to the instrument you're at and every other instrument whose input is on, or with
 ## the keyboard open, to every instrument whose input is on.
+## The on-screen keyboard clicked (and let go): as the key it shows, while the letter keys are notes.
+func piano_down(key: int) -> void:
+	if (playing != null or typing or plugin_open != null) and Bindings.NOTES.has(key) and not held.has(key):
+		_note_on(key)
+
+
+func piano_up(key: int) -> void:
+	if held.has(key):
+		for id in held[key][1]:
+			audio.note_off(id, held[key][0])
+		held.erase(key)
+
+
 func _note_on(key: int) -> void:
 	var base: int = octave if playing != null else keyboard_octave
 	var note := 60 + 12 * base + int(Bindings.NOTES[key])

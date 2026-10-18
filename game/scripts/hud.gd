@@ -416,6 +416,14 @@ func _piano_key(parent: Control, key: int, letter: String, pos: Vector2, size: V
 	rect.position = pos
 	rect.size = size
 	rect.color = idle
+	rect.mouse_filter = Control.MOUSE_FILTER_STOP  # it can be clicked to play, and a click on it isn't one in the room
+	rect.gui_input.connect(func(event: InputEvent) -> void:
+		if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+			if event.pressed:
+				player.piano_down(key)
+			else:
+				player.piano_up(key)
+			rect.accept_event())
 	parent.add_child(rect)
 	var label := Label.new()
 	label.text = letter
