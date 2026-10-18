@@ -174,7 +174,8 @@ public:
     void set_click(bool on);                    // the metronome click
     void set_click_volume(float gain);
     Dictionary get_transport() const;           // {running, bpm, swing, click, click_volume, step}
-    // A drum kit's pieces, "drums" (the drum machine) or "garage_drums": [{name, note}]; and which piece a note plays.
+    // A drum kit's pieces, "drums" (the drum machine), "garage_drums" or "studio_drums": [{name, note}]; and which piece
+    // a note plays.
     Array get_drum_pieces(const String& kind) const;
     String get_drum_piece_name(int note, const String& kind) const;
 

@@ -508,8 +508,8 @@ func _refresh() -> void:
 	var m: Dictionary = app.meter
 	_master.meter.feed([m.get("peak_l", 0.0), m.get("peak_r", 0.0)], [m.get("rms_l", 0.0), m.get("rms_r", 0.0)])
 	if not _master.fader._dragging:
-		_master.fader.set_value_no_signal(settings.master_volume_db)
-	_master.value.text = _db_text(settings.master_volume_db)
+		_master.fader.set_value_no_signal(app.master_volume_db)
+	_master.value.text = _db_text(app.master_volume_db)
 	_show_peak(_master.peak, app.master_peak_hold)
 	_master.limiter.set_pressed_no_signal(settings.limiter)
 	if Time.get_ticks_msec() < _problem_until:

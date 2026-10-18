@@ -253,8 +253,11 @@ func _run() -> void:
 		"New room asks for a name, a template (the default room to begin with), its size and what to bring over, everything ticked")
 	rooms._name.text = "Test room"
 	rooms._check_name()
+	main.set_master_volume_db(-80.0)  # left at the bottom behind the title, say
 	await click(rooms._create.get_global_rect().get_center())
 	await seconds(1.0)
+	check(is_equal_approx(main.master_volume_db, 0.0), "a room made from the default template starts with the master fader at 0 dB",
+		"%.1f dB" % main.master_volume_db)
 	drums = main.find_instrument("drums")
 	bass = main.find_instrument("bass")
 	speaker = main.speaker
@@ -445,7 +448,7 @@ func _run() -> void:
 	await tap(KEY_BACKSPACE)
 	check(player.target == null and player.remove_pending == null, "Backspace does nothing when you aren't facing an instrument")
 	await tap(KEY_N)
-	check(im.is_open() and im._cards.size() == 12 and not im._cards[0].disabled, "N opens the instrument menu, with the amps among the live inputs",
+	check(im.is_open() and im._cards.size() == 13 and not im._cards[0].disabled, "N opens the instrument menu, with the amps among the live inputs",
 		im._footer.text)
 	await click(im._card_for.bass.get_global_rect().get_center())
 	var bass2 = player.carried
@@ -1317,6 +1320,8 @@ func _run() -> void:
 	await tap(KEY_N)
 	await click(im._card_for.garage_drums.get_global_rect().get_center())
 	var garage = player.carried
+	check(im._card_for.has("studio_drums") and main.Catalog.KINDS.studio_drums.drum_kit and
+		main.Catalog.KINDS.studio_drums.color.b > main.Catalog.KINDS.studio_drums.color.g, "the instrument menu also has a studio kit, in purple")
 	check(garage != null and garage.display_name == "Garage Kit" and garage.drum_kit and garage.playable and audio.get_pattern(garage.source_id).is_empty(),
 		"the instrument menu has a garage kit", garage.display_name if garage else "nothing")
 	await tap(KEY_G)

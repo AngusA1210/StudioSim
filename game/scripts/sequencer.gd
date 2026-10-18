@@ -15,7 +15,7 @@ const SOMETIMES_VELOCITY := 0.3
 const SOMETIMES_CHANCE := 0.25
 # The lowest and highest row shown for each kind of instrument. Notes outside it widen the range.
 const RANGES := {"bass": [28, 64], "pad": [43, 79], "bells": [60, 96], "keys": [36, 84]}
-const DEFAULT_LENGTH := {"drums": 1.0, "garage_drums": 1.0, "bass": 2.0, "pad": 16.0, "bells": 1.0, "keys": 2.0, "plugin_synth": 2.0}
+const DEFAULT_LENGTH := {"drums": 1.0, "garage_drums": 1.0, "studio_drums": 1.0, "bass": 2.0, "pad": 16.0, "bells": 1.0, "keys": 2.0, "plugin_synth": 2.0}
 # A drum kit's rows, top to bottom, by its pieces' places in the audio core's list (Kick, Snare, Closed hat, Open hat,
 # Low tom, High tom, Clap or Ride, Crash): the cymbals on top, the kick at the foot.
 const DRUM_ORDER := [7, 3, 2, 6, 5, 4, 1, 0]

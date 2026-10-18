@@ -83,6 +83,7 @@ var instruments: Array = []
 var speaker  # the Speaker the room starts with: the one whose input choice is remembered between runs
 # The room's clock. These belong to the room rather than the player's settings, so they start from the defaults.
 var tempo := DEFAULT_TEMPO
+var master_volume_db := 0.0  # the master fader
 var swing := DEFAULT_SWING
 var sequence_running := true  # whether the sequencer is playing the patterns
 var options := {}
@@ -876,10 +877,10 @@ func set_reverb(on: bool) -> void:
 	settings.save_to_disk()
 
 
+## The master fader, in decibels. It belongs to the room (saved with it), as a session's master fader does.
 func set_master_volume_db(db: float) -> void:
-	settings.master_volume_db = db
+	master_volume_db = clampf(db, -80.0, 12.0)
 	_apply_master_volume()
-	settings.save_to_disk()
 
 
 ## A Speaker's own volume (its panel), in decibels: after its inserts, before its fader. -80 is off.
@@ -913,7 +914,7 @@ func set_stage_gain(gain: float) -> void:
 
 
 func _apply_master_volume() -> void:
-	audio.set_master_volume(db_to_linear(settings.master_volume_db) * _stage_gain)
+	audio.set_master_volume((0.0 if master_volume_db <= -79.0 else db_to_linear(master_volume_db)) * _stage_gain)
 
 
 func set_text_scale(scale_factor: float) -> void:

@@ -244,10 +244,15 @@ public:
             NSView* view = makeView();
             if (!view) return false;
             const NSSize size = NSMakeSize(std::max(view.frame.size.width, 240.0), std::max(view.frame.size.height, 80.0));
-            window_ = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, size.width, size.height)
-                                                  styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable
-                                                    backing:NSBackingStoreBuffered
-                                                      defer:NO];
+            // A panel that takes the keyboard only when something in it needs typing into (a text box), so that the
+            // game keeps the keys with the window open: notes still play, Tab still closes the mix window.
+            NSPanel* panel = [[NSPanel alloc] initWithContentRect:NSMakeRect(0, 0, size.width, size.height)
+                                                        styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable
+                                                          backing:NSBackingStoreBuffered
+                                                            defer:NO];
+            panel.becomesKeyOnlyIfNeeded = YES;
+            panel.hidesOnDeactivate = NO;
+            window_ = panel;
             window_.releasedWhenClosed = NO;
             window_.contentView = view;
             // Above the game, full screen or not, and on whichever space the game is on.
@@ -267,7 +272,7 @@ public:
             [window_ center];
         }
         window_.title = [NSString stringWithUTF8String:title.c_str()] ?: @"Plug-in";
-        [window_ makeKeyAndOrderFront:nil];
+        [window_ orderFront:nil];  // in front, but leaving the keyboard with the game
         return true;
     }
 

@@ -433,92 +433,121 @@ void Drums::render(float* out, int n) {
         if (v.active) for (int i = 0; i < n && v.active; ++i) out[i] += v.next(rng_);
 }
 
-// ── The garage kit ─────────────────────────────────────────────────────────────────────────────────────────
-int GarageKit::noteFor(Piece piece) { return piece == Ride ? 51 : Drums::noteFor(piece); }
+// ── The acoustic kits ──────────────────────────────────────────────────────────────────────────────────────
+namespace {
 
-const char* GarageKit::pieceName(Piece piece) { return piece == Ride ? "Ride" : Drums::pieceName(piece); }
+// kick: Hz, sharp, decay, boom, beater · snare: Hz, decay, ring, ring decay, wires, wire decay ·
+// toms: rack Hz, floor Hz, rack decay, floor decay, sharp · hats' noise, hats' band, cymbals' noise ·
+// buzz · tune and level jitter · drive · room
+constexpr KitVoicing kGarage{54.0f, 2.3f, 0.95f, 0.30f, 0.34f,
+                             190.0f, 0.24f, 0.11f, 0.65f, 0.50f, 0.34f,
+                             136.0f, 85.0f, 1.0f, 1.45f, 0.10f,
+                             0.50f, 8500.0f, 0.65f,
+                             0.07f, 0.012f, 0.08f, 1.6f, 0.34f};
+constexpr KitVoicing kStudio{50.0f, 1.9f, 0.42f, 0.08f, 0.48f,
+                             212.0f, 0.15f, 0.025f, 0.25f, 0.40f, 0.20f,
+                             146.0f, 96.0f, 0.55f, 0.80f, 0.06f,
+                             0.22f, 10000.0f, 0.42f,
+                             0.02f, 0.005f, 0.04f, 1.0f, 0.0f};
 
-void GarageKit::mode(int delay, float freq, float sharp, float glide, float level, float decay) {
+// The garage's first reflections: walls, floor and ceiling a few metres off, in milliseconds, and how loud each comes back.
+constexpr float kEchoMs[5] = {3.7f, 6.1f, 9.4f, 12.8f, 17.5f};
+constexpr float kEchoGain[5] = {0.55f, 0.45f, 0.36f, 0.28f, 0.2f};
+
+}  // namespace
+
+GarageKit::GarageKit(float sample_rate) : AcousticKit(sample_rate, kGarage) {}
+StudioKit::StudioKit(float sample_rate) : AcousticKit(sample_rate, kStudio) {}
+
+AcousticKit::AcousticKit(float sample_rate, const KitVoicing& voicing)
+    : Instrument(sample_rate), v_(voicing), scratch_(8192, 0.0f), echoes_(size_t(0.02f * sample_rate) + 1, 0.0f) {}
+
+int AcousticKit::noteFor(Piece piece) { return piece == Ride ? 51 : Drums::noteFor(piece); }
+
+const char* AcousticKit::pieceName(Piece piece) { return piece == Ride ? "Ride" : Drums::pieceName(piece); }
+
+void AcousticKit::mode(int delay, float freq, float sharp, float glide, float level, float decay) {
     pickVoice(modes_).start(sr_, delay, freq, sharp, glide, level, decay);
 }
 
-void GarageKit::noise(int delay, Biquad::Type type, float freq, float q, float level, float decay) {
+void AcousticKit::noise(int delay, Biquad::Type type, float freq, float q, float level, float decay) {
     pickVoice(noises_).start(sr_, delay, type, freq, q, level, decay);
 }
 
-void GarageKit::metal(int delay, float base, float band, float high, float level, float decay, float noise_share, int group) {
+void AcousticKit::metal(int delay, float base, float band, float high, float level, float decay, float noise_share, int group) {
     pickVoice(metals_).start(sr_, delay, base, band, high, level, decay, noise_share, group);
 }
 
-void GarageKit::wash(voice::MetalHit& ring, int delay, float base, float band, float high, float level, float decay, float noise_share) {
+void AcousticKit::wash(voice::MetalHit& ring, int delay, float base, float band, float high, float level, float decay, float noise_share) {
     if (ring.active && ring.delay == 0) ring.restrike(level, decay);
     else ring.start(sr_, delay, base, band, high, level, decay, noise_share, 0);
 }
 
-void GarageKit::hit(Piece piece, float velocity, int delay) {
+void AcousticKit::hit(Piece piece, float velocity, int delay) {
+    const KitVoicing& k = v_;
     const float v = std::clamp(velocity, 0.0f, 1.0f);
-    const float bright = 0.55f + 0.45f * v;               // harder hits are brighter...
-    const float tune = 1.0f + 0.008f * rng_.next();        // ...and no two land quite the same
-    const float l = v * (1.0f + 0.06f * rng_.next());
-    const auto buzz = [&](float level, float decay) {      // the snare's wires, set going by whatever else is hit
-        noise(delay, Biquad::Bandpass, 3800.0f, 0.6f, level * l, decay);
+    const float bright = 0.55f + 0.45f * v;                    // harder hits are brighter...
+    const float tune = 1.0f + k.tune_jitter * rng_.next();      // ...and no two land quite the same
+    const float l = v * (1.0f + k.level_jitter * rng_.next());
+    const auto buzz = [&](float decay) {  // the snare's wires, set going by whatever else is hit
+        noise(delay, Biquad::Bandpass, 3800.0f, 0.6f, k.buzz * l, decay);
     };
     switch (piece) {
-        case Drums::Kick:  // 22", front head ported, barely damped
-            mode(delay, 54.0f * tune, 2.1f, 0.012f, 0.95f * l, 0.75f);
-            mode(delay, 96.0f * tune, 1.15f, 0.02f, 0.22f * l, 0.35f);
-            mode(delay, 168.0f * tune, 1.05f, 0.02f, 0.10f * l, 0.16f);
-            noise(delay, Biquad::Bandpass, 2600.0f * bright, 0.8f, 0.30f * l * bright, 0.03f);  // the beater
+        case Drums::Kick:
+            mode(delay, k.kick_hz * tune, k.kick_sharp, 0.012f, 0.95f * l, k.kick_decay);
+            mode(delay, k.kick_hz * 1.78f * tune, 1.15f, 0.02f, k.kick_boom * l, k.kick_decay * 0.45f);
+            mode(delay, k.kick_hz * 3.1f * tune, 1.05f, 0.02f, 0.10f * l, 0.16f);
+            noise(delay, Biquad::Bandpass, 2600.0f * bright, 0.8f, k.kick_beater * l * bright, 0.03f);  // the beater
             noise(delay, Biquad::Lowpass, 900.0f, kLowpassQ, 0.28f * l, 0.05f);
-            buzz(0.025f, 0.22f);
+            buzz(0.22f);
             break;
-        case Drums::Snare: {  // 14" x 5.5" metal shell, ringing, its wires on the loose side
-            const float f = 192.0f * tune;
-            mode(delay, f, 1.04f, 0.03f, 0.42f * l, 0.20f);
-            mode(delay, f * 1.59f, 1.04f, 0.03f, 0.30f * l, 0.15f);
-            mode(delay, f * 2.14f, 1.03f, 0.03f, 0.20f * l, 0.12f);
-            mode(delay, f * 2.30f, 1.03f, 0.03f, 0.14f * l, 0.10f);
-            mode(delay, 523.0f * tune, 1.0f, 0.01f, 0.06f * l, 0.45f);   // the ring an undamped head keeps
-            mode(delay, 890.0f * tune, 1.0f, 0.01f, 0.07f * l, 0.06f);   // the shell
+        case Drums::Snare: {
+            const float f = k.snare_hz * tune;
+            mode(delay, f, 1.04f, 0.03f, 0.42f * l, k.snare_decay);
+            mode(delay, f * 1.59f, 1.04f, 0.03f, 0.30f * l, k.snare_decay * 0.75f);
+            mode(delay, f * 2.14f, 1.03f, 0.03f, 0.20f * l, k.snare_decay * 0.6f);
+            mode(delay, f * 2.30f, 1.03f, 0.03f, 0.14f * l, k.snare_decay * 0.5f);
+            mode(delay, f * 2.72f, 1.0f, 0.01f, k.snare_ring * l, k.snare_ring_decay);  // the ring a head keeps
+            mode(delay, 890.0f * tune, 1.0f, 0.01f, 0.07f * l, 0.06f);                 // the shell
             noise(delay, Biquad::Bandpass, 2500.0f + 4500.0f * v, 0.5f, 0.6f * l * bright * bright, 0.012f);  // the stick
             // The wires: brighter, as the stick is, the harder the head is hit.
-            noise(delay, Biquad::Bandpass, 3000.0f + 1800.0f * v, 0.6f, 0.42f * l, 0.26f);
-            noise(delay, Biquad::Highpass, 6500.0f, 0.7f, 0.20f * l * bright * bright, 0.14f);
-            noise(delay, Biquad::Bandpass, 2400.0f, 1.0f, 0.08f * l, 0.34f);
+            noise(delay, Biquad::Bandpass, 3000.0f + 1800.0f * v, 0.6f, k.snare_wires * l, k.snare_wire_decay);
+            noise(delay, Biquad::Highpass, 6500.0f, 0.7f, 0.20f * l * bright * bright, k.snare_wire_decay * 0.5f);
+            noise(delay, Biquad::Bandpass, 2400.0f, 1.0f, 0.08f * l, k.snare_wire_decay * 1.3f);
             break;
         }
         case Drums::TomLow:
-        case Drums::TomHigh: {  // a 16" floor tom and a 12" rack tom, both left to ring
+        case Drums::TomHigh: {
             const bool floor = piece == Drums::TomLow;
-            const float f = (floor ? 86.0f : 138.0f) * tune;
-            const float sharp = 1.04f + 0.08f * v;  // a hard hit stretches the head more, so it starts sharper
-            const float ring = floor ? 1.1f : 0.8f;
+            const float f = (floor ? k.floor_hz : k.rack_hz) * tune;
+            const float sharp = 1.04f + k.tom_sharp * v;  // a hard hit stretches the head more, so it starts sharper
+            const float ring = floor ? k.floor_decay : k.rack_decay;
             mode(delay, f, sharp, 0.05f, 0.80f * l, ring);
             mode(delay, f * 1.59f, sharp, 0.05f, 0.34f * l, ring * 0.5f);
             mode(delay, f * 2.14f, sharp, 0.05f, 0.16f * l, ring * 0.3f);
             mode(delay, f * 2.65f, sharp, 0.05f, 0.07f * l, ring * 0.18f);
             noise(delay, Biquad::Bandpass, 1800.0f * bright, 0.8f, 0.24f * l * bright, 0.025f);
-            buzz(0.04f, 0.25f);
+            buzz(0.25f);
             break;
         }
         case Drums::HatClosed:
-        case Drums::HatOpen: {  // 14" hats, a little trashy
+        case Drums::HatOpen: {
             const bool open = piece == Drums::HatOpen;
             if (!open)
                 for (auto& m : metals_)
                     if (m.active && m.group == 1) m.choke(0.04f);
-            metal(delay, 412.0f * tune, 9000.0f, 6200.0f, 0.55f * l * bright, open ? 0.75f : 0.075f, 0.35f, 1);
+            metal(delay, 412.0f * tune, k.hat_band, 6200.0f, 0.55f * l * bright, open ? 0.75f : 0.075f, k.hat_noise, 1);
             noise(delay, Biquad::Bandpass, 3200.0f, 1.2f, 0.18f * l, 0.008f);  // the stick's tick
             break;
         }
-        case Ride:  // 20": a ping on top of a wash that builds and hangs
+        case Ride:  // a ping on top of a wash that builds and hangs
             metal(delay, 523.0f * tune, 5200.0f, 3000.0f, 0.30f * l * bright, 0.4f, 0.15f, 0);
-            wash(ride_wash_, delay, 391.0f, 7000.0f, 4200.0f, 0.13f * l, 5.0f, 0.55f);
+            wash(ride_wash_, delay, 391.0f, 7000.0f, 4200.0f, 0.13f * l, 5.0f, k.cymbal_noise * 0.85f);
             mode(delay, 3150.0f * tune, 1.0f, 0.01f, 0.05f * l, 1.2f);
             noise(delay, Biquad::Bandpass, 3600.0f, 1.5f, 0.12f * l, 0.01f);
             break;
-        case Drums::Crash:  // 16", thin and washy
-            wash(crash_wash_, delay, 347.0f, 6500.0f, 3200.0f, 0.42f * l * bright, 3.5f, 0.6f);
+        case Drums::Crash:
+            wash(crash_wash_, delay, 347.0f, 6500.0f, 3200.0f, 0.42f * l * bright, 3.5f, k.cymbal_noise);
             noise(delay, Biquad::Highpass, 4500.0f, 0.7f, 0.22f * l * bright, 2.8f);
             noise(delay, Biquad::Bandpass, 2000.0f, 0.8f, 0.12f * l, 0.05f);
             break;
@@ -527,15 +556,36 @@ void GarageKit::hit(Piece piece, float velocity, int delay) {
     }
 }
 
-void GarageKit::render(float* out, int n) {
-    for (auto& v : modes_)
-        if (v.active) for (int i = 0; i < n && v.active; ++i) out[i] += v.next();
-    for (auto& v : noises_)
-        if (v.active) for (int i = 0; i < n && v.active; ++i) out[i] += v.next(rng_);
-    for (auto& v : metals_)
-        if (v.active) for (int i = 0; i < n && v.active; ++i) out[i] += v.next(rng_);
-    for (auto* ring : {&ride_wash_, &crash_wash_})
-        if (ring->active) for (int i = 0; i < n && ring->active; ++i) out[i] += ring->next(rng_);
+void AcousticKit::render(float* out, int n) {
+    float* x = scratch_.data();
+    for (int start = 0; start < n; start += int(scratch_.size())) {
+        const int len = std::min(n - start, int(scratch_.size()));
+        std::fill(x, x + len, 0.0f);
+        for (auto& v : modes_)
+            if (v.active) for (int i = 0; i < len && v.active; ++i) x[i] += v.next();
+        for (auto& v : noises_)
+            if (v.active) for (int i = 0; i < len && v.active; ++i) x[i] += v.next(rng_);
+        for (auto& v : metals_)
+            if (v.active) for (int i = 0; i < len && v.active; ++i) x[i] += v.next(rng_);
+        for (auto* ring : {&ride_wash_, &crash_wash_})
+            if (ring->active) for (int i = 0; i < len && ring->active; ++i) x[i] += ring->next(rng_);
+        const size_t size = echoes_.size();
+        for (int i = 0; i < len; ++i) {
+            float y = x[i];
+            if (v_.room > 0.0f) {  // the walls answering
+                echoes_[echo_at_] = y;
+                float back = 0.0f;
+                for (int e = 0; e < 5; ++e) {
+                    const size_t ago = std::min(size - 1, size_t(kEchoMs[e] * 0.001f * sr_));
+                    back += kEchoGain[e] * echoes_[(echo_at_ + size - ago) % size];
+                }
+                echo_at_ = (echo_at_ + 1) % size;
+                y += v_.room * back;
+            }
+            if (v_.drive > 1.0f) y = std::tanh(y * v_.drive) / v_.drive;  // as it was: quiet hits untouched, loud ones crunch
+            out[start + i] += y;
+        }
+    }
 }
 
 void Bass::noteOn(int note, float velocity) {

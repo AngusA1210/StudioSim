@@ -19,9 +19,12 @@ const KINDS := {
 		"top": 1.96, "footprint": Vector2(0.9, 0.5), "height": 1.6, "gain": 0.42, "send": 1.0, "octave": 1},
 	"keys": {"name": "Keys", "about": "An electric piano. A sustain pedal works on it.", "color": Color(1.0, 0.48, 0.82),
 		"top": 0.98, "footprint": Vector2(1.2, 0.55), "height": 0.95, "gain": 0.20, "send": 0.9},
-	# An acoustic kit, with the drum machine's pieces and keys (a ride on the clap's). As loud played as the drums.
-	"garage_drums": {"name": "Garage Kit", "about": "An acoustic kit in a garage: ringing toms, a loose snare, trashy hats, a ride.",
-		"color": Color(0.80, 0.52, 0.38), "top": 1.45, "footprint": Vector2(1.6, 1.3), "height": 0.9, "gain": 0.38, "send": 0.6,
+	# The acoustic kits, with the drum machine's pieces and keys (a ride on the clap's). As loud played as the drums.
+	"garage_drums": {"name": "Garage Kit", "about": "A rock kit in a garage, played loud: ringing, loose and raw, the walls slapping back.",
+		"color": Color(0.88, 0.16, 0.14), "top": 1.45, "footprint": Vector2(1.6, 1.3), "height": 0.9, "gain": 0.38, "send": 0.6,
+		"drum_kit": true},
+	"studio_drums": {"name": "Studio Kit", "about": "The same kit in a studio, tuned and damped: punchy, tight and clean.",
+		"color": Color(0.6, 0.3, 0.9), "top": 1.45, "footprint": Vector2(1.6, 1.3), "height": 0.9, "gain": 0.45, "send": 0.6,
 		"drum_kit": true},
 	# One of the instrument plug-ins on the computer, chosen when it is made, and named after it.
 	"plugin_synth": {"name": "Plug-in Instrument", "about": "One of your instrument plug-ins: a synthesizer, a sampler, a piano.",
@@ -120,7 +123,7 @@ const DELAY_NOTES := ["1/16", "1/8 triplet", "1/8", "dotted 1/8", "1/4 triplet",
 const GROUPS := [
 	{"title": "MIDI instruments",
 		"about": "Played from the computer keyboard or a MIDI controller, and each can loop a pattern on the sequencer. A new one starts with an empty pattern.",
-		"kinds": ["drums", "garage_drums", "bass", "pad", "bells", "keys", "plugin_synth"], "coming": ""},
+		"kinds": ["drums", "garage_drums", "studio_drums", "bass", "pad", "bells", "keys", "plugin_synth"], "coming": ""},
 	{"title": "Live input",
 		"about": "Bring a microphone, or a guitar or bass plugged into your audio interface, into the room. Switch its input on (I) to hear it.",
 		"kinds": ["live", "guitar_combo", "guitar_stack", "bass_combo", "bass_stack"], "coming": ""},

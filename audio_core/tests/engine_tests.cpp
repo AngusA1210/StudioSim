@@ -1987,10 +1987,25 @@ int main(int argc, char** argv) {
             return x;
         };
         GarageKit garage_kit = fresh();
+        StudioKit studio_groove_kit(kRate);
         Drums machine(kRate);
         const double garage_level = rms(groove(garage_kit, true), 0.0, 2.0), machine_level = rms(groove(machine, false), 0.0, 2.0);
-        check(std::fabs(db(garage_level / machine_level)) < 3.0, "played as a groove it is about as loud as the drum machine",
-              fmt("%+.1f dB", db(garage_level / machine_level)));
+        const double studio_level = rms(groove(studio_groove_kit, true), 0.0, 2.0);
+        // game/scripts/catalog.gd starts the drums at 0.50, the garage kit at 0.38 and the studio kit at 0.45.
+        const double garage_apart = db(garage_level * 0.38 / (machine_level * 0.50)), studio_apart = db(studio_level * 0.45 / (machine_level * 0.50));
+        check(std::fabs(garage_apart) < 2.0 && std::fabs(studio_apart) < 2.0, "played as a groove, each kit starts about as loud as the drum machine",
+              fmt("garage %+.1f dB, ", garage_apart) + fmt("studio %+.1f dB", studio_apart));
+
+        // The studio kit: the same kit, damped and clean, so its toms and kick stop sooner and nothing of a room rings on.
+        StudioKit s1(kRate), s2(kRate);
+        GarageKit g1 = fresh(), g2 = fresh();
+        const auto studio_floor = strike(s1, {{0.0, Drums::TomLow}}, 0.8f, 1.2), garage_floor = strike(g1, {{0.0, Drums::TomLow}}, 0.8f, 1.2);
+        const auto studio_snare = strike(s2, {{0.0, Drums::Snare}}, 0.9f, 0.6), garage_snare = strike(g2, {{0.0, Drums::Snare}}, 0.9f, 0.6);
+        const double floor_ring = db(rms(studio_floor, 0.5, 0.7) / rms(studio_floor, 0.0, 0.1)) - db(rms(garage_floor, 0.5, 0.7) / rms(garage_floor, 0.0, 0.1));
+        const double snare_tail = db(rms(studio_snare, 0.2, 0.35) / rms(studio_snare, 0.0, 0.05)) - db(rms(garage_snare, 0.2, 0.35) / rms(garage_snare, 0.0, 0.05));
+        check(floor_ring < -6.0 && snare_tail < -6.0 && std::fabs(pitch(studio_floor, 0.15, 0.45) - 96.0) < 10.0,
+              "the studio kit is the same kit damped: its floor tom and snare die away much sooner than the garage kit's",
+              fmt("floor tom %+.0f dB, ", floor_ring) + fmt("snare %+.0f dB at their tails", snare_tail));
     }
 
     {

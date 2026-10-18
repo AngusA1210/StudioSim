@@ -13,11 +13,11 @@
 
 namespace sr {
 
-// GarageDrums is an acoustic kit (GarageKit); PluginSynth plays an instrument plug-in (plugin_synth.h).
+// GarageDrums and StudioDrums are acoustic kits (AcousticKit); PluginSynth plays an instrument plug-in (plugin_synth.h).
 enum class InstrumentKind : uint8_t {
-    Drums, Bass, Pad, Bells, Keys, GarageDrums, PluginSynth, Live, GuitarCombo, GuitarStack, BassCombo, BassStack
+    Drums, Bass, Pad, Bells, Keys, GarageDrums, StudioDrums, PluginSynth, Live, GuitarCombo, GuitarStack, BassCombo, BassStack
 };
-constexpr int kInstrumentKinds = 12;
+constexpr int kInstrumentKinds = 13;
 
 // The kinds that play an audio input (the Speaker and the amps) rather than notes.
 inline bool isLiveInput(InstrumentKind kind) { return kind >= InstrumentKind::Live; }
@@ -181,19 +181,30 @@ private:
     Rng rng_;
 };
 
-// An acoustic drum kit as it sounds in a garage: a kick with its front head ported but barely damped, a snare with loose
-// wires that buzz along with the toms and the kick, a rack tom and a floor tom left to ring, hats a little trashy, and
-// a washy crash and ride. Each drum is its head's modes, settling in pitch after the hit, with the stick or beater on
-// top; harder hits are brighter, and no two hits are quite alike. The same eight pieces and keys as the drum machine,
-// except that the clap's key (D#, as General MIDI's ride at 51) plays the ride.
-class GarageKit : public Instrument {
+// How an acoustic kit is tuned, damped and heard: the garage kit and the studio kit are the same kit voiced two ways.
+struct KitVoicing {
+    float kick_hz, kick_sharp, kick_decay, kick_boom, kick_beater;  // boom: the ring an undamped kick keeps; beater: its click
+    float snare_hz, snare_decay, snare_ring, snare_ring_decay, snare_wires, snare_wire_decay;
+    float rack_hz, floor_hz, rack_decay, floor_decay, tom_sharp;  // tom_sharp: how far a hard hit starts above the note
+    float hat_noise, hat_band, cymbal_noise;                      // how much of a cymbal is noise rather than metal
+    float buzz;                       // how much the snare's wires buzz along when the kick and toms are hit
+    float tune_jitter, level_jitter;  // how far apart two hits can land
+    float drive;                      // into a soft clip, as a kit recorded hot (1: clean)
+    float room;                       // a small hard room's first reflections, heard with the kit (0: none)
+};
+
+// An acoustic drum kit. Each drum is its head's modes, settling in pitch after the hit, with the stick or beater on
+// top; the snare's wires buzz along with the kick and toms; the hats choke when closed; the crash's and ride's washes
+// build when hit again; harder hits are brighter, and no two hits are quite alike. The same eight pieces and keys as
+// the drum machine, except that the clap's key (D#, as General MIDI's ride at 51) plays a ride.
+class AcousticKit : public Instrument {
 public:
     using Piece = Drums::Piece;
     static constexpr Piece Ride = Drums::Clap;  // the ride stands where the drum machine has its clap
     static int noteFor(Piece piece);
     static const char* pieceName(Piece piece);
 
-    using Instrument::Instrument;
+    AcousticKit(float sample_rate, const KitVoicing& voicing);
     void hit(Piece piece, float velocity, int delay);
     void noteOn(int note, float velocity) override { hit(Drums::pieceFor(note), velocity, 0); }
     void play(int note, float /*dur_sec*/, float velocity, int delay) override { hit(Drums::pieceFor(note), velocity, delay); }
@@ -206,11 +217,28 @@ private:
     void metal(int delay, float base, float band, float high, float level, float decay, float noise_share, int group);
     // A cymbal's wash: one ring each for the ride and the crash, which a new hit adds to rather than piling up voices.
     void wash(voice::MetalHit& ring, int delay, float base, float band, float high, float level, float decay, float noise_share);
+    KitVoicing v_;
     std::array<voice::ModeHit, 48> modes_;
     std::array<voice::NoiseHit, 24> noises_;
     std::array<voice::MetalHit, 12> metals_;
     voice::MetalHit ride_wash_, crash_wash_;
     Rng rng_{0x5DEECE66u};
+    std::vector<float> scratch_, echoes_;  // the kit before the room and the drive; the room's memory
+    size_t echo_at_ = 0;
+};
+
+// A rock kit in a garage, played loud: a kick barely damped, a ringing snare with loose wires, a rack tom and a floor
+// tom left to ring, trashy hats, washy cymbals, a little crunch from being pushed, and the concrete walls slapping back.
+class GarageKit : public AcousticKit {
+public:
+    explicit GarageKit(float sample_rate);
+};
+
+// The same kit in a studio, tuned and damped: a punchy kick with a clear beater, a tight snare, toms that sing and stop,
+// clean hats and smooth cymbals, and nothing of the room but the one it stands in.
+class StudioKit : public AcousticKit {
+public:
+    explicit StudioKit(float sample_rate);
 };
 
 class Bass : public Instrument {

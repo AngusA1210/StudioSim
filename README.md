@@ -68,28 +68,34 @@ you get up or close it.
 
 There are two families of instrument, and the instrument menu (N) adds either to the room, up to 32 in all:
 
-- **MIDI instruments** (a drum machine, a garage kit, bass, pad, bells, keys, and plug-in instruments) are played from
+- **MIDI instruments** (a drum machine, a garage kit, a studio kit, bass, pad, bells, keys, and plug-in instruments) are played from
   the computer keyboard or a MIDI controller, and each can loop a pattern on the sequencer.
 - **Live inputs** bring a microphone, or an instrument plugged into the audio interface, into the room: the Speaker,
   which plays an input just as it comes in, and four guitar and bass amplifiers, each with a board of pedals in
   front of it (see below).
 
-Each is drawn as its real counterpart, standing on the floor: a drum kit, a garage kit on its rug, a bass
+Each is drawn as its real counterpart, standing on the floor: the drum kits (set up as a drummer plays them, the
+stool on your side with the kick and hi-hat pedals at your feet; the garage kit red on an old rug, the studio kit
+purple), a bass
 synthesizer, a modular synthesizer for the pad, tubular bells, an electric piano, a controller keyboard with a laptop
 for a plug-in instrument, a PA speaker on a tripod, and the amps with their pedals in front of them. The parts in the
 instrument's colour light up as it plays.
 
-**Drums** is a drum machine. The **Garage Kit** is an acoustic kit as it sounds in a garage: a kick barely damped, a
-loose snare whose wires buzz along with the kick and toms, a rack tom and a floor tom left to ring (about 138 Hz and
-86 Hz), trashy hats (closing them chokes an open one), and a washy crash and ride that build when hit again. Each drum
-is its head's modes settling in pitch after the hit, harder hits are brighter, and no two hits are quite alike. Both
-kits are on the same keys, following the General MIDI drum map, except that the garage kit has a ride (D#, as at 51)
-where the drum machine has a clap.
+**Drums** is a drum machine. The **Garage Kit** and the **Studio Kit** are one acoustic kit voiced two ways. Each
+drum is its head's modes settling in pitch after the hit, the snare's wires buzz along with the kick and toms,
+closing the hats chokes an open one, the crash's and ride's wash builds when hit again, harder hits are brighter, and
+no two hits are quite alike. The garage kit is raw: barely damped, a ringing snare with loose wires, toms left to
+ring (about 136 Hz and 85 Hz), trashy hats, a little crunch from being played loud, and the concrete walls slapping
+back. The studio kit is tuned and damped: a punchy kick with a clear beater, a tight snare, toms (about 146 Hz and
+96 Hz) that sing and stop, clean hats and smooth cymbals. All three kits are on the same keys, following the General
+MIDI drum map, except that the acoustic kits have a ride (D#, as at 51) where the drum machine has a clap.
 
 A **Plug-in Instrument** plays one of the instrument plug-ins on your Mac (Audio Unit synthesizers, samplers,
 pianos), chosen from the plug-in browser when you pick it, and takes that plug-in's name. MIDI controllers, the
 computer keyboard and its pattern play it like any instrument, sending it the sustain pedal, the mod wheel and the
-other controllers, and pitch bend as well. **P**, facing it, opens the plug-in's own window; in the mix window its
+other controllers, and pitch bend as well. **P**, facing it, opens the plug-in's own window, which leaves the keyboard
+with the room (unless you click a box in it to type), so you can sit at the instrument and play it with the window
+open; in the mix window its
 strip shows the plug-in where others show their input: click it for the window, right-click it for another plug-in or
 its presets. It is saved with the room, its plug-in's settings and all.
 
@@ -223,7 +229,7 @@ one channel, from where the instrument stands.
 A **room** is what a session is in a DAW: everything about it in one file. That covers its size and walls, and every
 instrument where it stands, with its fader, mute and solo, its pattern (the MIDI notes, the pattern's length and
 whether its loop is on), its inserts, an amp's head, cabinet, knobs and pedals, a Speaker's volume and input, and
-every plug-in's settings. It also holds the tempo and swing and where you were standing. Each room has a folder of
+every plug-in's settings. It also holds the master fader, the tempo and swing, and where you were standing. Each room has a folder of
 its own, named after it, as a Pro Tools session does: the room's `.sroom` file (JSON) and a **Room Backups** folder.
 Recorded audio will go there too once recording comes. Rooms go in the **Rooms** folder of the SoundRoom folder the
 game runs from (here, `SoundRoom/Rooms`, beside `game/`) unless you choose another; git leaves it alone. A build made to
@@ -231,7 +237,8 @@ hand out keeps them in `~/Music/SoundRoom` instead.
 
 - **New room…** (title screen): name the room, choose where it goes, pick a **template**, set its width, length and
   height (the template's to begin with), and tick what to bring over from the template: its walls, its instruments
-  where they stand (and, for those, their patterns, their faders with mute and solo, the amp and Speaker settings,
+  where they stand (and, for those, their patterns, their faders with mute and solo and the master fader, which is
+  otherwise at 0 dB, the amp and Speaker settings,
   and the plug-ins with their settings), and its tempo and swing. Everything starts ticked. Create room saves the
   room and takes you in.
 - **Open room…** lists the rooms in the rooms folder and those opened lately, the latest first. **Browse…** finds a

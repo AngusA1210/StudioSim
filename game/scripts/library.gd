@@ -303,7 +303,7 @@ func room_data() -> Dictionary:
 		walls.append([wall.a.x, wall.a.y, wall.b.x, wall.b.y, wall.height])
 	var size: Vector3 = app.room.size
 	var stood: Vector3 = app.player.global_position
-	return {"soundroom": "room", "version": VERSION, "tempo": app.tempo, "swing": app.swing,
+	return {"soundroom": "room", "version": VERSION, "tempo": app.tempo, "swing": app.swing, "master_db": app.master_volume_db,
 		"room": {"size": [size.x, size.y, size.z], "walls": walls},
 		"player": {"position": [stood.x, stood.z], "yaw": app.player.yaw}, "instruments": instruments}
 
@@ -378,6 +378,7 @@ func apply_room_data(data: Dictionary, carry := {}, size = null) -> String:
 	var with_tempo: bool = keep.call("tempo")
 	app.set_tempo(float(data.get("tempo", app.DEFAULT_TEMPO)) if with_tempo else app.DEFAULT_TEMPO)
 	app.set_swing(float(data.get("swing", app.DEFAULT_SWING)) if with_tempo else app.DEFAULT_SWING)
+	app.set_master_volume_db(float(data.get("master_db", 0.0)) if keep.call("mix") else 0.0)  # unity unless it says otherwise
 	var problems := []
 	var include := {"instrument_settings": keep.call("instrument_settings"), "plugins": keep.call("plugins")}
 	for entry in data.get("instruments", []) if keep.call("instruments") else []:

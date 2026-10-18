@@ -51,7 +51,9 @@ static func build(kind: String, color: Color, cabinet := "") -> Dictionary:
 		"drums":
 			_drum_kit(node, accent)
 		"garage_drums":
-			_drum_kit(node, accent, true)
+			_drum_kit(node, accent, "garage")
+		"studio_drums":
+			_drum_kit(node, accent, "studio")
 		"plugin_synth":
 			_controller(node, accent)
 		"bass":
@@ -90,47 +92,59 @@ static func stomp_box(color: Color, knobs: int) -> Dictionary:
 
 # ── The instruments ─────────────────────────────────────────────────────────────────────────────────────────
 
-## `garage`: the garage kit, one tom up and one down, on an old rug.
-static func _drum_kit(node: Node3D, accent: Material, garage := false) -> void:
+## A drum kit, set up as a right-handed drummer plays it, the stool on the side you stand (the instrument's front, +z):
+## the kick in the middle with its pedal under your right foot, the hi-hat on your left with its pedal under your left
+## foot, the snare between your knees, the toms over the kick and the floor tom on your right, the crash on your left
+## and the ride on your right. `style`: "machine" (the drum machine's kit: two toms up), "garage" (one up, one down, on
+## an old rug) or "studio" (one up, one down, on a dark rug).
+static func _drum_kit(node: Node3D, accent: Material, style := "machine") -> void:
 	var chrome := _finish("chrome")
 	var head := _finish("head")
 	var black := _finish("black")
 	var bronze := _finish("bronze")
-	if garage:
-		_box(node, Vector3(2.0, 0.008, 1.6), _plain(Color(0.36, 0.12, 0.1)), Vector3(0, 0.004, -0.08))
-	# Bass drum, on its side, with a hoop at each end.
-	_cylinder(node, 0.27, 0.42, accent, Vector3(0, 0.29, 0.02), Vector3(PI / 2, 0, 0))
-	_cylinder(node, 0.262, 0.006, head, Vector3(0, 0.29, 0.234), Vector3(PI / 2, 0, 0))
-	for z in [-0.19, 0.23]:
+	if style != "machine":
+		var rug := Color(0.36, 0.12, 0.1) if style == "garage" else Color(0.1, 0.1, 0.12)
+		_box(node, Vector3(2.0, 0.008, 1.8), _plain(rug), Vector3(0, 0.004, 0.1))
+	# The kick, on its side: its batter head towards you, its front head (and its spurs) away.
+	_cylinder(node, 0.27, 0.42, accent, Vector3(0, 0.29, -0.15), Vector3(PI / 2, 0, 0))
+	_cylinder(node, 0.262, 0.006, head, Vector3(0, 0.29, -0.364), Vector3(PI / 2, 0, 0))
+	_cylinder(node, 0.262, 0.006, head, Vector3(0, 0.29, 0.064), Vector3(PI / 2, 0, 0))
+	for z in [-0.36, 0.06]:
 		_ring(node, 0.262, 0.285, black, Vector3(0, 0.29, z), Vector3(PI / 2, 0, 0))
-	for side in [-1.0, 1.0]:  # spurs
-		_rod(node, Vector3(side * 0.24, 0.2, 0.15), Vector3(side * 0.36, 0.0, 0.28), 0.008, chrome)
-	# Two toms on the bass drum, tilted towards the player.
-	_rod(node, Vector3(0, 0.55, -0.02), Vector3(0, 0.74, -0.04), 0.012, chrome)
-	for x in ([-0.06] if garage else [-0.17, 0.17]):
-		_drum(node, 0.15 if garage else 0.14, 0.18 if garage else 0.17, Vector3(x, 0.8, -0.04), Vector3(0.3, 0, -x * 0.6), accent, head)
-	# Snare on its stand, to the left.
-	_drum(node, 0.18, 0.13, Vector3(-0.45, 0.62, 0.2), Vector3(0.12, 0, 0), accent, head)
-	_tripod(node, Vector3(-0.45, 0.55, 0.2), 0.22, chrome)
-	# Floor tom on three legs, to the right.
-	_drum(node, 0.2, 0.34, Vector3(0.5, 0.45, 0.18), Vector3.ZERO, accent, head)
+	for side in [-1.0, 1.0]:
+		_rod(node, Vector3(side * 0.24, 0.2, -0.3), Vector3(side * 0.36, 0.0, -0.44), 0.008, chrome)
+	# Its pedal: the footboard under your right foot, the beater up against the head.
+	_box(node, Vector3(0.09, 0.02, 0.26), black, Vector3(0.04, 0.035, 0.24), Vector3(0.12, 0, 0))
+	_rod(node, Vector3(0.04, 0.05, 0.12), Vector3(0.04, 0.3, 0.1), 0.006, chrome)
+	_sphere(node, 0.025, _finish("head"), Vector3(0.04, 0.3, 0.095))
+	# The toms over the kick, tilted towards you.
+	_rod(node, Vector3(0, 0.55, -0.12), Vector3(0, 0.74, -0.1), 0.012, chrome)
+	for x in ([-0.17, 0.17] if style == "machine" else [-0.04]):
+		_drum(node, 0.14 if style == "machine" else 0.15, 0.17 if style == "machine" else 0.18, Vector3(x, 0.8, -0.08),
+			Vector3(0.3, 0, -x * 0.6), accent, head)
+	# The snare between your knees, a little to the left.
+	_drum(node, 0.18, 0.13, Vector3(-0.28, 0.62, 0.22), Vector3(0.12, 0, 0), accent, head)
+	_tripod(node, Vector3(-0.28, 0.55, 0.22), 0.22, chrome)
+	# The floor tom on three legs, to your right.
+	_drum(node, 0.2, 0.34, Vector3(0.5, 0.45, 0.16), Vector3.ZERO, accent, head)
 	for i in 3:
 		var a := TAU * i / 3.0 + 0.4
-		_rod(node, Vector3(0.5 + cos(a) * 0.2, 0.5, 0.18 + sin(a) * 0.2), Vector3(0.5 + cos(a) * 0.26, 0.0, 0.18 + sin(a) * 0.26), 0.008, chrome)
-	# Hi-hat: a pair of cymbals on a stand with a pedal.
-	_tripod(node, Vector3(-0.75, 0.9, 0.05), 0.24, chrome)
+		_rod(node, Vector3(0.5 + cos(a) * 0.2, 0.5, 0.16 + sin(a) * 0.2), Vector3(0.5 + cos(a) * 0.26, 0.0, 0.16 + sin(a) * 0.26), 0.008, chrome)
+	# The hi-hat on your left, its pedal under your left foot.
+	_tripod(node, Vector3(-0.6, 0.9, 0.1), 0.24, chrome)
 	for y in [0.9, 0.925]:
-		_cylinder(node, 0.18, 0.006, bronze, Vector3(-0.75, y, 0.05))
-	_box(node, Vector3(0.09, 0.02, 0.25), black, Vector3(-0.75, 0.01, 0.22))
-	# Crash and ride on boom stands behind.
-	_tripod(node, Vector3(0.55, 1.18, -0.38), 0.26, chrome)
-	_rod(node, Vector3(0.55, 1.18, -0.38), Vector3(0.45, 1.32, -0.25), 0.01, chrome)
-	_cylinder(node, 0.23, 0.006, bronze, Vector3(0.45, 1.33, -0.24), Vector3(0.35, 0, 0.2))
-	_tripod(node, Vector3(0.85, 1.0, -0.12), 0.24, chrome)
-	_cylinder(node, 0.26, 0.007, bronze, Vector3(0.82, 1.02, -0.06), Vector3(0.22, 0, -0.25))
-	# The drummer's stool, behind.
-	_cylinder(node, 0.17, 0.08, black, Vector3(0, 0.52, -0.62))
-	_tripod(node, Vector3(0, 0.48, -0.62), 0.22, chrome)
+		_cylinder(node, 0.18, 0.006, bronze, Vector3(-0.6, y, 0.1))
+	_box(node, Vector3(0.09, 0.02, 0.25), black, Vector3(-0.56, 0.03, 0.32), Vector3(0.12, 0, 0))
+	# The crash behind on your left and the ride on your right, on boom stands, tilted towards you.
+	_tripod(node, Vector3(-0.62, 1.18, -0.42), 0.26, chrome)
+	_rod(node, Vector3(-0.62, 1.18, -0.42), Vector3(-0.48, 1.32, -0.3), 0.01, chrome)
+	_cylinder(node, 0.23, 0.006, bronze, Vector3(-0.47, 1.33, -0.29), Vector3(0.35, 0, 0.2))
+	_tripod(node, Vector3(0.82, 1.0, -0.22), 0.24, chrome)
+	_rod(node, Vector3(0.82, 1.0, -0.22), Vector3(0.72, 1.08, -0.12), 0.01, chrome)
+	_cylinder(node, 0.26, 0.007, bronze, Vector3(0.71, 1.09, -0.1), Vector3(0.22, 0, -0.25))
+	# The stool, on your side.
+	_cylinder(node, 0.17, 0.08, black, Vector3(0, 0.52, 0.66))
+	_tripod(node, Vector3(0, 0.48, 0.66), 0.22, chrome)
 
 
 ## A monophonic synthesizer: a short keyboard with a tilted panel of knobs, wooden ends, on an X stand.

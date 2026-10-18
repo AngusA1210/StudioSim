@@ -18,7 +18,7 @@ const CARRY := [
 	["walls", "Walls", "The walls standing in the room", false],
 	["instruments", "Instruments, where they stand", "Every instrument, standing and facing as it does in the template", false],
 	["patterns", "Their patterns", "Each MIDI instrument's pattern: its notes, its length, and whether its loop is on", true],
-	["mix", "Fader levels, mute and solo", "Each instrument's fader, and whether it is muted or soloed", true],
+	["mix", "Fader levels, mute and solo", "Each instrument's fader, whether it is muted or soloed, and the master fader (at 0 dB otherwise)", true],
 	["instrument_settings", "Amp and Speaker settings", "Amps' heads, cabinets, knobs and pedals, and Speakers' volume", true],
 	["plugins", "Plug-ins and their settings", "The plug-ins on the inserts and the Plug-in pedals, each with its settings", true],
 	["tempo", "Tempo and swing", "The tempo and swing, rather than the default ones", false],

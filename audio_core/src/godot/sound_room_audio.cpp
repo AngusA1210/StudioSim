@@ -127,6 +127,7 @@ int SoundRoomAudio::add_source(const String& kind, const Vector3& position, floa
     else if (kind == "bells") k = sr::InstrumentKind::Bells;
     else if (kind == "keys") k = sr::InstrumentKind::Keys;
     else if (kind == "garage_drums") k = sr::InstrumentKind::GarageDrums;
+    else if (kind == "studio_drums") k = sr::InstrumentKind::StudioDrums;
     else if (kind == "plugin_synth") k = sr::InstrumentKind::PluginSynth;
     else if (kind == "live") k = sr::InstrumentKind::Live;
     else if (kind == "guitar_combo") k = sr::InstrumentKind::GuitarCombo;
@@ -501,12 +502,12 @@ Dictionary SoundRoomAudio::get_transport() const {
 
 Array SoundRoomAudio::get_drum_pieces(const String& kind) const {
     Array out;
-    const bool garage = kind == "garage_drums";
+    const bool garage = kind == "garage_drums" || kind == "studio_drums";  // the acoustic kits, with their ride
     for (int piece = 0; piece < sr::Drums::kPieces; ++piece) {
         const auto p = sr::Drums::Piece(piece);
         Dictionary entry;
-        entry["name"] = String(garage ? sr::GarageKit::pieceName(p) : sr::Drums::pieceName(p));
-        entry["note"] = garage ? sr::GarageKit::noteFor(p) : sr::Drums::noteFor(p);
+        entry["name"] = String(garage ? sr::AcousticKit::pieceName(p) : sr::Drums::pieceName(p));
+        entry["note"] = garage ? sr::AcousticKit::noteFor(p) : sr::Drums::noteFor(p);
         out.push_back(entry);
     }
     return out;
@@ -514,7 +515,8 @@ Array SoundRoomAudio::get_drum_pieces(const String& kind) const {
 
 String SoundRoomAudio::get_drum_piece_name(int note, const String& kind) const {
     const auto piece = sr::Drums::pieceFor(note);
-    return String(kind == "garage_drums" ? sr::GarageKit::pieceName(piece) : sr::Drums::pieceName(piece));
+    const bool acoustic = kind == "garage_drums" || kind == "studio_drums";
+    return String(acoustic ? sr::AcousticKit::pieceName(piece) : sr::Drums::pieceName(piece));
 }
 
 // ── MIDI ───────────────────────────────────────────────────────────────────────────────────────────────────

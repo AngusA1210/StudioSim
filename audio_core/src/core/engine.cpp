@@ -239,6 +239,7 @@ std::unique_ptr<Instrument> AudioEngine::makeInstrument(InstrumentKind kind) con
         case InstrumentKind::Bells: return std::make_unique<Bells>(sr);
         case InstrumentKind::Keys:  return std::make_unique<Keys>(sr);
         case InstrumentKind::GarageDrums: return std::make_unique<GarageKit>(sr);
+        case InstrumentKind::StudioDrums: return std::make_unique<StudioKit>(sr);
         case InstrumentKind::PluginSynth: return std::make_unique<PluginSynth>(sr);
         case InstrumentKind::Live:  return std::make_unique<LiveInput>(sr, &input_bus_);
         case InstrumentKind::GuitarCombo:

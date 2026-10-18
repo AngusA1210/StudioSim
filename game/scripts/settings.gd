@@ -13,7 +13,6 @@ var speaker_input := -1   # hardware input the Speaker plays; -1 = all of them
 var midi_disabled: Array = []  # names of MIDI devices to ignore
 
 # Sound
-var master_volume_db := 0.0
 var binaural := true
 var reverb := true
 var click := false        # the metronome click (the tempo itself belongs to the room, not to these settings)
@@ -61,7 +60,6 @@ func load_from_disk() -> void:
 	input_device = file.get_value("io", "input_device", input_device)
 	speaker_input = file.get_value("io", "speaker_input", file.get_value("io", "amp_input", speaker_input))  # its old name
 	midi_disabled = file.get_value("midi", "disabled", midi_disabled)
-	master_volume_db = file.get_value("sound", "master_volume_db", master_volume_db)
 	binaural = file.get_value("sound", "binaural", binaural)
 	reverb = file.get_value("sound", "reverb", reverb)
 	click = file.get_value("sound", "click", click)
@@ -98,7 +96,6 @@ func save_to_disk() -> void:
 	file.set_value("io", "input_device", input_device)
 	file.set_value("io", "speaker_input", speaker_input)
 	file.set_value("midi", "disabled", midi_disabled)
-	file.set_value("sound", "master_volume_db", master_volume_db)
 	file.set_value("sound", "binaural", binaural)
 	file.set_value("sound", "reverb", reverb)
 	file.set_value("sound", "click", click)
