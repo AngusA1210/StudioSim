@@ -16,6 +16,26 @@
 #include <cstring>
 #include <thread>
 
+// A plug-in's window that never takes the keyboard from the game, so that the computer keyboard keeps playing while a
+// knob in it is dragged, unless what is clicked in it is a box to type in. Many plug-ins try to take the keyboard when
+// clicked (they make themselves first responder and their window key); here they can't.
+@interface SRPluginPanel : NSPanel
+@property(nonatomic) BOOL typing;  // a text box in it was clicked last: it may have the keyboard, for that
+@end
+
+@implementation SRPluginPanel
+- (BOOL)canBecomeKeyWindow {
+    return self.typing;
+}
+- (void)sendEvent:(NSEvent*)event {
+    if (event.type == NSEventTypeLeftMouseDown || event.type == NSEventTypeRightMouseDown) {
+        NSView* hit = [self.contentView hitTest:[self.contentView.superview convertPoint:event.locationInWindow fromView:nil]];
+        self.typing = [hit isKindOfClass:[NSTextView class]] || [hit isKindOfClass:[NSTextField class]];
+    }
+    [super sendEvent:event];
+}
+@end
+
 namespace sr {
 namespace {
 
@@ -247,7 +267,7 @@ public:
             const NSSize size = NSMakeSize(std::max(view.frame.size.width, 240.0), std::max(view.frame.size.height, 80.0));
             // A panel that takes the keyboard only when something in it needs typing into (a text box), so that the
             // game keeps the keys with the window open: notes still play, Tab still closes the mix window.
-            NSPanel* panel = [[NSPanel alloc] initWithContentRect:NSMakeRect(0, 0, size.width, size.height)
+            SRPluginPanel* panel = [[SRPluginPanel alloc] initWithContentRect:NSMakeRect(0, 0, size.width, size.height)
                                                         styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable
                                                           backing:NSBackingStoreBuffered
                                                             defer:NO];
@@ -271,9 +291,8 @@ public:
                                                                                    [window setContentSize:changed.frame.size];
                                                                              }];
             [window_ center];
-            // Many plug-ins take the keyboard when their window is clicked (they make themselves first responder), which
-            // would leave the game deaf to the keys (and a note held meanwhile stuck). Once the click is done, the
-            // keyboard goes back to the game, unless what was clicked is something to type in.
+            // Should one take the keyboard all the same (a text box clicked, or a plug-in that insists), it goes back to
+            // the game once the click is done, unless what was clicked is something to type in.
             __weak NSPanel* watched = panel;
             key_monitor_ = [NSEvent addLocalMonitorForEventsMatchingMask:(NSEventMaskLeftMouseUp | NSEventMaskRightMouseUp)
                                                                  handler:^NSEvent*(NSEvent* event) {
