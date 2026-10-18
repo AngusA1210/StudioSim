@@ -17,15 +17,19 @@ struct PluginDescription {
     std::string name;   // e.g. "AUDelay"
     std::string maker;  // e.g. "Apple"
     std::string category;  // what kind of effect it is, for grouping: "Reverb", "Amps & cabinets"... (a guess; see below)
+    bool instrument = false;  // an instrument (it makes its own sound from MIDI) rather than an effect
 };
 
-// What kind of effect a plug-in is, from its name, its maker and any tags it carries (plugin_category.cpp).
+// What kind of effect a plug-in is, from its name, its maker and any tags it carries (plugin_category.cpp); and the
+// same for an instrument plug-in ("Synths", "Pianos & keys", "Drums & percussion", "Samplers"...).
 std::string guessPluginCategory(const std::string& name, const std::string& maker, const std::vector<std::string>& tags);
+std::string guessInstrumentCategory(const std::string& name, const std::string& maker, const std::vector<std::string>& tags);
 
 class PluginInstance {
 public:
     // Every effect plug-in installed, by maker and then name (game thread). Quick: nothing is loaded to find them.
     static std::vector<PluginDescription> available();
+    static std::vector<PluginDescription> availableInstruments();  // likewise the instruments: synthesizers, samplers...
     // Loads one (game thread, which on macOS must be the main thread). Null, with the reason in `error`, if it can't be.
     static std::unique_ptr<PluginInstance> load(const std::string& id, std::string* error);
 
@@ -36,6 +40,11 @@ public:
     // One channel, in place (audio thread). A plug-in that only works in stereo hears it in both ears, and what it
     // plays back is their average.
     virtual void process(float* io, int n) = 0;
+    // An instrument (audio thread): a MIDI message to act on `offset` samples into the next render, and rendering,
+    // added into `out` as one channel (the average of a stereo instrument's two).
+    virtual bool isInstrument() const = 0;
+    virtual void midi(uint8_t status, uint8_t data1, uint8_t data2, int offset) = 0;
+    virtual void render(float* out, int n) = 0;
     virtual void setTempo(double bpm) = 0;  // the room's tempo, for plug-ins that keep time (audio thread)
     // The plug-in's own window, floating over the game (game thread). `title` names it.
     virtual bool showEditor(const std::string& title) = 0;

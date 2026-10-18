@@ -5,6 +5,7 @@
 namespace sr {
 
 std::vector<PluginDescription> PluginInstance::available() { return {}; }
+std::vector<PluginDescription> PluginInstance::availableInstruments() { return {}; }
 
 std::unique_ptr<PluginInstance> PluginInstance::load(const std::string&, std::string* error) {
     if (error) *error = "plug-ins aren't supported on this platform yet";

@@ -50,6 +50,10 @@ static func build(kind: String, color: Color, cabinet := "") -> Dictionary:
 			built.pedal_spot = Vector3(0, 0, size.z / 2 + 0.3)
 		"drums":
 			_drum_kit(node, accent)
+		"garage_drums":
+			_drum_kit(node, accent, true)
+		"plugin_synth":
+			_controller(node, accent)
 		"bass":
 			_bass_synth(node, accent)
 		"pad":
@@ -86,11 +90,14 @@ static func stomp_box(color: Color, knobs: int) -> Dictionary:
 
 # ── The instruments ─────────────────────────────────────────────────────────────────────────────────────────
 
-static func _drum_kit(node: Node3D, accent: Material) -> void:
+## `garage`: the garage kit, one tom up and one down, on an old rug.
+static func _drum_kit(node: Node3D, accent: Material, garage := false) -> void:
 	var chrome := _finish("chrome")
 	var head := _finish("head")
 	var black := _finish("black")
 	var bronze := _finish("bronze")
+	if garage:
+		_box(node, Vector3(2.0, 0.008, 1.6), _plain(Color(0.36, 0.12, 0.1)), Vector3(0, 0.004, -0.08))
 	# Bass drum, on its side, with a hoop at each end.
 	_cylinder(node, 0.27, 0.42, accent, Vector3(0, 0.29, 0.02), Vector3(PI / 2, 0, 0))
 	_cylinder(node, 0.262, 0.006, head, Vector3(0, 0.29, 0.234), Vector3(PI / 2, 0, 0))
@@ -100,8 +107,8 @@ static func _drum_kit(node: Node3D, accent: Material) -> void:
 		_rod(node, Vector3(side * 0.24, 0.2, 0.15), Vector3(side * 0.36, 0.0, 0.28), 0.008, chrome)
 	# Two toms on the bass drum, tilted towards the player.
 	_rod(node, Vector3(0, 0.55, -0.02), Vector3(0, 0.74, -0.04), 0.012, chrome)
-	for x in [-0.17, 0.17]:
-		_drum(node, 0.14, 0.17, Vector3(x, 0.8, -0.04), Vector3(0.3, 0, -x * 0.6), accent, head)
+	for x in ([-0.06] if garage else [-0.17, 0.17]):
+		_drum(node, 0.15 if garage else 0.14, 0.18 if garage else 0.17, Vector3(x, 0.8, -0.04), Vector3(0.3, 0, -x * 0.6), accent, head)
 	# Snare on its stand, to the left.
 	_drum(node, 0.18, 0.13, Vector3(-0.45, 0.62, 0.2), Vector3(0.12, 0, 0), accent, head)
 	_tripod(node, Vector3(-0.45, 0.55, 0.2), 0.22, chrome)
@@ -220,6 +227,24 @@ static func _electric_piano(node: Node3D, accent: Material) -> void:
 		for z in [-0.2, 0.2]:
 			_rod(node, Vector3(x, 0.0, z), Vector3(x, 0.75, z), 0.016, chrome)
 	_box(node, Vector3(0.09, 0.03, 0.24), chrome, Vector3(0.12, 0.015, 0.45))  # the sustain pedal
+
+
+## A plug-in instrument: a controller keyboard on a stand, and above it on a shelf the laptop running the plug-in, its
+## screen lit in the instrument's colour.
+static func _controller(node: Node3D, accent: Material) -> void:
+	var black := _finish("black")
+	var chrome := _finish("chrome")
+	var panel := _finish("panel")
+	_box(node, Vector3(0.82, 0.08, 0.3), black, Vector3(0, 0.8, 0))
+	_keyboard(node, 29, Vector3(-29 * KEY_WHITE / 2, 0.85, 0.13))
+	_box(node, Vector3(0.8, 0.006, 0.006), accent, Vector3(0, 0.8, 0.152))  # a lit strip under the keys
+	for x in [-0.36, 0.36]:
+		for z in [-0.11, 0.11]:
+			_rod(node, Vector3(x, 0.0, z), Vector3(x, 0.76, z), 0.014, chrome)
+	_rod(node, Vector3(0, 0.84, -0.13), Vector3(0, 1.04, -0.13), 0.012, chrome)
+	_box(node, Vector3(0.38, 0.015, 0.26), panel, Vector3(0, 1.05, -0.12))  # the laptop
+	_box(node, Vector3(0.38, 0.25, 0.012), black, Vector3(0, 1.17, -0.255), Vector3(-0.25, 0, 0))
+	_box(node, Vector3(0.34, 0.21, 0.004), accent, Vector3(0, 1.172, -0.247), Vector3(-0.25, 0, 0))
 
 
 ## A PA speaker on a tripod: a woofer and a horn behind a lit ring each.

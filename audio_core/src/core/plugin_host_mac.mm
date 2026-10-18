@@ -54,7 +54,8 @@ PluginDescription describe(AudioComponent component) {
     std::vector<std::string> tags;  // what it says it is, if it says (few but Apple's do)
     AVAudioUnitComponent* about = [[AVAudioUnitComponentManager sharedAudioUnitComponentManager] componentsMatchingDescription:d].firstObject;
     for (NSString* tag in about.allTagNames) tags.push_back(tag.UTF8String ? tag.UTF8String : "");
-    out.category = guessPluginCategory(out.name, out.maker, tags);
+    out.instrument = d.componentType == kAudioUnitType_MusicDevice;
+    out.category = out.instrument ? guessInstrumentCategory(out.name, out.maker, tags) : guessPluginCategory(out.name, out.maker, tags);
     return out;
 }
 
@@ -110,6 +111,8 @@ class AudioUnitPlugin final : public PluginInstance {
 public:
     AudioUnitPlugin(AudioUnit unit, PluginDescription description) : unit_(unit), description_(std::move(description)) {}
 
+    bool isInstrument() const override { return description_.instrument; }
+
     ~AudioUnitPlugin() override {
         if (window_) {
             if (resize_observer_) [[NSNotificationCenter defaultCenter] removeObserver:resize_observer_];
@@ -137,10 +140,23 @@ public:
         host.hostUserData = this;
         host.beatAndTempoProc = &AudioUnitPlugin::beatAndTempo;
         AudioUnitSetProperty(unit_, kAudioUnitProperty_HostCallbacks, kAudioUnitScope_Global, 0, &host, sizeof(host));
-        // One channel in and out if it will take that, which suits a pedal; otherwise stereo, or mono into stereo.
-        const int layouts[3][2] = {{1, 1}, {2, 2}, {1, 2}};
         OSStatus status = kAudioUnitErr_FormatNotSupported;
+        // An instrument has no input to give it: stereo out if it will, or one channel.
+        for (int channels : {2, 1}) {
+            if (!description_.instrument) break;
+            const AudioStreamBasicDescription out = streamFormat(sample_rate, channels);
+            if (AudioUnitSetProperty(unit_, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Output, 0, &out, sizeof(out)) != noErr) continue;
+            status = AudioUnitInitialize(unit_);
+            if (status == noErr) {
+                in_channels_ = 0;
+                out_channels_ = channels;
+                break;
+            }
+        }
+        // An effect: one channel in and out if it will take that, which suits a pedal; otherwise stereo, or mono into stereo.
+        const int layouts[3][2] = {{1, 1}, {2, 2}, {1, 2}};
         for (const auto& layout : layouts) {
+            if (description_.instrument) break;
             const AudioStreamBasicDescription in = streamFormat(sample_rate, layout[0]), out = streamFormat(sample_rate, layout[1]);
             if (AudioUnitSetProperty(unit_, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input, 0, &in, sizeof(in)) != noErr ||
                 AudioUnitSetProperty(unit_, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Output, 0, &out, sizeof(out)) != noErr ||
@@ -170,8 +186,34 @@ public:
         return true;
     }
 
+    void midi(uint8_t status, uint8_t data1, uint8_t data2, int offset) override {
+        if (initialized_) MusicDeviceMIDIEvent(unit_, status, data1, data2, UInt32(std::max(offset, 0)));
+    }
+
+    void render(float* out, int n) override {
+        if (!initialized_ || n > max_frames_ || !description_.instrument) return;
+        frames_now_ = 0;
+        auto* list = reinterpret_cast<AudioBufferList*>(list_.data());
+        list->mNumberBuffers = UInt32(out_channels_);
+        for (int c = 0; c < out_channels_; ++c) {
+            list->mBuffers[c].mNumberChannels = 1;
+            list->mBuffers[c].mDataByteSize = UInt32(n) * sizeof(float);
+            list->mBuffers[c].mData = output_[c].data();
+        }
+        AudioUnitRenderActionFlags flags = 0;
+        AudioTimeStamp stamp{};
+        stamp.mSampleTime = sample_time_;
+        stamp.mFlags = kAudioTimeStampSampleTimeValid;
+        const OSStatus status = AudioUnitRender(unit_, &flags, &stamp, 0, UInt32(n), list);
+        sample_time_ += n;
+        if (status != noErr) return;
+        const float* a = static_cast<const float*>(list->mBuffers[0].mData);
+        const float* b = out_channels_ > 1 ? static_cast<const float*>(list->mBuffers[1].mData) : a;
+        for (int i = 0; i < n; ++i) out[i] += 0.5f * (a[i] + b[i]);
+    }
+
     void process(float* io, int n) override {
-        if (!initialized_ || n > max_frames_) return;
+        if (!initialized_ || n > max_frames_ || description_.instrument) return;
         std::copy(io, io + n, input_.begin());
         frames_now_ = n;
         auto* list = reinterpret_cast<AudioBufferList*>(list_.data());
@@ -396,6 +438,23 @@ std::vector<PluginDescription> PluginInstance::available() {
         for (AudioComponent c = AudioComponentFindNext(nullptr, &wanted); c; c = AudioComponentFindNext(c, &wanted))
             out.push_back(describe(c));
     }
+    auto lower = [](std::string s) {
+        for (char& ch : s) ch = char(std::tolower(static_cast<unsigned char>(ch)));
+        return s;
+    };
+    std::sort(out.begin(), out.end(), [&](const PluginDescription& a, const PluginDescription& b) {
+        const std::string am = lower(a.maker), bm = lower(b.maker);
+        return am != bm ? am < bm : lower(a.name) < lower(b.name);
+    });
+    out.erase(std::unique(out.begin(), out.end(), [](const PluginDescription& a, const PluginDescription& b) { return a.id == b.id; }),
+              out.end());
+    return out;
+}
+
+std::vector<PluginDescription> PluginInstance::availableInstruments() {
+    std::vector<PluginDescription> out;
+    AudioComponentDescription wanted{kAudioUnitType_MusicDevice, 0, 0, 0, 0};
+    for (AudioComponent c = AudioComponentFindNext(nullptr, &wanted); c; c = AudioComponentFindNext(c, &wanted)) out.push_back(describe(c));
     auto lower = [](std::string s) {
         for (char& ch : s) ch = char(std::tolower(static_cast<unsigned char>(ch)));
         return s;

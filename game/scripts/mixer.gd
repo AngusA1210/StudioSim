@@ -40,6 +40,9 @@ var _insert_menu: PopupMenu  # what a right-click on a full insert offers
 var _menu_for := []  # [instrument, slot] that menu is open for
 var _insert_presets: PopupMenu  # its Presets submenu: the plug-in's presets, and copying and pasting its settings
 var _name_presets: PopupMenu  # the same for an instrument, from its name
+var _plugin_menu: PopupMenu  # what a right-click on a plug-in instrument's plug-in offers
+var _plugin_presets: PopupMenu
+var _plugin_menu_for = null
 var _name_menu: PopupMenu  # what a right-click on a strip's name offers
 var _name_menu_for = null
 var _confirm: ConfirmationDialog  # removing an instrument
@@ -77,9 +80,12 @@ func close() -> void:
 	_root.visible = false
 	_insert_menu.hide()
 	_meter_menu.hide()
+	_plugin_menu.hide()
 	app.plugin_browser.hide()
 	for inst in app.instruments:
 		app.hide_insert_editors(inst)
+		if inst.plays_plugin and inst.instrument_plugin.get("editor_open", false):
+			app.show_instrument_editor(inst, false)
 	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 
 
@@ -169,6 +175,13 @@ func _build() -> void:
 	_name_presets.setup(app)
 	_name_presets.reported.connect(_report)
 	_name_menu.add_child(_name_presets)
+	_plugin_menu = PopupMenu.new()
+	_plugin_menu.id_pressed.connect(_on_plugin_menu_chosen)
+	_root.add_child(_plugin_menu)
+	_plugin_presets = PresetMenu.new()
+	_plugin_presets.setup(app)
+	_plugin_presets.reported.connect(_report)
+	_plugin_menu.add_child(_plugin_presets)
 	_confirm = ConfirmationDialog.new()
 	_confirm.ok_button_text = "Remove"
 	_confirm.confirmed.connect(_on_remove_confirmed)
@@ -212,9 +225,21 @@ func _build_strip(inst) -> Dictionary:
 	var strip := _strip_panel(STRIP_WIDTH)
 	var box: VBoxContainer = strip.get_child(0)
 	var inserts := _build_inserts(box, inst)
-	_small(box, "INPUT")
+	_small(box, "INSTRUMENT" if inst.plays_plugin else "INPUT")
 	var source: Control
-	if inst.playable:
+	if inst.plays_plugin:  # the plug-in it plays, in place of where its input comes from
+		var plug := Button.new()
+		plug.focus_mode = Control.FOCUS_NONE
+		plug.clip_text = true
+		plug.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		plug.add_theme_font_size_override("font_size", 12)
+		plug.custom_minimum_size = Vector2(STRIP_WIDTH - 12, 24)
+		plug.pressed.connect(func() -> void: app.show_instrument_editor(inst, not inst.instrument_plugin.get("editor_open", false)))
+		plug.gui_input.connect(_on_plugin_input.bind(inst, plug))
+		Hints.give(plug, func() -> String: return "Its plug-in, %s: click for its window, right-click to replace it or for its presets" % (
+			inst.instrument_plugin.get("plugin_name", "")))
+		source = plug
+	elif inst.playable:
 		var midi := Label.new()
 		midi.text = "MIDI"
 		midi.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -466,6 +491,9 @@ func _refresh() -> void:
 		strip.input.set_pressed_no_signal(inst.input_on)
 		strip.mute.set_pressed_no_signal(inst.muted)
 		strip.solo.set_pressed_no_signal(inst.soloed)
+		strip.plate.text = inst.display_name  # a plug-in instrument takes its plug-in's name
+		if inst.plays_plugin:
+			strip.source.text = inst.instrument_plugin.get("plugin_name", "")
 		if strip.source is OptionButton:
 			if relist:
 				strip.source.clear()
@@ -674,6 +702,39 @@ func _choose_insert(inst, slot: int, near: Control) -> void:
 				_report("%s couldn't be loaded: %s." % [plugin.name, problem])
 			else:
 				app.show_insert_editor(inst, slot, true))
+
+
+func _on_plugin_input(event: InputEvent, inst, plug: Button) -> void:
+	if not (event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_RIGHT):
+		return
+	_plugin_menu_for = inst
+	_plugin_menu.clear()
+	_plugin_menu.add_item("Close its window" if inst.instrument_plugin.get("editor_open", false) else "Open its window", 0)
+	_plugin_menu.add_item("Replace with…", 1)
+	_plugin_presets.for_plugin(inst, "instrument", 0)
+	_plugin_menu.add_submenu_node_item("Presets", _plugin_presets, 2)
+	_plugin_menu.position = Vector2i(plug.get_screen_position() + Vector2(0, plug.size.y))
+	_plugin_menu.popup()
+	plug.accept_event()
+
+
+func _on_plugin_menu_chosen(id: int) -> void:
+	var inst = _plugin_menu_for
+	if inst == null or not app.instruments.has(inst):
+		return
+	if id == 0:
+		app.show_instrument_editor(inst, not inst.instrument_plugin.get("editor_open", false))
+	elif id == 1:
+		var near: Control = _strip_for(inst).source
+		app.plugin_browser.open_for("Another plug-in for the %s" % inst.display_name, app.available_instrument_plugins(),
+			near.get_screen_position() + Vector2(near.size.x + 6, 0), func(plugin: Dictionary) -> void:
+				if not app.instruments.has(inst):
+					return
+				var problem: String = app.set_instrument_plugin(inst, plugin.id)
+				if problem != "":
+					_report("%s couldn't be loaded: %s." % [plugin.name, problem])
+				else:
+					app.show_instrument_editor(inst, true))
 
 
 func _on_name_input(event: InputEvent, inst, plate: Button) -> void:

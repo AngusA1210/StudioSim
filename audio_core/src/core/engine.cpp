@@ -164,6 +164,8 @@ struct AudioEngine::Source {
     // ones there are in slot order. Both boards' orders are numbered from the same count.
     std::array<PedalSlot, kMaxInserts> inserts;
     PedalBoard insert_board;
+    // A plug-in instrument's plug-in, held as a Plug-in pedal holds one, and handed to its PluginSynth the same way.
+    PedalSlot synth;
     std::vector<std::pair<std::unique_ptr<Pedal>, uint32_t>> retired;
     uint32_t board_sent = 0;
     std::atomic<uint32_t> board_applied{0};
@@ -236,6 +238,8 @@ std::unique_ptr<Instrument> AudioEngine::makeInstrument(InstrumentKind kind) con
         case InstrumentKind::Pad:   return std::make_unique<Pad>(sr);
         case InstrumentKind::Bells: return std::make_unique<Bells>(sr);
         case InstrumentKind::Keys:  return std::make_unique<Keys>(sr);
+        case InstrumentKind::GarageDrums: return std::make_unique<GarageKit>(sr);
+        case InstrumentKind::PluginSynth: return std::make_unique<PluginSynth>(sr);
         case InstrumentKind::Live:  return std::make_unique<LiveInput>(sr, &input_bus_);
         case InstrumentKind::GuitarCombo:
         case InstrumentKind::GuitarStack:
@@ -247,6 +251,10 @@ std::unique_ptr<Instrument> AudioEngine::makeInstrument(InstrumentKind kind) con
 }
 
 void AudioEngine::connect(Source& s) {
+    if (s.kind == InstrumentKind::PluginSynth) {
+        auto* holder = static_cast<PluginPedal*>(s.synth.pedal.get());
+        static_cast<PluginSynth*>(s.instrument.get())->setPlugin(holder && holder->ready() ? holder->plugin() : nullptr);
+    }
     if (!isAmp(s.kind)) return;
     auto* amp = static_cast<Amp*>(s.instrument.get());
     amp->connect(&s.board, bar_timing_);
@@ -303,6 +311,10 @@ bool AudioEngine::configure(int sample_rate, int block_size, std::string* error)
             for (auto& slot : s->pedals) slot.pedal->prepare(float(sr_));
             for (auto& slot : s->inserts)
                 if (slot.pedal) slot.pedal->prepare(float(sr_));
+            if (s->synth.pedal) {
+                s->synth.pedal->prepare(float(sr_));
+                connect(*s);
+            }
         }
         s->mono.assign(size_t(block_), 0.0f);
         if (!s->spatializer.init(steam_, error)) return false;
@@ -798,33 +810,84 @@ bool AudioEngine::copyInsert(int from_id, int from_slot, int to_id, int to_slot,
     return copy && placeInsert(*b, to_slot, std::move(copy), a->inserts[size_t(from_slot)].on, error);
 }
 
-PluginInstance* AudioEngine::pluginAt(int id, bool insert, int index) const {
+PluginInstance* AudioEngine::pluginAt(int id, PluginPlace place, int index) const {
     const Source* s = owned(id);
     if (!s || index < 0) return nullptr;
     const Pedal* pedal = nullptr;
-    if (insert && index < kMaxInserts) pedal = s->inserts[size_t(index)].pedal.get();
-    else if (!insert && index < int(s->pedals.size())) pedal = s->pedals[size_t(index)].pedal.get();
+    if (place == PluginPlace::Insert && index < kMaxInserts) pedal = s->inserts[size_t(index)].pedal.get();
+    else if (place == PluginPlace::Pedal && index < int(s->pedals.size())) pedal = s->pedals[size_t(index)].pedal.get();
+    else if (place == PluginPlace::Instrument) pedal = s->synth.pedal.get();
     return pedal && pedal->kind() == PedalKind::Plugin ? static_cast<const PluginPedal*>(pedal)->plugin() : nullptr;
 }
 
-std::vector<uint8_t> AudioEngine::pluginState(int id, bool insert, int index) const {
-    const PluginInstance* plugin = pluginAt(id, insert, index);
+std::vector<uint8_t> AudioEngine::pluginState(int id, PluginPlace place, int index) const {
+    const PluginInstance* plugin = pluginAt(id, place, index);
     return plugin ? plugin->saveState() : std::vector<uint8_t>{};
 }
 
-bool AudioEngine::setPluginState(int id, bool insert, int index, const std::vector<uint8_t>& state) {
-    PluginInstance* plugin = pluginAt(id, insert, index);
+bool AudioEngine::setPluginState(int id, PluginPlace place, int index, const std::vector<uint8_t>& state) {
+    PluginInstance* plugin = pluginAt(id, place, index);
     return plugin && plugin->loadState(state);
 }
 
-std::vector<std::string> AudioEngine::factoryPresets(int id, bool insert, int index) const {
-    const PluginInstance* plugin = pluginAt(id, insert, index);
+std::vector<std::string> AudioEngine::factoryPresets(int id, PluginPlace place, int index) const {
+    const PluginInstance* plugin = pluginAt(id, place, index);
     return plugin ? plugin->factoryPresets() : std::vector<std::string>{};
 }
 
-bool AudioEngine::loadFactoryPreset(int id, bool insert, int index, int preset) {
-    PluginInstance* plugin = pluginAt(id, insert, index);
+bool AudioEngine::loadFactoryPreset(int id, PluginPlace place, int index, int preset) {
+    PluginInstance* plugin = pluginAt(id, place, index);
     return plugin && plugin->loadFactoryPreset(preset);
+}
+
+// ── Plug-in instruments (game thread) ──────────────────────────────────────────────────────────────────────
+bool AudioEngine::setInstrumentPlugin(int id, const std::string& plugin_id, std::string* error, const std::vector<uint8_t>* state) {
+    reapPedals();
+    Source* s = owned(id);
+    if (!s || s->kind != InstrumentKind::PluginSynth) {
+        if (error) *error = "that isn't a plug-in instrument";
+        return false;
+    }
+    std::unique_ptr<PluginPedal> holder = makePluginPedal(plugin_id, state, error);
+    if (!holder) return false;
+    if (!holder->plugin()->isInstrument()) {
+        if (error) *error = "it is an effect, not an instrument";
+        return false;
+    }
+    std::unique_ptr<Pedal> old = std::move(s->synth.pedal);
+    s->synth.pedal = std::move(holder);
+    Command c; c.type = Command::SynthPlugin; c.id = id; c.pedals[0] = s->synth.pedal.get(); c.epoch = s->board_sent + 1;
+    if (!commands_.push(c)) {
+        s->synth.pedal = std::move(old);
+        if (error) *error = "the audio engine is busy: try again";
+        return false;
+    }
+    s->board_sent = c.epoch;
+    if (old) {
+        if (PluginInstance* previous = static_cast<PluginPedal*>(old.get())->plugin()) previous->hideEditor();
+        s->retired.emplace_back(std::move(old), s->board_sent);
+    }
+    return true;
+}
+
+PluginDescription AudioEngine::instrumentPlugin(int id) const {
+    const PluginInstance* plugin = pluginAt(id, PluginPlace::Instrument, 0);
+    return plugin ? plugin->description() : PluginDescription{};
+}
+
+bool AudioEngine::instrumentEditorOpen(int id) const {
+    const PluginInstance* plugin = pluginAt(id, PluginPlace::Instrument, 0);
+    return plugin && plugin->editorVisible();
+}
+
+bool AudioEngine::showInstrumentEditor(int id, bool show, const std::string& title) {
+    PluginInstance* plugin = pluginAt(id, PluginPlace::Instrument, 0);
+    if (!plugin) return false;
+    if (!show) {
+        plugin->hideEditor();
+        return true;
+    }
+    return plugin->showEditor(title.empty() ? plugin->description().name : title);
 }
 
 bool AudioEngine::clearInsert(int id, int slot) {
@@ -1349,6 +1412,13 @@ void AudioEngine::drainCommands() {
             case Command::PedalOn:
                 if (s) c.pedals[0]->setOn(c.v[0] > 0.5f);
                 break;
+            case Command::SynthPlugin:
+                if (s && s->kind == InstrumentKind::PluginSynth) {
+                    auto* holder = static_cast<PluginPedal*>(c.pedals[0]);
+                    static_cast<PluginSynth*>(s->instrument.get())->setPlugin(holder && holder->ready() ? holder->plugin() : nullptr);
+                    s->board_applied.store(c.epoch, std::memory_order_release);  // the one it held may now be freed
+                }
+                break;
             case Command::PedalControl:
                 if (s) c.pedals[0]->setControl(int(c.v[0]), c.v[1]);
                 break;
@@ -1383,6 +1453,8 @@ void AudioEngine::drainMidi() {
                 case MidiEvent::NoteOn:  s->instrument->noteOn(e.note, e.velocity); break;
                 case MidiEvent::NoteOff: s->instrument->noteOff(e.note); break;
                 case MidiEvent::Sustain: s->instrument->sustain(e.note != 0); break;
+                case MidiEvent::Control: s->instrument->controlChange(e.note, e.value); break;
+                case MidiEvent::PitchBend: s->instrument->pitchBend(e.bend); break;
             }
         }
     }
@@ -1526,6 +1598,8 @@ void AudioEngine::renderBlock() {
         if (!s) continue;
         float* mono = s->mono.data();
         std::fill(s->mono.begin(), s->mono.end(), 0.0f);
+        if (s->kind == InstrumentKind::PluginSynth)  // the room's tempo, for plug-ins that keep time
+            static_cast<PluginSynth*>(s->instrument.get())->setBeatSamples(double(bar_timing_[1]) / 4.0);
         s->instrument->render(mono, block_);
         if (s->insert_board.count > 0) {  // its inserts, before its fader
             const PedalTiming timing{double(bar_timing_[1]) / 4.0, bar_timing_[0], bar_timing_[1]};

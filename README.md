@@ -45,6 +45,7 @@ to the title, which then offers to go back into the room.
 | I | that instrument's input on/off (see below) |
 | MIDI keyboard | plays every instrument whose input is on, with velocity (and the sustain pedal on the Keys); plug in any time |
 | Enter | open the pattern editor for the instrument you're next to or playing (at an amp: its knobs and pedals; at a Speaker: its volume and input) |
+| P | at a plug-in instrument, open or close its plug-in's window |
 | M | switch that instrument's loop off or on (for a Speaker or an amp: mute) |
 | L O U J | at an amp with a loop pedal: L the footswitch (record, close the loop, overdub), O stop or play, U undo or redo the last overdub, J twice to clear |
 | 1 to 8 | at an amp, stamp on its pedals: each switches that pedal on or off (the loop pedal: its footswitch) |
@@ -67,15 +68,30 @@ you get up or close it.
 
 There are two families of instrument, and the instrument menu (N) adds either to the room, up to 32 in all:
 
-- **MIDI instruments** (drums, bass, pad, bells, keys) are played from the computer keyboard or a MIDI controller,
-  and each can loop a pattern on the sequencer.
+- **MIDI instruments** (a drum machine, a garage kit, bass, pad, bells, keys, and plug-in instruments) are played from
+  the computer keyboard or a MIDI controller, and each can loop a pattern on the sequencer.
 - **Live inputs** bring a microphone, or an instrument plugged into the audio interface, into the room: the Speaker,
   which plays an input just as it comes in, and four guitar and bass amplifiers, each with a board of pedals in
   front of it (see below).
 
-Each is drawn as its real counterpart, standing on the floor: a drum kit, a bass synthesizer, a modular synthesizer
-for the pad, tubular bells, an electric piano, a PA speaker on a tripod, and the amps with their pedals in front of
-them. The parts in the instrument's colour light up as it plays.
+Each is drawn as its real counterpart, standing on the floor: a drum kit, a garage kit on its rug, a bass
+synthesizer, a modular synthesizer for the pad, tubular bells, an electric piano, a controller keyboard with a laptop
+for a plug-in instrument, a PA speaker on a tripod, and the amps with their pedals in front of them. The parts in the
+instrument's colour light up as it plays.
+
+**Drums** is a drum machine. The **Garage Kit** is an acoustic kit as it sounds in a garage: a kick barely damped, a
+loose snare whose wires buzz along with the kick and toms, a rack tom and a floor tom left to ring (about 138 Hz and
+86 Hz), trashy hats (closing them chokes an open one), and a washy crash and ride that build when hit again. Each drum
+is its head's modes settling in pitch after the hit, harder hits are brighter, and no two hits are quite alike. Both
+kits are on the same keys, following the General MIDI drum map, except that the garage kit has a ride (D#, as at 51)
+where the drum machine has a clap.
+
+A **Plug-in Instrument** plays one of the instrument plug-ins on your Mac (Audio Unit synthesizers, samplers,
+pianos), chosen from the plug-in browser when you pick it, and takes that plug-in's name. MIDI controllers, the
+computer keyboard and its pattern play it like any instrument, sending it the sustain pedal, the mod wheel and the
+other controllers, and pitch bend as well. **P**, facing it, opens the plug-in's own window; in the mix window its
+strip shows the plug-in where others show their input: click it for the window, right-click it for another plug-in or
+its presets. It is saved with the room, its plug-in's settings and all.
 
 Pick one and it appears in your hands: walk it to where it should stand and click to put it down. A new MIDI
 instrument starts with an empty pattern, so it is silent until you play it or write it a pattern (the pattern editor
@@ -83,7 +99,7 @@ can load the default one). A new Speaker plays the hardware input chosen in the 
 its mix window strip or on the I/O page; several Speakers can each play a different input. A Speaker's own
 **volume** (Enter at it, or click its name in the mix window) goes up to +24 dB, as on a big powered PA speaker, so that
 it can fill a large room; it comes after the Speaker's inserts and before its fader. A second instrument of a kind is numbered and a
-paler colour, to tell them apart. Like the tempo and the patterns, the instruments you add are not saved yet.
+paler colour, to tell them apart. Everything in the room is saved with it (see Rooms).
 
 ### Inputs
 
@@ -209,8 +225,9 @@ instrument where it stands, with its fader, mute and solo, its pattern (the MIDI
 whether its loop is on), its inserts, an amp's head, cabinet, knobs and pedals, a Speaker's volume and input, and
 every plug-in's settings. It also holds the tempo and swing and where you were standing. Each room has a folder of
 its own, named after it, as a Pro Tools session does: the room's `.sroom` file (JSON) and a **Room Backups** folder.
-Recorded audio will go there too once recording comes. Rooms go in `~/Music/SoundRoom/Rooms` unless you choose
-another folder.
+Recorded audio will go there too once recording comes. Rooms go in the **Rooms** folder of the SoundRoom folder the
+game runs from (here, `SoundRoom/Rooms`, beside `game/`) unless you choose another; git leaves it alone. A build made to
+hand out keeps them in `~/Music/SoundRoom` instead.
 
 - **New room…** (title screen): name the room, choose where it goes, pick a **template**, set its width, length and
   height (the template's to begin with), and tick what to bring over from the template: its walls, its instruments
@@ -229,7 +246,7 @@ another folder.
 
 **Templates** appear only when making a room. Two are built in: the default room, and an empty room with no
 instruments and no wall. Save a room as a template from the menu's Room button. Templates hold everything a room does,
-and are kept in `~/Music/SoundRoom/Templates` as `.srtemplate` files.
+and are kept in `SoundRoom/Templates` as `.srtemplate` files.
 
 ## Presets
 
@@ -239,11 +256,12 @@ the presets the plug-in comes with, then yours. **Save preset…** saves the plu
 in Logic show up in SoundRoom and the other way round.
 
 **Instrument presets** hold an instrument's sound, without where it stands or what it plays: the plug-ins on its
-inserts, an amp's head, cabinet, knobs and pedals (the plug-ins on its pedals too), and a Speaker's volume. They are on
+inserts, an amp's head, cabinet, knobs and pedals (the plug-ins on its pedals too), a Speaker's volume, and a plug-in
+instrument's plug-in with its settings. They are on
 the **Presets** button of an amp's or a Speaker's panel, and under **Presets** when you right-click an instrument's name
 in the mix window. A preset loads onto any instrument of its family (an amp's onto any amp, a guitar combo's onto a bass
 stack even), and the instrument menu (N) lists them under **Your presets**, to bring one into the room as a new
-instrument. They are kept in `~/Music/SoundRoom/Instrument Presets`.
+instrument. They are kept in `SoundRoom/Instrument Presets`.
 
 **Copy settings** and **Paste settings** sit in the same Presets menus, as in Pro Tools: a plug-in's settings paste
 onto the same plug-in anywhere (on an insert or a pedal), an instrument's onto another of its family.
@@ -371,7 +389,8 @@ game/                      Godot project: the room, player, instruments, HUD, me
 audio_core/
   src/core/                the audio engine, plain C++ with no Godot dependency
     engine.*               device, command queue, mixing, the shared clock
-    instruments.*          synthesized drums, bass, pad, bells and keys (each playable live or by pattern), live input
+    instruments.*          synthesized drums, the garage kit, bass, pad, bells and keys (each playable live or by pattern), live input
+    plugin_synth.*         a plug-in instrument: an instrument plug-in played by MIDI, live and by pattern, to the sample
     amp.*                  the guitar and bass amps: preamp drive (oversampled), tone stack, presence, cabinet
     looper.*               the loop pedal: record, overdub, undo/redo, synced to the bars
     pedals.*               the pedals in front of an amp: tuner, gate, compressor, drives, modulation, delay, reverb, looper

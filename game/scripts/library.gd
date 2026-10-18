@@ -3,12 +3,13 @@ extends RefCounted
 ##
 ## - Rooms and templates: what a room holds (room_data: its size and walls, every instrument where it stands with its
 ##   fader, mute, solo, pattern, pedals and plug-ins with their settings, the tempo and swing, and where you stand),
-##   and putting it back (apply_room_data). session.gd keeps rooms, each a .sroom file in a folder of its own;
-##   templates are .srtemplate files in Music/SoundRoom/Templates, two built in (the default room, an empty one), and
-##   a new room starts from one, carrying over as much of it as is chosen.
+##   and putting it back (apply_room_data). session.gd keeps rooms, each a .sroom file in a folder of its own, in
+##   SoundRoom/Rooms; templates are .srtemplate files in SoundRoom/Templates, two built in (the default room, an empty
+##   one), and a new room starts from one, carrying over as much of it as is chosen. (SoundRoom/ is the folder the
+##   game runs from: see home().)
 ## - Instrument presets: an instrument's sound, without where it stands or what it plays: the plug-ins on its inserts,
-##   an amp's head, cabinet, knobs and pedals, a Speaker's volume. A .srpreset file in Music/SoundRoom/Instrument
-##   Presets, in a folder for each family (amps, Speakers, MIDI instruments). One loads onto any instrument of its
+##   an amp's head, cabinet, knobs and pedals, a Speaker's volume, a plug-in instrument's plug-in. A .srpreset file in
+##   SoundRoom/Instrument Presets, in a folder for each family (amps, Speakers, MIDI instruments, plug-in instruments). One loads onto any instrument of its
 ##   family, or comes into the room as a new instrument from the instrument menu.
 ## - Plug-in presets: a plug-in's settings as an .aupreset file in ~/Library/Audio/Presets/Maker/Plug-in, where every
 ##   Audio Unit host keeps them, so presets saved in Logic show up here and the other way round. The presets a plug-in
@@ -25,12 +26,12 @@ const PRESET_EXT := "srpreset"
 const VERSION := 1
 const DEFAULT_TEMPLATE := "builtin:default"
 const EMPTY_TEMPLATE := "builtin:empty"
-const FAMILIES := {"amp": "Amps", "speaker": "Speakers", "midi": "MIDI instruments"}
+const FAMILIES := {"amp": "Amps", "speaker": "Speakers", "midi": "MIDI instruments", "plugin": "Plug-in instruments"}
 
 var app
 var audio: SoundRoomAudio
 var automated := false
-var root := ""         # Music/SoundRoom
+var root := ""         # SoundRoom (see home())
 var plugin_root := ""  # ~/Library/Audio/Presets
 var copied_instrument := {}  # instrument_settings() of what was copied
 var copied_plugin := {}      # {plugin_id, plugin_name, state}
@@ -45,8 +46,16 @@ func _init(the_app, automated_run: bool) -> void:
 		_remove_tree(root)
 		plugin_root = root.path_join("Audio Presets")
 	else:
-		root = OS.get_system_dir(OS.SYSTEM_DIR_MUSIC).path_join("SoundRoom")
+		root = home()
 		plugin_root = OS.get_environment("HOME").path_join("Library/Audio/Presets")
+
+
+## Where rooms, templates and instrument presets are kept: the SoundRoom folder the game runs from (the one holding
+## game/), or for a build made to be handed out, which has no such folder, Music/SoundRoom.
+static func home() -> String:
+	if OS.has_feature("template"):
+		return OS.get_system_dir(OS.SYSTEM_DIR_MUSIC).path_join("SoundRoom")
+	return ProjectSettings.globalize_path("res://").get_base_dir().get_base_dir()
 
 
 func templates_dir() -> String:
@@ -59,6 +68,8 @@ func presets_dir(family := "") -> String:
 
 
 static func family_of(inst) -> String:
+	if inst.plays_plugin:
+		return "plugin"
 	return "amp" if inst.is_amp else ("midi" if inst.playable else "speaker")
 
 
@@ -78,6 +89,10 @@ func instrument_settings(inst) -> Dictionary:
 				"on": insert.on, "state": Marshalls.raw_to_base64(audio.get_plugin_state(inst.source_id, "insert", slot))})
 	if family_of(inst) == "speaker":
 		out.volume_db = inst.volume_db
+	var played: Dictionary = audio.get_instrument_plugin(inst.source_id) if inst.plays_plugin else {}
+	if str(played.get("plugin_id", "")) != "":  # a plug-in instrument's plug-in, which is the instrument itself
+		out.instrument_plugin = {"plugin_id": played.plugin_id, "plugin_name": played.plugin_name, "plugin_maker": played.plugin_maker,
+			"state": Marshalls.raw_to_base64(audio.get_plugin_state(inst.source_id, "instrument", 0))}
 	if inst.is_amp:
 		var pedals := []
 		var board: Array = audio.get_pedals(inst.source_id)
@@ -101,6 +116,11 @@ func instrument_settings(inst) -> Dictionary:
 func apply_instrument_settings(inst, settings: Dictionary, include := {}) -> String:
 	var problems := []
 	var with_plugins: bool = include.get("plugins", true)
+	var played = settings.get("instrument_plugin")
+	if inst.plays_plugin and played is Dictionary:  # always: without it, a plug-in instrument would have no sound at all
+		var problem: String = app.set_instrument_plugin(inst, str(played.get("plugin_id", "")), _bytes(played.get("state", "")))
+		if problem != "":
+			problems.append("%s: %s" % [played.get("plugin_name", "its plug-in"), problem])
 	if inst.is_amp and settings.get("amp") is Dictionary and include.get("instrument_settings", true):
 		var amp: Dictionary = settings.amp
 		app.set_amp_voice(inst, str(amp.get("head", inst.amp_head)), bool(amp.get("head_on", true)),
@@ -160,6 +180,9 @@ func paste_instrument(inst) -> String:
 ## The plug-in on an insert (`place` "insert", `index` its slot) or a Plug-in pedal ("pedal", its place on the
 ## board): {id, name, maker}, or {} if there is none.
 func plugin_at(inst, place: String, index: int) -> Dictionary:
+	if place == "instrument":
+		var played: Dictionary = audio.get_instrument_plugin(inst.source_id)
+		return {} if played.plugin_id == "" else {"id": played.plugin_id, "name": played.plugin_name, "maker": played.plugin_maker}
 	var list: Array = audio.get_inserts(inst.source_id) if place == "insert" else audio.get_pedals(inst.source_id)
 	if index < 0 or index >= list.size() or str(list[index].get("plugin_id", "")) == "":
 		return {}

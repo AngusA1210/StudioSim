@@ -34,7 +34,7 @@ var fullscreen := false
 var room_brightness := 1.0
 
 # Rooms
-var rooms_location := ""   # the folder new rooms go in; "" for Music/SoundRoom/Rooms
+var rooms_location := ""   # the folder new rooms go in; "" for SoundRoom/Rooms (see library.gd's home())
 var recent_rooms: Array = []  # the rooms opened or saved lately, the latest first (their files)
 var autosave := false      # save the open room every so often, while it has changes
 var autosave_minutes := 5

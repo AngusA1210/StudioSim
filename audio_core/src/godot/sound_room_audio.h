@@ -102,6 +102,14 @@ public:
     // The effect plug-ins installed on this computer (Audio Units on macOS): [{id, name, maker, category}], the
     // category being what kind of effect it seems to be ("Reverb", "Amps & cabinets"...).
     Array get_plugins() const;
+    // Plug-in instruments (a source of kind "plugin_synth"): the instrument plug-ins installed, as get_plugins lists
+    // effects (category "Synths", "Pianos & keys", "Drums & percussion", "Samplers"...); loading one into such a source,
+    // with these settings if any are given (false with the reason in get_error()); what it holds:
+    // {plugin_id, plugin_name, plugin_maker, editor_open}; and its window.
+    Array get_instrument_plugins() const;
+    bool set_instrument_plugin(int id, const String& plugin_id, const PackedByteArray& state);
+    Dictionary get_instrument_plugin(int id) const;
+    bool show_instrument_editor(int id, bool show, const String& title);
     // Loads one into a Plug-in pedal, with these settings if any are given; false with the reason in get_error().
     bool load_pedal_plugin(int id, int index, const String& plugin_id, const PackedByteArray& state);
     bool show_plugin_editor(int id, int index, bool show, const String& title);  // the plug-in's own window
@@ -118,9 +126,9 @@ public:
     bool move_insert(int from_id, int from_slot, int to_id, int to_slot);
     bool copy_insert(int from_id, int from_slot, int to_id, int to_slot);
     int get_max_inserts() const;
-    // The plug-in on an insert (`place` "insert", `index` its slot) or a Plug-in pedal ("pedal", its place on the
-    // board): its settings, as the plug-in saves them (empty if there is none); putting settings back while it plays;
-    // and the presets it comes with, by name.
+    // The plug-in on an insert (`place` "insert", `index` its slot), a Plug-in pedal ("pedal", its place on the
+    // board) or a plug-in instrument ("instrument"): its settings, as the plug-in saves them (empty if there is none);
+    // putting settings back while it plays; and the presets it comes with, by name.
     PackedByteArray get_plugin_state(int id, const String& place, int index) const;
     bool set_plugin_state(int id, const String& place, int index, const PackedByteArray& state);
     PackedStringArray get_factory_presets(int id, const String& place, int index) const;
@@ -166,8 +174,9 @@ public:
     void set_click(bool on);                    // the metronome click
     void set_click_volume(float gain);
     Dictionary get_transport() const;           // {running, bpm, swing, click, click_volume, step}
-    Array get_drum_pieces() const;              // [{name, note}]: the drum machine's pieces
-    String get_drum_piece_name(int note) const; // which piece a note plays
+    // A drum kit's pieces, "drums" (the drum machine) or "garage_drums": [{name, note}]; and which piece a note plays.
+    Array get_drum_pieces(const String& kind) const;
+    String get_drum_piece_name(int note, const String& kind) const;
 
     // ── MIDI ─────────────────────────────────────────────────────────────────────────────────────────────
     // Controllers go straight into the audio core and play every instrument whose input is on.

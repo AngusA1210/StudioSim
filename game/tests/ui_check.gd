@@ -445,9 +445,9 @@ func _run() -> void:
 	await tap(KEY_BACKSPACE)
 	check(player.target == null and player.remove_pending == null, "Backspace does nothing when you aren't facing an instrument")
 	await tap(KEY_N)
-	check(im.is_open() and im._cards.size() == 10 and not im._cards[0].disabled, "N opens the instrument menu, with the amps among the live inputs",
+	check(im.is_open() and im._cards.size() == 12 and not im._cards[0].disabled, "N opens the instrument menu, with the amps among the live inputs",
 		im._footer.text)
-	await click(im._cards[1].get_global_rect().get_center())
+	await click(im._card_for.bass.get_global_rect().get_center())
 	var bass2 = player.carried
 	check(not im.is_open() and bass2 != null and bass2.display_name == "Bass 2" and bass2.kind == "bass" and main.instruments.size() == count_before + 1,
 		"picking Bass puts a second bass in your hands", " / ".join(main.hud.hint_lines()))
@@ -483,7 +483,7 @@ func _run() -> void:
 	await tap(KEY_N)
 	im._input_option.select(im._input_option.item_count - 1)  # the last hardware input there is
 	im._on_input_selected(im._input_option.selected)
-	await click(im._cards[5].get_global_rect().get_center())
+	await click(im._card_for.live.get_global_rect().get_center())
 	var speaker2 = player.carried
 	check(speaker2 != null and speaker2.display_name == "Speaker 2" and not speaker2.playable
 		and speaker2.input_channel == im._input_option.item_count - 2, "a second Speaker, set to the input chosen in the menu",
@@ -539,7 +539,7 @@ func _run() -> void:
 	player.place(Vector3(0.0, 0.0, 3.6), 0.0)
 	await frames(3)
 	await tap(KEY_N)
-	await click(im._cards[6].get_global_rect().get_center())
+	await click(im._card_for.guitar_combo.get_global_rect().get_center())
 	var amp = player.carried
 	check(amp != null and amp.display_name == "Guitar Combo" and amp.is_amp and not amp.playable and amp.pedals.is_empty(),
 		"the instrument menu offers a guitar combo, its pedalboard empty")
@@ -1311,6 +1311,80 @@ func _run() -> void:
 		from_preset.pedals.size() == 3, "picking one brings a new amp in, set up as the preset says", from_preset.display_name if from_preset else "nothing")
 	await tap(KEY_G)
 
+	print("More instruments")
+	player.place(Vector3(0.0, 0.0, 3.6), 0.0)
+	await frames(3)
+	await tap(KEY_N)
+	await click(im._card_for.garage_drums.get_global_rect().get_center())
+	var garage = player.carried
+	check(garage != null and garage.display_name == "Garage Kit" and garage.drum_kit and garage.playable and audio.get_pattern(garage.source_id).is_empty(),
+		"the instrument menu has a garage kit", garage.display_name if garage else "nothing")
+	await tap(KEY_G)
+	await frames(3)
+	seq.open(garage)
+	await frames(3)
+	var lanes: Array = seq._rows().map(func(row): return row.label)
+	check(lanes == ["Crash", "Open hat", "Closed hat", "Ride", "High tom", "Low tom", "Snare", "Kick"],
+		"its pattern has a row for each of its pieces, a ride where the drum machine has its clap", str(lanes))
+	seq.close()
+	await frames(2)
+	audio.note_on(garage.source_id, 38, 0.9)
+	var garage_level: float = await average_level(garage.source_id, 0.2)
+	check(garage_level > 0.001, "and it plays", "%.4f" % garage_level)
+
+	player.place(Vector3(3.0, 0.0, 3.6), 0.0)  # somewhere else to set the next one down
+	await frames(3)
+	await tap(KEY_N)
+	await click(im._card_for.plugin_synth.get_global_rect().get_center())
+	check(picker.visible and picker._title.text == "A plug-in instrument" and picker.plugins.any(func(p): return p.name == "DLSMusicDevice") and
+		not picker.plugins.any(func(p): return p.name == "AUDelay"), "Plug-in Instrument offers the instrument plug-ins, not the effects",
+		"%d of them" % picker.plugins.size())
+	picker._search.text = "dlsmusic"
+	picker._search.text_changed.emit("dlsmusic")
+	picker._search.text_submitted.emit("dlsmusic")
+	await frames(3)
+	var synth = player.carried
+	check(not im.is_open() and synth != null and synth.plays_plugin and synth.display_name == "DLSMusicDevice" and
+		synth.instrument_plugin.get("plugin_name", "") == "DLSMusicDevice", "choosing one brings a plug-in instrument into your hands, named after it",
+		synth.display_name if synth else "nothing")
+	await tap(KEY_G)
+	await frames(3)
+	main._sit_at("plugin_synth")
+	await frames(5)
+	check(main.hud.hint_lines().has("P its plug-in's window"), "its card offers its plug-in's window", " / ".join(main.hud.hint_lines()))
+	await tap(KEY_E)
+	key(KEY_A)
+	var synth_level: float = await average_level(synth.source_id, 0.3)
+	key(KEY_A, false)
+	await tap(KEY_Q)
+	check(synth_level > 0.0005, "sitting at it, the letter keys play it", "%.4f" % synth_level)
+	await tap(KEY_TAB)
+	await frames(3)
+	var synth_strip: Dictionary = mix._strip_for(synth)
+	(mix._strip_row.get_parent() as ScrollContainer).ensure_control_visible(synth_strip.source)
+	await frames(3)
+	check(synth_strip.source is Button and synth_strip.source.text == "DLSMusicDevice" and synth_strip.plate.text == "DLSMusicDevice",
+		"its strip shows its plug-in where others show their input")
+	await click(synth_strip.source.get_global_rect().get_center(), MOUSE_BUTTON_RIGHT)
+	check(mix._plugin_menu.visible and mix._plugin_menu.get_item_index(2) >= 0 and mix._plugin_presets.get_item_index(mix._plugin_presets.SAVE) >= 0,
+		"right-clicking it offers its window, another plug-in, and its presets")
+	mix._plugin_menu.hide()
+	mix._on_plugin_menu_chosen(1)
+	picker._search.text = "ausampler"
+	picker._search.text_changed.emit("ausampler")
+	picker._search.text_submitted.emit("ausampler")
+	await frames(3)
+	check(synth.display_name == "AUSampler" and mix._strip_for(synth).plate.text == "AUSampler" and mix._strip_for(synth).source.text == "AUSampler",
+		"Replace with another plug-in, and it takes that one's name", synth.display_name)
+	mix.duplicate_instrument(synth)
+	await frames(3)
+	var synth_copy = main.instruments[main.instruments.find(synth) + 1]
+	check(synth_copy.plays_plugin and synth_copy.display_name == "AUSampler 2" and synth_copy.instrument_plugin.get("plugin_name", "") == "AUSampler",
+		"duplicated, it plays the same plug-in, with its settings", synth_copy.display_name)
+	main.remove_instrument(synth_copy)
+	await tap(KEY_TAB)
+	await frames(2)
+
 	print("Rooms")
 	var session = main.session
 	var room_file: String = session.path
@@ -1402,6 +1476,8 @@ func _run() -> void:
 		audio.get_pattern(second_drums.source_id).is_empty() and audio.get_inserts(second_pad.source_id)[0].plugin_name == "" and
 		is_equal_approx(main.tempo, 123.0) and main.instruments.size() == on_disk.instruments.size(),
 		"Don't Save lets it go, and the new room is the template at the size asked for, without the patterns and plug-ins left unticked")
+	check(main.instruments.any(func(i): return i.plays_plugin and i.instrument_plugin.get("plugin_name", "") == "AUSampler"),
+		"though a plug-in instrument keeps its plug-in: it is the instrument")
 	check(is_equal_approx(float(library.read_room_file(room_file).tempo), 127.0), "the first room's file is as it was last saved")
 
 	main.show_title()
@@ -1417,6 +1493,8 @@ func _run() -> void:
 	await seconds(1.0)
 	check(session.room_name == "Test room" and is_equal_approx(main.tempo, 127.0) and main.room.size.is_equal_approx(Vector3(18.0, 5.0, 12.0)) and
 		not session.has_unsaved_changes() and not title.is_open(), "opening one brings it back as it was saved, and goes in")
+	check(main.instruments.any(func(i): return i.plays_plugin and i.display_name == "AUSampler" and i.instrument_plugin.get("plugin_name", "") == "AUSampler") and
+		main.instruments.any(func(i): return i.kind == "garage_drums"), "the garage kit and the plug-in instrument come back with it")
 	main.set_tempo(90.0)
 	session.request_quit()
 	check(session.is_asking() and session._confirm.dialog_text.ends_with("before quitting?"), "quitting with changes asks whether to save them")

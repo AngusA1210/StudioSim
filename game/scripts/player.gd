@@ -209,6 +209,11 @@ func _handle_key(event: InputEventKey) -> void:
 				app.amp_panel.open(at)
 			elif at != null and not at.playable and _distance_to(at) < PLAY_REACH + 0.5:
 				app.speaker_panel.open(at)
+		"plugin_window":  # a plug-in instrument's own window; the mouse is free to work it until you click back
+			if at != null and at.plays_plugin and not notes:
+				var showing: bool = not at.instrument_plugin.get("editor_open", false)
+				if app.show_instrument_editor(at, showing):
+					Input.mouse_mode = Input.MOUSE_MODE_VISIBLE if showing else Input.MOUSE_MODE_CAPTURED
 		"add":
 			app.instrument_menu.open()
 		"duplicate":  # a second of what you face or carry, with its settings, in your hands to be put down

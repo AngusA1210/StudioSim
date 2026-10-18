@@ -8,6 +8,7 @@
 //      build/engine_tests --midi     (lists MIDI devices and reports the notes they send for 15 seconds)
 //      build/engine_tests --plugins  (lists the effect plug-ins installed, with what kind each seems to be)
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <filesystem>
@@ -27,6 +28,7 @@
 #include "looper.h"
 #include "pedals.h"
 #include "plugin_host.h"
+#include "plugin_synth.h"
 #include "room_geometry.h"
 
 #ifdef __APPLE__
@@ -1851,11 +1853,11 @@ int main(int argc, char** argv) {
         // Presets: AUReverb2 comes with its own (Small Room, Large Hall...); its settings go to an .aupreset file and back.
         const std::string au_reverb = "AU:61756678:72766232:6170706c";  // aufx rvb2 appl
         mix.engine.setInsert(mix.pad, 0, au_reverb, &insert_error);
-        const std::vector<std::string> factory = mix.engine.factoryPresets(mix.pad, true, 0);
-        const std::vector<uint8_t> as_loaded = mix.engine.pluginState(mix.pad, true, 0);
-        const bool switched = factory.size() > 2 && mix.engine.loadFactoryPreset(mix.pad, true, 0, int(factory.size()) - 1);
-        const std::vector<uint8_t> hall = mix.engine.pluginState(mix.pad, true, 0);
-        check(switched && !hall.empty() && hall != as_loaded && mix.engine.factoryPresets(mix.drums, true, 4).empty(),
+        const std::vector<std::string> factory = mix.engine.factoryPresets(mix.pad, PluginPlace::Insert, 0);
+        const std::vector<uint8_t> as_loaded = mix.engine.pluginState(mix.pad, PluginPlace::Insert, 0);
+        const bool switched = factory.size() > 2 && mix.engine.loadFactoryPreset(mix.pad, PluginPlace::Insert, 0, int(factory.size()) - 1);
+        const std::vector<uint8_t> hall = mix.engine.pluginState(mix.pad, PluginPlace::Insert, 0);
+        check(switched && !hall.empty() && hall != as_loaded && mix.engine.factoryPresets(mix.drums, PluginPlace::Insert, 4).empty(),
               "a plug-in's own presets are listed, and choosing one changes its settings",
               factory.empty() ? "none" : fmt("%.0f presets, the last ", double(factory.size())) + factory.back());
         const std::string preset_path = (std::filesystem::temp_directory_path() / "soundroom-engine-tests" / "Apple" / "AUReverb2" / "Big.aupreset").string();
@@ -1863,9 +1865,9 @@ int main(int argc, char** argv) {
         const bool written = writePluginPreset(preset_path, "Big", hall, &preset_error);
         PluginPresetFile read_back;
         const bool read = written && readPluginPreset(preset_path, &read_back, &preset_error);
-        mix.engine.setPluginState(mix.pad, true, 0, as_loaded);
-        const bool put_back = mix.engine.setPluginState(mix.pad, true, 0, read_back.state);
-        const std::vector<uint8_t> again = mix.engine.pluginState(mix.pad, true, 0);
+        mix.engine.setPluginState(mix.pad, PluginPlace::Insert, 0, as_loaded);
+        const bool put_back = mix.engine.setPluginState(mix.pad, PluginPlace::Insert, 0, read_back.state);
+        const std::vector<uint8_t> again = mix.engine.pluginState(mix.pad, PluginPlace::Insert, 0);
         PluginPresetFile not_a_preset;
         const bool rejected = !readPluginPreset(preset_path + ".missing", &not_a_preset, &preset_error);
         check(read && read_back.plugin_id == au_reverb && read_back.name == "Big" && put_back && again.size() >= hall.size() - 16 && again != as_loaded && rejected,
@@ -1874,6 +1876,210 @@ int main(int argc, char** argv) {
         mix.engine.clearInsert(mix.pad, 0);
 #else
         check(plugins.empty(), "no plug-ins on this platform yet", "");
+#endif
+    }
+
+    {
+        std::printf("\nThe garage kit\n");
+        constexpr float kRate = 48000.0f;
+        // One hit (or a few), alone, straight out of the instrument.
+        auto strike = [&](Instrument& kit, std::initializer_list<std::pair<double, Drums::Piece>> hits, float velocity, double seconds) {
+            std::vector<float> x(size_t(seconds * kRate), 0.0f);
+            size_t done = 0;
+            for (size_t i = 0; i < x.size(); i += 128) {
+                for (const auto& [at, piece] : hits)
+                    if (size_t(at * kRate) >= i && size_t(at * kRate) < i + 128 && done < hits.size()) {
+                        static_cast<GarageKit&>(kit).hit(piece, velocity, int(size_t(at * kRate) - i));
+                        ++done;
+                    }
+                kit.render(x.data() + i, int(std::min<size_t>(128, x.size() - i)));
+            }
+            return x;
+        };
+        auto rms = [&](const std::vector<float>& x, double from, double to) {
+            double e = 0;
+            const size_t a = size_t(from * kRate), b = std::min(x.size(), size_t(to * kRate));
+            for (size_t i = a; i < b; ++i) e += double(x[i]) * x[i];
+            return std::sqrt(e / double(std::max<size_t>(b - a, 1)));
+        };
+        // The pitch it rings at: upward zero crossings, once the first moments have passed.
+        auto pitch = [&](const std::vector<float>& x, double from, double to) {
+            int ups = 0;
+            for (size_t i = size_t(from * kRate) + 1; i < size_t(to * kRate) && i < x.size(); ++i)
+                if (x[i - 1] < 0.0f && x[i] >= 0.0f) ++ups;
+            return double(ups) / (to - from);
+        };
+        auto fresh = [&] { return GarageKit(kRate); };
+
+        check(GarageKit::noteFor(GarageKit::Ride) == 51 && Drums::pieceFor(51) == GarageKit::Ride &&
+                  std::string(GarageKit::pieceName(GarageKit::Ride)) == "Ride" && GarageKit::noteFor(Drums::Kick) == 36,
+              "the garage kit plays the drum machine's keys, with a ride where the clap was, at General MIDI's 51", "");
+        GarageKit k1 = fresh();
+        const auto kick = strike(k1, {{0.0, Drums::Kick}}, 0.9f, 1.0);
+        double kick_low, kick_high;
+        bandEnergy(kick, kRate, kick_low, kick_high);
+        check(kick_low > 20 * kick_high && rms(kick, 0.35, 0.45) > 0.03 * rms(kick, 0.0, 0.1),
+              "its kick is low, and rings on a little, its front head barely damped",
+              fmt("%.0f dB of ring at 0.4 s", db(rms(kick, 0.35, 0.45) / rms(kick, 0.0, 0.1))));
+        GarageKit k2 = fresh();
+        const auto rack = strike(k2, {{0.0, Drums::TomHigh}}, 0.8f, 1.2);
+        GarageKit k3 = fresh();
+        const auto floor = strike(k3, {{0.0, Drums::TomLow}}, 0.8f, 1.2);
+        const double rack_hz = pitch(rack, 0.2, 0.5), floor_hz = pitch(floor, 0.2, 0.6);
+        check(std::fabs(rack_hz - 138.0) < 14.0 && std::fabs(floor_hz - 86.0) < 9.0 && rms(floor, 0.6, 0.8) > rms(rack, 0.6, 0.8),
+              "the rack tom rings at about 138 Hz and the floor tom at about 86 Hz, and longer", fmt("%.0f Hz and %.0f Hz", rack_hz, floor_hz));
+        GarageKit k4 = fresh();
+        const auto snare = strike(k4, {{0.0, Drums::Snare}}, 0.9f, 0.6);
+        double snare_low, snare_high;
+        bandEnergy(snare, kRate, snare_low, snare_high);
+        GarageKit k5 = fresh();
+        const auto soft = strike(k5, {{0.0, Drums::Snare}}, 0.3f, 0.6);
+        double soft_low, soft_high;
+        const std::vector<float> hard_attack(snare.begin(), snare.begin() + int(0.03 * kRate)), soft_attack(soft.begin(), soft.begin() + int(0.03 * kRate));
+        bandEnergy(hard_attack, kRate, snare_low, snare_high);
+        bandEnergy(soft_attack, kRate, soft_low, soft_high);
+        double whole_low, whole_high;
+        bandEnergy(snare, kRate, whole_low, whole_high);
+        check(whole_high > 0.25 * whole_low && snare_high / snare_low > 1.6 * soft_high / soft_low,
+              "the snare's wires fill the top end, and its crack is brighter the harder it is hit",
+              fmt("top against bottom: %.1f dB hard, %.1f dB soft", 10 * std::log10(snare_high / snare_low), 10 * std::log10(soft_high / soft_low)));
+        GarageKit k6 = fresh();
+        const auto again = strike(k6, {{0.0, Drums::Snare}, {0.3, Drums::Snare}}, 0.9f, 0.6);
+        double difference = 0;
+        for (size_t i = 0; i < size_t(0.1 * kRate); ++i) difference += std::fabs(again[i] - again[i + size_t(0.3 * kRate)]);
+        check(difference > 1.0 && std::fabs(db(rms(again, 0.0, 0.1) / rms(again, 0.3, 0.4))) < 2.0,
+              "no two hits are quite alike, though they are as loud", "");
+        GarageKit k7 = fresh();
+        const auto open = strike(k7, {{0.0, Drums::HatOpen}}, 0.8f, 0.8);
+        GarageKit k8 = fresh();
+        const auto closed = strike(k8, {{0.0, Drums::HatClosed}}, 0.8f, 0.8);
+        GarageKit k9 = fresh();
+        const auto choked = strike(k9, {{0.0, Drums::HatOpen}, {0.12, Drums::HatClosed}}, 0.8f, 0.8);
+        double hat_low, hat_high;
+        bandEnergy(closed, kRate, hat_low, hat_high);
+        check(rms(open, 0.3, 0.5) > 10 * rms(closed, 0.3, 0.5) && rms(choked, 0.3, 0.5) < 0.1 * rms(open, 0.3, 0.5) && hat_high > 10 * hat_low,
+              "the open hat rings and the closed one doesn't; closing the hats chokes an open one", "");
+        GarageKit k10 = fresh();
+        const auto ride = strike(k10, {{0.0, GarageKit::Ride}}, 0.8f, 2.5);
+        GarageKit k11 = fresh();
+        const auto crash = strike(k11, {{0.0, Drums::Crash}}, 0.9f, 2.5);
+        check(rms(ride, 1.5, 2.0) > 0.01 * rms(ride, 0.0, 0.2) && rms(crash, 1.0, 1.5) > 0.01 * rms(crash, 0.0, 0.2),
+              "the ride and the crash wash on", "");
+        // As loud, played as a groove, as the drum machine, so the two can sit at the same level in the room.
+        auto groove = [&](Instrument& kit, bool garage) {
+            std::vector<float> x(size_t(2.0 * kRate), 0.0f);
+            const double beat = 0.5;
+            for (size_t i = 0; i < x.size(); i += 128) {
+                for (int e = 0; e < 16; ++e) {
+                    const size_t at = size_t(double(e) * beat / 2.0 * kRate);
+                    if (at < i || at >= i + 128) continue;
+                    const int delay = int(at - i);
+                    auto play = [&](Drums::Piece piece, float v) {
+                        if (garage) static_cast<GarageKit&>(kit).hit(piece, v, delay);
+                        else static_cast<Drums&>(kit).hit(piece, v, delay);
+                    };
+                    play(Drums::HatClosed, 0.7f);
+                    if (e % 4 == 0) play(Drums::Kick, 0.9f);
+                    if (e % 4 == 2) play(Drums::Snare, 0.9f);
+                }
+                kit.render(x.data() + i, int(std::min<size_t>(128, x.size() - i)));
+            }
+            return x;
+        };
+        GarageKit garage_kit = fresh();
+        Drums machine(kRate);
+        const double garage_level = rms(groove(garage_kit, true), 0.0, 2.0), machine_level = rms(groove(machine, false), 0.0, 2.0);
+        check(std::fabs(db(garage_level / machine_level)) < 3.0, "played as a groove it is about as loud as the drum machine",
+              fmt("%+.1f dB", db(garage_level / machine_level)));
+    }
+
+    {
+        std::printf("\nPlug-in instruments\n");
+#ifdef __APPLE__
+        const std::string dls = "AU:61756d75:646c7320:6170706c";  // aumu dls  appl: Apple's General MIDI synthesizer
+        const std::string au_delay = "AU:61756678:64656c79:6170706c";
+        const std::vector<PluginDescription> instruments = AudioEngine::instrumentPlugins();
+        const std::vector<PluginDescription> effects = AudioEngine::effectPlugins();
+        const auto found = std::find_if(instruments.begin(), instruments.end(), [&](const PluginDescription& p) { return p.id == dls; });
+        const bool among_effects = std::any_of(effects.begin(), effects.end(), [&](const PluginDescription& p) { return p.id == dls; });
+        check(found != instruments.end() && found->instrument && !among_effects && found->category == "Samplers",
+              "the instrument plug-ins are listed apart from the effects, Apple's DLSMusicDevice among them",
+              fmt("%.0f instruments", double(instruments.size())) + (found != instruments.end() ? ", " + found->category : ""));
+
+        // Straight from the instrument: a sequenced note starts on its sample and stops when its length is up.
+        std::string why;
+        std::unique_ptr<PluginInstance> synth_plugin = PluginInstance::load(dls, &why);
+        const bool ready = synth_plugin && synth_plugin->prepare(48000.0, 4096, &why) && synth_plugin->isInstrument();
+        PluginSynth synth(48000.0f);
+        std::vector<float> out(size_t(48000 * 2), 0.0f);
+        if (ready) {
+            synth.setPlugin(synth_plugin.get());
+            synth.play(60, 0.5f, 0.9f, 3000);
+            for (size_t i = 0; i < out.size(); i += 256) synth.render(out.data() + i, 256);
+        }
+        double before = 0, during = 0, after = 0;
+        for (size_t i = 0; i < out.size(); ++i) {
+            const double a = std::fabs(out[i]);
+            if (i < 3000) before = std::max(before, a);
+            else if (i < 3000 + 24000) during = std::max(during, a);
+            else if (i > 3000 + 24000 + 24000 - 4800) after = std::max(after, a);
+        }
+        const int starts = onsetAfter(out, 0);
+        check(ready && before < 1e-6 && during > 0.01 && starts >= 3000 && starts < 3000 + 480 && after < 0.1 * during,
+              "a plug-in instrument plays a sequenced note from its very sample, and lets go when its length is up",
+              ready ? fmt("starts at sample %.0f, ", double(starts)) + fmt("%.0f dB after its end", db(after / std::max(during, 1e-9))) : why);
+
+        // In the room.
+        Room room;
+        room.soloOnly(-1);
+        room.engine.setReverb(false);
+        room.engine.setSequencerRunning(false);
+        const int piano = room.engine.addSource(InstrumentKind::PluginSynth, {0.0f, 1.2f, -1.0f}, 1.0f, 0.4f);
+        room.engine.noteOn(piano, 60, 0.9f);
+        const Render empty = renderSeconds(room.engine, 0.3);
+        room.engine.allNotesOff(piano);
+        std::string load_error, effect_error, drum_error;
+        const bool loaded = room.engine.setInstrumentPlugin(piano, dls, &load_error);
+        const bool effect = room.engine.setInstrumentPlugin(piano, au_delay, &effect_error);
+        const bool on_drums = room.engine.setInstrumentPlugin(room.drums, dls, &drum_error);
+        renderSeconds(room.engine, 0.1);
+        room.engine.noteOn(piano, 64, 0.9f);
+        const Render held = renderSeconds(room.engine, 0.4);
+        room.engine.noteOff(piano, 64);
+        renderSeconds(room.engine, 2.0);
+        const Render let_go = renderSeconds(room.engine, 0.3);
+        check(empty.peak < 1e-6 && loaded && !effect && !on_drums && room.engine.instrumentPlugin(piano).name == "DLSMusicDevice" &&
+                  held.rms_l > 0.002 && let_go.rms_l < 0.05 * held.rms_l && !room.engine.pluginState(piano, PluginPlace::Instrument, 0).empty(),
+              "a plug-in instrument in the room is silent until it holds a plug-in (an instrument, not an effect), then plays and stops",
+              load_error.empty() ? fmt("%.0f dBFS while held", db(held.rms_l)) : load_error);
+        // Replacing its plug-in while a note sounds: the old one is let go of safely.
+        room.engine.noteOn(piano, 67, 0.9f);
+        renderSeconds(room.engine, 0.1);
+        const bool replaced = room.engine.setInstrumentPlugin(piano, "AU:61756d75:73616d70:6170706c", &load_error);  // AUSampler
+        const Render swapped = renderSeconds(room.engine, 0.3);
+        check(replaced && swapped.finite && room.engine.instrumentPlugin(piano).name == "AUSampler",
+              "its plug-in can be swapped for another while it plays", load_error);
+        // Against the keys, at the same place and the same note, to set how loud a plug-in instrument starts.
+        Room level_room;
+        level_room.soloOnly(-1);
+        level_room.engine.setReverb(false);
+        level_room.engine.setSequencerRunning(false);
+        const int dls_piano = level_room.engine.addSource(InstrumentKind::PluginSynth, {0.0f, 1.2f, -1.0f}, 1.0f, 0.4f);
+        const int keys = level_room.engine.addSource(InstrumentKind::Keys, {0.0f, 1.2f, -1.0f}, 1.0f, 0.4f);
+        level_room.engine.setInstrumentPlugin(dls_piano, dls, &load_error);
+        renderSeconds(level_room.engine, 0.1);
+        level_room.engine.noteOn(dls_piano, 60, 0.8f);
+        const Render dls_level = renderSeconds(level_room.engine, 0.5);
+        level_room.engine.noteOff(dls_piano, 60);
+        renderSeconds(level_room.engine, 2.0);
+        level_room.engine.noteOn(keys, 60, 0.8f);
+        const Render keys_level = renderSeconds(level_room.engine, 0.5);
+        // game/scripts/catalog.gd starts a plug-in instrument at 1.4 and the keys at 0.2: within a few decibels of each other.
+        const double apart = db(dls_level.rms_l * 1.4) - db(keys_level.rms_l * 0.2);
+        check(dls_level.finite && std::fabs(apart) < 4.0, "a plug-in instrument starts about as loud as the keys (Apple's General MIDI piano, that is)",
+              fmt("%+.1f dB", apart));
+#else
+        check(AudioEngine::instrumentPlugins().empty(), "no plug-in instruments on this platform yet", "");
 #endif
     }
 

@@ -15,8 +15,10 @@ const SOMETIMES_VELOCITY := 0.3
 const SOMETIMES_CHANCE := 0.25
 # The lowest and highest row shown for each kind of instrument. Notes outside it widen the range.
 const RANGES := {"bass": [28, 64], "pad": [43, 79], "bells": [60, 96], "keys": [36, 84]}
-const DEFAULT_LENGTH := {"drums": 1.0, "bass": 2.0, "pad": 16.0, "bells": 1.0, "keys": 2.0}
-const DRUM_ORDER := ["Crash", "Open hat", "Closed hat", "Clap", "High tom", "Low tom", "Snare", "Kick"]
+const DEFAULT_LENGTH := {"drums": 1.0, "garage_drums": 1.0, "bass": 2.0, "pad": 16.0, "bells": 1.0, "keys": 2.0, "plugin_synth": 2.0}
+# A drum kit's rows, top to bottom, by its pieces' places in the audio core's list (Kick, Snare, Closed hat, Open hat,
+# Low tom, High tom, Clap or Ride, Crash): the cymbals on top, the kick at the foot.
+const DRUM_ORDER := [7, 3, 2, 6, 5, 4, 1, 0]
 const DRUM_ROW := 44.0
 const NOTE_ROW := 20.0
 const HELP := "Click a square to add a note, click a note to remove it. Right-click a note to change how hard it is hit. Click a name on the left to hear it."
@@ -73,7 +75,7 @@ func open(instrument, at_bar := -1, from_mixer := false) -> void:
 	app.player.start_playing(inst)
 	_note_length = DEFAULT_LENGTH.get(inst.kind, 1.0)
 	_reload()
-	_grid.show_rows(_rows(), DRUM_ROW if inst.kind == "drums" else NOTE_ROW)
+	_grid.show_rows(_rows(), DRUM_ROW if inst.drum_kit else NOTE_ROW)
 	var step := int(audio.get_transport().get("step", -1))
 	bar = at_bar if at_bar >= 0 else (maxi(step, 0) % _steps) / PatternGrid.COLUMNS
 	_root.visible = true
@@ -304,7 +306,7 @@ func _refresh() -> void:
 		_bars[i].disabled = i >= bars
 		_bars[i].set_pressed_no_signal(i == bar)
 	# The drums and bells ring for as long as they ring, whatever a note's length says.
-	_note_length_box.visible = inst.kind not in ["drums", "bells"]
+	_note_length_box.visible = not inst.drum_kit and inst.kind != "bells"
 	for i in NOTE_LENGTHS.size():
 		if is_equal_approx(NOTE_LENGTHS[i][0], _note_length):
 			_note_length_option.select(i)
@@ -317,12 +319,10 @@ func _refresh() -> void:
 
 func _rows() -> Array:
 	var rows := []
-	if inst.kind == "drums":
-		var note_of := {}
-		for piece in audio.get_drum_pieces():
-			note_of[piece.name] = piece.note
-		for piece_name in DRUM_ORDER:
-			rows.append({"note": note_of[piece_name], "label": piece_name, "dark": false})
+	if inst.drum_kit:
+		var pieces: Array = audio.get_drum_pieces(inst.kind)
+		for index in DRUM_ORDER:
+			rows.append({"note": pieces[index].note, "label": pieces[index].name, "dark": false})
 		return rows
 	var span: Array = RANGES.get(inst.kind, [36, 84])
 	var low: int = span[0]
@@ -336,7 +336,7 @@ func _rows() -> Array:
 
 
 func _center_on_notes() -> void:
-	if _notes.is_empty() or inst.kind == "drums":
+	if _notes.is_empty() or inst.drum_kit:
 		_scroll.scroll_vertical = int(maxf(_grid.size.y - _scroll.size.y, 0.0) / 2.0)
 		return
 	var highest := 0
@@ -361,7 +361,7 @@ func _note_name(note: int) -> String:
 
 
 func _row_name(note: int) -> String:
-	return audio.get_drum_piece_name(note) if inst.kind == "drums" else _note_name(note)
+	return audio.get_drum_piece_name(note, inst.kind) if inst.drum_kit else _note_name(note)
 
 
 func _loudness_index(velocity: float) -> int:
@@ -499,7 +499,7 @@ func _on_clear_all() -> void:
 func _on_reset() -> void:
 	audio.load_default_pattern(inst.source_id)
 	_reload()
-	_grid.show_rows(_rows(), DRUM_ROW if inst.kind == "drums" else NOTE_ROW)
+	_grid.show_rows(_rows(), DRUM_ROW if inst.drum_kit else NOTE_ROW)
 	_status.text = "Back to the default pattern." if not _notes.is_empty() else "The %s have no default pattern, so it is empty." % inst.display_name
 	_refresh()
 	_center_in = 2

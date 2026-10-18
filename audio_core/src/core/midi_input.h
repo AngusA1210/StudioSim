@@ -11,10 +11,12 @@
 namespace sr {
 
 struct MidiEvent {
-    enum Type : uint8_t { NoteOn, NoteOff, Sustain };
+    enum Type : uint8_t { NoteOn, NoteOff, Sustain, Control, PitchBend };
     Type type = NoteOn;
-    uint8_t note = 0;       // for Sustain: non-zero means the pedal is down
+    uint8_t note = 0;       // for Sustain: non-zero means the pedal is down; for Control: which controller
     float velocity = 0.0f;  // 0..1
+    uint8_t value = 0;      // Control: its value, 0 to 127
+    uint16_t bend = 8192;   // PitchBend: 0 to 16383, 8192 in the middle
 };
 
 struct MidiDeviceInfo {

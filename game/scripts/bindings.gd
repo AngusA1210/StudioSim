@@ -19,6 +19,7 @@ const ACTIONS := [
 	["octave_up", "Octave up (while playing)", KEY_X],
 	["input", "Input on / off", KEY_I],
 	["edit", "Its pattern, an amp's panel, a Speaker's panel", KEY_ENTER],
+	["plugin_window", "A plug-in instrument's own window", KEY_P],
 	["loop", "Its loop on / off (a Speaker or amp: mute)", KEY_M],
 	["carry", "Pick up, put down", KEY_G],
 	["add", "Add an instrument", KEY_N],

@@ -95,4 +95,35 @@ std::string guessPluginCategory(const std::string& name, const std::string& make
     return "Other";
 }
 
+std::string guessInstrumentCategory(const std::string& name, const std::string& maker, const std::vector<std::string>& tags) {
+    static const std::vector<Rule> kInstrumentRules = {
+        {"Drums & percussion", {"drum", "808", "909", "percuss", "battery", "groove agent", "ezdrummer", "bfd", "beatmaker"},
+         {"kit", "kits", "beat", "beats"}},
+        {"Pianos & keys", {"piano", "rhodes", "wurli", "organ", "clav", "keyscape", "e-piano", "epiano", "mellotron", "celest"},
+         {"keys", "grand", "b3"}},
+        {"Samplers", {"sampler", "kontakt", "soundfont", "sfz", "decent", "dls", "rompler"}, {"sample", "samples"}},
+        {"Orchestral & acoustic", {"orchestr", "symphon", "string", "brass", "woodwind", "spitfire", "choir", "harp", "bbc"}, {"labs"}},
+        {"Synths", {"synth", "diva", "serum", "vital", "massive", "omnisphere", "pigments", "repro", "zebra", "hive", "sylenth",
+                    "phase plant", "moog", "prophet", "juno", "jupiter", "analog", "modular", "wavetable", "oscillat"},
+         {"fm", "mono", "poly"}},
+    };
+    const std::string n = lower(name);
+    const std::vector<std::string> words = wordsOf(n);
+    for (const Rule& rule : kInstrumentRules) {
+        for (const auto& part : rule.within)
+            if (n.find(part) != std::string::npos) return rule.category;
+        for (const auto& word : rule.words)
+            if (std::find(words.begin(), words.end(), word) != words.end()) return rule.category;
+    }
+    static const std::pair<const char*, const char*> kTags[] = {
+        {"Synthesizer", "Synths"}, {"Sampler", "Samplers"}, {"Drums", "Drums & percussion"}, {"Piano", "Pianos & keys"},
+    };
+    for (const auto& [tag, category] : kTags)
+        if (std::find(tags.begin(), tags.end(), tag) != tags.end()) return category;
+    const std::string m = lower(maker);
+    if (m.find("native instruments") != std::string::npos) return "Samplers";
+    if (m.find("spitfire") != std::string::npos) return "Orchestral & acoustic";
+    return "Other";
+}
+
 }  // namespace sr

@@ -13,8 +13,11 @@
 
 namespace sr {
 
-enum class InstrumentKind : uint8_t { Drums, Bass, Pad, Bells, Keys, Live, GuitarCombo, GuitarStack, BassCombo, BassStack };
-constexpr int kInstrumentKinds = 10;
+// GarageDrums is an acoustic kit (GarageKit); PluginSynth plays an instrument plug-in (plugin_synth.h).
+enum class InstrumentKind : uint8_t {
+    Drums, Bass, Pad, Bells, Keys, GarageDrums, PluginSynth, Live, GuitarCombo, GuitarStack, BassCombo, BassStack
+};
+constexpr int kInstrumentKinds = 12;
 
 // The kinds that play an audio input (the Speaker and the amps) rather than notes.
 inline bool isLiveInput(InstrumentKind kind) { return kind >= InstrumentKind::Live; }
@@ -32,6 +35,8 @@ public:
     virtual void noteOn(int /*note*/, float /*velocity*/) {}
     virtual void noteOff(int /*note*/) {}
     virtual void sustain(bool /*pedal_down*/) {}
+    virtual void controlChange(int /*controller*/, int /*value*/) {}  // a MIDI controller other than the sustain pedal
+    virtual void pitchBend(int /*value*/) {}  // 0 to 16383, 8192 in the middle
     virtual void allNotesOff() {}  // releases everything that is being played live
 
     // Played by the sequencer: a note `dur_sec` long that starts `delay` samples into the coming block.
@@ -67,6 +72,35 @@ struct NoiseHit {
     Biquad filter;
 
     void start(float sample_rate, int delay_samples, Biquad::Type type, float freq, float q, float lvl, float decay_sec);
+    float next(Rng& rng);
+};
+
+// A drum head's or a shell's mode: a sine that starts a little sharp and settles (a head goes flat as it relaxes after
+// the hit), dying away over `decay_sec` (to -60 dB).
+struct ModeHit {
+    bool active = false;
+    int delay = 0, t = 0, attack_len = 1, end_len = 0;
+    float sr = 48000, phase = 0, freq = 0, freq_end = 0, glide_mul = 1, amp = 0, level = 0, decay_mul = 1;
+
+    void start(float sample_rate, int delay_samples, float f_end, float sharp, float glide_sec, float lvl, float decay_sec);
+    float next();
+};
+
+// A cymbal's metal: six square waves at clashing frequencies, as analog drum machines make their cymbals, with noise
+// for sizzle, through a band-pass and a high-pass, dying away. Hats belong to `group` 1, so a closed hat can choke an
+// open one that is still ringing, as the two cymbals of a real hi-hat do when they close.
+struct MetalHit {
+    bool active = false;
+    int delay = 0, t = 0, end_len = 0, group = 0;
+    float sr = 48000, amp = 0, decay_mul = 1, noise = 0;
+    std::array<float, 6> phase{}, inc{};
+    Biquad band, high;
+
+    void start(float sample_rate, int delay_samples, float base, float band_freq, float high_freq, float lvl, float decay_sec,
+               float noise_share, int grp);
+    void choke(float decay_sec);  // dies away over this long from now instead
+    // Struck again while still ringing: it rings on louder (the energies add) and starts dying away afresh.
+    void restrike(float lvl, float decay_sec);
     float next(Rng& rng);
 };
 
@@ -145,6 +179,38 @@ private:
     std::array<voice::ToneHit, 12> tones_;
     std::array<voice::NoiseHit, 24> noises_;
     Rng rng_;
+};
+
+// An acoustic drum kit as it sounds in a garage: a kick with its front head ported but barely damped, a snare with loose
+// wires that buzz along with the toms and the kick, a rack tom and a floor tom left to ring, hats a little trashy, and
+// a washy crash and ride. Each drum is its head's modes, settling in pitch after the hit, with the stick or beater on
+// top; harder hits are brighter, and no two hits are quite alike. The same eight pieces and keys as the drum machine,
+// except that the clap's key (D#, as General MIDI's ride at 51) plays the ride.
+class GarageKit : public Instrument {
+public:
+    using Piece = Drums::Piece;
+    static constexpr Piece Ride = Drums::Clap;  // the ride stands where the drum machine has its clap
+    static int noteFor(Piece piece);
+    static const char* pieceName(Piece piece);
+
+    using Instrument::Instrument;
+    void hit(Piece piece, float velocity, int delay);
+    void noteOn(int note, float velocity) override { hit(Drums::pieceFor(note), velocity, 0); }
+    void play(int note, float /*dur_sec*/, float velocity, int delay) override { hit(Drums::pieceFor(note), velocity, delay); }
+    float velocityJitter() const override { return 0.06f; }
+    void render(float* out, int n) override;
+
+private:
+    void mode(int delay, float freq, float sharp, float glide, float level, float decay);
+    void noise(int delay, Biquad::Type type, float freq, float q, float level, float decay);
+    void metal(int delay, float base, float band, float high, float level, float decay, float noise_share, int group);
+    // A cymbal's wash: one ring each for the ride and the crash, which a new hit adds to rather than piling up voices.
+    void wash(voice::MetalHit& ring, int delay, float base, float band, float high, float level, float decay, float noise_share);
+    std::array<voice::ModeHit, 48> modes_;
+    std::array<voice::NoiseHit, 24> noises_;
+    std::array<voice::MetalHit, 12> metals_;
+    voice::MetalHit ride_wash_, crash_wash_;
+    Rng rng_{0x5DEECE66u};
 };
 
 class Bass : public Instrument {

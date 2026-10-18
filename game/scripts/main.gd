@@ -75,6 +75,7 @@ var session  # the room that is open: its file, saving, backups
 var rooms_page  # making a new room, or opening one
 var name_prompt  # asks for a name, to save a template or a preset under
 var _plugins = null  # what get_plugins() said, the first time anything asked
+var _instrument_plugins = null  # and get_instrument_plugins()
 var instrument_menu
 var title  # the title screen
 var room  # its size and the walls inside it
@@ -526,6 +527,43 @@ func available_plugins() -> Array:
 	return _plugins
 
 
+## The instrument plug-ins installed (synthesizers, samplers, pianos), looked up once, the first time they are wanted.
+func available_instrument_plugins() -> Array:
+	if _instrument_plugins == null:
+		_instrument_plugins = audio.get_instrument_plugins()
+	return _instrument_plugins
+
+
+## Loads an instrument plug-in into a plug-in instrument (with these settings, if given), which then goes by its name.
+## Returns why it couldn't, or "".
+func set_instrument_plugin(inst, plugin_id: String, state := PackedByteArray()) -> String:
+	if not audio.set_instrument_plugin(inst.source_id, plugin_id, state):
+		return audio.get_error()
+	inst.instrument_plugin = audio.get_instrument_plugin(inst.source_id)
+	inst.set_display_name(unique_name(inst.instrument_plugin.plugin_name, inst))
+	return ""
+
+
+## A plug-in instrument's plug-in's own window, floating over the room. Not in automated runs, which have no windows.
+func show_instrument_editor(inst, show: bool) -> bool:
+	if show and DisplayServer.get_name() == "headless":
+		return false
+	var shown := audio.show_instrument_editor(inst.source_id, show, inst.display_name)
+	inst.instrument_plugin = audio.get_instrument_plugin(inst.source_id)
+	return shown
+
+
+## A name no other instrument in the room has: `base`, or "base 2", "base 3"... (`except` is the one being named).
+func unique_name(base: String, except = null) -> String:
+	var taken := instruments.filter(func(other): return other != except).map(func(other): return other.display_name)
+	var candidate := base
+	var number := 2
+	while taken.has(candidate):
+		candidate = "%s %d" % [base, number]
+		number += 1
+	return candidate
+
+
 ## A channel's inserts, as in a DAW's mix window: a plug-in in each of a few slots, before the fader. Loading one
 ## returns why it couldn't be loaded, or "".
 func set_insert(inst, slot: int, plugin_id: String, state := PackedByteArray()) -> String:
@@ -748,6 +786,11 @@ func duplicate_instrument(inst, at = null):
 		return null
 	instruments.erase(copy)
 	instruments.insert(instruments.find(inst) + 1, copy)
+	var problems := []
+	if inst.plays_plugin and str(inst.instrument_plugin.get("plugin_id", "")) != "":
+		var problem := set_instrument_plugin(copy, inst.instrument_plugin.plugin_id, audio.get_plugin_state(inst.source_id, "instrument", 0))
+		if problem != "":
+			problems.append("its plug-in: %s" % problem)
 	copy.rotation.y = inst.rotation.y
 	set_instrument_level(copy, inst.level_db)
 	set_muted(copy, inst.muted)
@@ -758,7 +801,6 @@ func duplicate_instrument(inst, at = null):
 	else:
 		set_input_channel(copy, inst.input_channel)
 		set_speaker_volume(copy, inst.volume_db)
-	var problems := []
 	if inst.is_amp:
 		set_amp_voice(copy, inst.amp_head, inst.head_on, inst.amp_cabinet, inst.cabinet_on)
 		for control in inst.amp_controls:
@@ -804,6 +846,8 @@ func remove_instrument(inst) -> void:
 		speaker = null
 	hide_plugin_editors(inst)
 	hide_insert_editors(inst)
+	if inst.plays_plugin:
+		show_instrument_editor(inst, false)
 	audio.remove_source(inst.source_id)  # fades out over a few milliseconds
 	inst.queue_free()
 	_apply_channels()  # it may have been the one soloed

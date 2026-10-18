@@ -11,6 +11,9 @@ namespace {
 sr::Vec3 vec(const Vector3& v) { return sr::Vec3{float(v.x), float(v.y), float(v.z)}; }
 String str(const std::string& s) { return String::utf8(s.c_str()); }
 std::string str(const String& s) { return std::string(s.utf8().get_data()); }
+sr::PluginPlace placeOf(const String& place) {
+    return place == "insert" ? sr::PluginPlace::Insert : place == "instrument" ? sr::PluginPlace::Instrument : sr::PluginPlace::Pedal;
+}
 std::vector<uint8_t> bytes(const PackedByteArray& b) { return std::vector<uint8_t>(b.ptr(), b.ptr() + b.size()); }
 PackedByteArray bytes(const std::vector<uint8_t>& v) {
     PackedByteArray out;
@@ -123,6 +126,8 @@ int SoundRoomAudio::add_source(const String& kind, const Vector3& position, floa
     else if (kind == "pad") k = sr::InstrumentKind::Pad;
     else if (kind == "bells") k = sr::InstrumentKind::Bells;
     else if (kind == "keys") k = sr::InstrumentKind::Keys;
+    else if (kind == "garage_drums") k = sr::InstrumentKind::GarageDrums;
+    else if (kind == "plugin_synth") k = sr::InstrumentKind::PluginSynth;
     else if (kind == "live") k = sr::InstrumentKind::Live;
     else if (kind == "guitar_combo") k = sr::InstrumentKind::GuitarCombo;
     else if (kind == "guitar_stack") k = sr::InstrumentKind::GuitarStack;
@@ -272,6 +277,41 @@ bool SoundRoomAudio::load_pedal_plugin(int id, int index, const String& plugin_i
     return false;
 }
 
+Array SoundRoomAudio::get_instrument_plugins() const {
+    Array out;
+    for (const sr::PluginDescription& p : sr::AudioEngine::instrumentPlugins()) {
+        Dictionary d;
+        d["id"] = str(p.id);
+        d["name"] = str(p.name);
+        d["maker"] = str(p.maker);
+        d["category"] = str(p.category);
+        out.push_back(d);
+    }
+    return out;
+}
+
+bool SoundRoomAudio::set_instrument_plugin(int id, const String& plugin_id, const PackedByteArray& state) {
+    std::string err;
+    const std::vector<uint8_t> settings = bytes(state);
+    if (engine_ && engine_->setInstrumentPlugin(id, str(plugin_id), &err, settings.empty() ? nullptr : &settings)) return true;
+    error_ = str(err.empty() ? std::string("the audio engine isn't running") : err);
+    return false;
+}
+
+Dictionary SoundRoomAudio::get_instrument_plugin(int id) const {
+    Dictionary d;
+    const sr::PluginDescription p = engine_ ? engine_->instrumentPlugin(id) : sr::PluginDescription{};
+    d["plugin_id"] = str(p.id);
+    d["plugin_name"] = str(p.name);
+    d["plugin_maker"] = str(p.maker);
+    d["editor_open"] = engine_ && engine_->instrumentEditorOpen(id);
+    return d;
+}
+
+bool SoundRoomAudio::show_instrument_editor(int id, bool show, const String& title) {
+    return engine_ && engine_->showInstrumentEditor(id, show, str(title));
+}
+
 bool SoundRoomAudio::show_plugin_editor(int id, int index, bool show, const String& title) {
     return engine_ && engine_->showPluginEditor(id, index, show, str(title));
 }
@@ -299,19 +339,19 @@ bool SoundRoomAudio::set_insert(int id, int slot, const String& plugin_id, const
     return false;
 }
 PackedByteArray SoundRoomAudio::get_plugin_state(int id, const String& place, int index) const {
-    return engine_ ? bytes(engine_->pluginState(id, place == "insert", index)) : PackedByteArray();
+    return engine_ ? bytes(engine_->pluginState(id, placeOf(place), index)) : PackedByteArray();
 }
 bool SoundRoomAudio::set_plugin_state(int id, const String& place, int index, const PackedByteArray& state) {
-    return engine_ && engine_->setPluginState(id, place == "insert", index, bytes(state));
+    return engine_ && engine_->setPluginState(id, placeOf(place), index, bytes(state));
 }
 PackedStringArray SoundRoomAudio::get_factory_presets(int id, const String& place, int index) const {
     PackedStringArray out;
     if (engine_)
-        for (const std::string& name : engine_->factoryPresets(id, place == "insert", index)) out.push_back(str(name));
+        for (const std::string& name : engine_->factoryPresets(id, placeOf(place), index)) out.push_back(str(name));
     return out;
 }
 bool SoundRoomAudio::load_factory_preset(int id, const String& place, int index, int preset) {
-    return engine_ && engine_->loadFactoryPreset(id, place == "insert", index, preset);
+    return engine_ && engine_->loadFactoryPreset(id, placeOf(place), index, preset);
 }
 bool SoundRoomAudio::write_plugin_preset(const String& path, const String& name, const PackedByteArray& state) {
     std::string err;
@@ -459,18 +499,23 @@ Dictionary SoundRoomAudio::get_transport() const {
     return d;
 }
 
-Array SoundRoomAudio::get_drum_pieces() const {
+Array SoundRoomAudio::get_drum_pieces(const String& kind) const {
     Array out;
+    const bool garage = kind == "garage_drums";
     for (int piece = 0; piece < sr::Drums::kPieces; ++piece) {
+        const auto p = sr::Drums::Piece(piece);
         Dictionary entry;
-        entry["name"] = String(sr::Drums::pieceName(sr::Drums::Piece(piece)));
-        entry["note"] = sr::Drums::noteFor(sr::Drums::Piece(piece));
+        entry["name"] = String(garage ? sr::GarageKit::pieceName(p) : sr::Drums::pieceName(p));
+        entry["note"] = garage ? sr::GarageKit::noteFor(p) : sr::Drums::noteFor(p);
         out.push_back(entry);
     }
     return out;
 }
 
-String SoundRoomAudio::get_drum_piece_name(int note) const { return String(sr::Drums::pieceName(sr::Drums::pieceFor(note))); }
+String SoundRoomAudio::get_drum_piece_name(int note, const String& kind) const {
+    const auto piece = sr::Drums::pieceFor(note);
+    return String(kind == "garage_drums" ? sr::GarageKit::pieceName(piece) : sr::Drums::pieceName(piece));
+}
 
 // ── MIDI ───────────────────────────────────────────────────────────────────────────────────────────────────
 bool SoundRoomAudio::start_midi() {
@@ -546,6 +591,11 @@ void SoundRoomAudio::_bind_methods() {
     ClassDB::bind_method(D_METHOD("show_plugin_editor", "id", "index", "show", "title"), &SoundRoomAudio::show_plugin_editor);
     ClassDB::bind_method(D_METHOD("get_inserts", "id"), &SoundRoomAudio::get_inserts);
     ClassDB::bind_method(D_METHOD("set_insert", "id", "slot", "plugin_id", "state"), &SoundRoomAudio::set_insert, DEFVAL(PackedByteArray()));
+    ClassDB::bind_method(D_METHOD("get_instrument_plugins"), &SoundRoomAudio::get_instrument_plugins);
+    ClassDB::bind_method(D_METHOD("set_instrument_plugin", "id", "plugin_id", "state"), &SoundRoomAudio::set_instrument_plugin,
+                         DEFVAL(PackedByteArray()));
+    ClassDB::bind_method(D_METHOD("get_instrument_plugin", "id"), &SoundRoomAudio::get_instrument_plugin);
+    ClassDB::bind_method(D_METHOD("show_instrument_editor", "id", "show", "title"), &SoundRoomAudio::show_instrument_editor);
     ClassDB::bind_method(D_METHOD("get_plugin_state", "id", "place", "index"), &SoundRoomAudio::get_plugin_state);
     ClassDB::bind_method(D_METHOD("set_plugin_state", "id", "place", "index", "state"), &SoundRoomAudio::set_plugin_state);
     ClassDB::bind_method(D_METHOD("get_factory_presets", "id", "place", "index"), &SoundRoomAudio::get_factory_presets);
@@ -589,8 +639,8 @@ void SoundRoomAudio::_bind_methods() {
     ClassDB::bind_method(D_METHOD("set_click", "on"), &SoundRoomAudio::set_click);
     ClassDB::bind_method(D_METHOD("set_click_volume", "gain"), &SoundRoomAudio::set_click_volume);
     ClassDB::bind_method(D_METHOD("get_transport"), &SoundRoomAudio::get_transport);
-    ClassDB::bind_method(D_METHOD("get_drum_pieces"), &SoundRoomAudio::get_drum_pieces);
-    ClassDB::bind_method(D_METHOD("get_drum_piece_name", "note"), &SoundRoomAudio::get_drum_piece_name);
+    ClassDB::bind_method(D_METHOD("get_drum_pieces", "kind"), &SoundRoomAudio::get_drum_pieces, DEFVAL("drums"));
+    ClassDB::bind_method(D_METHOD("get_drum_piece_name", "note", "kind"), &SoundRoomAudio::get_drum_piece_name, DEFVAL("drums"));
 
     ClassDB::bind_method(D_METHOD("start_midi"), &SoundRoomAudio::start_midi);
     ClassDB::bind_method(D_METHOD("poll_midi"), &SoundRoomAudio::poll_midi);

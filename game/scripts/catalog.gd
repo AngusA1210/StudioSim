@@ -4,12 +4,13 @@ extends RefCounted
 ## For each kind: its name and a line about it, how it looks (colour; how tall its model stands, `top`, and the
 ## floor it covers, `footprint`, both in metres), the height its sound comes from, how loud it is and how much of
 ## it goes to the room reverb, and for MIDI instruments the octave the computer keyboard starts in. "live_input"
-## marks the kinds that play an audio input rather than notes. scripts/instrument_models.gd draws them.
+## marks the kinds that play an audio input rather than notes, "drum_kit" those whose keys are drums (each key a
+## piece), and "plugin" the one that plays an instrument plug-in. scripts/instrument_models.gd draws them.
 ## Then the effect pedals an amp can have in front of it, and how their knobs read.
 
 const KINDS := {
-	"drums": {"name": "Drums", "about": "A drum kit, eight pieces in all, one on each key.", "color": Color(1.0, 0.42, 0.26),
-		"top": 1.45, "footprint": Vector2(1.5, 1.2), "height": 0.9, "gain": 0.50, "send": 0.6},
+	"drums": {"name": "Drums", "about": "A drum machine, eight pieces in all, one on each key.", "color": Color(1.0, 0.42, 0.26),
+		"top": 1.45, "footprint": Vector2(1.5, 1.2), "height": 0.9, "gain": 0.50, "send": 0.6, "drum_kit": true},
 	"bass": {"name": "Bass", "about": "A bass synthesizer. Notes hold for as long as the key is down.", "color": Color(0.58, 0.44, 1.0),
 		"top": 1.2, "footprint": Vector2(0.8, 0.5), "height": 1.0, "gain": 0.38, "send": 0.4, "octave": -2},
 	"pad": {"name": "Pad", "about": "A modular synthesizer: soft, slow chords that swell and fade.", "color": Color(0.25, 0.84, 0.75),
@@ -18,6 +19,14 @@ const KINDS := {
 		"top": 1.96, "footprint": Vector2(0.9, 0.5), "height": 1.6, "gain": 0.42, "send": 1.0, "octave": 1},
 	"keys": {"name": "Keys", "about": "An electric piano. A sustain pedal works on it.", "color": Color(1.0, 0.48, 0.82),
 		"top": 0.98, "footprint": Vector2(1.2, 0.55), "height": 0.95, "gain": 0.20, "send": 0.9},
+	# An acoustic kit, with the drum machine's pieces and keys (a ride on the clap's). As loud played as the drums.
+	"garage_drums": {"name": "Garage Kit", "about": "An acoustic kit in a garage: ringing toms, a loose snare, trashy hats, a ride.",
+		"color": Color(0.80, 0.52, 0.38), "top": 1.45, "footprint": Vector2(1.6, 1.3), "height": 0.9, "gain": 0.38, "send": 0.6,
+		"drum_kit": true},
+	# One of the instrument plug-ins on the computer, chosen when it is made, and named after it.
+	"plugin_synth": {"name": "Plug-in Instrument", "about": "One of your instrument plug-ins: a synthesizer, a sampler, a piano.",
+		"color": Color(0.66, 0.72, 1.0), "top": 1.3, "footprint": Vector2(0.9, 0.5), "height": 1.0, "gain": 1.4, "send": 0.8,
+		"plugin": true},
 	"live": {"name": "Speaker", "about": "Plays an input just as it comes in, from where the speaker stands.", "color": Color(0.55, 0.78, 1.0),
 		"top": 1.72, "footprint": Vector2(0.6, 0.6), "height": 1.45, "gain": 1.5, "send": 0.7, "live_input": true},
 	# Amps: their output level is set in the audio core, so "gain" is 1. Each has room for a board of effect pedals,
@@ -97,7 +106,7 @@ const PEDALS := {
 		"about": "A room or a hall around the guitar, before it reaches the amp. Its tail rings on after it is switched off.",
 		"controls": [["DECAY", "decay", 5.0], ["TONE", "tone_reverb", 5.0], ["MIX", "percent", 3.0]]},
 	"looper": {"name": "Loop Pedal", "color": Color(0.2, 0.22, 0.26),
-		"about": "Records what reaches it and plays it round and round, with overdubs on top. One to an amp; L, K, U and J work it.",
+		"about": "Records what reaches it and plays it round and round, with overdubs on top. One to an amp; L, O, U and J work it.",
 		"controls": [["LEVEL", "level", 5.0], ["SYNC", "switch", 1.0], ["OVERDUB AFTER RECORDING", "switch", 0.0]]},
 	"plugin": {"name": "Plug-in", "color": Color(0.55, 0.56, 0.62),
 		"about": "Holds one of the effect plug-ins installed on this computer, with its own window, before the amp.",
@@ -111,7 +120,7 @@ const DELAY_NOTES := ["1/16", "1/8 triplet", "1/8", "dotted 1/8", "1/4 triplet",
 const GROUPS := [
 	{"title": "MIDI instruments",
 		"about": "Played from the computer keyboard or a MIDI controller, and each can loop a pattern on the sequencer. A new one starts with an empty pattern.",
-		"kinds": ["drums", "bass", "pad", "bells", "keys"], "coming": ""},
+		"kinds": ["drums", "garage_drums", "bass", "pad", "bells", "keys", "plugin_synth"], "coming": ""},
 	{"title": "Live input",
 		"about": "Bring a microphone, or a guitar or bass plugged into your audio interface, into the room. Switch its input on (I) to hear it.",
 		"kinds": ["live", "guitar_combo", "guitar_stack", "bass_combo", "bass_stack"], "coming": ""},

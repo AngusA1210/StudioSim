@@ -15,7 +15,7 @@ const BLACK_KEYS := [[KEY_W, "W", 0], [KEY_E, "E", 1], [KEY_T, "T", 3], [KEY_Y, 
 	[KEY_O, "O", 7], [KEY_P, "P", 8]]
 # What each drum piece is called on a key: spelled out on the wide white keys, two letters on the black ones.
 const DRUM_LABELS := {"Kick": ["Kick", "BD"], "Snare": ["Snare", "SD"], "Closed hat": ["Hat", "CH"], "Open hat": ["Open", "OH"],
-	"Low tom": ["Lo tom", "LT"], "High tom": ["Hi tom", "HT"], "Clap": ["Clap", "CP"], "Crash": ["Crash", "CR"]}
+	"Low tom": ["Lo tom", "LT"], "High tom": ["Hi tom", "HT"], "Clap": ["Clap", "CP"], "Ride": ["Ride", "RD"], "Crash": ["Crash", "CR"]}
 
 var app
 var audio: SoundRoomAudio
@@ -229,7 +229,7 @@ func _process(_delta: float) -> void:
 		if _piano_for != str(inst.get_instance_id()):
 			_label_piano(inst)
 		_piano_title.text = "Playing the %s" % inst.display_name
-		var octave := "" if inst.kind == "drums" else "%s (lowest key C%d)  ·  " % [octaves, 4 + player.octave]
+		var octave := "" if inst.drum_kit else "%s (lowest key C%d)  ·  " % [octaves, 4 + player.octave]
 		_piano_help.text = "%s  stop  ·  %s%s  pattern  ·  %s  input %s  ·  %s  loop %s" % [keys.label("stop"), octave, keys.label("edit"),
 			keys.label("input"), "off" if inst.input_on else "on", keys.label("loop"), "on" if not inst.loop_on else "off"]
 		_light_piano(inst.color)
@@ -240,7 +240,7 @@ func _process(_delta: float) -> void:
 		var names := []
 		for inst in armed:
 			names.append(inst.display_name)
-			drums_only = drums_only and inst.kind == "drums"
+			drums_only = drums_only and inst.drum_kit
 		var lead = armed[0] if not armed.is_empty() else null
 		if _piano_for != (str(lead.get_instance_id()) if drums_only else "keyboard"):
 			_label_piano(lead if drums_only else null)
@@ -307,6 +307,8 @@ func _show_hint(vp: Vector2) -> void:
 		elif t.playable:
 			rows.append([keys.label("play"), "play" if player.can_play_target() else "play (step closer)"])
 			rows.append([keys.label("edit"), "edit its pattern"])
+			if t.plays_plugin:
+				rows.append([keys.label("plugin_window"), "close its plug-in's window" if t.instrument_plugin.get("editor_open", false) else "its plug-in's window"])
 			rows.append([keys.label("input"), "input off" if t.input_on else "input on"])
 			rows.append([keys.label("loop"), "loop on" if not t.loop_on else "loop off"])
 		elif not t.is_amp:
@@ -420,18 +422,17 @@ func _piano_key(parent: Control, key: int, letter: String, pos: Vector2, size: V
 	_piano_keys[key] = {"rect": rect, "idle": idle, "piece": piece, "semitone": semitone, "white": white}
 
 
-## At the drums each key is a drum, so say which; at anything else the keys are just notes.
 ## Names the keys for an instrument: a drum kit's pieces, or nothing beyond the notes (null: the keyboard).
 func _label_piano(inst) -> void:
 	_piano_for = str(inst.get_instance_id()) if inst != null else "keyboard"
-	var drums: bool = inst != null and inst.kind == "drums"
+	var drums: bool = inst != null and inst.drum_kit
 	if inst != null:
 		_piano_title.add_theme_color_override("font_color", inst.color.lightened(0.3))
 	for key in _piano_keys:
 		var entry: Dictionary = _piano_keys[key]
 		entry.piece.visible = drums
 		if drums:
-			var names: Array = DRUM_LABELS.get(audio.get_drum_piece_name(60 + int(entry.semitone)), ["", ""])
+			var names: Array = DRUM_LABELS.get(audio.get_drum_piece_name(60 + int(entry.semitone), inst.kind), ["", ""])
 			entry.piece.text = names[0] if entry.white else names[1]
 
 

@@ -47,7 +47,7 @@ func has_room() -> bool:
 	return path != ""
 
 
-## Where new rooms go unless another folder is chosen: Music/SoundRoom/Rooms.
+## Where new rooms go unless another folder is chosen: Rooms, in the SoundRoom folder (library.gd's home()).
 func default_location() -> String:
 	return app.library.root.path_join("Rooms")
 

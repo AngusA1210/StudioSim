@@ -14,9 +14,11 @@ var audio: SoundRoomAudio
 var _root: Control
 var _panel: PanelContainer
 var _cards: Array = []
+var _card_for := {}  # kind → its card
 var _input_option: OptionButton
 var _input_choice := -1  # the hardware input a new live instrument plays; -1 = all of them
 var _footer: Label
+var _scroll: ScrollContainer
 var _preset_box: VBoxContainer  # "Your presets", shown when there are any
 var _preset_cards: HFlowContainer
 var _preset_buttons: Array = []
@@ -40,6 +42,7 @@ func open() -> void:
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	_fill_presets()
 	_refresh()
+	_scroll.scroll_vertical = 0  # from the top each time
 
 
 func close() -> void:
@@ -61,7 +64,7 @@ func create(kind: String):
 
 
 func _input(event: InputEvent) -> void:
-	if is_open() and not app.name_prompt.is_open() and event is InputEventKey and event.pressed and not event.echo and \
+	if is_open() and not app.name_prompt.is_open() and not app.plugin_browser.visible and event is InputEventKey and event.pressed and not event.echo and \
 			(event.physical_keycode == KEY_ESCAPE or app.bindings.action_for(event.physical_keycode) == "add"):
 		close()
 		get_viewport().set_input_as_handled()
@@ -115,6 +118,7 @@ func _build() -> void:
 	header.add_child(close_button)
 
 	var scroll := ScrollContainer.new()
+	_scroll = scroll
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	outer.add_child(scroll)
@@ -186,6 +190,7 @@ func _card(kind: String) -> Button:
 		style.border_color = spec.color if state != "disabled" else spec.color.darkened(0.6)
 		card.add_theme_stylebox_override(state, style)
 	card.pressed.connect(_on_picked.bind(kind))
+	_card_for[kind] = card
 
 	var margin := MarginContainer.new()
 	margin.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -247,6 +252,25 @@ func _refresh() -> void:
 	_input_option.select(_input_choice + 1)
 
 
+## A plug-in instrument: which of the instrument plug-ins, from the browser; then it comes into your hands holding it,
+## named after it.
+func _choose_plugin_instrument() -> void:
+	var card: Control = _card_for.plugin_synth
+	app.plugin_browser.open_for("A plug-in instrument", app.available_instrument_plugins(), card.get_screen_position() + Vector2(card.size.x + 6, 0),
+		func(plugin: Dictionary) -> void:
+			var inst = create("plugin_synth")
+			if inst == null:
+				_refresh()
+				return
+			var problem: String = app.set_instrument_plugin(inst, plugin.id)
+			if problem != "":
+				app.remove_instrument(inst)
+				_footer.text = "%s couldn't be loaded: %s." % [plugin.name, problem]
+				_footer.add_theme_color_override("font_color", WARN)
+				return
+			close())
+
+
 ## A card for each instrument preset saved, in the colour of the kind of instrument it makes.
 func _fill_presets() -> void:
 	for child in _preset_cards.get_children():
@@ -299,6 +323,9 @@ func _on_input_selected(index: int) -> void:
 
 
 func _on_picked(kind: String) -> void:
+	if kind == "plugin_synth":
+		_choose_plugin_instrument()
+		return
 	if create(kind) != null:
 		close()
 	else:

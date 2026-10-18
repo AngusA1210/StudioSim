@@ -1,6 +1,7 @@
 extends PopupPanel
-## The plug-in browser: every effect plug-in on the computer, grouped by the kind of effect it is or by who makes it,
-## with a search box. The mix window's insert slots and the amps' Plug-in pedals open it. Double-click a plug-in (or
+## The plug-in browser: the effect plug-ins on the computer (or, for a plug-in instrument, the instrument plug-ins),
+## grouped by the kind they are or by who makes them, with a search box. The mix window's insert slots and the amps'
+## Plug-in pedals open it, and so does choosing a plug-in instrument. Double-click a plug-in (or
 ## pick one and press Load, or Enter) to choose it.
 ##
 ## Most plug-ins don't say what kind of effect they are, so the kinds are worked out from their names in the audio core
@@ -9,7 +10,8 @@ extends PopupPanel
 const DIM := Color(0.62, 0.65, 0.74)
 # The order the kinds are listed in, roughly the order they would sit on a channel.
 const TYPE_ORDER := ["Amps & cabinets", "EQ", "Dynamics", "Channel strips", "Saturation & distortion", "Filter", "Modulation",
-	"Delay", "Reverb", "Pitch & vocal", "Spatial", "Restoration", "Mastering", "Utility & metering", "Other"]
+	"Delay", "Reverb", "Pitch & vocal", "Spatial", "Restoration", "Mastering", "Utility & metering",
+	"Synths", "Pianos & keys", "Drums & percussion", "Samplers", "Orchestral & acoustic", "Other"]
 
 var plugins: Array = []  # [{id, name, maker, category}]
 var by_maker := false
@@ -148,7 +150,7 @@ func _fill() -> void:
 			item.set_custom_color(1, DIM)
 			item.set_metadata(0, i)
 	if plugins.is_empty():
-		_count.text = "No effect plug-ins are installed."
+		_count.text = "None of these are installed."
 	else:
 		_count.text = "%d of %d · your Audio Units (AAX-only plug-ins can't be used)" % [shown, plugins.size()]
 

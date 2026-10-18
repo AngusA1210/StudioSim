@@ -56,6 +56,13 @@ struct MidiInput::Impl {
                 } else if (status == 0xB0 && d1 == 64) {
                     e.type = MidiEvent::Sustain;
                     e.note = d2 >= 64 ? 1 : 0;
+                } else if (status == 0xB0) {  // the mod wheel and the rest, for plug-in instruments
+                    e.type = MidiEvent::Control;
+                    e.note = d1;
+                    e.value = d2;
+                } else if (status == 0xE0) {
+                    e.type = MidiEvent::PitchBend;
+                    e.bend = uint16_t(d1 | (d2 << 7));
                 } else {
                     continue;
                 }

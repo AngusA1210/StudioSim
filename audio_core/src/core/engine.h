@@ -21,6 +21,7 @@
 #include "mix.h"
 #include "pedals.h"
 #include "plugin_host.h"
+#include "plugin_synth.h"
 #include "room_geometry.h"
 #include "sequencer.h"
 #include "spatializer.h"
@@ -96,6 +97,9 @@ struct PedalStatus {
     PluginDescription plugin;
     bool editor_open = false;
 };
+
+// Where a plug-in is: on a Plug-in pedal, an insert, or a plug-in instrument (the instrument itself).
+enum class PluginPlace : uint8_t { Pedal, Insert, Instrument };
 
 // What an amp's loop pedal is doing, for the game to show.
 struct LooperStatus {
@@ -223,13 +227,22 @@ public:
     // in place of what was there.
     bool moveInsert(int from_id, int from_slot, int to_id, int to_slot);
     bool copyInsert(int from_id, int from_slot, int to_id, int to_slot, std::string* error);
-    // The plug-in on an insert (`insert`, `index` its slot) or a Plug-in pedal (`index` its place on the board): its
-    // settings as it saves them (empty if there is no plug-in there), putting settings back while it plays, as a DAW
-    // loads a preset, and the presets it comes with. Game thread.
-    std::vector<uint8_t> pluginState(int id, bool insert, int index) const;
-    bool setPluginState(int id, bool insert, int index, const std::vector<uint8_t>& state);
-    std::vector<std::string> factoryPresets(int id, bool insert, int index) const;
-    bool loadFactoryPreset(int id, bool insert, int index, int preset);
+    // The plug-in on an insert (`index` its slot), a Plug-in pedal (`index` its place on the board) or a plug-in
+    // instrument: its settings as it saves them (empty if there is no plug-in there), putting settings back while it
+    // plays, as a DAW loads a preset, and the presets it comes with. Game thread.
+    std::vector<uint8_t> pluginState(int id, PluginPlace place, int index) const;
+    bool setPluginState(int id, PluginPlace place, int index, const std::vector<uint8_t>& state);
+    std::vector<std::string> factoryPresets(int id, PluginPlace place, int index) const;
+    bool loadFactoryPreset(int id, PluginPlace place, int index, int preset);
+
+    // ── Plug-in instruments ──────────────────────────────────────────────────────────────────────────────
+    // A source of kind PluginSynth plays one of the instrument plug-ins installed. Loading one replaces what it held
+    // (with these settings, if given); false with the reason. Game thread, which on macOS must be the main thread.
+    static std::vector<PluginDescription> instrumentPlugins() { return PluginInstance::availableInstruments(); }
+    bool setInstrumentPlugin(int id, const std::string& plugin_id, std::string* error, const std::vector<uint8_t>* state = nullptr);
+    PluginDescription instrumentPlugin(int id) const;  // what it holds (an empty id if nothing)
+    bool instrumentEditorOpen(int id) const;
+    bool showInstrumentEditor(int id, bool show, const std::string& title = "");
     void setListener(Vec3 position, Vec3 ahead, Vec3 up);
     void noteOn(int id, int note, float velocity);
     void noteOff(int id, int note);
@@ -302,7 +315,7 @@ private:
             NoteOn, NoteOff, AllNotesOff, Binaural, Reverb, MasterVolume, SourceInput,
             PatternNoteSet, PatternNoteRemove, PatternClear, PatternSteps, SourceLoop, SourceVolume,
             SequencerRunning, Tempo, Swing, Click, ClickVolume, Reverb2, SourceGain, Falloff, LimiterOn,
-            AmpKnob, AmpHeadSet, AmpCabinetSet, LooperMemory, LooperAct, PedalBoardSet, PedalOn, PedalControl,
+            AmpKnob, AmpHeadSet, AmpCabinetSet, LooperMemory, LooperAct, PedalBoardSet, PedalOn, PedalControl, SynthPlugin,
         } type = AddSource;
         int id = 0;
         float v[9] = {};
@@ -310,7 +323,8 @@ private:
         float* memory[2] = {nullptr, nullptr};  // LooperMemory
         int64_t count = 0;
         // PedalBoardSet: the new order (`count` of them; v[0] is 0 for the pedals, 1 for the inserts). PedalOn,
-        // PedalControl, LooperMemory and LooperAct: the pedal, [0].
+        // PedalControl, LooperMemory and LooperAct: the pedal, [0]. SynthPlugin: the plug-in instrument's, [0]
+        // (a PluginPedal holding it), or none.
         Pedal* pedals[kMaxPedals] = {};
         uint32_t epoch = 0;
     };
@@ -324,7 +338,7 @@ private:
     void connect(Source& source);  // an amp's pedals and knobs, after its instrument is (re)built
     bool sendBoard(Source& source, bool inserts = false);  // hands the audio thread the pedals (or inserts) anew
     LooperPedal* looperOf(const Source& source) const;     // the loop pedal on its board, if any
-    PluginInstance* pluginAt(int id, bool insert, int index) const;  // the plug-in on an insert or a Plug-in pedal
+    PluginInstance* pluginAt(int id, PluginPlace place, int index) const;
     // A Plug-in pedal holding this plug-in, ready to play (and given these settings, if any); null, with the reason.
     std::unique_ptr<PluginPedal> makePluginPedal(const std::string& plugin_id, const std::vector<uint8_t>* state, std::string* error);
     bool placeInsert(Source& source, int slot, std::unique_ptr<PluginPedal> pedal, bool on, std::string* error);

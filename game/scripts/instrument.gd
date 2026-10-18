@@ -36,6 +36,9 @@ var meter_peak := 0.0
 var meter_rms := 0.0
 var peak_hold := 0.0
 var is_amp := false    # a guitar or bass amp, with knobs and a loop pedal
+var drum_kit := false  # each key plays a drum (the drums, the garage kit)
+var plays_plugin := false  # a plug-in instrument: it plays one of the instrument plug-ins on the computer
+var instrument_plugin := {}  # what that plug-in is, from the audio core: {plugin_id, plugin_name, plugin_maker, editor_open}
 var amp_controls := {"gain": 5.0, "bass": 5.0, "mid": 5.0, "treble": 5.0, "presence": 5.0, "master": 5.0}
 var amp_head := ""      # an amp's head and cabinet (catalog.gd lists them), and whether each is in use
 var amp_cabinet := ""
@@ -76,6 +79,8 @@ func setup(spec: Dictionary, audio: SoundRoomAudio) -> void:
 	playable = not spec.get("live_input", false)
 	default_octave = spec.get("octave", 0)
 	is_amp = spec.get("amp", false)
+	drum_kit = spec.get("drum_kit", false)
+	plays_plugin = spec.get("plugin", false)
 	amp_head = spec.get("head", "")
 	amp_cabinet = spec.get("cabinet", "")
 	name = display_name
@@ -178,6 +183,8 @@ func _process(delta: float) -> void:
 	_accent.emission_energy_multiplier = (0.12 + 1.5 * glow) * on
 	_light.light_energy = (0.1 + 1.6 * glow) * on
 	inserts = _audio.get_inserts(source_id)
+	if plays_plugin:
+		instrument_plugin = _audio.get_instrument_plugin(source_id)
 	if is_amp:
 		_show_pedals()
 		_show_looper()
@@ -281,6 +288,13 @@ func set_input_channel(channel: int) -> void:
 func set_loop(on: bool) -> void:
 	loop_on = on
 	_audio.set_source_loop(source_id, on)
+	_refresh_label()
+
+
+## A new name (a plug-in instrument takes its plug-in's): over it in the room, and wherever else it is shown.
+func set_display_name(new_name: String) -> void:
+	display_name = new_name
+	name = new_name.validate_node_name()
 	_refresh_label()
 
 
