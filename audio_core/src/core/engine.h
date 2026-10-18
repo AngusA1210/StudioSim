@@ -202,7 +202,8 @@ public:
     // Plug-ins (plugin_host.h): every effect plug-in installed, and loading one into a Plug-in pedal, replacing what
     // it held. Both on the game thread, which on macOS must be the main thread. False, with the reason, if it fails.
     static std::vector<PluginDescription> effectPlugins() { return PluginInstance::available(); }
-    bool loadPedalPlugin(int id, int index, const std::string& plugin_id, std::string* error);
+    // With `state`, the plug-in is given those settings before it plays.
+    bool loadPedalPlugin(int id, int index, const std::string& plugin_id, std::string* error, const std::vector<uint8_t>* state = nullptr);
     // The plug-in's own window; `title` names it. False if there is no plug-in there.
     bool showPluginEditor(int id, int index, bool show, const std::string& title = "");
 
@@ -211,7 +212,8 @@ public:
     // on the instrument's sound before its fader (for an amp, after its pedals and the amp itself). Each slot holds a
     // plug-in or nothing, and a plug-in can be bypassed. Game thread, which on macOS must be the main thread.
     static constexpr int kMaxInserts = 5;
-    bool setInsert(int id, int slot, const std::string& plugin_id, std::string* error);  // replaces what was there
+    // Replaces what was there; with `state`, the plug-in is given those settings before it plays.
+    bool setInsert(int id, int slot, const std::string& plugin_id, std::string* error, const std::vector<uint8_t>* state = nullptr);
     bool clearInsert(int id, int slot);
     void setInsertOn(int id, int slot, bool on);  // off = bypassed
     std::vector<PedalStatus> inserts(int id) const;  // one for each slot; an empty `plugin` where there is none
@@ -221,6 +223,13 @@ public:
     // in place of what was there.
     bool moveInsert(int from_id, int from_slot, int to_id, int to_slot);
     bool copyInsert(int from_id, int from_slot, int to_id, int to_slot, std::string* error);
+    // The plug-in on an insert (`insert`, `index` its slot) or a Plug-in pedal (`index` its place on the board): its
+    // settings as it saves them (empty if there is no plug-in there), putting settings back while it plays, as a DAW
+    // loads a preset, and the presets it comes with. Game thread.
+    std::vector<uint8_t> pluginState(int id, bool insert, int index) const;
+    bool setPluginState(int id, bool insert, int index, const std::vector<uint8_t>& state);
+    std::vector<std::string> factoryPresets(int id, bool insert, int index) const;
+    bool loadFactoryPreset(int id, bool insert, int index, int preset);
     void setListener(Vec3 position, Vec3 ahead, Vec3 up);
     void noteOn(int id, int note, float velocity);
     void noteOff(int id, int note);
@@ -315,6 +324,7 @@ private:
     void connect(Source& source);  // an amp's pedals and knobs, after its instrument is (re)built
     bool sendBoard(Source& source, bool inserts = false);  // hands the audio thread the pedals (or inserts) anew
     LooperPedal* looperOf(const Source& source) const;     // the loop pedal on its board, if any
+    PluginInstance* pluginAt(int id, bool insert, int index) const;  // the plug-in on an insert or a Plug-in pedal
     // A Plug-in pedal holding this plug-in, ready to play (and given these settings, if any); null, with the reason.
     std::unique_ptr<PluginPedal> makePluginPedal(const std::string& plugin_id, const std::vector<uint8_t>* state, std::string* error);
     bool placeInsert(Source& source, int slot, std::unique_ptr<PluginPedal> pedal, bool on, std::string* error);

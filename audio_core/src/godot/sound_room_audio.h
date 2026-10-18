@@ -9,6 +9,8 @@
 #include <godot_cpp/classes/node.hpp>
 #include <godot_cpp/variant/array.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
+#include <godot_cpp/variant/packed_byte_array.hpp>
+#include <godot_cpp/variant/packed_string_array.hpp>
 #include <godot_cpp/variant/vector2.hpp>
 #include <godot_cpp/variant/string.hpp>
 #include <godot_cpp/variant/transform3d.hpp>
@@ -100,13 +102,14 @@ public:
     // The effect plug-ins installed on this computer (Audio Units on macOS): [{id, name, maker, category}], the
     // category being what kind of effect it seems to be ("Reverb", "Amps & cabinets"...).
     Array get_plugins() const;
-    // Loads one into a Plug-in pedal; false with the reason in get_error() if it can't.
-    bool load_pedal_plugin(int id, int index, const String& plugin_id);
+    // Loads one into a Plug-in pedal, with these settings if any are given; false with the reason in get_error().
+    bool load_pedal_plugin(int id, int index, const String& plugin_id, const PackedByteArray& state);
     bool show_plugin_editor(int id, int index, bool show, const String& title);  // the plug-in's own window
     // A channel's inserts, as in a DAW's mix window: get_max_inserts() slots of plug-ins, played in order before the
     // fader. [{on, plugin_id, plugin_name, plugin_maker, editor_open}], an empty plugin_id where a slot is free.
     Array get_inserts(int id) const;
-    bool set_insert(int id, int slot, const String& plugin_id);  // false with the reason in get_error()
+    // With these settings if any are given; false with the reason in get_error().
+    bool set_insert(int id, int slot, const String& plugin_id, const PackedByteArray& state);
     bool clear_insert(int id, int slot);
     void set_insert_on(int id, int slot, bool on);  // off = bypassed
     bool show_insert_editor(int id, int slot, bool show, const String& title);
@@ -115,6 +118,17 @@ public:
     bool move_insert(int from_id, int from_slot, int to_id, int to_slot);
     bool copy_insert(int from_id, int from_slot, int to_id, int to_slot);
     int get_max_inserts() const;
+    // The plug-in on an insert (`place` "insert", `index` its slot) or a Plug-in pedal ("pedal", its place on the
+    // board): its settings, as the plug-in saves them (empty if there is none); putting settings back while it plays;
+    // and the presets it comes with, by name.
+    PackedByteArray get_plugin_state(int id, const String& place, int index) const;
+    bool set_plugin_state(int id, const String& place, int index, const PackedByteArray& state);
+    PackedStringArray get_factory_presets(int id, const String& place, int index) const;
+    bool load_factory_preset(int id, const String& place, int index, int preset);
+    // Preset files as every Audio Unit host shares them (.aupreset): writing a plug-in's settings under a name (false
+    // with the reason in get_error()), and reading one back: {plugin_id, name, state}, or {} if it can't be read.
+    bool write_plugin_preset(const String& path, const String& name, const PackedByteArray& state);
+    Dictionary read_plugin_preset(const String& path);
     void set_listener(const Transform3D& transform);
     void note_on(int id, int note, float velocity);
     void note_off(int id, int note);

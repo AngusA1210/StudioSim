@@ -186,8 +186,8 @@ opens, floating over the room. Plug-ins get the room's tempo, for those that kee
 Most plug-ins don't say what kind of effect they are, so the types are worked out from their names: a good guess, not
 a certainty (`audio_core/build/engine_tests --plugins` lists what each was taken for). By maker is always exact. A
 plug-in that only comes as AAX can't be used, since only Pro Tools can host those. Plug-ins run inside SoundRoom as
-they would inside a DAW, so one that crashes takes SoundRoom with it, and like the rest of the room their settings
-aren't saved yet. Each instrument is a single point of sound in the room, so a plug-in's stereo output is heard as
+they would inside a DAW, so one that crashes takes SoundRoom with it. Their settings are kept with templates and
+presets (below). Each instrument is a single point of sound in the room, so a plug-in's stereo output is heard as
 one channel, from where the instrument stands.
 
 **Amp simulators** (TONE3000 and other amp and cabinet models) work in two ways:
@@ -199,6 +199,30 @@ one channel, from where the instrument stands.
 - **On a Speaker**: the Speaker plays its input as it comes in, so with the simulator on its first insert the Speaker
   is the amp, sounding from where it stands, full range. Put it where the amp should stand, pick the interface input
   the guitar is plugged into, and switch its input on.
+
+## Templates and presets
+
+**Templates** hold a whole room: its size and walls, every instrument where it stands with its fader, mute, solo,
+pattern, pedals and plug-ins (each plug-in's settings too), the tempo and swing, and where you were standing. The
+**Templates** page of the menu (also on the title screen) lists them: **Load** replaces the room with one, after
+asking; **Save this room as a template…** names and saves the room as it is. Two are built in: the default room, and
+an empty room with no instruments and no wall. Any one can be what SoundRoom opens with. Templates are kept in
+`~/Music/SoundRoom/Templates` as `.sroom` files (JSON), to copy, back up or share.
+
+**Plug-in presets**: right-click an insert and open **Presets**, or press **Presets** under a Plug-in pedal. It lists
+the presets the plug-in comes with, then yours. **Save preset…** saves the plug-in's settings under a name as an
+`.aupreset` file in `~/Library/Audio/Presets/Maker/Plug-in`, the folder every Audio Unit host uses, so presets saved
+in Logic show up in SoundRoom and the other way round.
+
+**Instrument presets** hold an instrument's sound, without where it stands or what it plays: the plug-ins on its
+inserts, an amp's head, cabinet, knobs and pedals (the plug-ins on its pedals too), and a Speaker's volume. They are on
+the **Presets** button of an amp's or a Speaker's panel, and under **Presets** when you right-click an instrument's name
+in the mix window. A preset loads onto any instrument of its family (an amp's onto any amp, a guitar combo's onto a bass
+stack even), and the instrument menu (N) lists them under **Your presets**, to bring one into the room as a new
+instrument. They are kept in `~/Music/SoundRoom/Instrument Presets`.
+
+**Copy settings** and **Paste settings** sit in the same Presets menus, as in Pro Tools: a plug-in's settings paste
+onto the same plug-in anywhere (on an insert or a pedal), an instrument's onto another of its family.
 
 ## The mix window
 
@@ -293,6 +317,7 @@ patterns go back to the defaults at each start until rooms can be saved.
 
 - **Metronome**: start and stop the patterns, tempo, swing, the click and its volume.
 - **Room**: the room's size and the walls inside it (see above).
+- **Templates**: whole rooms, saved and loaded (see above).
 - **Playback Engine**: which output device the audio engine runs on, and the hardware buffer size (32–1024 samples).
   The sample rate follows the device. Shows the resulting latency (the buffer, the device, and the quarter of a
   buffer that binaural rendering adds while it is switched on) and CPU use.
@@ -315,6 +340,8 @@ game/                      Godot project: the room, player, instruments, HUD, me
   scripts/mixer.gd         the mix window: channel strips, faders (fader.gd) and meters (level_meter.gd)
   scripts/amp_panel.gd     an amp's knobs (knob.gd) and its pedalboard
   scripts/plugin_browser.gd  the plug-ins installed, by type or by maker, for an insert or a Plug-in pedal
+  scripts/library.gd       templates, instrument and plug-in presets on disk, and copied settings
+  scripts/preset_menu.gd   the Presets menu of a plug-in or an instrument
 audio_core/
   src/core/                the audio engine, plain C++ with no Godot dependency
     engine.*               device, command queue, mixing, the shared clock
@@ -322,7 +349,7 @@ audio_core/
     amp.*                  the guitar and bass amps: preamp drive (oversampled), tone stack, presence, cabinet
     looper.*               the loop pedal: record, overdub, undo/redo, synced to the bars
     pedals.*               the pedals in front of an amp: tuner, gate, compressor, drives, modulation, delay, reverb, looper
-    plugin_host*           the effect plug-ins installed on the computer: Audio Units on macOS, and their windows
+    plugin_host*           the effect plug-ins installed on the computer: Audio Units on macOS, their windows, presets
     plugin_category.cpp    what kind of effect a plug-in seems to be, from its name
     sequencer.*            the clock (tempo, swing), pattern notes, and the default groove, scheduled to the exact sample
     spatializer.*          Steam Audio: distance, air absorption, wall filtering, binaural (HRTF)
@@ -333,7 +360,8 @@ audio_core/
                            (the output meter and the distance law live in engine.* and spatializer.*)
   src/godot/               the Godot extension wrapping the engine (SoundRoomAudio node)
   tests/engine_tests.cpp   offline checks: levels, binaural direction, walls, latency, MIDI, live input, sequencer, amps, pedals, plug-ins, loop pedal
-game/tests/ui_check.gd     the game driven by pretend keys and clicks: title, playing, patterns, instruments, amps, room, menus
+game/tests/ui_check.gd     the game driven by pretend keys and clicks: title, playing, patterns, instruments, amps, room, menus,
+                           templates and presets
 prototypes/sound-room/     the original browser prototype, for reference
 tools/                     build and dependency scripts
 ```
@@ -358,22 +386,20 @@ Diagnostics that don't need the game:
 Done so far: the native audio pipeline, instruments that can be added, placed and removed and each played from the
 keyboard or a MIDI controller, a pattern sequencer with tempo, swing and a metronome, live audio input through
 Speakers, guitar and bass amps with boards of effect pedals (a loop pedal and a plug-in pedal among them), a title
-screen, a mix window laid out like a DAW's with plug-in inserts on every channel, and a room whose size and walls
-can be changed, with sound bending round the walls and a reverb that follows the size.
+screen, a mix window laid out like a DAW's with plug-in inserts on every channel, a room whose size and walls
+can be changed, with sound bending round the walls and a reverb that follows the size, and templates of whole rooms
+with presets and copy and paste for plug-ins and instruments.
 
 To do, roughly in this order:
 
-1. **Templates**: save and load a room's dimensions and walls, its instrument layout, and their sequences (and the
-   tempo). Choosing one will go on the title screen.
-2. **Recording.**
-3. **More plug-ins**: inserts on the master, plug-in settings saved with the room (with templates), and perhaps VST3
-   and Windows.
-4. **The room's sound**: a reverb amount you can set, then wall materials, each absorbing and diffusing sound in its
+1. **Recording.**
+2. **More plug-ins**: inserts on the master, and perhaps VST3 and Windows.
+3. **The room's sound**: a reverb amount you can set, then wall materials, each absorbing and diffusing sound in its
    own way, which shape how the room's reverb rings.
-5. **You in the room**: an avatar whose height you can set (the ears and eyes go with it; the view is a little tall
+4. **You in the room**: an avatar whose height you can set (the ears and eyes go with it; the view is a little tall
    for some now), which multiplayer will show to the others; and a free camera, detached from the avatar, that flies
    about the room with nothing in its way.
-6. **Multiplayer**, the final goal: a session server, a networked clock, note events and low-latency audio streams.
+5. **Multiplayer**, the final goal: a session server, a networked clock, note events and low-latency audio streams.
 
 Also wanted along the way: MIDI on Windows and Linux, and VR through OpenXR.
 

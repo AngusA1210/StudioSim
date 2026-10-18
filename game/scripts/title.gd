@@ -13,7 +13,7 @@ const TAGLINE := "A room of instruments, heard from where you stand."
 var app
 var audio: SoundRoomAudio
 var camera: Camera3D
-var buttons := {}  # "enter", "audio", "settings", "controls", "quit" → Button
+var buttons := {}  # "enter", "templates", "audio", "settings", "controls", "quit" → Button
 
 var _open := false
 var _leaving := false
@@ -147,6 +147,7 @@ func _build() -> void:
 	column.add_child(gap)
 
 	_button(column, "enter", "Enter the room", _on_enter_pressed)
+	_button(column, "templates", "Templates", _on_menu_pressed.bind("TEMPLATES_TAB"))
 	_button(column, "audio", "Audio setup", _on_menu_pressed.bind("ENGINE_TAB"))
 	_button(column, "settings", "Settings", _on_menu_pressed.bind("SETTINGS_TAB"))
 	_button(column, "controls", "Controls", _on_menu_pressed.bind("CONTROLS_TAB"))

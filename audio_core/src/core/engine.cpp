@@ -679,21 +679,15 @@ TunerReading AudioEngine::tuner(int id) const {
     return {};
 }
 
-bool AudioEngine::loadPedalPlugin(int id, int index, const std::string& plugin_id, std::string* error) {
+bool AudioEngine::loadPedalPlugin(int id, int index, const std::string& plugin_id, std::string* error, const std::vector<uint8_t>* state) {
     reapPedals();
     Source* s = owned(id);
     if (!s || index < 0 || index >= int(s->pedals.size()) || s->pedals[size_t(index)].pedal->kind() != PedalKind::Plugin) {
         if (error) *error = "there is no Plug-in pedal there";
         return false;
     }
-    std::unique_ptr<PluginInstance> plugin = PluginInstance::load(plugin_id, error);
-    if (!plugin) return false;
-    auto pedal = std::make_unique<PluginPedal>(std::move(plugin));
-    pedal->prepare(float(sr_));
-    if (!pedal->ready()) {
-        if (error) *error = pedal->error();
-        return false;
-    }
+    std::unique_ptr<PluginPedal> pedal = makePluginPedal(plugin_id, state, error);
+    if (!pedal) return false;
     auto& slot = s->pedals[size_t(index)];
     pedal->setOn(slot.on);
     std::unique_ptr<Pedal> old = std::move(slot.pedal);
@@ -735,14 +729,14 @@ std::unique_ptr<PluginPedal> AudioEngine::makePluginPedal(const std::string& plu
     return pedal;
 }
 
-bool AudioEngine::setInsert(int id, int slot, const std::string& plugin_id, std::string* error) {
+bool AudioEngine::setInsert(int id, int slot, const std::string& plugin_id, std::string* error, const std::vector<uint8_t>* state) {
     reapPedals();
     Source* s = owned(id);
     if (!s || slot < 0 || slot >= kMaxInserts) {
         if (error) *error = "there is no such insert";
         return false;
     }
-    std::unique_ptr<PluginPedal> pedal = makePluginPedal(plugin_id, nullptr, error);
+    std::unique_ptr<PluginPedal> pedal = makePluginPedal(plugin_id, state, error);
     return pedal && placeInsert(*s, slot, std::move(pedal), true, error);
 }
 
@@ -802,6 +796,35 @@ bool AudioEngine::copyInsert(int from_id, int from_slot, int to_id, int to_slot,
     const std::vector<uint8_t> state = original->saveState();
     std::unique_ptr<PluginPedal> copy = makePluginPedal(original->description().id, &state, error);
     return copy && placeInsert(*b, to_slot, std::move(copy), a->inserts[size_t(from_slot)].on, error);
+}
+
+PluginInstance* AudioEngine::pluginAt(int id, bool insert, int index) const {
+    const Source* s = owned(id);
+    if (!s || index < 0) return nullptr;
+    const Pedal* pedal = nullptr;
+    if (insert && index < kMaxInserts) pedal = s->inserts[size_t(index)].pedal.get();
+    else if (!insert && index < int(s->pedals.size())) pedal = s->pedals[size_t(index)].pedal.get();
+    return pedal && pedal->kind() == PedalKind::Plugin ? static_cast<const PluginPedal*>(pedal)->plugin() : nullptr;
+}
+
+std::vector<uint8_t> AudioEngine::pluginState(int id, bool insert, int index) const {
+    const PluginInstance* plugin = pluginAt(id, insert, index);
+    return plugin ? plugin->saveState() : std::vector<uint8_t>{};
+}
+
+bool AudioEngine::setPluginState(int id, bool insert, int index, const std::vector<uint8_t>& state) {
+    PluginInstance* plugin = pluginAt(id, insert, index);
+    return plugin && plugin->loadState(state);
+}
+
+std::vector<std::string> AudioEngine::factoryPresets(int id, bool insert, int index) const {
+    const PluginInstance* plugin = pluginAt(id, insert, index);
+    return plugin ? plugin->factoryPresets() : std::vector<std::string>{};
+}
+
+bool AudioEngine::loadFactoryPreset(int id, bool insert, int index, int preset) {
+    PluginInstance* plugin = pluginAt(id, insert, index);
+    return plugin && plugin->loadFactoryPreset(preset);
 }
 
 bool AudioEngine::clearInsert(int id, int slot) {

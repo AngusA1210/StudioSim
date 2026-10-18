@@ -10,6 +10,7 @@
 
 #include <chrono>
 #include <cmath>
+#include <filesystem>
 #include <cstdio>
 #include <cstdlib>
 #include <functional>
@@ -1846,6 +1847,31 @@ int main(int argc, char** argv) {
         const std::vector<uint8_t> state = both ? saved->saveState() : std::vector<uint8_t>{};
         check(both && !state.empty() && restored->loadState(state) && restored->saveState().size() == state.size(),
               "a plug-in's settings can be saved and put back", fmt("%.0f bytes", double(state.size())));
+
+        // Presets: AUReverb2 comes with its own (Small Room, Large Hall...); its settings go to an .aupreset file and back.
+        const std::string au_reverb = "AU:61756678:72766232:6170706c";  // aufx rvb2 appl
+        mix.engine.setInsert(mix.pad, 0, au_reverb, &insert_error);
+        const std::vector<std::string> factory = mix.engine.factoryPresets(mix.pad, true, 0);
+        const std::vector<uint8_t> as_loaded = mix.engine.pluginState(mix.pad, true, 0);
+        const bool switched = factory.size() > 2 && mix.engine.loadFactoryPreset(mix.pad, true, 0, int(factory.size()) - 1);
+        const std::vector<uint8_t> hall = mix.engine.pluginState(mix.pad, true, 0);
+        check(switched && !hall.empty() && hall != as_loaded && mix.engine.factoryPresets(mix.drums, true, 4).empty(),
+              "a plug-in's own presets are listed, and choosing one changes its settings",
+              factory.empty() ? "none" : fmt("%.0f presets, the last ", double(factory.size())) + factory.back());
+        const std::string preset_path = (std::filesystem::temp_directory_path() / "soundroom-engine-tests" / "Apple" / "AUReverb2" / "Big.aupreset").string();
+        std::string preset_error;
+        const bool written = writePluginPreset(preset_path, "Big", hall, &preset_error);
+        PluginPresetFile read_back;
+        const bool read = written && readPluginPreset(preset_path, &read_back, &preset_error);
+        mix.engine.setPluginState(mix.pad, true, 0, as_loaded);
+        const bool put_back = mix.engine.setPluginState(mix.pad, true, 0, read_back.state);
+        const std::vector<uint8_t> again = mix.engine.pluginState(mix.pad, true, 0);
+        PluginPresetFile not_a_preset;
+        const bool rejected = !readPluginPreset(preset_path + ".missing", &not_a_preset, &preset_error);
+        check(read && read_back.plugin_id == au_reverb && read_back.name == "Big" && put_back && again.size() >= hall.size() - 16 && again != as_loaded && rejected,
+              "a plug-in's settings saved as an .aupreset file name the plug-in and the preset, and load back", preset_error);
+        std::filesystem::remove_all(std::filesystem::temp_directory_path() / "soundroom-engine-tests");
+        mix.engine.clearInsert(mix.pad, 0);
 #else
         check(plugins.empty(), "no plug-ins on this platform yet", "");
 #endif

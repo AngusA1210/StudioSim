@@ -46,6 +46,19 @@ public:
     // putting them back: for copying a plug-in with its settings, and for saving them (game thread).
     virtual std::vector<uint8_t> saveState() const = 0;
     virtual bool loadState(const std::vector<uint8_t>& state) = 0;
+    // The presets the plug-in comes with, by name, and switching to one (game thread).
+    virtual std::vector<std::string> factoryPresets() const = 0;
+    virtual bool loadFactoryPreset(int index) = 0;
 };
+
+// A preset file of the kind every Audio Unit host shares (.aupreset, kept in ~/Library/Audio/Presets/Maker/Plug-in):
+// a plug-in's settings under a name. Writing one gives the settings that name (and makes the folders it goes in);
+// reading one gives the plug-in it is for, its name and the settings, ready for loadState.
+struct PluginPresetFile {
+    std::string plugin_id, name;
+    std::vector<uint8_t> state;
+};
+bool writePluginPreset(const std::string& path, const std::string& name, const std::vector<uint8_t>& state, std::string* error);
+bool readPluginPreset(const std::string& path, PluginPresetFile* out, std::string* error);
 
 }  // namespace sr

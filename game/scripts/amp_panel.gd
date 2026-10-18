@@ -16,6 +16,7 @@ extends CanvasLayer
 const Knob := preload("res://scripts/knob.gd")
 const Catalog := preload("res://scripts/catalog.gd")
 const Hints := preload("res://scripts/hints.gd")
+const PresetMenu := preload("res://scripts/preset_menu.gd")
 const DIM := Color(0.62, 0.65, 0.74)
 const WARN := Color(1.0, 0.61, 0.48)
 const LED_ON := Color(1.0, 0.27, 0.22)
@@ -52,9 +53,12 @@ var _cabinet_choice: OptionButton
 var _cabinet_on: CheckButton
 var _input_switch: CheckButton
 var _source: OptionButton
-var _hint: Label  # the line at the foot: what the mouse is over, or a problem for a few seconds
-var _problem := ""
-var _problem_until := 0
+var _hint: Label  # the line at the foot: what the mouse is over, or for a few seconds what just happened
+var _notice := ""
+var _notice_is_problem := false
+var _notice_until := 0
+var _presets: Button  # the amp's Presets menu: its presets, and copying and pasting its settings
+var _amp_presets: PopupMenu
 
 # The board
 var _board_toggle: Button  # its heading, which folds it away and brings it back
@@ -89,6 +93,8 @@ var _plugin_box: VBoxContainer
 var _plugin_status: Label
 var _plugin_window: Button
 var _plugin_choose: Button
+var _plugin_presets: Button  # the Plug-in pedal's plug-in's Presets menu
+var _pedal_presets: PopupMenu
 var _plugin_error: Label
 
 # The loop pedal
@@ -141,6 +147,8 @@ func open(amp, from_mixer := false) -> void:
 func close() -> void:
 	_root.visible = false
 	_add_menu.hide()
+	_amp_presets.hide()
+	_pedal_presets.hide()
 	app.plugin_browser.hide()
 	if inst != null:
 		app.hide_plugin_editors(inst)
@@ -157,7 +165,7 @@ func has_looper() -> bool:
 func _input(event: InputEvent) -> void:
 	if not is_open() or not (event is InputEventKey) or not event.pressed or event.echo:
 		return
-	if app.plugin_browser.visible:  # the keys are for its search box
+	if app.plugin_browser.visible or app.name_prompt.is_open():  # the keys are for typing
 		return
 	var handled := true
 	var key: int = event.physical_keycode
@@ -189,9 +197,9 @@ func _process(_delta: float) -> void:
 	var vp := get_viewport().get_visible_rect().size
 	_panel.custom_minimum_size = Vector2(minf(1080.0, vp.x - 32.0), 0.0)
 	_refresh()
-	var problem := Time.get_ticks_msec() < _problem_until
-	_hint.text = _problem if problem else Hints.under_mouse(_panel)
-	_hint.add_theme_color_override("font_color", WARN if problem else DIM)
+	var noticed := Time.get_ticks_msec() < _notice_until
+	_hint.text = _notice if noticed else Hints.under_mouse(_panel)
+	_hint.add_theme_color_override("font_color", (WARN if _notice_is_problem else Color(0.85, 0.87, 0.92)) if noticed else DIM)
 
 
 func _refresh() -> void:
@@ -411,7 +419,7 @@ func drop_pedal(data: Dictionary, gap: int, copy: bool) -> void:
 	if copy:
 		var at: int = app.copy_pedal(inst, data.index, inst, gap)
 		if at < 0:
-			_show_problem("It couldn't be copied: %s." % audio.get_error())
+			_show_notice("It couldn't be copied: %s." % audio.get_error())
 		else:
 			selected = at
 	else:
@@ -422,9 +430,11 @@ func drop_pedal(data: Dictionary, gap: int, copy: bool) -> void:
 	_refresh()
 
 
-func _show_problem(text: String) -> void:
-	_problem = text
-	_problem_until = Time.get_ticks_msec() + 4000
+## A problem, or something done, in the line at the foot for a few seconds.
+func _show_notice(text: String, problem := true) -> void:
+	_notice = text
+	_notice_is_problem = problem
+	_notice_until = Time.get_ticks_msec() + 4000
 
 
 # ── A pedal ─────────────────────────────────────────────────────────────────────────────────────────────────
@@ -458,6 +468,7 @@ func _refresh_pedal() -> void:
 		var has_plugin: bool = pedal.plugin_name != ""
 		_plugin_status.text = ("%s   ·   %s" % [pedal.plugin_name, pedal.plugin_maker]) if has_plugin else "No plug-in yet."
 		_plugin_window.visible = has_plugin
+		_plugin_presets.visible = has_plugin
 		_plugin_window.text = "Close its window" if pedal.editor_open else "Open its window"
 		_plugin_choose.text = "Choose another…" if has_plugin else "Choose a plug-in…"
 
@@ -593,10 +604,28 @@ func _build() -> void:
 	_title.add_theme_font_size_override("font_size", 22)
 	_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header.add_child(_title)
+	_presets = Button.new()
+	_presets.text = "Presets ▾"
+	Hints.give(_presets, "Load a preset of the amp (head, cabinet, knobs, pedals and plug-ins), save one, or copy and paste its settings")
+	_presets.pressed.connect(func() -> void:
+		_amp_presets.for_instrument(inst)
+		_amp_presets.open_below(_presets))
+	header.add_child(_presets)
+	var gap_before_close := Control.new()
+	gap_before_close.custom_minimum_size.x = 8
+	header.add_child(gap_before_close)
 	var close_button := Button.new()
 	close_button.text = "Close  (Enter)"
 	close_button.pressed.connect(close)
 	header.add_child(close_button)
+	_amp_presets = PresetMenu.new()
+	_amp_presets.setup(app)
+	_amp_presets.reported.connect(_show_notice)
+	_root.add_child(_amp_presets)
+	_pedal_presets = PresetMenu.new()
+	_pedal_presets.setup(app)
+	_pedal_presets.reported.connect(_show_notice)
+	_root.add_child(_pedal_presets)
 
 	# The head and the cabinet, each with its switch.
 	var voice := HBoxContainer.new()
@@ -804,6 +833,13 @@ func _build_pedal_page() -> VBoxContainer:
 	_plugin_window = Button.new()
 	_plugin_window.pressed.connect(_on_plugin_window_pressed)
 	plugin_row.add_child(_plugin_window)
+	_plugin_presets = Button.new()
+	_plugin_presets.text = "Presets ▾"
+	Hints.give(_plugin_presets, "The plug-in's own presets and yours: load one, save one, or copy and paste its settings")
+	_plugin_presets.pressed.connect(func() -> void:
+		_pedal_presets.for_plugin(inst, "pedal", selected)
+		_pedal_presets.open_below(_plugin_presets))
+	plugin_row.add_child(_plugin_presets)
 	_plugin_error = Label.new()
 	_plugin_error.add_theme_color_override("font_color", WARN)
 	_plugin_error.add_theme_font_size_override("font_size", 12)

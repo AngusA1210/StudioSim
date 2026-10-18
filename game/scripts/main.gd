@@ -8,7 +8,7 @@ extends Node3D
 ##   --skip-title             start in the room rather than on the title screen
 ##   --pose=x,z,yaw_degrees   start the player somewhere else
 ##   --live-input             switch the Speaker's input on at start
-##   --menu=N                 open the menu on page N at start (0 Metronome, 1 Mixer, 2 Room, 3 Playback Engine...)
+##   --menu=N                 open the menu on page N at start (0 Metronome, 1 Room, 2 Templates, 3 Playback Engine...)
 ##   --play=kind              sit down at an instrument at start (drums, bass, pad, bells, keys)
 ##   --sequencer=kind[,bar]   open that instrument's pattern editor at start
 ##   --add=kind               make a new instrument at start, in the player's hands
@@ -36,6 +36,8 @@ const Title := preload("res://scripts/title.gd")
 const Catalog := preload("res://scripts/catalog.gd")
 const Settings := preload("res://scripts/settings.gd")
 const Room := preload("res://scripts/room.gd")
+const Library := preload("res://scripts/library.gd")
+const NamePrompt := preload("res://scripts/name_prompt.gd")
 
 # The instruments the room starts with, each playing its part of the default groove and turned to face where the
 # player comes in. More can be added from the instrument menu; scripts/catalog.gd describes each kind.
@@ -66,6 +68,8 @@ var amp_panel  # an amp's knobs and its pedals (Enter at an amp)
 var plugin_browser  # the effect plug-ins on the computer, to choose one for an insert or a Plug-in pedal
 var speaker_panel  # a Speaker's volume and input (Enter at a Speaker)
 var bindings  # the keys, as set on the Controls page
+var library  # templates, presets, and settings copied to be pasted
+var name_prompt  # asks for a name, to save a template or a preset under
 var _plugins = null  # what get_plugins() said, the first time anything asked
 var instrument_menu
 var title  # the title screen
@@ -114,10 +118,19 @@ func _ready() -> void:
 	audio.start_midi()
 
 	_build_environment()
+	library = Library.new(self, options.has("silent"))
 	room = Room.new()
 	add_child(room)
 	room.changed.connect(_on_room_changed)
 	room.setup()
+	player = Player.new()
+	player.name = "Player"
+	add_child(player)
+	player.setup(self, instruments)
+	# The room it starts with: the template chosen for that in the menu, or the default room.
+	var start: String = "" if options.has("silent") else settings.start_template
+	if start == "" or library.load_template(start) == Library.UNREADABLE:
+		load_default_room()
 	if options.has("room"):
 		var dims: PackedStringArray = options.room.split(",")
 		room.set_size(Vector3(float(dims[0]), float(dims[1]), float(dims[2])))
@@ -127,16 +140,6 @@ func _ready() -> void:
 		for text in options.walls.split(";", false):
 			var n: PackedStringArray = text.split(",")
 			room.add_wall(Vector2(float(n[0]), float(n[1])), Vector2(float(n[2]), float(n[3])), float(n[4]) if n.size() > 4 else Room.DEFAULT_WALL_HEIGHT)
-	for entry in DEFAULT_ROOM:
-		var inst = add_instrument(entry.kind, entry.position, true)  # with its part of the default groove
-		inst.face(SPAWN)
-		if entry.kind == "live":
-			speaker = inst
-			inst.set_input_channel(settings.speaker_input)
-	# The clock has been running since the audio opened: begin again, so the music starts on the first beat with
-	# every pattern in place.
-	audio.set_sequencer_running(false)
-	audio.set_sequencer_running(true)
 	audio.set_binaural(settings.binaural)
 	audio.set_reverb(settings.reverb)
 	_apply_master_volume()
@@ -146,12 +149,6 @@ func _ready() -> void:
 	audio.set_click_volume(db_to_linear(settings.click_volume_db))
 	if options.has("tempo"):
 		set_tempo(float(options.tempo))
-
-	player = Player.new()
-	player.name = "Player"
-	add_child(player)
-	player.setup(self, instruments)
-	_on_room_changed()  # now that there are instruments and a player to keep inside it
 	if options.has("pose"):
 		var p: PackedStringArray = options.pose.split(",")
 		player.place(Vector3(float(p[0]), 0.0, float(p[1])), deg_to_rad(float(p[2])))
@@ -182,6 +179,8 @@ func _ready() -> void:
 	title = Title.new()
 	add_child(title)
 	title.setup(self)
+	name_prompt = NamePrompt.new()
+	add_child(name_prompt)
 	_apply_display()
 	if not options.has("skip-title"):
 		title.open()
@@ -480,8 +479,8 @@ func set_pedal_control(inst, index: int, control: int, value: float) -> void:
 
 
 ## Loads one of the computer's effect plug-ins into a Plug-in pedal. Returns why it couldn't, or "".
-func load_pedal_plugin(inst, index: int, plugin_id: String) -> String:
-	var loaded := audio.load_pedal_plugin(inst.source_id, index, plugin_id)
+func load_pedal_plugin(inst, index: int, plugin_id: String, state := PackedByteArray()) -> String:
+	var loaded := audio.load_pedal_plugin(inst.source_id, index, plugin_id, state)
 	inst.pedals = audio.get_pedals(inst.source_id)
 	return "" if loaded else audio.get_error()
 
@@ -506,8 +505,8 @@ func available_plugins() -> Array:
 
 ## A channel's inserts, as in a DAW's mix window: a plug-in in each of a few slots, before the fader. Loading one
 ## returns why it couldn't be loaded, or "".
-func set_insert(inst, slot: int, plugin_id: String) -> String:
-	var loaded := audio.set_insert(inst.source_id, slot, plugin_id)
+func set_insert(inst, slot: int, plugin_id: String, state := PackedByteArray()) -> String:
+	var loaded := audio.set_insert(inst.source_id, slot, plugin_id, state)
 	inst.inserts = audio.get_inserts(inst.source_id)
 	return "" if loaded else audio.get_error()
 
@@ -680,6 +679,58 @@ func add_instrument(kind: String, at: Vector3, with_default_pattern := false):
 	if with_default_pattern and inst.playable:
 		audio.load_default_pattern(inst.source_id)
 	return inst
+
+
+## The room the game starts with, as Templates' "Default room" brings it back: its size and wall, the instruments
+## playing the default groove, all facing where you come in, and the tempo. `empty`: the same room bare, with no
+## instruments and no wall ("Empty room").
+func load_default_room(empty := false) -> void:
+	clear_room()
+	room.reset()
+	if empty:
+		room.remove_wall(0)
+	set_tempo(DEFAULT_TEMPO)
+	set_swing(DEFAULT_SWING)
+	if not empty:
+		for entry in DEFAULT_ROOM:
+			var inst = add_instrument(entry.kind, entry.position, true)  # with its part of the default groove
+			inst.face(SPAWN)
+			if entry.kind == "live":
+				inst.set_input_channel(settings.speaker_input)
+	player.place(SPAWN, 0.0)
+	settle_new_room()
+
+
+## Takes everything out of the room, ready for another: its instruments go, with their windows.
+func clear_room() -> void:
+	player.stop_playing()
+	player.put_down()
+	for inst in instruments.duplicate():
+		remove_instrument(inst)
+
+
+## A room has just been filled (the default one, or a template's): mute and solo take effect, the Speaker whose input
+## is remembered is the first one, everything is settled inside the room, and the patterns start together from the top.
+func settle_new_room() -> void:
+	_apply_channels()
+	speaker = null
+	for inst in instruments:
+		if inst.kind == "live":
+			speaker = inst
+			break
+	_on_room_changed()
+	if title != null and title.is_open():  # its names would drift behind the title's words
+		for inst in instruments:
+			inst.set_label_visible(false)
+	if sequence_running:
+		audio.set_sequencer_running(false)
+		audio.set_sequencer_running(true)
+
+
+## Which template SoundRoom opens with ("" for the default room).
+func set_start_template(path: String) -> void:
+	settings.start_template = path
+	settings.save_to_disk()
 
 
 ## A second of an instrument, as Pro Tools duplicates a track: the same kind, with its fader, mute and pattern, a

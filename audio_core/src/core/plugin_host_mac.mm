@@ -264,6 +264,38 @@ public:
         }
         return done;
     }
+    std::vector<std::string> factoryPresets() const override {
+        std::vector<std::string> out;
+        CFArrayRef presets = nullptr;
+        UInt32 size = sizeof(presets);
+        if (AudioUnitGetProperty(unit_, kAudioUnitProperty_FactoryPresets, kAudioUnitScope_Global, 0, &presets, &size) != noErr || !presets)
+            return out;
+        for (CFIndex i = 0; i < CFArrayGetCount(presets); ++i) {
+            const auto* preset = static_cast<const AUPreset*>(CFArrayGetValueAtIndex(presets, i));
+            out.push_back(preset ? toString(preset->presetName) : "");
+        }
+        CFRelease(presets);
+        return out;
+    }
+
+    bool loadFactoryPreset(int index) override {
+        CFArrayRef presets = nullptr;
+        UInt32 size = sizeof(presets);
+        if (AudioUnitGetProperty(unit_, kAudioUnitProperty_FactoryPresets, kAudioUnitScope_Global, 0, &presets, &size) != noErr || !presets)
+            return false;
+        bool done = false;
+        if (index >= 0 && index < CFArrayGetCount(presets)) {
+            const AUPreset preset = *static_cast<const AUPreset*>(CFArrayGetValueAtIndex(presets, index));
+            done = AudioUnitSetProperty(unit_, kAudioUnitProperty_PresentPreset, kAudioUnitScope_Global, 0, &preset, sizeof(preset)) == noErr;
+        }
+        CFRelease(presets);
+        if (done) {
+            AudioUnitParameter all{unit_, kAUParameterListener_AnyParameter, kAudioUnitScope_Global, 0};
+            AUParameterListenerNotify(nullptr, nullptr, &all);
+        }
+        return done;
+    }
+
     int latencySamples() const override { return latency_; }
 
     void setTempo(double bpm) override { tempo_.store(bpm, std::memory_order_relaxed); }
@@ -404,6 +436,54 @@ std::unique_ptr<PluginInstance> PluginInstance::load(const std::string& id, std:
         return nullptr;
     }
     return std::make_unique<AudioUnitPlugin>(unit, describe(component));
+}
+
+bool writePluginPreset(const std::string& path, const std::string& name, const std::vector<uint8_t>& state, std::string* error) {
+    @autoreleasepool {
+        NSData* data = [NSData dataWithBytes:state.data() length:state.size()];
+        id info = state.empty() ? nil : [NSPropertyListSerialization propertyListWithData:data options:NSPropertyListMutableContainers
+                                                                                   format:nullptr error:nil];
+        if (![info isKindOfClass:[NSMutableDictionary class]]) {
+            if (error) *error = "there are no settings to save";
+            return false;
+        }
+        NSMutableDictionary* preset = info;
+        preset[@kAUPresetNameKey] = [NSString stringWithUTF8String:name.c_str()] ?: @"Preset";
+        NSData* xml = [NSPropertyListSerialization dataWithPropertyList:preset format:NSPropertyListXMLFormat_v1_0 options:0 error:nil];
+        NSString* file = [NSString stringWithUTF8String:path.c_str()];
+        NSError* problem = nil;
+        if (!xml || !file ||
+            ![[NSFileManager defaultManager] createDirectoryAtPath:[file stringByDeletingLastPathComponent] withIntermediateDirectories:YES
+                                                        attributes:nil error:&problem] ||
+            ![xml writeToFile:file options:NSDataWritingAtomic error:&problem]) {
+            if (error) *error = problem ? problem.localizedDescription.UTF8String : "it couldn't be written";
+            return false;
+        }
+        return true;
+    }
+}
+
+bool readPluginPreset(const std::string& path, PluginPresetFile* out, std::string* error) {
+    @autoreleasepool {
+        NSData* data = [NSData dataWithContentsOfFile:[NSString stringWithUTF8String:path.c_str()] ?: @""];
+        id info = data ? [NSPropertyListSerialization propertyListWithData:data options:NSPropertyListImmutable format:nullptr error:nil] : nil;
+        NSDictionary* preset = [info isKindOfClass:[NSDictionary class]] ? info : nil;
+        NSNumber* type = preset[@kAUPresetTypeKey];
+        NSNumber* subtype = preset[@kAUPresetSubtypeKey];
+        NSNumber* maker = preset[@kAUPresetManufacturerKey];
+        if (![type isKindOfClass:[NSNumber class]] || ![subtype isKindOfClass:[NSNumber class]] || ![maker isKindOfClass:[NSNumber class]]) {
+            if (error) *error = "it isn't an Audio Unit preset";
+            return false;
+        }
+        out->plugin_id = "AU:" + hexCode(OSType(type.unsignedIntValue)) + ":" + hexCode(OSType(subtype.unsignedIntValue)) + ":" +
+                         hexCode(OSType(maker.unsignedIntValue));
+        NSString* name = preset[@kAUPresetNameKey];
+        out->name = [name isKindOfClass:[NSString class]] && name.UTF8String ? name.UTF8String : "";
+        NSData* binary = [NSPropertyListSerialization dataWithPropertyList:preset format:NSPropertyListBinaryFormat_v1_0 options:0 error:nil];
+        const auto* bytes = static_cast<const uint8_t*>(binary.bytes);
+        out->state.assign(bytes, bytes + binary.length);
+        return !out->state.empty();
+    }
 }
 
 }  // namespace sr

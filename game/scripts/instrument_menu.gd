@@ -1,7 +1,8 @@
 extends CanvasLayer
 ## The instrument menu (N): pick a kind of instrument and it appears in your hands, to be walked to where it
 ## should stand and put down. Two families: MIDI instruments, which are played and sequenced, and live inputs,
-## which bring a microphone or a plugged-in instrument into the room.
+## which bring a microphone or a plugged-in instrument into the room. Under them, any instrument presets saved
+## (an amp with its pedals and plug-ins, say), each of which comes in as a new instrument set up that way.
 
 const Catalog := preload("res://scripts/catalog.gd")
 const DIM := Color(0.62, 0.65, 0.74)
@@ -16,6 +17,9 @@ var _cards: Array = []
 var _input_option: OptionButton
 var _input_choice := -1  # the hardware input a new live instrument plays; -1 = all of them
 var _footer: Label
+var _preset_box: VBoxContainer  # "Your presets", shown when there are any
+var _preset_cards: HFlowContainer
+var _preset_buttons: Array = []
 
 
 func setup(the_app) -> void:
@@ -34,6 +38,7 @@ func open() -> void:
 	app.player.release_keys()
 	_root.visible = true
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	_fill_presets()
 	_refresh()
 
 
@@ -56,7 +61,7 @@ func create(kind: String):
 
 
 func _input(event: InputEvent) -> void:
-	if is_open() and event is InputEventKey and event.pressed and not event.echo and \
+	if is_open() and not app.name_prompt.is_open() and event is InputEventKey and event.pressed and not event.echo and \
 			(event.physical_keycode == KEY_ESCAPE or app.bindings.action_for(event.physical_keycode) == "add"):
 		close()
 		get_viewport().set_input_as_handled()
@@ -148,6 +153,19 @@ func _build() -> void:
 		if group.coming != "":
 			_note(box, group.coming)
 
+	_preset_box = VBoxContainer.new()
+	_preset_box.add_theme_constant_override("separation", 10)
+	box.add_child(_preset_box)
+	_preset_box.add_child(HSeparator.new())
+	var preset_heading := Label.new()
+	preset_heading.text = "Your presets"
+	preset_heading.add_theme_font_size_override("font_size", 18)
+	_preset_box.add_child(preset_heading)
+	_preset_cards = HFlowContainer.new()
+	_preset_cards.add_theme_constant_override("h_separation", 10)
+	_preset_cards.add_theme_constant_override("v_separation", 10)
+	_preset_box.add_child(_preset_cards)
+
 	_footer = Label.new()
 	_footer.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_footer.add_theme_font_size_override("font_size", 13)
@@ -212,7 +230,7 @@ func _refresh() -> void:
 	var count: int = app.instruments.size()
 	var limit := audio.get_max_sources()
 	var full := count >= limit
-	for card in _cards:
+	for card in _cards + _preset_buttons:
 		card.disabled = full
 	if full:
 		_footer.text = "The room is full: it holds %d instruments. Remove one to make space: face it and press Backspace twice." % limit
@@ -227,6 +245,53 @@ func _refresh() -> void:
 		_input_option.add_item("input %d" % (i + 1))
 	_input_choice = mini(_input_choice, inputs - 1)
 	_input_option.select(_input_choice + 1)
+
+
+## A card for each instrument preset saved, in the colour of the kind of instrument it makes.
+func _fill_presets() -> void:
+	for child in _preset_cards.get_children():
+		child.queue_free()
+	_preset_buttons.clear()
+	for preset in app.library.instrument_presets():
+		var data: Dictionary = app.library.read_instrument_preset(preset.path)
+		var kind: String = data.get("kind", "")
+		if not Catalog.KINDS.has(kind):
+			continue
+		var spec: Dictionary = Catalog.KINDS[kind]
+		var card := Button.new()
+		card.text = "%s\n%s" % [preset.name, spec.name]
+		card.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		card.custom_minimum_size = Vector2(200, 56)
+		card.focus_mode = Control.FOCUS_NONE
+		card.add_theme_font_size_override("font_size", 14)
+		for state in ["normal", "hover", "pressed", "disabled"]:
+			var style := StyleBoxFlat.new()
+			style.bg_color = Color(1, 1, 1, {"normal": 0.05, "hover": 0.11, "pressed": 0.16, "disabled": 0.02}[state])
+			style.set_corner_radius_all(8)
+			style.border_width_left = 6
+			style.border_color = spec.color if state != "disabled" else spec.color.darkened(0.6)
+			style.content_margin_left = 16
+			style.content_margin_right = 12
+			card.add_theme_stylebox_override(state, style)
+		card.pressed.connect(_on_preset_picked.bind(preset.path))
+		_preset_cards.add_child(card)
+		_preset_buttons.append(card)
+	_preset_box.visible = not _preset_buttons.is_empty()
+
+
+## A preset picked: a new instrument of its kind, set up as the preset says, in your hands.
+func _on_preset_picked(path: String) -> void:
+	var data: Dictionary = app.library.read_instrument_preset(path)
+	var inst = create(data.get("kind", "")) if Catalog.KINDS.has(data.get("kind", "")) else null
+	if inst == null:
+		_refresh()
+		return
+	var problem: String = app.library.apply_instrument_settings(inst, data)
+	if problem == "":
+		close()
+	else:
+		_footer.text = "Not all of it could be set up: %s." % problem
+		_footer.add_theme_color_override("font_color", WARN)
 
 
 func _on_input_selected(index: int) -> void:

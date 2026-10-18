@@ -6,7 +6,9 @@ extends CanvasLayer
 
 const Knob := preload("res://scripts/knob.gd")
 const Hints := preload("res://scripts/hints.gd")
+const PresetMenu := preload("res://scripts/preset_menu.gd")
 const DIM := Color(0.62, 0.65, 0.74)
+const WARN := Color(1.0, 0.61, 0.48)
 const MAX_DB := 24.0
 
 var app
@@ -19,7 +21,12 @@ var _volume: Knob
 var _input_switch: CheckButton
 var _source: OptionButton
 var _inserts: Label
-var _hint: Label  # the line at the foot: what the mouse is over
+var _hint: Label  # the line at the foot: what the mouse is over, or for a few seconds what just happened
+var _notice := ""
+var _notice_is_problem := false
+var _notice_until := 0
+var _presets: Button
+var _speaker_presets: PopupMenu
 var _back_to_mixer := false
 
 
@@ -60,6 +67,7 @@ func open(speaker, from_mixer := false) -> void:
 
 func close() -> void:
 	_root.visible = false
+	_speaker_presets.hide()
 	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 	if _back_to_mixer:
 		_back_to_mixer = false
@@ -67,7 +75,7 @@ func close() -> void:
 
 
 func _input(event: InputEvent) -> void:
-	if not is_open() or not (event is InputEventKey) or not event.pressed or event.echo:
+	if not is_open() or not (event is InputEventKey) or not event.pressed or event.echo or app.name_prompt.is_open():
 		return
 	var action: String = "edit" if event.physical_keycode == KEY_ESCAPE else app.bindings.action_for(event.physical_keycode)
 	if action in ["edit", "mixer"]:
@@ -81,7 +89,9 @@ func _input(event: InputEvent) -> void:
 func _process(_delta: float) -> void:
 	if is_open():
 		_refresh()
-		_hint.text = Hints.under_mouse(_panel)
+		var noticed := Time.get_ticks_msec() < _notice_until
+		_hint.text = _notice if noticed else Hints.under_mouse(_panel)
+		_hint.add_theme_color_override("font_color", (WARN if _notice_is_problem else Color(0.85, 0.87, 0.92)) if noticed else DIM)
 
 
 func _refresh() -> void:
@@ -129,10 +139,27 @@ func _build() -> void:
 	_title.add_theme_font_size_override("font_size", 22)
 	_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header.add_child(_title)
+	_presets = Button.new()
+	_presets.text = "Presets ▾"
+	Hints.give(_presets, "Load a preset of the Speaker (its volume and plug-ins), save one, or copy and paste its settings")
+	_presets.pressed.connect(func() -> void:
+		_speaker_presets.for_instrument(inst)
+		_speaker_presets.open_below(_presets))
+	header.add_child(_presets)
+	var gap_before_close := Control.new()
+	gap_before_close.custom_minimum_size.x = 8
+	header.add_child(gap_before_close)
 	var close_button := Button.new()
 	close_button.text = "Close  (Enter)"
 	close_button.pressed.connect(close)
 	header.add_child(close_button)
+	_speaker_presets = PresetMenu.new()
+	_speaker_presets.setup(app)
+	_speaker_presets.reported.connect(func(text: String, problem: bool) -> void:
+		_notice = text
+		_notice_is_problem = problem
+		_notice_until = Time.get_ticks_msec() + 4000)
+	_root.add_child(_speaker_presets)
 
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 18)

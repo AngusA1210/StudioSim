@@ -208,12 +208,15 @@ func _run() -> void:
 	var stood: Vector3 = player.global_position
 	for code in [KEY_E, KEY_TAB, KEY_N, KEY_M, KEY_SPACE]:
 		await tap(code)
-	check(player.playing == null and not seq.is_open() and not main.instrument_menu.is_open() and main.sequence_running
-		and player.global_position.is_equal_approx(stood), "the room's own keys do nothing here")
+	check(player.playing == null and not seq.is_open() and not main.instrument_menu.is_open() and not main.mixer.is_open() and
+		main.sequence_running and player.global_position.is_equal_approx(stood), "the room's own keys do nothing here")
+	if main.menu.is_open():  # Tab and Space are the buttons' own keys here: Tab moved to the next button, Space pressed it
+		main.menu.close()
+	await frames(2)
 	await click(title.buttons.audio.get_global_rect().get_center())
 	check(main.menu.is_open() and main.menu._tabs.get_tab_title(main.menu._tabs.current_tab) == "Playback Engine"
 		and main.menu._resume.text.begins_with("Back") and not main.menu._to_title.visible and not title._ui.visible,
-		"Audio setup opens the menu on the Playback Engine page", main.menu._resume.text)
+		"Audio setup opens the menu on the Playback Engine page", main.menu._tabs.get_tab_title(main.menu._tabs.current_tab))
 	var with_binaural: Dictionary = audio.get_stats()
 	check(main.menu._latency_label.text.contains("binaural") and with_binaural.binaural_ms > 0.0
 		and is_equal_approx(with_binaural.output_latency_ms, with_binaural.buffer_ms + with_binaural.device_ms + with_binaural.binaural_ms),
@@ -625,7 +628,7 @@ func _run() -> void:
 	panel._head_choice.item_selected.emit(1)
 	await frames(2)
 	await click(panel._footswitch.get_global_rect().get_center())
-	check(amp.looper.get("state", "") == "playing", "the pedal's footswitch button plays it again")
+	check(amp.looper.get("state", "") == "playing", "the pedal's footswitch button plays it again", "%s, footswitch at %s, panel %s" % [amp.looper.get("state", ""), panel._footswitch.get_global_rect(), panel._panel.get_global_rect()])
 	await tap(KEY_J)
 	await tap(KEY_J)
 	await frames(3)
@@ -920,7 +923,10 @@ func _run() -> void:
 		"the limiter comes before the master fader: bringing the master down 10 dB doesn't ease it", "%.1f dB, then %.1f dB" % [limiting, main.meter_reduction_db])
 	mix._on_master_changed(0.0)
 	await click(mix._master.limiter.get_global_rect().get_center())
-	await seconds(1.5)
+	for wait in 16:  # however quiet the groove is just then, it clips within a bar or two
+		await seconds(0.25)
+		if main.meter_clipped and wait >= 5:
+			break
 	check(not main.settings.limiter and main.meter_clipped and mix._status.text.contains("Clipping"),
 		"with the LIMIT button off, the same mix is reported as clipping", mix._status.text)
 	for inst in main.instruments:
@@ -1167,6 +1173,200 @@ func _run() -> void:
 	await seconds(1.0)
 	check(not title.is_open() and player.camera.current and audio.get_pattern(drums.source_id).size() == notes_before
 		and is_equal_approx(audio.get_transport().bpm, 100.0), "and the room is as you left it when you come back in")
+
+	print("Presets, copy and paste")
+	var library = main.library
+	var prompt = main.name_prompt
+	var reverb_id := "AU:61756678:72766232:6170706c"  # Apple's AUReverb2
+	var delay_id := "AU:61756678:64656c79:6170706c"  # and AUDelay
+	var bells = main.find_instrument("bells")
+	check(library.root.ends_with("automated-run-library") and not library.plugin_root.begins_with(OS.get_environment("HOME").path_join("Library/Audio")),
+		"automated runs keep templates and presets in a folder of their own", library.root)
+	main.set_insert(pad, 0, reverb_id)
+	await tap(KEY_TAB)
+	await frames(3)
+	await click(mix._strip_for(pad).inserts[0].button.get_global_rect().get_center(), MOUSE_BUTTON_RIGHT)
+	var presets = mix._insert_presets
+	check(mix._insert_menu.visible and mix._insert_menu.get_item_index(4) >= 0 and presets.get_item_index(presets.FACTORY + 12) >= 0 and
+		presets.is_item_disabled(presets.get_item_index(presets.PASTE)), "an insert's right-click menu has Presets: AUReverb2's own, and nothing to paste yet",
+		"%d items" % presets.item_count)
+	mix._insert_menu.hide()
+	var as_loaded: PackedByteArray = audio.get_plugin_state(pad.source_id, "insert", 0)
+	presets.id_pressed.emit(presets.FACTORY + 12)
+	await frames(2)
+	var hall: PackedByteArray = audio.get_plugin_state(pad.source_id, "insert", 0)
+	check(hall != as_loaded and mix._status.text == "Large Hall 2 loaded", "choosing one of its own presets loads it", mix._status.text)
+	presets.id_pressed.emit(presets.SAVE)
+	await frames(2)
+	check(prompt.is_open() and prompt._name.text == "AUReverb2", "Save preset asks for a name", prompt._title.text)
+	await tap(KEY_TAB)
+	check(mix.is_open() and prompt.is_open(), "while it asks, the keys are for typing: Tab doesn't close the mix window")
+	prompt._name.text = "Big hall"
+	prompt.confirm()
+	await frames(2)
+	var saved: Array = library.plugin_presets(pad, "insert", 0)
+	check(not prompt.is_open() and saved.size() == 1 and saved[0].name == "Big hall" and saved[0].path == library.plugin_root.path_join("Apple/AUReverb2/Big hall.aupreset"),
+		"it is saved as an .aupreset in the plug-in's folder, where Audio Unit hosts keep them", saved[0].path if not saved.is_empty() else "nothing")
+	presets.for_plugin(pad, "insert", 0)
+	presets.id_pressed.emit(presets.FACTORY)
+	await frames(2)
+	var small: PackedByteArray = audio.get_plugin_state(pad.source_id, "insert", 0)
+	presets.for_plugin(pad, "insert", 0)
+	check(presets.get_item_text(presets.get_item_index(presets.SAVED)) == "Big hall", "and listed under Saved")
+	presets.id_pressed.emit(presets.SAVED)
+	await frames(2)
+	check(small != hall and audio.get_plugin_state(pad.source_id, "insert", 0) != small and mix._status.text == "Big hall loaded",
+		"from where it loads again", mix._status.text)
+	presets.id_pressed.emit(presets.COPY)
+	main.set_insert(bells, 1, reverb_id)
+	main.set_insert(drums, 1, delay_id)
+	presets.for_plugin(drums, "insert", 1)
+	var not_onto_delay: bool = presets.is_item_disabled(presets.get_item_index(presets.PASTE))
+	presets.for_plugin(bells, "insert", 1)
+	check(not_onto_delay and not presets.is_item_disabled(presets.get_item_index(presets.PASTE)),
+		"a plug-in's copied settings can be pasted onto the same plug-in elsewhere, and not onto another")
+	presets.id_pressed.emit(presets.PASTE)
+	await frames(2)
+	check(audio.get_plugin_state(bells.source_id, "insert", 1) == audio.get_plugin_state(pad.source_id, "insert", 0),
+		"pasting them gives the bells' AUReverb2 the pad's settings")
+
+	var lead = main.add_instrument("guitar_combo", Vector3(-1.0, 0.0, 0.5))
+	main.set_amp_voice(lead, "high_gain", true, "4x12", true)
+	main.set_amp_control(lead, "gain", 8.5)
+	main.add_pedal(lead, "overdrive")
+	main.add_pedal(lead, "delay")
+	main.set_pedal_control(lead, 1, 0, 3.0)
+	main.set_pedal_on(lead, 0, false)
+	main.add_pedal(lead, "plugin")
+	main.load_pedal_plugin(lead, 2, reverb_id)
+	main.set_insert(lead, 2, delay_id)
+	var names = mix._name_presets
+	names.for_instrument(lead)
+	names.id_pressed.emit(names.SAVE)
+	await frames(2)
+	prompt._name.text = "Lead rig"
+	prompt.confirm()
+	var amp_presets: Array = library.instrument_presets("amp")
+	check(amp_presets.size() == 1 and amp_presets[0].name == "Lead rig" and amp_presets[0].path == library.presets_dir("amp").path_join("Lead rig.srpreset"),
+		"an amp's settings are saved as an instrument preset", amp_presets[0].path if not amp_presets.is_empty() else "none")
+	var stack = main.add_instrument("bass_stack", Vector3(1.0, 0.0, 0.5))
+	names.for_instrument(stack)
+	check(names.get_item_text(names.get_item_index(names.SAVED)) == "Lead rig", "it is offered to another amp, a bass stack even")
+	names.id_pressed.emit(names.SAVED)
+	await frames(3)
+	var kinds_on_board: Array = stack.pedals.map(func(p): return p.kind)
+	check(stack.amp_head == "high_gain" and stack.amp_cabinet == "4x12" and absf(stack.amp_controls.gain - 8.5) < 0.01 and
+		kinds_on_board == ["overdrive", "delay", "plugin"] and not stack.pedals[0].on and absf(stack.pedals[1].controls[0] - 3.0) < 0.01 and
+		stack.pedals[2].plugin_name == "AUReverb2" and audio.get_inserts(stack.source_id)[2].plugin_name == "AUDelay",
+		"loading it gives the stack the same head, cabinet, knobs, pedals and plug-ins", str(kinds_on_board))
+	names.for_instrument(speaker)
+	check(names.get_item_index(names.SAVED) < 0, "a Speaker isn't offered an amp's presets")
+	main.set_speaker_volume(speaker, 6.0)
+	main.set_insert(speaker, 0, delay_id)
+	names.id_pressed.emit(names.COPY)
+	var speaker3 = main.add_instrument("live", Vector3(0.0, 0.0, -1.0))
+	names.for_instrument(lead)
+	var not_onto_amp: bool = names.is_item_disabled(names.get_item_index(names.PASTE))
+	names.for_instrument(speaker3)
+	names.id_pressed.emit(names.PASTE)
+	await frames(2)
+	check(not_onto_amp and absf(speaker3.volume_db - 6.0) < 0.01 and audio.get_inserts(speaker3.source_id)[0].plugin_name == "AUDelay",
+		"a Speaker's copied settings paste onto another Speaker (volume and plug-ins), not onto an amp")
+	main.set_speaker_volume(speaker, 0.0)
+	await tap(KEY_TAB)
+	await tap(KEY_N)
+	check(im.is_open() and im._preset_box.visible and im._preset_buttons.size() == 1 and im._preset_buttons[0].text.begins_with("Lead rig"),
+		"the instrument menu offers the presets saved")
+	(im._preset_box.get_parent().get_parent() as ScrollContainer).ensure_control_visible(im._preset_buttons[0])
+	await frames(3)
+	await click(im._preset_buttons[0].get_global_rect().get_center())
+	var from_preset = player.carried
+	check(not im.is_open() and from_preset != null and from_preset.kind == "guitar_combo" and from_preset.amp_head == "high_gain" and
+		from_preset.pedals.size() == 3, "picking one brings a new amp in, set up as the preset says", from_preset.display_name if from_preset else "nothing")
+	await tap(KEY_G)
+
+	print("Templates")
+	main.set_tempo(123.0)
+	main.room.set_size(Vector3(18.0, 5.0, 12.0))
+	var kinds_before: Array = main.instruments.map(func(i): return i.kind)
+	var drum_notes: Array = audio.get_pattern(drums.source_id)
+	var lead_at: Vector3 = lead.global_position
+	var pad_reverb: PackedByteArray = audio.get_plugin_state(pad.source_id, "insert", 0)
+	var walls_before: int = main.room.walls.size()
+	menu.open(menu.TEMPLATES_TAB)
+	await frames(3)
+	check(menu._templates.size() == 2 and menu._templates[0].name == "Default room" and menu._templates[1].name == "Empty room" and
+		menu._template_start.button_pressed, "the Templates page lists the default room, which SoundRoom opens with, and an empty one")
+	menu._on_template_save_pressed()
+	await frames(2)
+	prompt._name.text = "Test room"
+	prompt.confirm()
+	await frames(2)
+	check(menu._templates.size() == 3 and menu._chosen_template().get("name", "") == "Test room" and
+		FileAccess.file_exists(library.templates_dir().path_join("Test room.sroom")), "the room is saved as a template, and listed")
+	menu._template_list.select(1)
+	menu._show_template_choice()
+	menu._on_template_load_pressed()
+	check(menu._template_confirm.visible and menu._template_delete.disabled, "loading one asks first (and a built-in one can't be thrown away)")
+	menu._template_confirm.get_ok_button().pressed.emit()
+	await frames(5)
+	check(main.instruments.is_empty() and main.room.walls.is_empty() and not menu.is_open() and audio.get_source_count() == 0,
+		"the empty room has nothing in it, not even a wall")
+	menu.open(menu.TEMPLATES_TAB)
+	await frames(2)
+	menu._template_list.select(2)
+	menu._show_template_choice()
+	menu._load_chosen_template()
+	await frames(5)
+	var loaded_lead = null
+	for inst in main.instruments:
+		if inst.kind == "guitar_combo" and loaded_lead == null:
+			loaded_lead = inst
+	var loaded_drums = main.find_instrument("drums")
+	var loaded_pad = main.find_instrument("pad")
+	check(main.instruments.map(func(i): return i.kind) == kinds_before and audio.get_pattern(loaded_drums.source_id) == drum_notes and
+		loaded_lead.global_position.distance_to(lead_at) < 0.05 and is_equal_approx(main.tempo, 123.0) and
+		main.room.size.is_equal_approx(Vector3(18.0, 5.0, 12.0)) and main.room.walls.size() == walls_before,
+		"loading the saved template brings back every instrument where it stood, the patterns, the tempo, the size and walls",
+		"%d instruments" % main.instruments.size())
+	check(loaded_lead.amp_head == "high_gain" and loaded_lead.pedals.size() == 3 and loaded_lead.pedals[2].plugin_name == "AUReverb2" and
+		audio.get_inserts(loaded_lead.source_id)[2].plugin_name == "AUDelay" and audio.get_plugin_state(loaded_pad.source_id, "insert", 0) == pad_reverb,
+		"and their amps, pedals and plug-ins, the plug-ins' settings too", "%d pedals, pad's reverb settings %s" % [loaded_lead.pedals.size(),
+		"the same" if audio.get_plugin_state(loaded_pad.source_id, "insert", 0) == pad_reverb else "different"])
+	menu.open(menu.TEMPLATES_TAB)
+	await frames(2)
+	menu._template_list.select(2)
+	menu._show_template_choice()
+	menu._template_start.button_pressed = true
+	await frames(2)
+	check(main.settings.start_template == library.templates_dir().path_join("Test room.sroom") and menu._template_list.get_item_text(2).contains("opens with"),
+		"SoundRoom can be made to open with it")
+	menu._template_start.button_pressed = false
+	menu._on_template_delete_pressed()
+	await frames(2)
+	check(main.settings.start_template == "" and menu._templates.size() == 2 and not FileAccess.file_exists(library.templates_dir().path_join("Test room.sroom")),
+		"and it can be thrown away")
+	menu._template_list.select(0)
+	menu._show_template_choice()
+	menu._load_chosen_template()
+	await frames(5)
+	check(main.instruments.size() == 6 and main.room.size.is_equal_approx(Vector3(14.0, 4.0, 10.0)) and main.room.walls.size() == 1 and
+		is_equal_approx(main.tempo, 92.0) and main.speaker != null and main.speaker.kind == "live", "the default room comes back as SoundRoom starts")
+	main.show_title()
+	await frames(3)
+	menu.open(menu.TEMPLATES_TAB)
+	await frames(2)
+	menu._template_list.select(1)
+	menu._show_template_choice()
+	menu._load_chosen_template()
+	menu._template_list.select(0)
+	menu.open(menu.TEMPLATES_TAB)
+	menu._template_list.select(0)
+	menu._show_template_choice()
+	menu._load_chosen_template()
+	await frames(3)
+	check(title.is_open() and main.instruments.size() == 6 and main.instruments.all(func(i): return not i._label.visible),
+		"a template loaded from the title screen loads behind it, without the instruments' names floating over its words")
 
 	print("ALL PASSED" if failures == 0 else "%d FAILED" % failures)
 	quit(failures)

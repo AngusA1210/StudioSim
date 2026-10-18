@@ -19,6 +19,7 @@ extends CanvasLayer
 const Fader := preload("res://scripts/fader.gd")
 const LevelMeter := preload("res://scripts/level_meter.gd")
 const Hints := preload("res://scripts/hints.gd")
+const PresetMenu := preload("res://scripts/preset_menu.gd")
 
 const STRIP_WIDTH := 96.0
 const STRIP_BG := Color(0.16, 0.17, 0.19, 0.98)
@@ -37,6 +38,8 @@ var _strip_row: HBoxContainer
 var _strips: Array = []  # {inst, fader, meter, value, peak, input, mute, solo, source, inserts: [{button, style}], plate}
 var _insert_menu: PopupMenu  # what a right-click on a full insert offers
 var _menu_for := []  # [instrument, slot] that menu is open for
+var _insert_presets: PopupMenu  # its Presets submenu: the plug-in's presets, and copying and pasting its settings
+var _name_presets: PopupMenu  # the same for an instrument, from its name
 var _name_menu: PopupMenu  # what a right-click on a strip's name offers
 var _name_menu_for = null
 var _confirm: ConfirmationDialog  # removing an instrument
@@ -81,7 +84,7 @@ func close() -> void:
 
 
 func _input(event: InputEvent) -> void:
-	if app.plugin_browser.visible:  # the keys are for its search box
+	if app.plugin_browser.visible or app.name_prompt.is_open():  # the keys are for typing
 		return
 	if is_open() and event is InputEventKey and event.pressed and not event.echo and \
 			(event.physical_keycode == KEY_ESCAPE or app.bindings.action_for(event.physical_keycode) == "mixer"):
@@ -155,9 +158,17 @@ func _build() -> void:
 	_insert_menu = PopupMenu.new()
 	_insert_menu.id_pressed.connect(_on_insert_menu_chosen)
 	_root.add_child(_insert_menu)
+	_insert_presets = PresetMenu.new()
+	_insert_presets.setup(app)
+	_insert_presets.reported.connect(_report)
+	_insert_menu.add_child(_insert_presets)
 	_name_menu = PopupMenu.new()
 	_name_menu.id_pressed.connect(_on_name_menu_chosen)
 	_root.add_child(_name_menu)
+	_name_presets = PresetMenu.new()
+	_name_presets.setup(app)
+	_name_presets.reported.connect(_report)
+	_name_menu.add_child(_name_presets)
 	_confirm = ConfirmationDialog.new()
 	_confirm.ok_button_text = "Remove"
 	_confirm.confirmed.connect(_on_remove_confirmed)
@@ -626,6 +637,9 @@ func _on_insert_input(event: InputEvent, inst, slot: int) -> void:
 		_insert_menu.add_item("Bypass off" if not insert.get("on", true) else "Bypass", 1)
 		_insert_menu.add_item("Replace with…", 2)
 		_insert_menu.add_separator()
+		_insert_presets.for_plugin(inst, "insert", slot)
+		_insert_menu.add_submenu_node_item("Presets", _insert_presets, 4)
+		_insert_menu.add_separator()
 		_insert_menu.add_item("Remove", 3)
 		_insert_menu.position = Vector2i(button.get_screen_position() + Vector2(0, button.size.y))
 		_insert_menu.popup()
@@ -672,9 +686,11 @@ func _on_name_input(event: InputEvent, inst, plate: Button) -> void:
 		_name_menu.clear()
 		_name_menu.add_item("Open the %s" % _editor_name(inst), 0)
 		_name_menu.add_item("Duplicate", 2)
+		_name_presets.for_instrument(inst)
+		_name_menu.add_submenu_node_item("Presets", _name_presets, 3)
 		_name_menu.add_separator()
 		_name_menu.add_item("Remove the %s from the room…" % inst.display_name, 1)
-		_name_menu.position = Vector2i(plate.get_screen_position() - Vector2(0, 96))
+		_name_menu.position = Vector2i(plate.get_screen_position() - Vector2(0, 124))
 		_name_menu.popup()
 	plate.accept_event()
 
@@ -700,7 +716,7 @@ func _on_name_menu_chosen(id: int) -> void:
 		open_editor(inst)
 	elif id == 2:
 		duplicate_instrument(inst)
-	else:
+	elif id == 1:
 		_confirm.dialog_text = "Remove the %s from the room? Its pattern, pedals and plug-ins go with it." % inst.display_name
 		_confirm.popup_centered()
 
@@ -713,10 +729,10 @@ func duplicate_instrument(inst) -> void:
 		_report("Not all of it could be copied: %s." % app.copy_problem)
 
 
-## A problem, in the status line for a few seconds.
-func _report(text: String) -> void:
+## A problem, or something done, in the status line for a few seconds.
+func _report(text: String, problem := true) -> void:
 	_status.text = text
-	_status.add_theme_color_override("font_color", WARN)
+	_status.add_theme_color_override("font_color", WARN if problem else Color(0.85, 0.87, 0.92))
 	_problem_until = Time.get_ticks_msec() + 5000
 
 

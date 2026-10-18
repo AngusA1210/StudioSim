@@ -32,6 +32,7 @@ var pedalboard_open := true    # an amp's panel shows its pedalboard, or folds i
 var bindings := {}  # the keys changed on the Controls page: action → physical keycode (see bindings.gd)
 var fullscreen := false
 var room_brightness := 1.0
+var start_template := ""  # the template SoundRoom opens with; "" for the default room
 
 var path := "user://settings.cfg"
 var persist := true  # automated runs switch this off so they neither read nor change the player's settings
@@ -69,6 +70,7 @@ func load_from_disk() -> void:
 	fullscreen = file.get_value("display", "fullscreen", fullscreen)
 	room_brightness = clampf(file.get_value("display", "room_brightness", room_brightness), 0.5, 3.0)
 	bindings = file.get_value("controls", "keys", bindings)
+	start_template = file.get_value("templates", "start", start_template)
 
 
 func save_to_disk() -> void:
@@ -99,4 +101,5 @@ func save_to_disk() -> void:
 	file.set_value("display", "fullscreen", fullscreen)
 	file.set_value("display", "room_brightness", room_brightness)
 	file.set_value("controls", "keys", bindings)
+	file.set_value("templates", "start", start_template)
 	file.save(path)

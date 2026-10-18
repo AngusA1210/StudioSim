@@ -1,6 +1,6 @@
 extends CanvasLayer
-## The menu (Esc). A Metronome page for the tempo and click, a Room page for its size and walls, then the audio
-## setup laid out the way a DAW does it:
+## The menu (Esc). A Metronome page for the tempo and click, a Room page for its size and walls, a Templates page for
+## saving the whole room and starting from one saved before, then the audio setup laid out the way a DAW does it:
 ## a Playback Engine page for the device and buffer size, an I/O page that maps hardware channels to what they
 ## carry, a MIDI page for enabling controllers, and general settings. The music keeps playing while it's open, so
 ## changes can be heard straight away.
@@ -14,11 +14,12 @@ const Room := preload("res://scripts/room.gd")
 # The pages, in order.
 const METRONOME_TAB := 0
 const ROOM_TAB := 1
-const ENGINE_TAB := 2
-const IO_TAB := 3
-const MIDI_TAB := 4
-const SETTINGS_TAB := 5
-const CONTROLS_TAB := 6
+const TEMPLATES_TAB := 2
+const ENGINE_TAB := 3
+const IO_TAB := 4
+const MIDI_TAB := 5
+const SETTINGS_TAB := 6
+const CONTROLS_TAB := 7
 const Bindings := preload("res://scripts/bindings.gd")
 const FIXED_KEYS := """Look about              the mouse (click to capture it)
 Back out of anything    Esc
@@ -30,6 +31,15 @@ Notes                   A S D F G H J K L ;  white keys,  W E T Y U O P  black k
 
 var app
 var audio: SoundRoomAudio
+# Templates
+var _template_list: ItemList
+var _templates: Array = []  # what the list shows: [{name, path}]
+var _template_load: Button
+var _template_delete: Button
+var _template_start: CheckButton
+var _template_status: Label
+var _template_confirm: ConfirmationDialog
+
 var _key_buttons := {}  # action → its button on the Controls page
 var _waiting_for := ""  # the action whose new key is awaited
 var _keys_note: Label
@@ -139,6 +149,8 @@ func open(tab := -1) -> void:
 	_input_signature = ""
 	_refresh_devices()
 	_refresh_live()
+	_template_status.text = ""
+	_refresh_templates()
 
 
 func close() -> void:
@@ -148,7 +160,7 @@ func close() -> void:
 
 
 func _input(event: InputEvent) -> void:
-	if not is_open() or not (event is InputEventKey) or not event.pressed or event.echo:
+	if not is_open() or not (event is InputEventKey) or not event.pressed or event.echo or app.name_prompt.is_open():
 		return
 	if _waiting_for != "":  # the Controls page is waiting for a key
 		_take_key(event.physical_keycode)
@@ -231,6 +243,7 @@ func _build() -> void:
 	box.add_child(_tabs)
 	_build_metronome_page(_page("Metronome"))
 	_build_room_page(_page("Room"))
+	_build_templates_page(_page("Templates"))
 	_build_engine_page(_page("Playback Engine"))
 	_build_io_page(_page("I-O"))
 	_tabs.set_tab_title(IO_TAB, "I/O")
@@ -396,11 +409,145 @@ func _build_room_page(page: VBoxContainer) -> void:
 	reset.pressed.connect(_on_room_reset_pressed)
 	side.add_child(reset)
 	var unsaved := Label.new()
-	unsaved.text = "Resets when SoundRoom restarts."
+	unsaved.text = "To keep the room, save it on the Templates page."
 	unsaved.add_theme_color_override("font_color", DIM)
 	unsaved.add_theme_font_size_override("font_size", 12)
 	unsaved.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	side.add_child(unsaved)
+
+
+## Templates: whole rooms, saved to start from again (library.gd keeps them).
+func _build_templates_page(page: VBoxContainer) -> void:
+	page.get_parent().size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_note(page, "A whole room: its size and walls, the instruments where they stand with their patterns, faders, pedals and plug-ins, and the tempo.")
+	_template_list = ItemList.new()
+	_template_list.custom_minimum_size.y = 230
+	_template_list.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_template_list.item_selected.connect(func(_index: int) -> void: _show_template_choice())
+	_template_list.item_activated.connect(func(_index: int) -> void: _on_template_load_pressed())
+	page.add_child(_template_list)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	page.add_child(row)
+	_template_load = Button.new()
+	_template_load.text = "Load"
+	_template_load.custom_minimum_size.x = 90
+	_template_load.pressed.connect(_on_template_load_pressed)
+	row.add_child(_template_load)
+	var save := Button.new()
+	save.text = "Save this room as a template…"
+	save.pressed.connect(_on_template_save_pressed)
+	row.add_child(save)
+	_template_delete = Button.new()
+	_template_delete.text = "Move to Trash"
+	_template_delete.pressed.connect(_on_template_delete_pressed)
+	row.add_child(_template_delete)
+	var finder := Button.new()
+	finder.text = "Show in Finder"
+	finder.pressed.connect(func() -> void: app.library.show_folder(app.library.templates_dir()))
+	row.add_child(finder)
+	_template_start = CheckButton.new()
+	_template_start.text = "SoundRoom opens with this one"
+	_template_start.toggled.connect(_on_template_start_toggled)
+	page.add_child(_template_start)
+	_template_status = Label.new()
+	_template_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_template_status.add_theme_font_size_override("font_size", 13)
+	page.add_child(_template_status)
+	_template_confirm = ConfirmationDialog.new()
+	_template_confirm.ok_button_text = "Replace the room"
+	_template_confirm.confirmed.connect(_load_chosen_template)
+	_root.add_child(_template_confirm)
+
+
+## The templates there are, the one chosen kept chosen if it is still there.
+func _refresh_templates() -> void:
+	var was: String = _chosen_template().get("path", "")
+	_templates = app.library.templates()
+	_template_list.clear()
+	var start: String = app.settings.start_template
+	for template in _templates:
+		var opens: bool = template.path == start or (start == "" and template.path == app.library.DEFAULT_TEMPLATE)
+		_template_list.add_item(template.name + ("     · SoundRoom opens with this" if opens else ""))
+	var index := 0
+	for i in _templates.size():
+		if _templates[i].path == was:
+			index = i
+	_template_list.select(index)
+	_show_template_choice()
+
+
+func _chosen_template() -> Dictionary:
+	var picked := _template_list.get_selected_items() if _template_list != null else PackedInt32Array()
+	return _templates[picked[0]] if not picked.is_empty() and picked[0] < _templates.size() else {}
+
+
+func _show_template_choice() -> void:
+	var template := _chosen_template()
+	var path: String = template.get("path", "")
+	var builtin := path.begins_with("builtin:")
+	var start: String = app.settings.start_template
+	var opens: bool = path == start or (start == "" and path == app.library.DEFAULT_TEMPLATE)
+	_template_load.disabled = template.is_empty()
+	_template_delete.disabled = template.is_empty() or builtin
+	_template_start.set_pressed_no_signal(opens)
+	_template_start.disabled = template.is_empty() or (opens and path == app.library.DEFAULT_TEMPLATE)
+
+
+func _on_template_load_pressed() -> void:
+	var template := _chosen_template()
+	if template.is_empty():
+		return
+	_template_confirm.dialog_text = "Replace the room with \"%s\"? Everything in it now goes: its instruments, patterns, plug-ins and walls." % template.name
+	_template_confirm.popup_centered()
+
+
+func _load_chosen_template() -> void:
+	var template := _chosen_template()
+	if template.is_empty():
+		return
+	var problem: String = app.library.load_template(template.path)
+	_refresh_live()
+	if problem == "":
+		close()
+	else:
+		_show_template_status("%s loaded, but not all of it: %s." % [template.name, problem], true)
+
+
+func _on_template_save_pressed() -> void:
+	app.name_prompt.ask("Save this room as a template", "My room", func(template_name: String) -> void:
+		var problem: String = app.library.save_template(template_name)
+		if problem != "":
+			_show_template_status("It couldn't be saved: %s." % problem, true)
+			return
+		_refresh_templates()
+		for i in _templates.size():
+			if _templates[i].name == app.library._safe(template_name):
+				_template_list.select(i)
+		_show_template_choice()
+		_show_template_status("Saved as %s." % template_name, false), app.library.template_exists)
+
+
+func _on_template_delete_pressed() -> void:
+	var template := _chosen_template()
+	if template.is_empty() or template.path.begins_with("builtin:"):
+		return
+	app.library.delete_file(template.path)
+	if app.settings.start_template == template.path:
+		app.set_start_template("")
+	_refresh_templates()
+	_show_template_status("%s is in the Trash." % template.name, false)
+
+
+func _on_template_start_toggled(on: bool) -> void:
+	var path: String = _chosen_template().get("path", "")
+	app.set_start_template(path if on and path != app.library.DEFAULT_TEMPLATE else "")
+	_refresh_templates()
+
+
+func _show_template_status(text: String, problem: bool) -> void:
+	_template_status.text = text
+	_template_status.add_theme_color_override("font_color", WARN if problem else DIM)
 
 
 func _build_engine_page(page: VBoxContainer) -> void:
