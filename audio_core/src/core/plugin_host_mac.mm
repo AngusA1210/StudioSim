@@ -276,6 +276,25 @@ public:
         return true;
     }
 
+    void placeEditor(double above_bottom) override {
+        if (!window_) return;
+        NSWindow* game = nil;  // the frontmost window that isn't one of the plug-ins' panels
+        for (NSWindow* w in NSApp.orderedWindows)
+            if (w != window_ && ![w isKindOfClass:[NSPanel class]] && w.isVisible) {
+                game = w;
+                break;
+            }
+        if (!game) return;
+        const NSRect content = [game contentRectForFrameRect:game.frame];
+        const NSRect screen = (game.screen ?: NSScreen.mainScreen).visibleFrame;
+        NSRect f = window_.frame;
+        f.origin.x = NSMidX(content) - f.size.width / 2;
+        f.origin.y = content.origin.y + content.size.height * std::clamp(above_bottom, 0.0, 1.0);
+        f.origin.y = std::max(std::min(f.origin.y, NSMaxY(screen) - f.size.height), NSMinY(screen));
+        f.origin.x = std::max(std::min(f.origin.x, NSMaxX(screen) - f.size.width), NSMinX(screen));
+        [window_ setFrame:f display:YES];
+    }
+
     void hideEditor() override {
         if (window_) [window_ orderOut:nil];
     }

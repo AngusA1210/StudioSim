@@ -110,6 +110,8 @@ public:
     bool set_instrument_plugin(int id, const String& plugin_id, const PackedByteArray& state);
     Dictionary get_instrument_plugin(int id) const;
     bool show_instrument_editor(int id, bool show, const String& title);
+    // Moves that window to the middle of the game's, its bottom `above_bottom` of the way up it (0 to 1).
+    void place_instrument_editor(int id, float above_bottom);
     // Loads one into a Plug-in pedal, with these settings if any are given; false with the reason in get_error().
     bool load_pedal_plugin(int id, int index, const String& plugin_id, const PackedByteArray& state);
     bool show_plugin_editor(int id, int index, bool show, const String& title);  // the plug-in's own window

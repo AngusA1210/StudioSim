@@ -309,6 +309,10 @@ Dictionary SoundRoomAudio::get_instrument_plugin(int id) const {
     return d;
 }
 
+void SoundRoomAudio::place_instrument_editor(int id, float above_bottom) {
+    if (engine_) engine_->placeInstrumentEditor(id, above_bottom);
+}
+
 bool SoundRoomAudio::show_instrument_editor(int id, bool show, const String& title) {
     return engine_ && engine_->showInstrumentEditor(id, show, str(title));
 }
@@ -598,6 +602,7 @@ void SoundRoomAudio::_bind_methods() {
                          DEFVAL(PackedByteArray()));
     ClassDB::bind_method(D_METHOD("get_instrument_plugin", "id"), &SoundRoomAudio::get_instrument_plugin);
     ClassDB::bind_method(D_METHOD("show_instrument_editor", "id", "show", "title"), &SoundRoomAudio::show_instrument_editor);
+    ClassDB::bind_method(D_METHOD("place_instrument_editor", "id", "above_bottom"), &SoundRoomAudio::place_instrument_editor);
     ClassDB::bind_method(D_METHOD("get_plugin_state", "id", "place", "index"), &SoundRoomAudio::get_plugin_state);
     ClassDB::bind_method(D_METHOD("set_plugin_state", "id", "place", "index", "state"), &SoundRoomAudio::set_plugin_state);
     ClassDB::bind_method(D_METHOD("get_factory_presets", "id", "place", "index"), &SoundRoomAudio::get_factory_presets);

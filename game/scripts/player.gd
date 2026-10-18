@@ -29,6 +29,11 @@ var carried = null  # instrument you're carrying
 var playing = null  # instrument you're playing
 var octave := 0
 var typing := false  # the keyboard (K) is open: the letter keys play every instrument whose input is on
+# A plug-in instrument whose window was opened from the room (P): the window stands above the on-screen keyboard, the
+# letter keys play the instrument (and any whose input is on), and the mouse is free to work the window. A click in
+# the room, Esc, Q or the window's own close button puts it away and hands the mouse back to looking about.
+var plugin_open = null
+var _plugin_shown := false  # its window did open (automated runs have no windows to open)
 var keyboard_octave := 0
 var held := {}      # physical key → [MIDI note sounding, the instruments it was sent to]
 var remove_pending = null  # instrument that Backspace was pressed on once; a second press removes it
@@ -126,7 +131,35 @@ func carry(inst) -> void:
 
 
 ## An instrument is leaving the room: let go of it.
+## Opens a plug-in instrument's window from the room, above the on-screen keyboard, the letter keys playing it.
+func open_plugin_window(inst) -> void:
+	stop_playing()
+	close_keyboard()
+	plugin_open = inst
+	keyboard_octave = inst.default_octave
+	_plugin_shown = app.show_instrument_editor(inst, true)
+	if _plugin_shown:
+		app.place_instrument_editor(inst, app.hud.piano_top_fraction())
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+
+
+## Puts the window away (a click in the room, Esc, Q, or its own close button), and the mouse goes back to looking.
+func close_plugin_window() -> void:
+	if plugin_open == null:
+		return
+	release_keys()
+	if app.instruments.has(plugin_open):
+		app.show_instrument_editor(plugin_open, false)
+	plugin_open = null
+	_plugin_shown = false
+	if not _ui_open():
+		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+
+
 func forget(inst) -> void:
+	if plugin_open == inst:
+		plugin_open = null
+		_plugin_shown = false
 	if playing == inst:
 		stop_playing()
 	if carried == inst:
@@ -167,6 +200,8 @@ func _unhandled_input(event: InputEvent) -> void:
 		yaw -= event.relative.x * sensitivity
 		pitch = clampf(pitch - event.relative.y * sensitivity, -1.45, 1.45)
 		_apply_look()
+	elif event is InputEventMouseButton and event.pressed and plugin_open != null:  # a click outside its window
+		close_plugin_window()
 	elif event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
 		if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
 			Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
@@ -184,15 +219,17 @@ func _handle_key(event: InputEventKey) -> void:
 				audio.note_off(id, held[key][0])
 			held.erase(key)
 		return
-	if key == KEY_ESCAPE:  # always backs out: up from an instrument, the keyboard closed, or the menu
-		if playing != null:
+	if key == KEY_ESCAPE:  # always backs out: a plug-in's window put away, up from an instrument, the keyboard closed, or the menu
+		if plugin_open != null:
+			close_plugin_window()
+		elif playing != null:
 			stop_playing()
 		elif typing:
 			close_keyboard()
 		else:
 			app.menu.open()
 		return
-	var notes := playing != null or typing  # the letter keys are a piano
+	var notes := playing != null or typing or plugin_open != null  # the letter keys are a piano
 	if notes and Bindings.NOTES.has(key):
 		_note_on(key)
 		return
@@ -209,11 +246,9 @@ func _handle_key(event: InputEventKey) -> void:
 				app.amp_panel.open(at)
 			elif at != null and not at.playable and _distance_to(at) < PLAY_REACH + 0.5:
 				app.speaker_panel.open(at)
-		"plugin_window":  # a plug-in instrument's own window; the mouse is free to work it until you click back
+		"plugin_window":  # a plug-in instrument's own window, with the keyboard under it
 			if at != null and at.plays_plugin and not notes:
-				var showing: bool = not at.instrument_plugin.get("editor_open", false)
-				if app.show_instrument_editor(at, showing):
-					Input.mouse_mode = Input.MOUSE_MODE_VISIBLE if showing else Input.MOUSE_MODE_CAPTURED
+				open_plugin_window(at)
 		"add":
 			app.instrument_menu.open()
 		"duplicate":  # a second of what you face or carry, with its settings, in your hands to be put down
@@ -241,7 +276,9 @@ func _handle_key(event: InputEventKey) -> void:
 			if at != null:
 				app.set_input(at, not at.input_on)
 		"stop":
-			if playing != null:
+			if plugin_open != null:
+				close_plugin_window()
+			elif playing != null:
 				stop_playing()
 			elif typing:
 				close_keyboard()
@@ -274,9 +311,9 @@ func _handle_key(event: InputEventKey) -> void:
 func _note_on(key: int) -> void:
 	var base: int = octave if playing != null else keyboard_octave
 	var note := 60 + 12 * base + int(Bindings.NOTES[key])
-	var ids := [playing.source_id] if playing != null else []
+	var ids := [playing.source_id] if playing != null else ([plugin_open.source_id] if plugin_open != null else [])
 	for inst in app.armed_instruments():
-		if inst != playing:
+		if inst != playing and inst != plugin_open:
 			ids.append(inst.source_id)
 	for id in ids:
 		audio.note_on(id, note, 0.8)
@@ -349,6 +386,8 @@ func _physics_process(delta: float) -> void:
 func _process(_delta: float) -> void:
 	if app.title == null or not app.title.is_open():  # on the title screen its own camera does the listening
 		audio.set_listener(camera.global_transform)
+	if plugin_open != null and _plugin_shown and not plugin_open.instrument_plugin.get("editor_open", true):
+		close_plugin_window()  # closed with its own button, or put away by the mix window
 	if remove_pending != null and (Time.get_ticks_msec() >= _remove_deadline
 			or (remove_pending != carried and remove_pending != target and remove_pending != playing)):
 		remove_pending = null  # too slow, or looking at something else now
@@ -368,7 +407,7 @@ func _held(action: String) -> float:
 	if Input.is_key_pressed(KEY_META) or Input.is_key_pressed(KEY_CTRL):  # Cmd-S saves rather than walks
 		return 0.0
 	var keycode: int = app.bindings.key(action)
-	if (playing != null or typing) and Bindings.NOTES.has(keycode):
+	if (playing != null or typing or plugin_open != null) and Bindings.NOTES.has(keycode):
 		return 0.0
 	return float(Input.is_physical_key_pressed(keycode))
 

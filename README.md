@@ -45,7 +45,7 @@ to the title, which then offers to go back into the room.
 | I | that instrument's input on/off (see below) |
 | MIDI keyboard | plays every instrument whose input is on, with velocity (and the sustain pedal on the Keys); plug in any time |
 | Enter | open the pattern editor for the instrument you're next to or playing (at an amp: its knobs and pedals; at a Speaker: its volume and input) |
-| P | at a plug-in instrument, open or close its plug-in's window |
+| P | at a plug-in instrument, open its plug-in's window above the on-screen keyboard, the letter keys playing it; a click in the room, Esc or Q puts it away |
 | M | switch that instrument's loop off or on (for a Speaker or an amp: mute) |
 | L O U J | at an amp with a loop pedal: L the footswitch (record, close the loop, overdub), O stop or play, U undo or redo the last overdub, J twice to clear |
 | 1 to 8 | at an amp, stamp on its pedals: each switches that pedal on or off (the loop pedal: its footswitch) |
@@ -93,9 +93,10 @@ MIDI drum map, except that the acoustic kits have a ride (D#, as at 51) where th
 A **Plug-in Instrument** plays one of the instrument plug-ins on your Mac (Audio Unit synthesizers, samplers,
 pianos), chosen from the plug-in browser when you pick it, and takes that plug-in's name. MIDI controllers, the
 computer keyboard and its pattern play it like any instrument, sending it the sustain pedal, the mod wheel and the
-other controllers, and pitch bend as well. **P**, facing it, opens the plug-in's own window, which leaves the keyboard
-with the room (unless you click a box in it to type), so you can sit at the instrument and play it with the window
-open; in the mix window its
+other controllers, and pitch bend as well. **P**, facing it, opens the plug-in's own window just above the on-screen
+keyboard: the letter keys play the instrument while you work the window with the mouse, and a click anywhere in the
+room (or Esc, or Q, or the window's close button) puts it away and gives the mouse back to looking about. The window
+leaves the keyboard with the room unless you click a box in it to type; in the mix window its
 strip shows the plug-in where others show their input: click it for the window, right-click it for another plug-in or
 its presets. It is saved with the room, its plug-in's settings and all.
 

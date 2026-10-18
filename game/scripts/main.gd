@@ -554,6 +554,11 @@ func show_instrument_editor(inst, show: bool) -> bool:
 	return shown
 
 
+## Moves a plug-in instrument's window to the middle of the game's, its bottom `above_bottom` of the way up (0 to 1).
+func place_instrument_editor(inst, above_bottom: float) -> void:
+	audio.place_instrument_editor(inst.source_id, above_bottom)
+
+
 ## A name no other instrument in the room has: `base`, or "base 2", "base 3"... (`except` is the one being named).
 func unique_name(base: String, except = null) -> String:
 	var taken := instruments.filter(func(other): return other != except).map(func(other): return other.display_name)

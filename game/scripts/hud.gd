@@ -212,7 +212,7 @@ func _process(_delta: float) -> void:
 
 	# One line of guidance: how to start, or where the menu is.
 	var keys = app.bindings
-	var playing: bool = player.playing != null or player.typing
+	var playing: bool = player.playing != null or player.typing or player.plugin_open != null
 	_prompt.text = "Click to look around  ·  Esc  menu and settings" if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED else \
 		"Esc  menu  ·  %s  mix window  ·  %s  add an instrument  ·  %s  keyboard" % [keys.label("mixer"), keys.label("add"), keys.label("keyboard")]
 	_prompt_panel.visible = not playing
@@ -233,6 +233,14 @@ func _process(_delta: float) -> void:
 		_piano_help.text = "%s  stop  ·  %s%s  pattern  ·  %s  input %s  ·  %s  loop %s" % [keys.label("stop"), octave, keys.label("edit"),
 			keys.label("input"), "off" if inst.input_on else "on", keys.label("loop"), "on" if not inst.loop_on else "off"]
 		_light_piano(inst.color)
+	elif player.plugin_open != null:
+		# A plug-in instrument's window is open above: the keys play it.
+		var inst = player.plugin_open
+		if _piano_for != str(inst.get_instance_id()):
+			_label_piano(inst)
+		_piano_title.text = "Playing the %s  ·  its window is open above" % inst.display_name
+		_piano_help.text = "Esc, %s or a click in the room  close it  ·  %s (lowest key C%d)" % [keys.label("stop"), octaves, 4 + player.keyboard_octave]
+		_light_piano(inst.color)
 	elif player.typing:
 		# The keyboard: every instrument whose input is on, wherever they stand.
 		var armed: Array = app.armed_instruments()
@@ -250,6 +258,12 @@ func _process(_delta: float) -> void:
 		_piano_help.text = "%s or Esc  close  ·  %s (lowest key C%d)  ·  arrows  walk and turn  ·  %s  input of what you face" % [
 			keys.label("stop"), octaves, 4 + player.keyboard_octave, keys.label("input")]
 		_light_piano(lead.color if lead != null else Color(0.6, 0.62, 0.68))
+
+
+## How far up the screen the on-screen keyboard reaches (0 to 1), for a plug-in's window to stand just above it.
+func piano_top_fraction() -> float:
+	var vp := get_viewport().get_visible_rect().size
+	return clampf((_piano.get_combined_minimum_size().y + 18.0 + 10.0) / maxf(vp.y, 1.0), 0.0, 0.9)
 
 
 func _light_piano(lit: Color) -> void:
@@ -308,7 +322,7 @@ func _show_hint(vp: Vector2) -> void:
 			rows.append([keys.label("play"), "play" if player.can_play_target() else "play (step closer)"])
 			rows.append([keys.label("edit"), "edit its pattern"])
 			if t.plays_plugin:
-				rows.append([keys.label("plugin_window"), "close its plug-in's window" if t.instrument_plugin.get("editor_open", false) else "its plug-in's window"])
+				rows.append([keys.label("plugin_window"), "its plug-in's window"])
 			rows.append([keys.label("input"), "input off" if t.input_on else "input on"])
 			rows.append([keys.label("loop"), "loop on" if not t.loop_on else "loop off"])
 		elif not t.is_amp:

@@ -1357,6 +1357,18 @@ func _run() -> void:
 	main._sit_at("plugin_synth")
 	await frames(5)
 	check(main.hud.hint_lines().has("P its plug-in's window"), "its card offers its plug-in's window", " / ".join(main.hud.hint_lines()))
+	await tap(KEY_P)
+	check(player.plugin_open == synth and main.hud._piano.visible and main.hud._piano_title.text.begins_with("Playing the DLSMusicDevice") and
+		main.hud.piano_top_fraction() > 0.1, "P opens its plug-in's window over the on-screen keyboard", main.hud._piano_title.text)
+	key(KEY_D)
+	var window_level: float = await average_level(synth.source_id, 0.3)
+	key(KEY_D, false)
+	await click(Vector2(640, 300))
+	check(window_level > 0.0005 and player.plugin_open == null and not main.hud._piano.visible,
+		"with it open the letter keys play it, and a click in the room puts it away", "%.4f" % window_level)
+	await tap(KEY_P)
+	await tap(KEY_ESCAPE)
+	check(player.plugin_open == null and not main.menu.is_open(), "Esc puts it away too (rather than opening the menu)")
 	await tap(KEY_E)
 	key(KEY_A)
 	var synth_level: float = await average_level(synth.source_id, 0.3)

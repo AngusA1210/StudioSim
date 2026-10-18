@@ -49,6 +49,9 @@ public:
     // The plug-in's own window, floating over the game (game thread). `title` names it.
     virtual bool showEditor(const std::string& title) = 0;
     virtual void hideEditor() = 0;
+    // Moves its window to the middle of the game's window, its bottom `above_bottom` of the way up it (0 to 1), and
+    // on the screen.
+    virtual void placeEditor(double /*above_bottom*/) {}
     virtual bool editorVisible() const = 0;
     virtual int latencySamples() const = 0;  // how late what it plays back is, as it reports
     // Its settings, as the plug-in itself saves them (an Audio Unit's class info, as a binary property list), and

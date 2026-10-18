@@ -243,6 +243,7 @@ public:
     PluginDescription instrumentPlugin(int id) const;  // what it holds (an empty id if nothing)
     bool instrumentEditorOpen(int id) const;
     bool showInstrumentEditor(int id, bool show, const std::string& title = "");
+    void placeInstrumentEditor(int id, double above_bottom);  // see PluginInstance::placeEditor
     void setListener(Vec3 position, Vec3 ahead, Vec3 up);
     void noteOn(int id, int note, float velocity);
     void noteOff(int id, int note);

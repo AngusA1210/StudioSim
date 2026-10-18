@@ -871,6 +871,10 @@ bool AudioEngine::setInstrumentPlugin(int id, const std::string& plugin_id, std:
     return true;
 }
 
+void AudioEngine::placeInstrumentEditor(int id, double above_bottom) {
+    if (PluginInstance* plugin = pluginAt(id, PluginPlace::Instrument, 0)) plugin->placeEditor(above_bottom);
+}
+
 PluginDescription AudioEngine::instrumentPlugin(int id) const {
     const PluginInstance* plugin = pluginAt(id, PluginPlace::Instrument, 0);
     return plugin ? plugin->description() : PluginDescription{};
