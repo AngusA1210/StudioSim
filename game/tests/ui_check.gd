@@ -203,7 +203,8 @@ func _run() -> void:
 	check(title.is_open() and title.camera.current and not player.camera.current and not main.hud._root.visible,
 		"the game starts on the title screen, looking at the room from its own camera")
 	check(heard > 0.001 and audio.get_transport().running, "the room is already playing behind it", "loudest instrument %.3f" % heard)
-	check(title.buttons.enter.has_focus() and title._status.text.begins_with("Playing through"), "Enter the room is ready under the keyboard",
+	check(title.buttons.new.has_focus() and not title.buttons.back.visible and not main.session.has_room() and
+		title._status.text.begins_with("Playing through"), "with no room open yet, New room is ready under the keyboard",
 		title._status.text.replace("\n", " / "))
 	var stood: Vector3 = player.global_position
 	for code in [KEY_E, KEY_TAB, KEY_N, KEY_M, KEY_SPACE]:
@@ -212,6 +213,8 @@ func _run() -> void:
 		main.sequence_running and player.global_position.is_equal_approx(stood), "the room's own keys do nothing here")
 	if main.menu.is_open():  # Tab and Space are the buttons' own keys here: Tab moved to the next button, Space pressed it
 		main.menu.close()
+	if main.rooms_page.is_open():
+		main.rooms_page.close()
 	await frames(2)
 	await click(title.buttons.audio.get_global_rect().get_center())
 	check(main.menu.is_open() and main.menu._tabs.get_tab_title(main.menu._tabs.current_tab) == "Playback Engine"
@@ -231,16 +234,33 @@ func _run() -> void:
 	await seconds(0.3)
 	check(main.settings.binaural and main.menu._latency_label.text.contains("binaural"), "switching it back on brings the delay back", main.menu._latency_label.text)
 	await tap(KEY_ENTER)
-	check(title.is_open(), "Enter doesn't slip through the menu to the title's buttons")
+	check(title.is_open() and not main.rooms_page.is_open(), "Enter doesn't slip through the menu to the title's buttons")
 	await tap(KEY_ESCAPE)
 	await frames(3)
-	check(not main.menu.is_open() and title.is_open() and title._ui.visible and title.buttons.enter.has_focus(), "Esc comes back to the title")
+	check(not main.menu.is_open() and title.is_open() and title._ui.visible and title.buttons.new.has_focus(), "Esc comes back to the title")
 	await click(title.buttons.controls.get_global_rect().get_center())
 	check(main.menu.is_open() and main.menu._tabs.get_tab_title(main.menu._tabs.current_tab) == "Controls", "Controls opens the key list")
 	await tap(KEY_ESCAPE)
 	await frames(3)
+	check(main.menu._tabs.get_tab_count() == 7 and not range(7).any(func(i): return main.menu._tabs.get_tab_title(i) == "Templates") and
+		not title.buttons.has("templates"), "templates are neither on the title screen nor in the menu")
 	await tap(KEY_ENTER)
+	await frames(3)
+	var rooms = main.rooms_page
+	check(rooms.is_open() and rooms._new_page.visible and rooms._name.text == "Untitled room" and rooms._templates[0].name == "Default room" and
+		rooms._templates[1].name == "Empty room" and rooms._carry.values().all(func(box): return box.button_pressed) and
+		is_equal_approx(rooms._size.x.value, 14.0) and is_equal_approx(rooms._size.z.value, 10.0) and is_equal_approx(rooms._size.y.value, 4.0),
+		"New room asks for a name, a template (the default room to begin with), its size and what to bring over, everything ticked")
+	rooms._name.text = "Test room"
+	rooms._check_name()
+	await click(rooms._create.get_global_rect().get_center())
 	await seconds(1.0)
+	drums = main.find_instrument("drums")
+	bass = main.find_instrument("bass")
+	speaker = main.speaker
+	check(not rooms.is_open() and main.session.room_name == "Test room" and FileAccess.file_exists(main.session.path) and
+		main.instruments.size() == 6 and audio.get_pattern(drums.source_id).size() > 10, "Create room makes it from the template, saves it, and goes in",
+		main.session.path)
 	check(main.hud._meter_panel.visible and main.hud._meter.vertical and main.hud._meter_text.text.ends_with(" dB") and main.hud._meter.held_db() > -40.0,
 		"the master meter stands upright on screen, reading the music", main.hud._meter_text.text)
 	check(main.hud._binaural_chip.text == "BINAURAL" and main.hud._reverb_chip.text == "REVERB" and main.hud._modes_panel.visible,
@@ -918,9 +938,13 @@ func _run() -> void:
 		"turned up too far, the limiter holds the output and the window says by how much", mix._status.text)
 	var limiting: float = main.meter_reduction_db
 	mix._on_master_changed(-10.0)
-	await seconds(1.6)
-	check(limiting > 1.0 and main.meter_reduction_db > 1.0,  # 10 dB down would have ended limiting after the fader
-		"the limiter comes before the master fader: bringing the master down 10 dB doesn't ease it", "%.1f dB, then %.1f dB" % [limiting, main.meter_reduction_db])
+	var still_limiting := 0.0
+	for wait in 12:  # the most it holds back over a few bars, whatever the groove is doing just then
+		await seconds(0.25)
+		if wait >= 6:
+			still_limiting = maxf(still_limiting, main.meter_reduction_db)
+	check(limiting > 1.0 and still_limiting > 1.0,  # 10 dB down would have ended limiting after the fader
+		"the limiter comes before the master fader: bringing the master down 10 dB doesn't ease it", "%.1f dB, then %.1f dB" % [limiting, still_limiting])
 	mix._on_master_changed(0.0)
 	await click(mix._master.limiter.get_global_rect().get_center())
 	for wait in 16:  # however quiet the groove is just then, it clips within a bar or two
@@ -1169,7 +1193,9 @@ func _run() -> void:
 	await frames(3)
 	check(title.is_open() and not main.menu.is_open() and title.camera.current and player.carried == null and not bass.carried,
 		"it goes back to the title, putting down what you were carrying")
-	await click(title.buttons.enter.get_global_rect().get_center())
+	check(title.buttons.back.visible and title.buttons.back.text == "Back to Test room" and title.buttons.back.has_focus(),
+		"the title screen offers to go back to the room that is open", title.buttons.back.text)
+	await click(title.buttons.back.get_global_rect().get_center())
 	await seconds(1.0)
 	check(not title.is_open() and player.camera.current and audio.get_pattern(drums.source_id).size() == notes_before
 		and is_equal_approx(audio.get_transport().bpm, 100.0), "and the room is as you left it when you come back in")
@@ -1285,88 +1311,118 @@ func _run() -> void:
 		from_preset.pedals.size() == 3, "picking one brings a new amp in, set up as the preset says", from_preset.display_name if from_preset else "nothing")
 	await tap(KEY_G)
 
-	print("Templates")
+	print("Rooms")
+	var session = main.session
+	var room_file: String = session.path
+	check(room_file == session.location().path_join("Test room").path_join("Test room.sroom") and session.has_unsaved_changes(),
+		"the room has a folder of its own with its file inside, and what was done since it was made isn't saved yet", room_file)
 	main.set_tempo(123.0)
 	main.room.set_size(Vector3(18.0, 5.0, 12.0))
-	var kinds_before: Array = main.instruments.map(func(i): return i.kind)
-	var drum_notes: Array = audio.get_pattern(drums.source_id)
-	var lead_at: Vector3 = lead.global_position
-	var pad_reverb: PackedByteArray = audio.get_plugin_state(pad.source_id, "insert", 0)
-	var walls_before: int = main.room.walls.size()
-	menu.open(menu.TEMPLATES_TAB)
-	await frames(3)
-	check(menu._templates.size() == 2 and menu._templates[0].name == "Default room" and menu._templates[1].name == "Empty room" and
-		menu._template_start.button_pressed, "the Templates page lists the default room, which SoundRoom opens with, and an empty one")
-	menu._on_template_save_pressed()
+	var standing_at: Vector3 = player.global_position
+	var command := InputEventKey.new()  # as a hand would: Cmd down, then S
+	command.physical_keycode = KEY_META
+	command.keycode = KEY_META
+	command.pressed = true
+	Input.parse_input_event(command)
+	var save_key := InputEventKey.new()
+	save_key.physical_keycode = KEY_S
+	save_key.keycode = KEY_S
+	save_key.meta_pressed = true
+	save_key.pressed = true
+	Input.parse_input_event(save_key)
+	view.push_input(save_key)
+	await frames(6)
+	for each in [save_key, command]:
+		var up: InputEventKey = each.duplicate()
+		up.pressed = false
+		Input.parse_input_event(up)
 	await frames(2)
-	prompt._name.text = "Test room"
+	var on_disk: Dictionary = library.read_room_file(room_file)
+	check(not session.has_unsaved_changes() and is_equal_approx(float(on_disk.get("tempo", 0.0)), 123.0) and on_disk.get("name", "") == "Test room" and
+		player.global_position.distance_to(standing_at) < 0.05, "Cmd-S saves it, the tempo and all, without walking you backwards",
+		"unsaved %s, moved %.2f m" % [session.has_unsaved_changes(), player.global_position.distance_to(standing_at)])
+	check(on_disk.instruments.size() == main.instruments.size() and on_disk.instruments[0].has("pattern") and on_disk.instruments[0].has("level_db") and
+		on_disk.has("swing"), "its one file holds every instrument with its pattern and fader, and the tempo and swing")
+	menu.open()
+	await frames(2)
+	check(menu._room_title.text == "Test room" and menu._room_status.text.begins_with("saved") and menu._save.visible, "the menu names the room, and when it was saved",
+		menu._room_status.text)
+	menu._on_room_menu_chosen(1)
+	await frames(2)
+	prompt._name.text = "Big room"
 	prompt.confirm()
 	await frames(2)
-	check(menu._templates.size() == 3 and menu._chosen_template().get("name", "") == "Test room" and
-		FileAccess.file_exists(library.templates_dir().path_join("Test room.sroom")), "the room is saved as a template, and listed")
-	menu._template_list.select(1)
-	menu._show_template_choice()
-	menu._on_template_load_pressed()
-	check(menu._template_confirm.visible and menu._template_delete.disabled, "loading one asks first (and a built-in one can't be thrown away)")
-	menu._template_confirm.get_ok_button().pressed.emit()
-	await frames(5)
-	check(main.instruments.is_empty() and main.room.walls.is_empty() and not menu.is_open() and audio.get_source_count() == 0,
-		"the empty room has nothing in it, not even a wall")
-	menu.open(menu.TEMPLATES_TAB)
-	await frames(2)
-	menu._template_list.select(2)
-	menu._show_template_choice()
-	menu._load_chosen_template()
-	await frames(5)
-	var loaded_lead = null
-	for inst in main.instruments:
-		if inst.kind == "guitar_combo" and loaded_lead == null:
-			loaded_lead = inst
-	var loaded_drums = main.find_instrument("drums")
-	var loaded_pad = main.find_instrument("pad")
-	check(main.instruments.map(func(i): return i.kind) == kinds_before and audio.get_pattern(loaded_drums.source_id) == drum_notes and
-		loaded_lead.global_position.distance_to(lead_at) < 0.05 and is_equal_approx(main.tempo, 123.0) and
-		main.room.size.is_equal_approx(Vector3(18.0, 5.0, 12.0)) and main.room.walls.size() == walls_before,
-		"loading the saved template brings back every instrument where it stood, the patterns, the tempo, the size and walls",
-		"%d instruments" % main.instruments.size())
-	check(loaded_lead.amp_head == "high_gain" and loaded_lead.pedals.size() == 3 and loaded_lead.pedals[2].plugin_name == "AUReverb2" and
-		audio.get_inserts(loaded_lead.source_id)[2].plugin_name == "AUDelay" and audio.get_plugin_state(loaded_pad.source_id, "insert", 0) == pad_reverb,
-		"and their amps, pedals and plug-ins, the plug-ins' settings too", "%d pedals, pad's reverb settings %s" % [loaded_lead.pedals.size(),
-		"the same" if audio.get_plugin_state(loaded_pad.source_id, "insert", 0) == pad_reverb else "different"])
-	menu.open(menu.TEMPLATES_TAB)
-	await frames(2)
-	menu._template_list.select(2)
-	menu._show_template_choice()
-	menu._template_start.button_pressed = true
-	await frames(2)
-	check(main.settings.start_template == library.templates_dir().path_join("Test room.sroom") and menu._template_list.get_item_text(2).contains("opens with"),
-		"SoundRoom can be made to open with it")
-	menu._template_start.button_pressed = false
-	menu._on_template_delete_pressed()
-	await frames(2)
-	check(main.settings.start_template == "" and menu._templates.size() == 2 and not FileAccess.file_exists(library.templates_dir().path_join("Test room.sroom")),
-		"and it can be thrown away")
-	menu._template_list.select(0)
-	menu._show_template_choice()
-	menu._load_chosen_template()
-	await frames(5)
-	check(main.instruments.size() == 6 and main.room.size.is_equal_approx(Vector3(14.0, 4.0, 10.0)) and main.room.walls.size() == 1 and
-		is_equal_approx(main.tempo, 92.0) and main.speaker != null and main.speaker.kind == "live", "the default room comes back as SoundRoom starts")
+	check(FileAccess.file_exists(library.templates_dir().path_join("Big room.srtemplate")) and library.templates().any(func(t): return t.name == "Big room"),
+		"its Room button saves the room as a template")
+	menu.close()
+
+	main.settings.backups = true
+	main.settings.backups_kept = 2
+	session._process(main.settings.backup_minutes * 60.0)
+	var unchanged: bool = session.backups().is_empty()
+	for bpm in [124.0, 125.0, 126.0]:
+		main.set_tempo(bpm)
+		session._process(main.settings.backup_minutes * 60.0)
+	var copies: Array = session.backups()
+	check(unchanged and copies.size() == 2 and copies[0].path.ends_with("Room Backups/Test room backup 002.sroom") and
+		is_equal_approx(float(library.read_room_file(copies[1].path).tempo), 126.0) and session.has_unsaved_changes(),
+		"every so often a backup goes in its Room Backups folder (only if it changed), keeping as many as set; the room itself stays unsaved",
+		", ".join(copies.map(func(c): return c.path.get_file())))
+	main.settings.autosave = true
+	main.settings.autosave_minutes = 1
+	main.set_tempo(127.0)
+	session._process(61.0)
+	check(not session.has_unsaved_changes() and is_equal_approx(float(library.read_room_file(room_file).tempo), 127.0) and main.hud._notice.text == "Auto-saved Test room",
+		"with auto-save on, it is saved every so many minutes", main.hud._notice.text)
+	main.settings.autosave = false
+
+	main.set_tempo(128.0)  # a change left unsaved
 	main.show_title()
 	await frames(3)
-	menu.open(menu.TEMPLATES_TAB)
-	await frames(2)
-	menu._template_list.select(1)
-	menu._show_template_choice()
-	menu._load_chosen_template()
-	menu._template_list.select(0)
-	menu.open(menu.TEMPLATES_TAB)
-	menu._template_list.select(0)
-	menu._show_template_choice()
-	menu._load_chosen_template()
+	await click(title.buttons.new.get_global_rect().get_center())
+	rooms._name.text = "Test room"
+	rooms._check_name()
+	check(rooms._create.disabled and rooms._new_status.text.begins_with("There is a room called that"), "a second room can't take the name of one beside it")
+	rooms._name.text = "Second room"
+	rooms._check_name()
+	var big: int = rooms._templates.map(func(t): return t.name).find("Big room")
+	rooms._template_list.select(big)
+	rooms._on_template_chosen()
+	check(is_equal_approx(rooms._size.x.value, 18.0) and is_equal_approx(rooms._size.y.value, 5.0), "choosing a template takes its size")
+	rooms._size.x.value = 20.0
+	rooms._carry.patterns.button_pressed = false
+	rooms._carry.plugins.button_pressed = false
+	await click(rooms._create.get_global_rect().get_center())
+	check(session.is_asking() and session._confirm.dialog_text.contains("Test room"), "the room open has changes: making another asks first whether to save them")
+	session._confirm.custom_action.emit(&"discard")
+	await seconds(1.0)
+	var second_drums = main.find_instrument("drums")
+	var second_pad = main.find_instrument("pad")
+	check(session.room_name == "Second room" and not title.is_open() and is_equal_approx(main.room.size.x, 20.0) and is_equal_approx(main.room.size.z, 12.0) and
+		audio.get_pattern(second_drums.source_id).is_empty() and audio.get_inserts(second_pad.source_id)[0].plugin_name == "" and
+		is_equal_approx(main.tempo, 123.0) and main.instruments.size() == on_disk.instruments.size(),
+		"Don't Save lets it go, and the new room is the template at the size asked for, without the patterns and plug-ins left unticked")
+	check(is_equal_approx(float(library.read_room_file(room_file).tempo), 127.0), "the first room's file is as it was last saved")
+
+	main.show_title()
 	await frames(3)
-	check(title.is_open() and main.instruments.size() == 6 and main.instruments.all(func(i): return not i._label.visible),
-		"a template loaded from the title screen loads behind it, without the instruments' names floating over its words")
+	await click(title.buttons.open.get_global_rect().get_center())
+	await frames(2)
+	var listed: Array = rooms._rooms.map(func(r): return r.name)
+	check(rooms.is_open() and rooms._open_page.visible and listed.has("Test room") and listed.has("Second room") and
+		rooms._room_list.get_root().get_first_child().get_text(0).begins_with("Second room"), "Open room lists the rooms, the latest first", str(listed))
+	var first_room: TreeItem = rooms._room_list.get_root().get_child(listed.find("Test room"))
+	first_room.select(0)
+	await click(rooms._open.get_global_rect().get_center())
+	await seconds(1.0)
+	check(session.room_name == "Test room" and is_equal_approx(main.tempo, 127.0) and main.room.size.is_equal_approx(Vector3(18.0, 5.0, 12.0)) and
+		not session.has_unsaved_changes() and not title.is_open(), "opening one brings it back as it was saved, and goes in")
+	main.set_tempo(90.0)
+	session.request_quit()
+	check(session.is_asking() and session._confirm.dialog_text.ends_with("before quitting?"), "quitting with changes asks whether to save them")
+	session._confirm.get_cancel_button().pressed.emit()
+	await frames(2)
+	check(not session.is_asking() and is_equal_approx(main.tempo, 90.0), "and Cancel carries on")
 
 	print("ALL PASSED" if failures == 0 else "%d FAILED" % failures)
 	quit(failures)

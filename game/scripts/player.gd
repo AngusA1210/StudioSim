@@ -143,7 +143,7 @@ func forget(inst) -> void:
 ## Walking about: with nothing open, or only the mix window, which docks along the bottom so the room stays in view
 ## (unless something in it is being typed into).
 func _can_move() -> bool:
-	for panel in [app.title, app.menu, app.sequencer, app.amp_panel, app.speaker_panel, app.instrument_menu, app.name_prompt]:
+	for panel in [app.title, app.menu, app.sequencer, app.amp_panel, app.speaker_panel, app.instrument_menu, app.name_prompt, app.rooms_page]:
 		if panel != null and panel.is_open():
 			return false
 	if app.plugin_browser != null and app.plugin_browser.visible:
@@ -152,7 +152,8 @@ func _can_move() -> bool:
 
 
 func _ui_open() -> bool:
-	for panel in [app.title, app.menu, app.sequencer, app.mixer, app.amp_panel, app.speaker_panel, app.instrument_menu, app.name_prompt]:
+	for panel in [app.title, app.menu, app.sequencer, app.mixer, app.amp_panel, app.speaker_panel, app.instrument_menu, app.name_prompt,
+			app.rooms_page]:
 		if panel != null and panel.is_open():
 			return true
 	return false
@@ -359,6 +360,8 @@ func _process(_delta: float) -> void:
 
 ## 1 if a movement key is held, 0 if not, or if it is a note key and the letter keys are notes just now.
 func _held(action: String) -> float:
+	if Input.is_key_pressed(KEY_META) or Input.is_key_pressed(KEY_CTRL):  # Cmd-S saves rather than walks
+		return 0.0
 	var keycode: int = app.bindings.key(action)
 	if (playing != null or typing) and Bindings.NOTES.has(keycode):
 		return 0.0

@@ -24,9 +24,10 @@ Open `game/project.godot` in the Godot editor to work on the scene and scripts.
 Use **wired** headphones. Bluetooth headphones add 150–250 ms of delay that no software can remove; the
 "Output latency" readout shows what your current device adds.
 
-The game opens on a title screen with the room already playing behind it. From there you can check which device
-the sound is going to (and be warned if it is one that adds delay, such as Bluetooth), open the audio setup and
-settings, and enter the room. The menu inside the room has a button to come back to it.
+The game opens on a title screen with the default room already playing behind it. From there you make a **new room**
+or **open** one (see Rooms, below), check which device the sound is going to (and be warned if it is one that adds
+delay, such as Bluetooth), and open the audio setup and settings. The menu inside the room has a button to come back
+to the title, which then offers to go back into the room.
 
 ## Controls
 
@@ -51,6 +52,7 @@ settings, and enter the room. The menu inside the room has a button to come back
 | Space | start or stop every instrument's pattern |
 | C | metronome click on/off |
 | Esc | the menu (see below), including the room's size and walls; the music keeps playing while it's open |
+| ⌘S | save the room |
 | B | binaural on/off (compare with plain stereo) |
 | R | room reverb on/off |
 
@@ -186,7 +188,7 @@ opens, floating over the room. Plug-ins get the room's tempo, for those that kee
 Most plug-ins don't say what kind of effect they are, so the types are worked out from their names: a good guess, not
 a certainty (`audio_core/build/engine_tests --plugins` lists what each was taken for). By maker is always exact. A
 plug-in that only comes as AAX can't be used, since only Pro Tools can host those. Plug-ins run inside SoundRoom as
-they would inside a DAW, so one that crashes takes SoundRoom with it. Their settings are kept with templates and
+they would inside a DAW, so one that crashes takes SoundRoom with it. Their settings are kept with the room and in
 presets (below). Each instrument is a single point of sound in the room, so a plug-in's stereo output is heard as
 one channel, from where the instrument stands.
 
@@ -200,14 +202,36 @@ one channel, from where the instrument stands.
   is the amp, sounding from where it stands, full range. Put it where the amp should stand, pick the interface input
   the guitar is plugged into, and switch its input on.
 
-## Templates and presets
+## Rooms
 
-**Templates** hold a whole room: its size and walls, every instrument where it stands with its fader, mute, solo,
-pattern, pedals and plug-ins (each plug-in's settings too), the tempo and swing, and where you were standing. The
-**Templates** page of the menu (also on the title screen) lists them: **Load** replaces the room with one, after
-asking; **Save this room as a template…** names and saves the room as it is. Two are built in: the default room, and
-an empty room with no instruments and no wall. Any one can be what SoundRoom opens with. Templates are kept in
-`~/Music/SoundRoom/Templates` as `.sroom` files (JSON), to copy, back up or share.
+A **room** is what a session is in a DAW: everything about it in one file. That covers its size and walls, and every
+instrument where it stands, with its fader, mute and solo, its pattern (the MIDI notes, the pattern's length and
+whether its loop is on), its inserts, an amp's head, cabinet, knobs and pedals, a Speaker's volume and input, and
+every plug-in's settings. It also holds the tempo and swing and where you were standing. Each room has a folder of
+its own, named after it, as a Pro Tools session does: the room's `.sroom` file (JSON) and a **Room Backups** folder.
+Recorded audio will go there too once recording comes. Rooms go in `~/Music/SoundRoom/Rooms` unless you choose
+another folder.
+
+- **New room…** (title screen): name the room, choose where it goes, pick a **template**, set its width, length and
+  height (the template's to begin with), and tick what to bring over from the template: its walls, its instruments
+  where they stand (and, for those, their patterns, their faders with mute and solo, the amp and Speaker settings,
+  and the plug-ins with their settings), and its tempo and swing. Everything starts ticked. Create room saves the
+  room and takes you in.
+- **Open room…** lists the rooms in the rooms folder and those opened lately, the latest first. **Browse…** finds a
+  room's file anywhere, a backup among them.
+- **Saving**: ⌘S, or **Save** in the menu's header, which also names the room and says when it was saved. The
+  header's **Room** button has Save as…, **Save as template…** and Show in Finder. Making or opening another room,
+  or quitting, asks first whether to save any changes.
+- **Auto-save** (Settings, off to begin with) saves the room every so many minutes while it has changes.
+- **Backups** (Settings, on to begin with): every 10 minutes (or as set), if the room has changed, a copy of it as it
+  is goes in its Room Backups folder (`Name backup 001.sroom`, `002`…). The oldest are thrown away past the number
+  kept (10 to begin with). A backup opens like any room.
+
+**Templates** appear only when making a room. Two are built in: the default room, and an empty room with no
+instruments and no wall. Save a room as a template from the menu's Room button. Templates hold everything a room does,
+and are kept in `~/Music/SoundRoom/Templates` as `.srtemplate` files.
+
+## Presets
 
 **Plug-in presets**: right-click an insert and open **Presets**, or press **Presets** under a Plug-in pedal. It lists
 the presets the plug-in comes with, then yours. **Save preset…** saves the plug-in's settings under a name as an
@@ -317,7 +341,6 @@ patterns go back to the defaults at each start until rooms can be saved.
 
 - **Metronome**: start and stop the patterns, tempo, swing, the click and its volume.
 - **Room**: the room's size and the walls inside it (see above).
-- **Templates**: whole rooms, saved and loaded (see above).
 - **Playback Engine**: which output device the audio engine runs on, and the hardware buffer size (32–1024 samples).
   The sample rate follows the device. Shows the resulting latency (the buffer, the device, and the quarter of a
   buffer that binaural rendering adds while it is switched on) and CPU use.
@@ -325,7 +348,8 @@ patterns go back to the defaults at each start until rooms can be saved.
   Live input always starts switched off, so an open microphone never meets a pair of speakers by surprise.
 - **MIDI**: every MIDI device the system sees, with a tick box each and a light that flashes when it sends notes.
 - **Settings**: binaural, reverb, distance falloff, text size, field of view, mouse sensitivity, room lighting, full screen (which
-  SoundRoom then opens in every time), and whether the master meter and the audio readout are shown on screen.
+  SoundRoom then opens in every time), whether the master meter and the audio readout are shown on screen, and
+  auto-save and backups for the room.
 
 Choices are saved (Godot's user data folder, `settings.cfg`) and restored at the next start. If a saved device
 isn't connected, the system default is used until it is.
@@ -340,7 +364,9 @@ game/                      Godot project: the room, player, instruments, HUD, me
   scripts/mixer.gd         the mix window: channel strips, faders (fader.gd) and meters (level_meter.gd)
   scripts/amp_panel.gd     an amp's knobs (knob.gd) and its pedalboard
   scripts/plugin_browser.gd  the plug-ins installed, by type or by maker, for an insert or a Plug-in pedal
-  scripts/library.gd       templates, instrument and plug-in presets on disk, and copied settings
+  scripts/session.gd       the open room: its file, saving, auto-save and backups
+  scripts/rooms_page.gd    making a new room (from a template) and opening one
+  scripts/library.gd       what a room holds, templates, instrument and plug-in presets, and copied settings
   scripts/preset_menu.gd   the Presets menu of a plug-in or an instrument
 audio_core/
   src/core/                the audio engine, plain C++ with no Godot dependency
@@ -361,7 +387,7 @@ audio_core/
   src/godot/               the Godot extension wrapping the engine (SoundRoomAudio node)
   tests/engine_tests.cpp   offline checks: levels, binaural direction, walls, latency, MIDI, live input, sequencer, amps, pedals, plug-ins, loop pedal
 game/tests/ui_check.gd     the game driven by pretend keys and clicks: title, playing, patterns, instruments, amps, room, menus,
-                           templates and presets
+                           presets, and rooms (making, saving, backups, opening)
 prototypes/sound-room/     the original browser prototype, for reference
 tools/                     build and dependency scripts
 ```
@@ -387,8 +413,8 @@ Done so far: the native audio pipeline, instruments that can be added, placed an
 keyboard or a MIDI controller, a pattern sequencer with tempo, swing and a metronome, live audio input through
 Speakers, guitar and bass amps with boards of effect pedals (a loop pedal and a plug-in pedal among them), a title
 screen, a mix window laid out like a DAW's with plug-in inserts on every channel, a room whose size and walls
-can be changed, with sound bending round the walls and a reverb that follows the size, and templates of whole rooms
-with presets and copy and paste for plug-ins and instruments.
+can be changed, with sound bending round the walls and a reverb that follows the size, rooms saved as sessions (with
+templates, auto-save and backups), and presets and copy and paste for plug-ins and instruments.
 
 To do, roughly in this order:
 

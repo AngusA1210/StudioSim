@@ -8,7 +8,7 @@ extends Node3D
 ##   --skip-title             start in the room rather than on the title screen
 ##   --pose=x,z,yaw_degrees   start the player somewhere else
 ##   --live-input             switch the Speaker's input on at start
-##   --menu=N                 open the menu on page N at start (0 Metronome, 1 Room, 2 Templates, 3 Playback Engine...)
+##   --menu=N                 open the menu on page N at start (0 Metronome, 1 Room, 2 Playback Engine...)
 ##   --play=kind              sit down at an instrument at start (drums, bass, pad, bells, keys)
 ##   --sequencer=kind[,bar]   open that instrument's pattern editor at start
 ##   --add=kind               make a new instrument at start, in the player's hands
@@ -37,6 +37,8 @@ const Catalog := preload("res://scripts/catalog.gd")
 const Settings := preload("res://scripts/settings.gd")
 const Room := preload("res://scripts/room.gd")
 const Library := preload("res://scripts/library.gd")
+const Session := preload("res://scripts/session.gd")
+const RoomsPage := preload("res://scripts/rooms_page.gd")
 const NamePrompt := preload("res://scripts/name_prompt.gd")
 
 # The instruments the room starts with, each playing its part of the default groove and turned to face where the
@@ -68,7 +70,9 @@ var amp_panel  # an amp's knobs and its pedals (Enter at an amp)
 var plugin_browser  # the effect plug-ins on the computer, to choose one for an insert or a Plug-in pedal
 var speaker_panel  # a Speaker's volume and input (Enter at a Speaker)
 var bindings  # the keys, as set on the Controls page
-var library  # templates, presets, and settings copied to be pasted
+var library  # rooms' and templates' contents, presets, and settings copied to be pasted
+var session  # the room that is open: its file, saving, backups
+var rooms_page  # making a new room, or opening one
 var name_prompt  # asks for a name, to save a template or a preset under
 var _plugins = null  # what get_plugins() said, the first time anything asked
 var instrument_menu
@@ -127,10 +131,11 @@ func _ready() -> void:
 	player.name = "Player"
 	add_child(player)
 	player.setup(self, instruments)
-	# The room it starts with: the template chosen for that in the menu, or the default room.
-	var start: String = "" if options.has("silent") else settings.start_template
-	if start == "" or library.load_template(start) == Library.UNREADABLE:
-		load_default_room()
+	session = Session.new()
+	session.name = "Session"
+	add_child(session)
+	session.setup(self)
+	load_default_room()  # behind the title screen, until a room is made or opened
 	if options.has("room"):
 		var dims: PackedStringArray = options.room.split(",")
 		room.set_size(Vector3(float(dims[0]), float(dims[1]), float(dims[2])))
@@ -179,8 +184,12 @@ func _ready() -> void:
 	title = Title.new()
 	add_child(title)
 	title.setup(self)
+	rooms_page = RoomsPage.new()
+	add_child(rooms_page)
+	rooms_page.setup(self)
 	name_prompt = NamePrompt.new()
 	add_child(name_prompt)
+	get_tree().auto_accept_quit = false  # quitting asks first whether to save the room
 	_apply_display()
 	if not options.has("skip-title"):
 		title.open()
@@ -202,6 +211,20 @@ func _ready() -> void:
 		instrument_menu.open()
 	if options.has("mixer"):
 		mixer.open()
+
+
+## Closing the window, or Cmd-Q: as Quit, which offers to save the room first.
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_WM_CLOSE_REQUEST and session != null:
+		session.request_quit()
+
+
+## Cmd-S (Ctrl-S) saves the room, from anywhere but a box being typed in.
+func _input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and not event.echo and event.physical_keycode == KEY_S and \
+			(event.meta_pressed or event.ctrl_pressed) and not name_prompt.is_open() and not rooms_page.is_open():
+		session.save_or_ask()
+		get_viewport().set_input_as_handled()
 
 
 func _process(delta: float) -> void:
@@ -681,24 +704,10 @@ func add_instrument(kind: String, at: Vector3, with_default_pattern := false):
 	return inst
 
 
-## The room the game starts with, as Templates' "Default room" brings it back: its size and wall, the instruments
-## playing the default groove, all facing where you come in, and the tempo. `empty`: the same room bare, with no
-## instruments and no wall ("Empty room").
+## The room the game starts with (the "Default room" template): its size and wall, the instruments playing the
+## default groove, all facing where you come in, and the tempo. `empty`: the same room bare ("Empty room").
 func load_default_room(empty := false) -> void:
-	clear_room()
-	room.reset()
-	if empty:
-		room.remove_wall(0)
-	set_tempo(DEFAULT_TEMPO)
-	set_swing(DEFAULT_SWING)
-	if not empty:
-		for entry in DEFAULT_ROOM:
-			var inst = add_instrument(entry.kind, entry.position, true)  # with its part of the default groove
-			inst.face(SPAWN)
-			if entry.kind == "live":
-				inst.set_input_channel(settings.speaker_input)
-	player.place(SPAWN, 0.0)
-	settle_new_room()
+	library.apply_room_data(library.default_room_data(empty))
 
 
 ## Takes everything out of the room, ready for another: its instruments go, with their windows.
@@ -725,12 +734,6 @@ func settle_new_room() -> void:
 	if sequence_running:
 		audio.set_sequencer_running(false)
 		audio.set_sequencer_running(true)
-
-
-## Which template SoundRoom opens with ("" for the default room).
-func set_start_template(path: String) -> void:
-	settings.start_template = path
-	settings.save_to_disk()
 
 
 ## A second of an instrument, as Pro Tools duplicates a track: the same kind, with its fader, mute and pattern, a

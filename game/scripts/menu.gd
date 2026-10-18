@@ -1,6 +1,7 @@
 extends CanvasLayer
-## The menu (Esc). A Metronome page for the tempo and click, a Room page for its size and walls, a Templates page for
-## saving the whole room and starting from one saved before, then the audio setup laid out the way a DAW does it:
+## The menu (Esc). Its header names the room that is open, with Save (Cmd-S) and a Room menu (Save As, Save as
+## Template, Show in Finder). A Metronome page for the tempo and click, a Room page for its size and walls, then the
+## audio setup laid out the way a DAW does it:
 ## a Playback Engine page for the device and buffer size, an I/O page that maps hardware channels to what they
 ## carry, a MIDI page for enabling controllers, and general settings. The music keeps playing while it's open, so
 ## changes can be heard straight away.
@@ -14,12 +15,11 @@ const Room := preload("res://scripts/room.gd")
 # The pages, in order.
 const METRONOME_TAB := 0
 const ROOM_TAB := 1
-const TEMPLATES_TAB := 2
-const ENGINE_TAB := 3
-const IO_TAB := 4
-const MIDI_TAB := 5
-const SETTINGS_TAB := 6
-const CONTROLS_TAB := 7
+const ENGINE_TAB := 2
+const IO_TAB := 3
+const MIDI_TAB := 4
+const SETTINGS_TAB := 5
+const CONTROLS_TAB := 6
 const Bindings := preload("res://scripts/bindings.gd")
 const FIXED_KEYS := """Look about              the mouse (click to capture it)
 Back out of anything    Esc
@@ -31,14 +31,22 @@ Notes                   A S D F G H J K L ;  white keys,  W E T Y U O P  black k
 
 var app
 var audio: SoundRoomAudio
-# Templates
-var _template_list: ItemList
-var _templates: Array = []  # what the list shows: [{name, path}]
-var _template_load: Button
-var _template_delete: Button
-var _template_start: CheckButton
-var _template_status: Label
-var _template_confirm: ConfirmationDialog
+# The room that is open
+var _room_title: Label
+var _room_status: Label
+var _save: Button
+var _room_menu: MenuButton
+var _status_until := 0  # something just done is shown in place of when it was saved, for a few seconds
+
+# Saving (Settings)
+var _autosave_toggle: CheckButton
+var _autosave_slider: HSlider
+var _autosave_value: Label
+var _backup_toggle: CheckButton
+var _backup_slider: HSlider
+var _backup_value: Label
+var _kept_slider: HSlider
+var _kept_value: Label
 
 var _key_buttons := {}  # action → its button on the Controls page
 var _waiting_for := ""  # the action whose new key is awaited
@@ -149,8 +157,6 @@ func open(tab := -1) -> void:
 	_input_signature = ""
 	_refresh_devices()
 	_refresh_live()
-	_template_status.text = ""
-	_refresh_templates()
 
 
 func close() -> void:
@@ -218,13 +224,31 @@ func _build() -> void:
 
 	var header := HBoxContainer.new()
 	box.add_child(header)
-	var title := Label.new()
-	title.text = "SoundRoom"
-	title.add_theme_font_size_override("font_size", 22)
-	header.add_child(title)
-	var spacer := Control.new()
-	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	header.add_child(spacer)
+	header.add_theme_constant_override("separation", 6)
+	_room_title = Label.new()
+	_room_title.add_theme_font_size_override("font_size", 22)
+	header.add_child(_room_title)
+	_room_status = Label.new()
+	_room_status.add_theme_color_override("font_color", DIM)
+	_room_status.add_theme_font_size_override("font_size", 13)
+	_room_status.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_room_status.clip_text = true
+	header.add_child(_room_status)
+	_save = Button.new()
+	_save.text = "Save  (⌘S)"
+	_save.pressed.connect(func() -> void:
+		app.session.save_or_ask()
+		_show_status("Saved" if not app.session.has_unsaved_changes() else ""))
+	header.add_child(_save)
+	_room_menu = MenuButton.new()
+	_room_menu.text = "Room ▾"
+	_room_menu.flat = false
+	_room_menu.get_popup().add_item("Save as…", 0)
+	_room_menu.get_popup().add_item("Save as template…", 1)
+	_room_menu.get_popup().add_separator()
+	_room_menu.get_popup().add_item("Show in Finder", 2)
+	_room_menu.get_popup().id_pressed.connect(_on_room_menu_chosen)
+	header.add_child(_room_menu)
 	_resume = Button.new()
 	_resume.text = "Resume  (Esc)"
 	_resume.pressed.connect(close)
@@ -235,7 +259,7 @@ func _build() -> void:
 	header.add_child(_to_title)
 	var quit := Button.new()
 	quit.text = "Quit"
-	quit.pressed.connect(func(): get_tree().quit())
+	quit.pressed.connect(func() -> void: app.session.request_quit())
 	header.add_child(quit)
 
 	_tabs = TabContainer.new()
@@ -243,7 +267,6 @@ func _build() -> void:
 	box.add_child(_tabs)
 	_build_metronome_page(_page("Metronome"))
 	_build_room_page(_page("Room"))
-	_build_templates_page(_page("Templates"))
 	_build_engine_page(_page("Playback Engine"))
 	_build_io_page(_page("I-O"))
 	_tabs.set_tab_title(IO_TAB, "I/O")
@@ -408,146 +431,6 @@ func _build_room_page(page: VBoxContainer) -> void:
 	reset.text = "Back to the default room"
 	reset.pressed.connect(_on_room_reset_pressed)
 	side.add_child(reset)
-	var unsaved := Label.new()
-	unsaved.text = "To keep the room, save it on the Templates page."
-	unsaved.add_theme_color_override("font_color", DIM)
-	unsaved.add_theme_font_size_override("font_size", 12)
-	unsaved.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	side.add_child(unsaved)
-
-
-## Templates: whole rooms, saved to start from again (library.gd keeps them).
-func _build_templates_page(page: VBoxContainer) -> void:
-	page.get_parent().size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_note(page, "A whole room: its size and walls, the instruments where they stand with their patterns, faders, pedals and plug-ins, and the tempo.")
-	_template_list = ItemList.new()
-	_template_list.custom_minimum_size.y = 230
-	_template_list.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_template_list.item_selected.connect(func(_index: int) -> void: _show_template_choice())
-	_template_list.item_activated.connect(func(_index: int) -> void: _on_template_load_pressed())
-	page.add_child(_template_list)
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 8)
-	page.add_child(row)
-	_template_load = Button.new()
-	_template_load.text = "Load"
-	_template_load.custom_minimum_size.x = 90
-	_template_load.pressed.connect(_on_template_load_pressed)
-	row.add_child(_template_load)
-	var save := Button.new()
-	save.text = "Save this room as a template…"
-	save.pressed.connect(_on_template_save_pressed)
-	row.add_child(save)
-	_template_delete = Button.new()
-	_template_delete.text = "Move to Trash"
-	_template_delete.pressed.connect(_on_template_delete_pressed)
-	row.add_child(_template_delete)
-	var finder := Button.new()
-	finder.text = "Show in Finder"
-	finder.pressed.connect(func() -> void: app.library.show_folder(app.library.templates_dir()))
-	row.add_child(finder)
-	_template_start = CheckButton.new()
-	_template_start.text = "SoundRoom opens with this one"
-	_template_start.toggled.connect(_on_template_start_toggled)
-	page.add_child(_template_start)
-	_template_status = Label.new()
-	_template_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_template_status.add_theme_font_size_override("font_size", 13)
-	page.add_child(_template_status)
-	_template_confirm = ConfirmationDialog.new()
-	_template_confirm.ok_button_text = "Replace the room"
-	_template_confirm.confirmed.connect(_load_chosen_template)
-	_root.add_child(_template_confirm)
-
-
-## The templates there are, the one chosen kept chosen if it is still there.
-func _refresh_templates() -> void:
-	var was: String = _chosen_template().get("path", "")
-	_templates = app.library.templates()
-	_template_list.clear()
-	var start: String = app.settings.start_template
-	for template in _templates:
-		var opens: bool = template.path == start or (start == "" and template.path == app.library.DEFAULT_TEMPLATE)
-		_template_list.add_item(template.name + ("     · SoundRoom opens with this" if opens else ""))
-	var index := 0
-	for i in _templates.size():
-		if _templates[i].path == was:
-			index = i
-	_template_list.select(index)
-	_show_template_choice()
-
-
-func _chosen_template() -> Dictionary:
-	var picked := _template_list.get_selected_items() if _template_list != null else PackedInt32Array()
-	return _templates[picked[0]] if not picked.is_empty() and picked[0] < _templates.size() else {}
-
-
-func _show_template_choice() -> void:
-	var template := _chosen_template()
-	var path: String = template.get("path", "")
-	var builtin := path.begins_with("builtin:")
-	var start: String = app.settings.start_template
-	var opens: bool = path == start or (start == "" and path == app.library.DEFAULT_TEMPLATE)
-	_template_load.disabled = template.is_empty()
-	_template_delete.disabled = template.is_empty() or builtin
-	_template_start.set_pressed_no_signal(opens)
-	_template_start.disabled = template.is_empty() or (opens and path == app.library.DEFAULT_TEMPLATE)
-
-
-func _on_template_load_pressed() -> void:
-	var template := _chosen_template()
-	if template.is_empty():
-		return
-	_template_confirm.dialog_text = "Replace the room with \"%s\"? Everything in it now goes: its instruments, patterns, plug-ins and walls." % template.name
-	_template_confirm.popup_centered()
-
-
-func _load_chosen_template() -> void:
-	var template := _chosen_template()
-	if template.is_empty():
-		return
-	var problem: String = app.library.load_template(template.path)
-	_refresh_live()
-	if problem == "":
-		close()
-	else:
-		_show_template_status("%s loaded, but not all of it: %s." % [template.name, problem], true)
-
-
-func _on_template_save_pressed() -> void:
-	app.name_prompt.ask("Save this room as a template", "My room", func(template_name: String) -> void:
-		var problem: String = app.library.save_template(template_name)
-		if problem != "":
-			_show_template_status("It couldn't be saved: %s." % problem, true)
-			return
-		_refresh_templates()
-		for i in _templates.size():
-			if _templates[i].name == app.library._safe(template_name):
-				_template_list.select(i)
-		_show_template_choice()
-		_show_template_status("Saved as %s." % template_name, false), app.library.template_exists)
-
-
-func _on_template_delete_pressed() -> void:
-	var template := _chosen_template()
-	if template.is_empty() or template.path.begins_with("builtin:"):
-		return
-	app.library.delete_file(template.path)
-	if app.settings.start_template == template.path:
-		app.set_start_template("")
-	_refresh_templates()
-	_show_template_status("%s is in the Trash." % template.name, false)
-
-
-func _on_template_start_toggled(on: bool) -> void:
-	var path: String = _chosen_template().get("path", "")
-	app.set_start_template(path if on and path != app.library.DEFAULT_TEMPLATE else "")
-	_refresh_templates()
-
-
-func _show_template_status(text: String, problem: bool) -> void:
-	_template_status.text = text
-	_template_status.add_theme_color_override("font_color", WARN if problem else DIM)
 
 
 func _build_engine_page(page: VBoxContainer) -> void:
@@ -647,6 +530,25 @@ func _build_settings_page(page: VBoxContainer) -> void:
 	_stats_toggle = CheckButton.new()
 	_stats_toggle.toggled.connect(_on_stats_toggled)
 	_field(page, "Audio readout on screen").add_child(_stats_toggle)
+
+	page.add_child(HSeparator.new())
+	_heading(page, "Saving the room")
+	_autosave_toggle = CheckButton.new()
+	_autosave_toggle.toggled.connect(func(on: bool) -> void: _set_saving("autosave", on))
+	_field(page, "Auto-save").add_child(_autosave_toggle)
+	_autosave_value = Label.new()
+	_autosave_slider = _slider(page, "Auto-save every", 1.0, 60.0, 1.0, _autosave_value)
+	_autosave_slider.value_changed.connect(func(minutes: float) -> void: _set_saving("autosave_minutes", int(minutes)))
+	_backup_toggle = CheckButton.new()
+	_backup_toggle.toggled.connect(func(on: bool) -> void: _set_saving("backups", on))
+	_field(page, "Backups in the room's folder").add_child(_backup_toggle)
+	_backup_value = Label.new()
+	_backup_slider = _slider(page, "A backup every", 1.0, 120.0, 1.0, _backup_value)
+	_backup_slider.value_changed.connect(func(minutes: float) -> void: _set_saving("backup_minutes", int(minutes)))
+	_kept_value = Label.new()
+	_kept_slider = _slider(page, "Backups kept", 1.0, 100.0, 1.0, _kept_value)
+	_kept_slider.value_changed.connect(func(count: float) -> void: _set_saving("backups_kept", int(count)))
+	_note(page, "Backups go in the Room Backups folder beside the room's file, only when the room has changed, the oldest thrown away past the number kept. Each is a room you can open.")
 
 
 # ── Refreshing ──────────────────────────────────────────────────────────────────────────────────────────────
@@ -799,6 +701,20 @@ func _refresh_live() -> void:
 	_mouse_value.text = "%.2f ×" % settings.mouse_sensitivity
 	_stats_toggle.set_pressed_no_signal(settings.show_stats)
 	_stats_toggle.text = "On" if settings.show_stats else "Off"
+	_autosave_toggle.set_pressed_no_signal(settings.autosave)
+	_autosave_toggle.text = "On" if settings.autosave else "Off"
+	_autosave_slider.set_value_no_signal(settings.autosave_minutes)
+	_autosave_slider.editable = settings.autosave
+	_autosave_value.text = "%d min" % settings.autosave_minutes
+	_backup_toggle.set_pressed_no_signal(settings.backups)
+	_backup_toggle.text = "On" if settings.backups else "Off"
+	_backup_slider.set_value_no_signal(settings.backup_minutes)
+	_backup_slider.editable = settings.backups
+	_backup_value.text = "%d min" % settings.backup_minutes
+	_kept_slider.set_value_no_signal(settings.backups_kept)
+	_kept_slider.editable = settings.backups
+	_kept_value.text = "the last %d" % settings.backups_kept
+	_refresh_room()
 	_fullscreen_toggle.set_pressed_no_signal(settings.fullscreen)
 	_fullscreen_toggle.text = "On: SoundRoom opens full screen" if settings.fullscreen else "Off"
 	_meter_toggle.set_pressed_no_signal(settings.show_meter)
@@ -808,6 +724,58 @@ func _refresh_live() -> void:
 
 
 # ── Handlers ────────────────────────────────────────────────────────────────────────────────────────────────
+
+## The header: the room's name, and when it was saved, or something just done.
+func _refresh_room() -> void:
+	var session = app.session
+	_room_title.text = (session.room_name if session.room_name.length() <= 28 else session.room_name.left(27) + "…") if session.has_room() else "SoundRoom"
+	_save.visible = session.has_room() or (app.title == null or not app.title.is_open())
+	_room_menu.visible = _save.visible
+	_room_menu.get_popup().set_item_disabled(_room_menu.get_popup().get_item_index(2), not session.has_room())
+	if Time.get_ticks_msec() < _status_until:
+		return
+	if not session.has_room():
+		_room_status.text = "not saved as a room yet" if _save.visible else ""
+	elif session.saved_at > 0:
+		var when: Dictionary = Time.get_datetime_dict_from_unix_time(session.saved_at + _utc_offset())
+		_room_status.text = "saved %02d:%02d" % [when.hour, when.minute]
+
+
+func _utc_offset() -> int:
+	return int(Time.get_time_zone_from_system().get("bias", 0)) * 60
+
+
+func _show_status(text: String) -> void:
+	if text == "":
+		return
+	_room_status.text = text
+	_status_until = Time.get_ticks_msec() + 3000
+
+
+func _on_room_menu_chosen(id: int) -> void:
+	var session = app.session
+	match id:
+		0:
+			app.name_prompt.ask("Save the room as", (session.room_name + " copy") if session.has_room() else "Untitled room",
+				func(the_name: String) -> void:
+					session.save_as(the_name)
+					_show_status("Saved as %s" % the_name),
+				func(the_name: String) -> bool: return session.exists(session.folder_around(), the_name))
+		1:
+			app.name_prompt.ask("Save the room as a template", session.room_name if session.has_room() else "My template",
+				func(the_name: String) -> void:
+					var problem: String = app.library.save_template(the_name)
+					_show_status("Saved as the template %s" % the_name if problem == "" else "It couldn't be saved: %s" % problem),
+				app.library.template_exists)
+		2:
+			session.show_folder()
+
+
+func _set_saving(what: String, value) -> void:
+	app.settings.set(what, value)
+	app.settings.save_to_disk()
+	_refresh_live()
+
 
 func _on_title_pressed() -> void:
 	app.show_title()

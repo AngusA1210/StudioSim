@@ -61,10 +61,15 @@ func setup() -> void:
 	reset()
 
 
+## The wall the default room has: a short one standing between the drums and the bass.
+static func default_walls() -> Array:
+	return [{"a": Vector2(-2.5, -3.25), "b": Vector2(-2.5, -0.55), "height": DEFAULT_WALL_HEIGHT}]
+
+
 ## Back to the room the game starts with.
 func reset() -> void:
 	size = DEFAULT_SIZE
-	walls = [{"a": Vector2(-2.5, -3.25), "b": Vector2(-2.5, -0.55), "height": DEFAULT_WALL_HEIGHT}]
+	walls = default_walls()
 	_build_shell()
 	_build_walls()
 	changed.emit()

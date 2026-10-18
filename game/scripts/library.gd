@@ -1,9 +1,11 @@
 extends RefCounted
 ## What SoundRoom keeps on disk, and copying and pasting settings.
 ##
-## - Templates: a whole room (its size and walls, every instrument where it stands with its fader, mute, solo, pattern,
-##   pedals and plug-ins with their settings, the tempo and swing, and where you stand), as a .sroom file in
-##   Music/SoundRoom/Templates. Loading one replaces the room. Two are built in: the default room, and an empty one.
+## - Rooms and templates: what a room holds (room_data: its size and walls, every instrument where it stands with its
+##   fader, mute, solo, pattern, pedals and plug-ins with their settings, the tempo and swing, and where you stand),
+##   and putting it back (apply_room_data). session.gd keeps rooms, each a .sroom file in a folder of its own;
+##   templates are .srtemplate files in Music/SoundRoom/Templates, two built in (the default room, an empty one), and
+##   a new room starts from one, carrying over as much of it as is chosen.
 ## - Instrument presets: an instrument's sound, without where it stands or what it plays: the plug-ins on its inserts,
 ##   an amp's head, cabinet, knobs and pedals, a Speaker's volume. A .srpreset file in Music/SoundRoom/Instrument
 ##   Presets, in a folder for each family (amps, Speakers, MIDI instruments). One loads onto any instrument of its
@@ -17,13 +19,13 @@ extends RefCounted
 ## Files are JSON, plug-in settings in them base64. Automated runs keep everything in a folder of their own, emptied
 ## at start, and never touch the real ones.
 
-const TEMPLATE_EXT := "sroom"
+const ROOM_EXT := "sroom"
+const TEMPLATE_EXT := "srtemplate"
 const PRESET_EXT := "srpreset"
 const VERSION := 1
 const DEFAULT_TEMPLATE := "builtin:default"
 const EMPTY_TEMPLATE := "builtin:empty"
 const FAMILIES := {"amp": "Amps", "speaker": "Speakers", "midi": "MIDI instruments"}
-const UNREADABLE := "it couldn't be read"
 
 var app
 var audio: SoundRoomAudio
@@ -93,10 +95,13 @@ func instrument_settings(inst) -> Dictionary:
 
 ## Gives an instrument these settings (from instrument_settings, a preset or a template), replacing its own. What
 ## applies to it does: an amp's parts only to an amp, a Speaker's volume only to a Speaker, inserts to anything.
-## A plug-in that isn't installed leaves its insert empty. Returns what couldn't be done, or "".
-func apply_instrument_settings(inst, settings: Dictionary) -> String:
+## A plug-in that isn't installed leaves its insert empty. `include` can leave out the instrument's own settings
+## ("instrument_settings": false) or the plug-ins ("plugins": false), which then aren't put back. Returns what
+## couldn't be done, or "".
+func apply_instrument_settings(inst, settings: Dictionary, include := {}) -> String:
 	var problems := []
-	if inst.is_amp and settings.get("amp") is Dictionary:
+	var with_plugins: bool = include.get("plugins", true)
+	if inst.is_amp and settings.get("amp") is Dictionary and include.get("instrument_settings", true):
 		var amp: Dictionary = settings.amp
 		app.set_amp_voice(inst, str(amp.get("head", inst.amp_head)), bool(amp.get("head_on", true)),
 			str(amp.get("cabinet", inst.amp_cabinet)), bool(amp.get("cabinet_on", true)))
@@ -116,13 +121,13 @@ func apply_instrument_settings(inst, settings: Dictionary) -> String:
 			for c in values.size():
 				app.set_pedal_control(inst, at, c, float(values[c]))
 			app.set_pedal_on(inst, at, bool(pedal.get("on", true)))
-			if str(pedal.get("plugin_id", "")) != "":
+			if str(pedal.get("plugin_id", "")) != "" and with_plugins:
 				var problem: String = app.load_pedal_plugin(inst, at, pedal.plugin_id, _bytes(pedal.get("state", "")))
 				if problem != "":
 					problems.append("%s on pedal %d: %s" % [pedal.get("plugin_name", "a plug-in"), at + 1, problem])
-	if family_of(inst) == "speaker" and settings.has("volume_db"):
+	if family_of(inst) == "speaker" and settings.has("volume_db") and include.get("instrument_settings", true):
 		app.set_speaker_volume(inst, float(settings.volume_db))
-	var inserts: Array = settings.get("inserts", [])
+	var inserts: Array = settings.get("inserts", []) if with_plugins else []
 	for slot in audio.get_max_inserts():
 		var insert = inserts[slot] if slot < inserts.size() else null
 		if not (insert is Dictionary):
@@ -224,38 +229,42 @@ func instrument_presets(family := "") -> Array:
 func save_instrument_preset(inst, preset_name: String) -> String:
 	var data := instrument_settings(inst)
 	data.merge({"soundroom": "instrument preset", "version": VERSION, "name": preset_name})
-	return _write(presets_dir(family_of(inst)).path_join(_safe(preset_name) + "." + PRESET_EXT), data)
+	return write_file(presets_dir(family_of(inst)).path_join(_safe(preset_name) + "." + PRESET_EXT), data)
 
 
 ## An instrument preset file's settings, or {} if it can't be read.
 func read_instrument_preset(path: String) -> Dictionary:
-	var data := _read(path)
+	var data := read_file(path)
 	return data if data.get("soundroom", "") == "instrument preset" and FAMILIES.has(data.get("family", "")) else {}
 
 
 func load_instrument_preset(inst, path: String) -> String:
 	var data := read_instrument_preset(path)
 	if data.is_empty():
-		return UNREADABLE
+		return "it couldn't be read"
 	if data.family != family_of(inst):
 		return "it is a preset for %s" % FAMILIES[data.family].to_lower()
 	return apply_instrument_settings(inst, data)
 
 
-# ── Templates ────────────────────────────────────────────────────────────────────────────────────────────────
+# ── Rooms and templates ──────────────────────────────────────────────────────────────────────────────────────
 
 ## The templates there are, the two built-in ones first: [{name, path}].
 func templates() -> Array:
-	return [{"name": "Default room", "path": DEFAULT_TEMPLATE}, {"name": "Empty room", "path": EMPTY_TEMPLATE}] + \
-		_files(templates_dir(), TEMPLATE_EXT)
+	var saved := _files(templates_dir(), TEMPLATE_EXT) + _files(templates_dir(), ROOM_EXT)  # (early templates were .sroom)
+	saved.sort_custom(func(a, b): return a.name.naturalnocasecmp_to(b.name) < 0)
+	return [{"name": "Default room", "path": DEFAULT_TEMPLATE}, {"name": "Empty room", "path": EMPTY_TEMPLATE}] + saved
 
 
 func template_exists(template_name: String) -> bool:
 	return FileAccess.file_exists(templates_dir().path_join(_safe(template_name) + "." + TEMPLATE_EXT))
 
 
-## The room as it is now, as a template holds it.
-func room_template() -> Dictionary:
+## The room as it is now: its size and walls, every instrument where it stands with its fader, mute, solo, pattern
+## (MIDI notes, length, loop on or off), inserts, an amp's head, cabinet, knobs and pedals and a Speaker's volume and
+## input, plug-ins with their settings, the tempo and swing, and where you stand. What a room's file and a template
+## hold alike.
+func room_data() -> Dictionary:
 	var instruments := []
 	for inst in app.instruments:
 		var entry := {"kind": inst.kind, "position": [inst.global_position.x, inst.global_position.z], "yaw": inst.rotation.y,
@@ -271,41 +280,84 @@ func room_template() -> Dictionary:
 		walls.append([wall.a.x, wall.a.y, wall.b.x, wall.b.y, wall.height])
 	var size: Vector3 = app.room.size
 	var stood: Vector3 = app.player.global_position
-	return {"soundroom": "template", "version": VERSION, "tempo": app.tempo, "swing": app.swing,
+	return {"soundroom": "room", "version": VERSION, "tempo": app.tempo, "swing": app.swing,
 		"room": {"size": [size.x, size.y, size.z], "walls": walls},
 		"player": {"position": [stood.x, stood.z], "yaw": app.player.yaw}, "instruments": instruments}
 
 
-func save_template(template_name: String) -> String:
-	var data := room_template()
-	data.name = template_name
-	return _write(templates_dir().path_join(_safe(template_name) + "." + TEMPLATE_EXT), data)
+## The room SoundRoom starts with, as data: its size and its one wall, the instruments playing the default groove, all
+## turned to face where you come in. `empty`: the same room bare, with no instruments and no wall.
+func default_room_data(empty := false) -> Dictionary:
+	var instruments := []
+	var spawn: Vector3 = app.SPAWN
+	if not empty:
+		for entry in app.DEFAULT_ROOM:
+			var at: Vector3 = entry.position
+			instruments.append({"kind": entry.kind, "position": [at.x, at.z], "yaw": atan2(spawn.x - at.x, spawn.z - at.z),
+				"default_pattern": true, "input_channel": app.settings.speaker_input if entry.kind == "live" else -1})
+	var walls := []
+	if not empty:
+		for wall in app.Room.default_walls():
+			walls.append([wall.a.x, wall.a.y, wall.b.x, wall.b.y, wall.height])
+	var size: Vector3 = app.Room.DEFAULT_SIZE
+	return {"soundroom": "template", "version": VERSION, "tempo": app.DEFAULT_TEMPO, "swing": app.DEFAULT_SWING,
+		"room": {"size": [size.x, size.y, size.z], "walls": walls}, "player": {"position": [spawn.x, spawn.z], "yaw": 0.0},
+		"instruments": instruments}
 
 
-## Replaces the room with a template's (a file, or one of the built-in ones). Returns what couldn't be done, or "".
-func load_template(path: String) -> String:
+## What a template holds (one of the built-in ones, or a file), or {} if it can't be read.
+func template_data(path: String) -> Dictionary:
 	if path == DEFAULT_TEMPLATE or path == EMPTY_TEMPLATE:
-		app.load_default_room(path == EMPTY_TEMPLATE)
-		return ""
-	var data := _read(path)
-	if data.get("soundroom", "") != "template":
-		return UNREADABLE
+		return default_room_data(path == EMPTY_TEMPLATE)
+	return read_room_file(path)
+
+
+## A room's file, or a template's: what it holds, or {} if it isn't one.
+func read_room_file(path: String) -> Dictionary:
+	var data := read_file(path)
+	return data if data.get("soundroom", "") in ["room", "template"] else {}
+
+
+## The size a room or template is, or the default room's.
+static func size_of(data: Dictionary) -> Vector3:
+	var size: Array = data.get("room", {}).get("size", [])
+	return Vector3(float(size[0]), float(size[1]), float(size[2])) if size.size() == 3 else Vector3(14.0, 4.0, 10.0)
+
+
+func save_template(template_name: String) -> String:
+	var data := room_data()
+	data.soundroom = "template"
+	data.name = template_name
+	return write_file(templates_dir().path_join(_safe(template_name) + "." + TEMPLATE_EXT), data)
+
+
+## What can be carried over from a template into a new room, each true unless said otherwise.
+const CARRY := ["walls", "instruments", "patterns", "mix", "instrument_settings", "plugins", "tempo"]
+
+
+## Replaces the room with what a room's file or a template holds. `carry` leaves out what it sets false (see CARRY):
+## the walls; the instruments altogether; their patterns; their faders, mute and solo; their own settings (an amp's
+## head, cabinet, knobs and pedals, a Speaker's volume); the plug-ins on their inserts and pedals; the tempo and swing.
+## `size`, if given, is the room's size instead of the one in `data`. Returns what couldn't be done, or "".
+func apply_room_data(data: Dictionary, carry := {}, size = null) -> String:
+	var keep := func(what: String) -> bool: return bool(carry.get(what, true))
 	app.clear_room()
 	var room = app.room
-	var room_data: Dictionary = data.get("room", {})
-	var size: Array = room_data.get("size", [])
+	var room_part: Dictionary = data.get("room", {})
 	room.reset()
 	while not room.walls.is_empty():
 		room.remove_wall(0)
-	if size.size() == 3:
-		room.set_size(Vector3(float(size[0]), float(size[1]), float(size[2])))
-	for wall in room_data.get("walls", []):
-		if wall is Array and wall.size() >= 5:
-			room.add_wall(Vector2(float(wall[0]), float(wall[1])), Vector2(float(wall[2]), float(wall[3])), float(wall[4]))
-	app.set_tempo(float(data.get("tempo", app.DEFAULT_TEMPO)))
-	app.set_swing(float(data.get("swing", app.DEFAULT_SWING)))
+	room.set_size(size if size is Vector3 else size_of(data))
+	if keep.call("walls"):
+		for wall in room_part.get("walls", []):
+			if wall is Array and wall.size() >= 5:
+				room.add_wall(Vector2(float(wall[0]), float(wall[1])), Vector2(float(wall[2]), float(wall[3])), float(wall[4]))
+	var with_tempo: bool = keep.call("tempo")
+	app.set_tempo(float(data.get("tempo", app.DEFAULT_TEMPO)) if with_tempo else app.DEFAULT_TEMPO)
+	app.set_swing(float(data.get("swing", app.DEFAULT_SWING)) if with_tempo else app.DEFAULT_SWING)
 	var problems := []
-	for entry in data.get("instruments", []):
+	var include := {"instrument_settings": keep.call("instrument_settings"), "plugins": keep.call("plugins")}
+	for entry in data.get("instruments", []) if keep.call("instruments") else []:
 		var kind := str(entry.get("kind", ""))
 		var at: Array = entry.get("position", [0.0, 0.0])
 		var inst = app.add_instrument(kind, Vector3(float(at[0]), 0.0, float(at[1]))) if app.Catalog.KINDS.has(kind) else null
@@ -313,23 +365,28 @@ func load_template(path: String) -> String:
 			problems.append("a %s (%s)" % [kind, "the room is full" if app.Catalog.KINDS.has(kind) else "not a kind SoundRoom knows"])
 			continue
 		inst.rotation.y = float(entry.get("yaw", 0.0))
-		app.set_instrument_level(inst, float(entry.get("level_db", 0.0)))
 		if not inst.playable:
 			inst.set_input_channel(int(entry.get("input_channel", -1)))
-		if inst.playable:
-			audio.set_pattern_steps(inst.source_id, int(entry.get("steps", 16)))
-			audio.set_pattern(inst.source_id, entry.get("pattern", []))
+		if keep.call("mix"):
+			app.set_instrument_level(inst, float(entry.get("level_db", 0.0)))
+			inst.muted = bool(entry.get("muted", false))
+			inst.soloed = bool(entry.get("soloed", false))
+		if inst.playable and keep.call("patterns"):
+			if entry.get("default_pattern", false):
+				audio.load_default_pattern(inst.source_id)
+			else:
+				audio.set_pattern_steps(inst.source_id, int(entry.get("steps", 16)))
+				audio.set_pattern(inst.source_id, entry.get("pattern", []))
 			inst.set_loop(bool(entry.get("loop_on", true)))
-		var problem := apply_instrument_settings(inst, entry.get("settings", {}))
+		var problem := apply_instrument_settings(inst, entry.get("settings", {}), include)
 		if problem != "":
 			problems.append(problem)
-		inst.muted = bool(entry.get("muted", false))
-		inst.soloed = bool(entry.get("soloed", false))
 	app.settle_new_room()
 	var player: Dictionary = data.get("player", {})
 	var stood: Array = player.get("position", [])
 	if stood.size() == 2:
 		app.player.place(Vector3(float(stood[0]), 0.0, float(stood[1])), float(player.get("yaw", 0.0)))
+	app.settle_new_room()  # where you stand too, should the room be smaller than the one you stood in
 	return "; ".join(problems)
 
 
@@ -362,16 +419,21 @@ func _files(dir: String, extension: String) -> Array:
 	return out
 
 
-func _write(path: String, data: Dictionary) -> String:
+## Writes data as a JSON file, by way of a file beside it that then takes its place, so that a room's file is never
+## left half written. Returns why it couldn't, or "".
+func write_file(path: String, data: Dictionary) -> String:
 	DirAccess.make_dir_recursive_absolute(path.get_base_dir())
-	var file := FileAccess.open(path, FileAccess.WRITE)
+	var partial := path + ".saving"
+	var file := FileAccess.open(partial, FileAccess.WRITE)
 	if file == null:
 		return "it couldn't be written (%s)" % error_string(FileAccess.get_open_error())
 	file.store_string(JSON.stringify(data, "\t"))
-	return ""
+	file.close()
+	var moved := DirAccess.rename_absolute(partial, path)
+	return "" if moved == OK else "it couldn't be written (%s)" % error_string(moved)
 
 
-func _read(path: String) -> Dictionary:
+func read_file(path: String) -> Dictionary:
 	var text := FileAccess.get_file_as_string(path)
 	var data = JSON.parse_string(text) if text != "" else null
 	return data if data is Dictionary else {}

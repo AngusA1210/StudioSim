@@ -1,6 +1,8 @@
 extends CanvasLayer
-## The title screen. The room is already alive behind it: a camera circles under the ceiling, and since the
-## camera is also the listener, the music turns around you while you wait. Entering hands both over to the player.
+## The title screen. A room is already alive behind it (the default room, until one is made or opened): a camera
+## circles under the ceiling, and since the camera is also the listener, the music turns around you while you wait.
+## New room and Open room lead to the rooms page; once a room is open, Back to it goes in, handing the camera and the
+## listening over to the player.
 
 const ACCENT := Color(0.49, 0.89, 0.82)
 const DIM := Color(0.62, 0.65, 0.74)
@@ -13,7 +15,7 @@ const TAGLINE := "A room of instruments, heard from where you stand."
 var app
 var audio: SoundRoomAudio
 var camera: Camera3D
-var buttons := {}  # "enter", "templates", "audio", "settings", "controls", "quit" → Button
+var buttons := {}  # "back" (into the open room), "new", "open", "audio", "settings", "controls", "quit" → Button
 
 var _open := false
 var _leaving := false
@@ -38,6 +40,8 @@ func setup(the_app) -> void:
 	app.add_child(camera)
 	_build()
 	visible = false
+	app.session.changed.connect(_show_room)
+	_show_room()
 
 
 func is_open() -> bool:
@@ -66,8 +70,8 @@ func _process(delta: float) -> void:
 		_angle = fposmod(_angle + TAU * delta / ORBIT_SECONDS, TAU)
 		_place_camera()
 		audio.set_listener(camera.global_transform)
-		# The menu covers the title while it is open; hiding the buttons also keeps Enter from reaching them.
-		var covered: bool = app.menu != null and app.menu.is_open()
+		# The menu and the rooms page cover the title while open; hiding the buttons also keeps Enter from reaching them.
+		var covered: bool = (app.menu != null and app.menu.is_open()) or (app.rooms_page != null and app.rooms_page.is_open())
 		if _ui.visible == covered and not _leaving:
 			_show_ui(not covered)
 	_layout()
@@ -87,7 +91,18 @@ func _place_camera() -> void:
 func _show_ui(on: bool) -> void:
 	_ui.visible = on
 	if on:
-		buttons.enter.grab_focus()
+		(buttons.back if buttons.back.visible else buttons.new).grab_focus()
+
+
+## The open room, if there is one, to go back into.
+func _show_room() -> void:
+	var session = app.session
+	buttons.back.visible = session.has_room()
+	buttons.back.text = "Back to %s" % session.room_name
+	for key in ["back", "new"]:  # the one to go on with stands out
+		var ink := ACCENT if key == ("back" if session.has_room() else "new") else Color(0.9, 0.91, 0.95)
+		for colour in ["font_color", "font_focus_color", "font_hover_color", "font_pressed_color"]:
+			buttons[key].add_theme_color_override(colour, ink.lightened(0.25) if colour == "font_hover_color" else ink)
 
 
 # ── Building ────────────────────────────────────────────────────────────────────────────────────────────────
@@ -146,8 +161,9 @@ func _build() -> void:
 	gap.custom_minimum_size.y = 18
 	column.add_child(gap)
 
-	_button(column, "enter", "Enter the room", _on_enter_pressed)
-	_button(column, "templates", "Templates", _on_menu_pressed.bind("TEMPLATES_TAB"))
+	_button(column, "back", "Back to the room", enter)
+	_button(column, "new", "New room…", func() -> void: app.rooms_page.open_new())
+	_button(column, "open", "Open room…", func() -> void: app.rooms_page.open_existing())
 	_button(column, "audio", "Audio setup", _on_menu_pressed.bind("ENGINE_TAB"))
 	_button(column, "settings", "Settings", _on_menu_pressed.bind("SETTINGS_TAB"))
 	_button(column, "controls", "Controls", _on_menu_pressed.bind("CONTROLS_TAB"))
@@ -187,7 +203,7 @@ func _button(parent: Control, key: String, text: String, on_pressed: Callable) -
 			style.border_width_left = 3
 			style.border_color = ACCENT
 		button.add_theme_stylebox_override(state, style)
-	var ink := ACCENT if key == "enter" else Color(0.9, 0.91, 0.95)
+	var ink := ACCENT if key in ["back", "new"] else Color(0.9, 0.91, 0.95)
 	for colour in ["font_color", "font_focus_color", "font_hover_color", "font_pressed_color"]:
 		button.add_theme_color_override(colour, ink.lightened(0.25) if colour == "font_hover_color" else ink)
 	button.pressed.connect(on_pressed)
@@ -205,7 +221,7 @@ func _layout() -> void:
 	_title.add_theme_font_size_override("font_size", roundi(84 * k))
 	_tagline.add_theme_font_size_override("font_size", roundi(19 * k))
 	for key in buttons:
-		buttons[key].add_theme_font_size_override("font_size", roundi((26 if key == "enter" else 22) * k))
+		buttons[key].add_theme_font_size_override("font_size", roundi((26 if key in ["back", "new", "open"] else 22) * k))
 
 
 func _refresh_status() -> void:
@@ -225,8 +241,8 @@ func _refresh_status() -> void:
 
 # ── Handlers ────────────────────────────────────────────────────────────────────────────────────────────────
 
-## Fade out, cut to the player's view, fade in, with the music rising to its full level across the two.
-func _on_enter_pressed() -> void:
+## Into the room: fade out, cut to the player's view, fade in, with the music rising to its full level across the two.
+func enter() -> void:
 	if _leaving or not _open:
 		return
 	_leaving = true
@@ -258,4 +274,4 @@ func _on_menu_pressed(page: String) -> void:
 
 
 func _on_quit_pressed() -> void:
-	get_tree().quit()
+	app.session.request_quit()

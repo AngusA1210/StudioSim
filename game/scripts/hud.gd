@@ -44,6 +44,9 @@ var _piano_help: Label
 var _piano_keys := {}  # physical key → {rect, idle colour, piece label, semitone, white}
 var _piano_for := ""  # what the keyboard is labelled for: an instrument (its id), or "keyboard"
 var _frame := 0
+var _notice_panel: PanelContainer  # something done in the background (the room saved or backed up), for a moment
+var _notice: Label
+var _notice_until := 0
 
 
 func setup(the_app) -> void:
@@ -136,9 +139,27 @@ func setup(the_app) -> void:
 
 	_build_piano(_root)
 
+	# Outside the rest, so it shows over the mix window too.
+	var notice_root := Control.new()
+	notice_root.set_anchors_preset(Control.PRESET_FULL_RECT)
+	notice_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(notice_root)
+	_notice_panel = _panel(notice_root)
+	_notice = Label.new()
+	_notice.add_theme_font_size_override("font_size", 14)
+	_notice_panel.add_child(_notice)
+	_notice_panel.visible = false
+	app.session.notice.connect(func(text: String) -> void:
+		_notice.text = text
+		_notice_until = Time.get_ticks_msec() + 2500)
+
 
 func _process(_delta: float) -> void:
 	_frame += 1
+	_notice_panel.visible = Time.get_ticks_msec() < _notice_until and not app.title.is_open()
+	if _notice_panel.visible:
+		_notice_panel.reset_size()
+		_notice_panel.position = Vector2(14, 14 + (_stats_panel.size.y + 8 if _stats_panel.visible and _root.visible else 0.0))
 	var covered := false
 	for panel in [app.title, app.menu, app.sequencer, app.mixer, app.amp_panel, app.speaker_panel, app.instrument_menu]:
 		covered = covered or (panel != null and panel.is_open())

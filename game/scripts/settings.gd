@@ -32,7 +32,15 @@ var pedalboard_open := true    # an amp's panel shows its pedalboard, or folds i
 var bindings := {}  # the keys changed on the Controls page: action → physical keycode (see bindings.gd)
 var fullscreen := false
 var room_brightness := 1.0
-var start_template := ""  # the template SoundRoom opens with; "" for the default room
+
+# Rooms
+var rooms_location := ""   # the folder new rooms go in; "" for Music/SoundRoom/Rooms
+var recent_rooms: Array = []  # the rooms opened or saved lately, the latest first (their files)
+var autosave := false      # save the open room every so often, while it has changes
+var autosave_minutes := 5
+var backups := true        # a copy of the room in its Room Backups folder every so often
+var backup_minutes := 10
+var backups_kept := 10     # the oldest copies go past this many
 
 var path := "user://settings.cfg"
 var persist := true  # automated runs switch this off so they neither read nor change the player's settings
@@ -70,7 +78,13 @@ func load_from_disk() -> void:
 	fullscreen = file.get_value("display", "fullscreen", fullscreen)
 	room_brightness = clampf(file.get_value("display", "room_brightness", room_brightness), 0.5, 3.0)
 	bindings = file.get_value("controls", "keys", bindings)
-	start_template = file.get_value("templates", "start", start_template)
+	rooms_location = file.get_value("rooms", "location", rooms_location)
+	recent_rooms = file.get_value("rooms", "recent", recent_rooms)
+	autosave = file.get_value("rooms", "autosave", autosave)
+	autosave_minutes = clampi(file.get_value("rooms", "autosave_minutes", autosave_minutes), 1, 60)
+	backups = file.get_value("rooms", "backups", backups)
+	backup_minutes = clampi(file.get_value("rooms", "backup_minutes", backup_minutes), 1, 120)
+	backups_kept = clampi(file.get_value("rooms", "backups_kept", backups_kept), 1, 100)
 
 
 func save_to_disk() -> void:
@@ -101,5 +115,11 @@ func save_to_disk() -> void:
 	file.set_value("display", "fullscreen", fullscreen)
 	file.set_value("display", "room_brightness", room_brightness)
 	file.set_value("controls", "keys", bindings)
-	file.set_value("templates", "start", start_template)
+	file.set_value("rooms", "location", rooms_location)
+	file.set_value("rooms", "recent", recent_rooms)
+	file.set_value("rooms", "autosave", autosave)
+	file.set_value("rooms", "autosave_minutes", autosave_minutes)
+	file.set_value("rooms", "backups", backups)
+	file.set_value("rooms", "backup_minutes", backup_minutes)
+	file.set_value("rooms", "backups_kept", backups_kept)
 	file.save(path)
