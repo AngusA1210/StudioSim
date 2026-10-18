@@ -202,6 +202,12 @@ int SoundRoomAudio::add_pedal(int id, const String& kind, int at) {
 }
 bool SoundRoomAudio::remove_pedal(int id, int index) { return engine_ && engine_->removePedal(id, index); }
 bool SoundRoomAudio::move_pedal(int id, int from, int to) { return engine_ && engine_->movePedal(id, from, to); }
+int SoundRoomAudio::copy_pedal(int from_id, int index, int to_id, int at) {
+    std::string err;
+    const int placed = engine_ ? engine_->copyPedal(from_id, index, to_id, at, &err) : -1;
+    if (placed < 0) error_ = str(err.empty() ? std::string("the audio engine isn't running") : err);
+    return placed;
+}
 void SoundRoomAudio::set_pedal_on(int id, int index, bool on) { if (engine_) engine_->setPedalOn(id, index, on); }
 void SoundRoomAudio::set_pedal_control(int id, int index, int control, float value) {
     if (engine_) engine_->setPedalControl(id, index, control, value);
@@ -485,6 +491,7 @@ void SoundRoomAudio::_bind_methods() {
     ClassDB::bind_method(D_METHOD("add_pedal", "id", "kind", "at"), &SoundRoomAudio::add_pedal);
     ClassDB::bind_method(D_METHOD("remove_pedal", "id", "index"), &SoundRoomAudio::remove_pedal);
     ClassDB::bind_method(D_METHOD("move_pedal", "id", "from", "to"), &SoundRoomAudio::move_pedal);
+    ClassDB::bind_method(D_METHOD("copy_pedal", "from_id", "index", "to_id", "at"), &SoundRoomAudio::copy_pedal, DEFVAL(-1));
     ClassDB::bind_method(D_METHOD("set_pedal_on", "id", "index", "on"), &SoundRoomAudio::set_pedal_on);
     ClassDB::bind_method(D_METHOD("set_pedal_control", "id", "index", "control", "value"), &SoundRoomAudio::set_pedal_control);
     ClassDB::bind_method(D_METHOD("get_pedals", "id"), &SoundRoomAudio::get_pedals);

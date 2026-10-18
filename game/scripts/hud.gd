@@ -253,7 +253,8 @@ func _show_hint(vp: Vector2) -> void:
 	elif player.carried != null:
 		title = "Carrying %s" % player.carried.display_name
 		tint = player.carried.color.lightened(0.3)
-		rows = [["%s or click" % keys.label("carry"), "put it down"], ["", ""], [keys.label("remove"), "remove"]]
+		rows = [["%s or click" % keys.label("carry"), "put it down"], [keys.label("duplicate"), "duplicate it"], ["", ""],
+			[keys.label("remove"), "remove"]]
 	elif player.clear_pending != null:
 		title = "Clear %s's loop?" % player.clear_pending.display_name
 		tint = WARN
@@ -292,6 +293,7 @@ func _show_hint(vp: Vector2) -> void:
 			rows.append([keys.label("edit"), "volume and input"])
 			rows.append([keys.label("loop"), "unmute" if t.muted else "mute"])
 		rows.append([keys.label("carry"), "carry"])
+		rows.append([keys.label("duplicate"), "duplicate"])
 		rows.append(["", ""])
 		rows.append([keys.label("remove"), "remove (press twice)"])
 	_hint_panel.visible = title != ""

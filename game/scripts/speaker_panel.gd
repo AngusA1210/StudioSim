@@ -5,6 +5,7 @@ extends CanvasLayer
 ## sound whatever the volume) and before its fader.
 
 const Knob := preload("res://scripts/knob.gd")
+const Hints := preload("res://scripts/hints.gd")
 const DIM := Color(0.62, 0.65, 0.74)
 const MAX_DB := 24.0
 
@@ -18,6 +19,7 @@ var _volume: Knob
 var _input_switch: CheckButton
 var _source: OptionButton
 var _inserts: Label
+var _hint: Label  # the line at the foot: what the mouse is over
 var _back_to_mixer := false
 
 
@@ -79,6 +81,7 @@ func _input(event: InputEvent) -> void:
 func _process(_delta: float) -> void:
 	if is_open():
 		_refresh()
+		_hint.text = Hints.under_mouse(_panel)
 
 
 func _refresh() -> void:
@@ -93,8 +96,7 @@ func _refresh() -> void:
 	for insert in inst.inserts:
 		if insert.plugin_name != "":
 			names.append(insert.plugin_name + ("" if insert.on else " (bypassed)"))
-	_inserts.text = "Inserts: " + (", ".join(names) if not names.is_empty() else \
-		"none. An amp simulator goes on one (%s for the mix window, then the strip's first insert); the Speaker then sounds as that amp." % app.bindings.label("mixer"))
+	_inserts.text = "Inserts: " + (", ".join(names) if not names.is_empty() else "none")
 
 
 func _build() -> void:
@@ -138,6 +140,7 @@ func _build() -> void:
 	_volume = Knob.new()
 	_volume.title = "VOLUME"
 	_volume.value_changed.connect(func(value: float) -> void: app.set_speaker_volume(inst, db_for(value)))
+	Hints.give(_volume, "Its own level in the room, as on a powered speaker: 5 plays the input as it comes in, 10 is +24 dB, enough to fill a big room")
 	row.add_child(_volume)
 	var column := VBoxContainer.new()
 	column.add_theme_constant_override("separation", 8)
@@ -148,18 +151,18 @@ func _build() -> void:
 	column.add_child(input_row)
 	_input_switch = CheckButton.new()
 	_input_switch.toggled.connect(func(on: bool) -> void: app.set_input(inst, on))
+	Hints.give(_input_switch, "Input on: it plays what comes into your interface. Wear headphones")
 	input_row.add_child(_input_switch)
 	_source = OptionButton.new()
 	_source.item_selected.connect(func(index: int) -> void: app.set_input_channel(inst, index - 1))
+	Hints.give(_source, "Which of your interface's inputs it plays")
 	input_row.add_child(_source)
-	var note := Label.new()
-	note.text = "Its own level in the room, as on a powered speaker: 5 plays the input as it comes in, 10 is +24 dB, enough to fill a big room. Close up, the limiter catches it."
-	note.add_theme_color_override("font_color", DIM)
-	note.add_theme_font_size_override("font_size", 13)
-	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	column.add_child(note)
 	_inserts = Label.new()
 	_inserts.add_theme_color_override("font_color", DIM)
 	_inserts.add_theme_font_size_override("font_size", 13)
 	_inserts.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	box.add_child(_inserts)
+	Hints.give(_inserts, func() -> String: return "The plug-ins on its channel, set in the mix window (%s). An amp simulator on the first makes the Speaker sound as that amp" % (
+		app.bindings.label("mixer")))
+	column.add_child(_inserts)
+	_hint = Hints.line()
+	box.add_child(_hint)

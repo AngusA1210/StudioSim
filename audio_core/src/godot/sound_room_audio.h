@@ -88,6 +88,9 @@ public:
     int add_pedal(int id, const String& kind, int at);
     bool remove_pedal(int id, int index);
     bool move_pedal(int id, int from, int to);
+    // A second of a pedal (a Plug-in pedal's plug-in and its settings too) on this amp's board or another's, at `at`
+    // (-1: the end). Where it went, or -1, with the reason in get_error().
+    int copy_pedal(int from_id, int index, int to_id, int at);
     void set_pedal_on(int id, int index, bool on);
     void set_pedal_control(int id, int index, int control, float value);  // knobs 0 to 10, switches 0 or 1
     // [{kind, on, controls: [5 numbers], plugin_id, plugin_name, plugin_maker, editor_open}]

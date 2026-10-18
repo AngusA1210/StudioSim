@@ -588,6 +588,52 @@ bool AudioEngine::movePedal(int id, int from, int to) {
     return false;
 }
 
+int AudioEngine::copyPedal(int from_id, int index, int to_id, int at, std::string* error) {
+    reapPedals();
+    const Source* a = owned(from_id);
+    Source* b = owned(to_id);
+    if (!a || index < 0 || index >= int(a->pedals.size()) || !b || !isAmp(b->kind)) {
+        if (error) *error = "there is nothing there to copy";
+        return -1;
+    }
+    if (int(b->pedals.size()) >= kMaxPedals) {
+        if (error) *error = "the board is full";
+        return -1;
+    }
+    const Source::PedalSlot& original = a->pedals[size_t(index)];
+    const PedalKind kind = original.pedal->kind();
+    if (kind == PedalKind::Looper && looperOf(*b)) {
+        if (error) *error = "an amp has only one loop pedal";
+        return -1;
+    }
+    Source::PedalSlot slot;
+    const PluginInstance* plugin =
+        kind == PedalKind::Plugin ? static_cast<const PluginPedal*>(original.pedal.get())->plugin() : nullptr;
+    if (plugin) {
+        const std::vector<uint8_t> state = plugin->saveState();
+        slot.pedal = makePluginPedal(plugin->description().id, &state, error);
+        if (!slot.pedal) return -1;
+    } else {
+        slot.pedal = Pedal::make(kind, float(sr_));
+        if (!slot.pedal) {
+            if (error) *error = "it couldn't be made";
+            return -1;
+        }
+    }
+    slot.on = original.on;
+    slot.controls = original.controls;
+    slot.pedal->setOn(slot.on);  // the audio thread doesn't have it yet
+    for (int i = 0; i < kPedalControls; ++i) slot.pedal->setControl(i, slot.controls[size_t(i)]);
+    if (at < 0 || at > int(b->pedals.size())) at = int(b->pedals.size());
+    b->pedals.insert(b->pedals.begin() + at, std::move(slot));
+    if (!sendBoard(*b)) {
+        b->pedals.erase(b->pedals.begin() + at);
+        if (error) *error = "the audio engine is busy: try again";
+        return -1;
+    }
+    return at;
+}
+
 void AudioEngine::setPedalOn(int id, int index, bool on) {
     Source* s = owned(id);
     if (!s || index < 0 || index >= int(s->pedals.size())) return;

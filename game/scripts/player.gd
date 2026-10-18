@@ -210,6 +210,12 @@ func _handle_key(event: InputEventKey) -> void:
 				app.speaker_panel.open(at)
 		"add":
 			app.instrument_menu.open()
+		"duplicate":  # a second of what you face or carry, with its settings, in your hands to be put down
+			var original = carried if carried != null else at
+			if original != null and not notes:
+				var copy = app.duplicate_instrument(original, original.global_position)
+				if copy != null:
+					carry(copy)
 		"remove":
 			_ask_to_remove(carried if carried != null else at)
 		"loop":  # an instrument's loop; a Speaker or an amp has none, so it mutes

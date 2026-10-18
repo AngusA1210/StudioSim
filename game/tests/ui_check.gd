@@ -66,6 +66,43 @@ func click(pos: Vector2, button := MOUSE_BUTTON_LEFT) -> void:
 	await frames(2)
 
 
+## Moves the mouse over a point, as hovering does.
+func hover(pos: Vector2) -> void:
+	var move := InputEventMouseMotion.new()
+	move.position = pos
+	move.global_position = pos
+	move.relative = Vector2(2, 1)
+	view.push_input(move)
+	await frames(2)
+
+
+## Drags with the mouse from one point to another and lets go there: Godot's own drag and drop.
+func mouse_drag(from: Vector2, to: Vector2) -> void:
+	await hover(from)
+	var grab := InputEventMouseButton.new()
+	grab.position = from
+	grab.global_position = from
+	grab.button_index = MOUSE_BUTTON_LEFT
+	grab.pressed = true
+	view.push_input(grab)
+	await frames(1)
+	for step in 8:
+		var at: Vector2 = from.lerp(to, (step + 1) / 8.0)
+		var move := InputEventMouseMotion.new()
+		move.position = at
+		move.global_position = at
+		move.relative = (to - from) / 8.0
+		move.button_mask = MOUSE_BUTTON_MASK_LEFT
+		view.push_input(move)
+		await frames(1)
+	var let_go := InputEventMouseButton.new()
+	let_go.position = to
+	let_go.global_position = to
+	let_go.button_index = MOUSE_BUTTON_LEFT
+	view.push_input(let_go)
+	await frames(3)
+
+
 ## Turns a knob by dragging it up (or down, for negative) by so many pixels.
 func turn(knob: Control, pixels: float) -> void:
 	var at: Vector2 = knob.get_global_rect().get_center() - Vector2(0, 20)
@@ -227,7 +264,7 @@ func _run() -> void:
 	await frames(5)
 	check(player.target == drums and player.can_play_target(), "standing at the drums, they are what you're facing")
 	var card: Array = main.hud.hint_lines()
-	check(card == ["Drums", "E play", "Enter edit its pattern", "I input on", "M loop off", "G carry", "Backspace remove (press twice)"],
+	check(card == ["Drums", "E play", "Enter edit its pattern", "I input on", "M loop off", "G carry", "V duplicate", "Backspace remove (press twice)"],
 		"a card lists what each key does, one per line, with removing at the bottom", " / ".join(card))
 	var parts := 0
 	for node in drums._model.find_children("*", "MeshInstance3D", true, false):
@@ -574,8 +611,12 @@ func _run() -> void:
 	panel._head_on.button_pressed = false
 	panel._cabinet_on.button_pressed = false
 	await frames(3)
+	await hover(panel._head_on.get_global_rect().get_center())
 	check(not amp.head_on and not amp.cabinet_on and panel._knobs.gain.modulate.a < 0.5 and panel._knobs.master.modulate.a == 1.0 and
-		panel._voice_note.text.begins_with("No head"), "either can be bypassed: the head's knobs go dim, the master stays", panel._voice_note.text)
+		panel._hint.text.begins_with("Bypassed, the head passes"), "either can be bypassed: the head's knobs go dim, the master stays, and the line at the foot says what that means while the mouse is over its switch",
+		panel._hint.text)
+	await hover(panel._title.get_global_rect().get_center())
+	check(panel._hint.text == "", "over the panel's name there is nothing to explain, and the line is empty", panel._hint.text)
 	panel._head_on.button_pressed = true
 	panel._cabinet_on.button_pressed = true
 	panel._cabinet_choice.select(0)
@@ -628,9 +669,25 @@ func _run() -> void:
 	panel._add_menu.id_pressed.emit(order.find("tuner"))
 	panel._add_menu.hide()
 	await frames(3)
-	await click(panel._earlier.get_global_rect().get_center())
-	check(amp.pedals.size() == 2 and amp.pedals[0].kind == "tuner" and amp.pedals[1].kind == "overdrive" and panel.selected == 0 and panel._tuner_box.visible,
-		"a tuner added at the end can be moved to the front of the line")
+	check(panel._footer.get_children().all(func(b): return not (b is Button) or not (b.text.contains("Earlier") or b.text.contains("Later"))),
+		"there are no buttons for moving pedals along the line")
+	await mouse_drag(panel._tiles[1].panel.get_global_rect().get_center(), panel._tiles[0].panel.get_global_rect().position + Vector2(8, 40))
+	check(amp.pedals.size() == 2 and amp.pedals[0].kind == "tuner" and amp.pedals[1].kind == "overdrive" and panel.selected == 0 and panel._tuner_box.visible and
+		not panel._drop_mark.visible, "a tuner added at the end can be dragged with the mouse to the front of the line", "%s, %s" % [amp.pedals[0].kind, amp.pedals[1].kind])
+	panel.drop_pedal({"pedal": true, "inst": amp, "index": 1}, 2, true)  # with Option held
+	await frames(3)
+	check(amp.pedals.size() == 3 and amp.pedals[2].kind == "overdrive" and absf(amp.pedals[2].controls[0] - amp.pedals[1].controls[0]) < 0.01 and
+		amp.pedals[2].on == amp.pedals[1].on and panel.selected == 2, "dropped with Option held, a second overdrive goes in, its knobs set the same")
+	await click(panel._remove.get_global_rect().get_center())
+	panel.selected = 0
+	await click(panel._board_toggle.get_global_rect().get_center())
+	check(not main.settings.pedalboard_open and not panel._board_body.visible and panel._board_summary.text == "2 pedals, 2 on" and panel._knobs.gain.is_visible_in_tree(),
+		"the pedalboard folds away under its heading, leaving the amp", panel._board_summary.text)
+	await tap(KEY_2)
+	check(not amp.pedals[1].on, "and 2 still stamps on the second pedal")
+	await tap(KEY_2)
+	await click(panel._board_toggle.get_global_rect().get_center())
+	check(main.settings.pedalboard_open and panel._board_body.visible, "it unfolds again")
 	check(amp.tuner.get("listening", false) and not amp.tuner.get("pitched", true) and panel._tuner_cents.text == "Play a string" and amp._loop_label.text.begins_with("TUNER"),
 		"switched on, it listens for a note, on the panel and over the amp", amp._loop_label.text.replace("\n", " / "))
 	await click(panel._add_button.get_global_rect().get_center())
@@ -671,6 +728,23 @@ func _run() -> void:
 	await tap(KEY_2)
 	await frames(2)
 	check(not amp.pedals[1].on and amp._pedal_leds[1].emission_energy_multiplier == 0.0, "2 switches the overdrive off from the room, and its light goes out")
+	main.set_insert(amp, 0, "AU:61756678:64656c79:6170706c")  # AUDelay
+	main.set_amp_control(amp, "treble", 7.5)
+	var amp_count: int = main.instruments.size()
+	await tap(KEY_V)
+	await frames(3)
+	var amp_copy = player.carried
+	check(amp_copy != null and amp_copy != amp and amp_copy.kind == amp.kind and main.instruments.size() == amp_count + 1 and
+		main.instruments.find(amp_copy) == main.instruments.find(amp) + 1, "V duplicates the amp you face, into your hands", amp_copy.display_name if amp_copy else "nothing")
+	var same_pedals: bool = amp_copy.pedals.size() == amp.pedals.size()
+	for i in mini(amp_copy.pedals.size(), amp.pedals.size()):
+		same_pedals = same_pedals and amp_copy.pedals[i].kind == amp.pedals[i].kind and amp_copy.pedals[i].on == amp.pedals[i].on and \
+			amp_copy.pedals[i].controls == amp.pedals[i].controls
+	check(same_pedals and amp_copy.amp_head == amp.amp_head and amp_copy.amp_cabinet == amp.amp_cabinet and amp_copy.amp_controls == amp.amp_controls and
+		audio.get_inserts(amp_copy.source_id)[0].plugin_name == "AUDelay" and not amp_copy.input_on and amp_copy.input_channel == amp.input_channel,
+		"the copy has the same head, cabinet, knobs and pedals, the same plug-in on its insert, and its input off")
+	await tap(KEY_G)
+	main.remove_instrument(amp_copy)
 	main.set_input(amp, false)
 	main.remove_instrument(amp)
 	main.set_tempo(100.0)
@@ -681,7 +755,7 @@ func _run() -> void:
 	await frames(5)
 	var speaker_card: Array = main.hud.hint_lines()
 	check(player.target == speaker and speaker_card == ["Speaker", "I input on", "Enter volume and input", "M mute", "G carry",
-		"Backspace remove (press twice)"], "the Speaker's card offers input, its panel and mute, but not playing", " / ".join(speaker_card))
+		"V duplicate", "Backspace remove (press twice)"], "the Speaker's card offers input, its panel and mute, but not playing", " / ".join(speaker_card))
 	await tap(KEY_M)
 	check(speaker.muted, "M mutes it")
 	await tap(KEY_E)
@@ -722,12 +796,21 @@ func _run() -> void:
 	var drums_strip: Dictionary = mix._strips[0]
 	check(drums.peak_hold > 0.01 and drums_strip.peak.text.begins_with("-") and drums_strip.peak.text != "-inf" and mix._strips[0].meter.held_db() > -40.0,
 		"each strip has its own peak readout under the fader", drums_strip.peak.text)
+	main.set_pre_fader_meters(false)  # muted, the meter after the fader stays down once its peak is cleared
 	main.set_muted(drums, true)
 	await seconds(0.3)
 	await click(drums_strip.peak.get_global_rect().get_center())
 	await frames(2)
 	check(drums.peak_hold < 0.00001 and drums_strip.peak.text == "-inf", "clicking the peak readout clears it, as in Pro Tools", drums_strip.peak.text)
 	main.set_muted(drums, false)
+	main.set_pre_fader_meters(true)
+	await hover(drums_strip.mute.get_global_rect().get_center())
+	var over_mute: String = mix._hint.text
+	await hover(drums_strip.inserts[0].button.get_global_rect().get_center())
+	var over_insert: String = mix._hint.text
+	await hover(mix._status.get_global_rect().end + Vector2(-4, 0))
+	check(over_mute == "Mute" and over_insert.begins_with("Insert A: click to choose") and mix._hint.text == "",
+		"the line at the foot of the window says what the mouse is over (M: Mute), and nothing otherwise", "%s / %s" % [over_mute, over_insert])
 	check(drums_strip.inserts.size() == audio.get_max_inserts() and audio.get_max_inserts() == 5 and drums_strip.inserts[0].button.text == "" and
 		mix._strips.back().inserts.size() == 5, "every strip has five inserts, empty to begin with")
 	await click(drums_strip.inserts[0].button.get_global_rect().get_center())
@@ -746,9 +829,9 @@ func _run() -> void:
 	var held = mix._insert_drag(Vector2.ZERO, drums, 0)
 	check(held != null and mix._insert_can_drop(Vector2.ZERO, held, drums, 2) and not mix._insert_can_drop(Vector2.ZERO, held, drums, 0) and
 		mix._insert_drag(Vector2.ZERO, drums, 4) == null, "an insert can be picked up and dropped on another slot, but an empty one can't be picked up")
-	mix.drop_insert(held, drums, 2, false)
-	await frames(2)
-	check(drums.inserts[0].plugin_name == "" and drums.inserts[2].plugin_name == "AUDelay", "dragging it down the strip moves it to that slot")
+	await mouse_drag(drums_strip.inserts[0].button.get_global_rect().get_center(), drums_strip.inserts[2].button.get_global_rect().get_center())
+	check(drums.inserts[0].plugin_name == "" and drums.inserts[2].plugin_name == "AUDelay" and not drums.inserts[2].editor_open and not picker.visible,
+		"dragging it down the strip with the mouse moves it to that slot")
 	mix.drop_insert(mix._insert_drag(Vector2.ZERO, drums, 2), bass, 0, false)
 	await frames(2)
 	check(drums.inserts[2].plugin_name == "" and bass.inserts[0].plugin_name == "AUDelay" and mix._strip_for(bass).inserts[0].button.text == "AUDelay",
@@ -828,7 +911,7 @@ func _run() -> void:
 	for inst in main.instruments:  # every instrument far too loud
 		mix._on_fader_changed(12.0, inst)
 	await seconds(1.5)
-	check(main.meter_reduction_db > 1.0 and not main.meter_clipped and mix._status.text.contains("Limiting by"),
+	check(main.meter_reduction_db > 1.0 and not main.meter_clipped and mix._status.text.begins_with("Limiting"),
 		"turned up too far, the limiter holds the output and the window says by how much", mix._status.text)
 	var limiting: float = main.meter_reduction_db
 	mix._on_master_changed(-10.0)
@@ -855,18 +938,27 @@ func _run() -> void:
 	await frames(3)
 	check(held_loud > 0.5 and main.master_peak_hold < 0.5 and drums.peak_hold < 0.5 and pad.peak_hold < held_loud,
 		"Alt-clicking a peak readout clears them all, the master's too", "master held %.2f, now %.2f" % [held_loud, main.master_peak_hold])
-	# Metering before the fader: the pad turned down 20 dB still reads as loud before its fader.
+	# The meters read before the fader unless a fader's right-click menu says after: the pad turned down 20 dB still reads
+	# as loud before its fader.
 	mix._on_fader_changed(-20.0, pad)
 	await seconds(0.3)
 	main.clear_peak(pad)
 	await seconds(1.0)
-	var after_fader: float = pad.peak_hold
-	mix._pre_fader.button_pressed = true
-	await seconds(1.0)
 	var before_fader: float = pad.peak_hold
-	check(main.settings.pre_fader_meters and before_fader > after_fader * 5.0, "Pre-fader meters read the channel before its fader",
-		"%.1f dB after the fader, %.1f dB before" % [linear_to_db(after_fader), linear_to_db(before_fader)])
-	mix._pre_fader.button_pressed = false
+	await click(mix._strip_for(pad).fader.get_global_rect().get_center(), MOUSE_BUTTON_RIGHT)
+	check(mix._meter_menu.visible and mix._meter_menu.is_item_checked(0) and not mix._meter_menu.is_item_checked(1) and absf(pad.level_db + 20.0) < 0.01,
+		"right-clicking a fader offers pre- or post-fader metering, pre-fader ticked, and leaves the fader where it is")
+	mix._meter_menu.id_pressed.emit(1)
+	mix._meter_menu.hide()
+	await seconds(1.0)
+	var after_fader: float = pad.peak_hold
+	check(main.settings.pre_fader_meters == false and before_fader > after_fader * 5.0, "the meters read before the fader to begin with, and after it once that is chosen",
+		"%.1f dB before the fader, %.1f dB after" % [linear_to_db(before_fader), linear_to_db(after_fader)])
+	await click(mix._master.meter.get_global_rect().get_center(), MOUSE_BUTTON_RIGHT)
+	check(mix._meter_menu.visible and mix._meter_menu.is_item_checked(1), "a meter's right-click offers the same, post-fader now ticked")
+	mix._meter_menu.id_pressed.emit(0)
+	mix._meter_menu.hide()
+	check(main.settings.pre_fader_meters, "and pre-fader can be chosen again there")
 	mix._on_fader_changed(0.0, pad)
 	# Walking about with the mix window open.
 	var standing: Vector3 = player.global_position
@@ -888,6 +980,18 @@ func _run() -> void:
 	await tap(KEY_ESCAPE)
 	await frames(3)
 	check(not seq.is_open() and mix.is_open(), "and closing it comes back to the mix window")
+	await click(mix._strip_for(drums).plate.get_global_rect().get_center(), MOUSE_BUTTON_RIGHT)
+	check(mix._name_menu.visible and mix._name_menu.get_item_index(2) >= 0, "a strip's name offers to duplicate the instrument")
+	mix._name_menu.id_pressed.emit(2)
+	mix._name_menu.hide()
+	await frames(3)
+	var drums_copy = main.instruments[main.instruments.find(drums) + 1]
+	var plugin_names := func(of) -> Array: return audio.get_inserts(of.source_id).map(func(insert): return insert.plugin_name)
+	check(drums_copy.kind == "drums" and drums_copy.display_name == "Drums 2" and mix._strips[main.instruments.find(drums) + 1].inst == drums_copy and
+		audio.get_pattern(drums_copy.source_id) == audio.get_pattern(drums.source_id) and plugin_names.call(drums_copy) == plugin_names.call(drums) and
+		drums_copy.global_position.distance_to(drums.global_position) > 0.9, "Duplicate puts a second drum kit beside the first, its strip next to theirs, with the same pattern and inserts",
+		drums_copy.display_name)
+	main.remove_instrument(drums_copy)
 	var spare = main.add_instrument("bells", Vector3(2.0, 0.0, 2.0))
 	await frames(3)
 	await click(mix._strip_for(spare).plate.get_global_rect().get_center(), MOUSE_BUTTON_RIGHT)

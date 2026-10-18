@@ -80,6 +80,7 @@ var options := {}
 var live_input := false   # the audio input is open: some Speaker's input is on. Every Speaker starts with it off,
                           # since an open microphone next to speakers would feed back
 var audio_error := ""     # the last problem opening a device, shown in the menu
+var copy_problem := ""    # what the last duplicate_instrument couldn't copy, if anything
 var _stage_gain := 1.0    # the title screen turns the music down a little; 1 in the room
 var _environment: Environment
 # The output meter, read once a frame for whoever shows it: the latest reading, how hard the limiter has pulled
@@ -230,7 +231,8 @@ func _read_meter(delta: float) -> void:
 	var pre: bool = settings.pre_fader_meters
 	for inst in instruments:
 		var scale: float = CHANNEL_TRIM * (inst.normal_gain() if pre else 1.0)
-		inst.meter_peak = audio.get_source_peak(inst.source_id, pre) * scale
+		var peaks := [audio.get_source_peak(inst.source_id, false), audio.get_source_peak(inst.source_id, true)]  # both,
+		inst.meter_peak = peaks[int(pre)] * scale  # so the other doesn't hold an old peak for when it is chosen
 		inst.meter_rms = audio.get_source_level(inst.source_id, pre) * scale
 		inst.peak_hold = maxf(inst.peak_hold, inst.meter_peak)
 	var reduction := -linear_to_db(maxf(meter.get("limiter_gain", 1.0), 0.001))
@@ -270,6 +272,12 @@ func set_pre_fader_meters(on: bool) -> void:
 	settings.save_to_disk()
 	for inst in instruments:
 		inst.peak_hold = 0.0
+
+
+## An amp's panel with its pedalboard showing, or folded away (for every amp, and remembered).
+func set_pedalboard_open(on: bool) -> void:
+	settings.pedalboard_open = on
+	settings.save_to_disk()
 
 
 func clear_all_peaks() -> void:
@@ -450,6 +458,15 @@ func move_pedal(inst, from: int, to: int) -> bool:
 	var moved := audio.move_pedal(inst.source_id, from, to)
 	inst.pedals = audio.get_pedals(inst.source_id)
 	return moved
+
+
+## A second of a pedal (Option-drag on the board, or duplicating the amp), switch, knobs and plug-in settings and all,
+## on `to_inst`'s board at `at` (-1: the end). Where it went, or -1, with the reason in `audio.get_error()`.
+func copy_pedal(inst, index: int, to_inst, at := -1) -> int:
+	var placed := audio.copy_pedal(inst.source_id, index, to_inst.source_id, at)
+	to_inst.pedals = audio.get_pedals(to_inst.source_id)
+	to_inst.looper = audio.get_looper(to_inst.source_id)
+	return placed
 
 
 func set_pedal_on(inst, index: int, on: bool) -> void:
@@ -663,6 +680,59 @@ func add_instrument(kind: String, at: Vector3, with_default_pattern := false):
 	if with_default_pattern and inst.playable:
 		audio.load_default_pattern(inst.source_id)
 	return inst
+
+
+## A second of an instrument, as Pro Tools duplicates a track: the same kind, with its fader, mute and pattern, a
+## Speaker's volume, an amp's head, cabinet, knobs and pedals, and the plug-ins on its inserts and pedals with their
+## settings. Its input starts off, as every input does, and a loop pedal comes without its loop. It stands at `at`, or
+## beside the original, and its strip follows the original's. Null if the room is full; anything that couldn't be
+## copied is in `copy_problem`.
+func duplicate_instrument(inst, at = null):
+	copy_problem = ""
+	var copy = add_instrument(inst.kind, at if at != null else _spot_beside(inst))
+	if copy == null:
+		return null
+	instruments.erase(copy)
+	instruments.insert(instruments.find(inst) + 1, copy)
+	copy.rotation.y = inst.rotation.y
+	set_instrument_level(copy, inst.level_db)
+	set_muted(copy, inst.muted)
+	if inst.playable:
+		audio.set_pattern_steps(copy.source_id, audio.get_pattern_steps(inst.source_id))
+		audio.set_pattern(copy.source_id, audio.get_pattern(inst.source_id))
+		copy.set_loop(inst.loop_on)
+	else:
+		set_input_channel(copy, inst.input_channel)
+		set_speaker_volume(copy, inst.volume_db)
+	var problems := []
+	if inst.is_amp:
+		set_amp_voice(copy, inst.amp_head, inst.head_on, inst.amp_cabinet, inst.cabinet_on)
+		for control in inst.amp_controls:
+			set_amp_control(copy, control, inst.amp_controls[control])
+		for i in audio.get_pedals(inst.source_id).size():
+			if copy_pedal(inst, i, copy) < 0:
+				problems.append("pedal %d: %s" % [i + 1, audio.get_error()])
+	var inserts: Array = audio.get_inserts(inst.source_id)
+	for slot in inserts.size():
+		if inserts[slot].plugin_name != "":
+			var problem := copy_insert(inst, slot, copy, slot)
+			if problem != "":
+				problems.append("insert %s: %s" % [char(65 + slot), problem])
+	copy_problem = "; ".join(problems)
+	return copy
+
+
+## Somewhere on the floor beside an instrument, clear of the others if there is room: for a copy of it.
+func _spot_beside(inst) -> Vector3:
+	var side: Vector3 = inst.global_transform.basis.x.normalized()
+	var step: float = maxf(inst.footprint.x, 0.6) + 0.5
+	for offset in [step, -step, 2.0 * step, -2.0 * step]:
+		var at: Vector3 = room.settle(inst.global_position + side * offset, 0.6, 0.5, inst.global_position)
+		var clear := instruments.all(func(other) -> bool:
+			return Vector2(other.global_position.x - at.x, other.global_position.z - at.z).length() > 0.9)
+		if clear:
+			return at
+	return room.settle(inst.global_position + side * step, 0.6, 0.5, inst.global_position)
 
 
 func remove_instrument(inst) -> void:

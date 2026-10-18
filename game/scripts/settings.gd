@@ -27,7 +27,8 @@ var fov := 75.0
 var mouse_sensitivity := 1.0
 var show_stats := false
 var show_meter := true    # the master level meter on screen
-var pre_fader_meters := false  # the mix window's channel meters read before the fader, as Pro Tools' option does
+var pre_fader_meters := true  # the mix window's channel meters read before the fader (right-click a fader for after it)
+var pedalboard_open := true    # an amp's panel shows its pedalboard, or folds it away
 var bindings := {}  # the keys changed on the Controls page: action → physical keycode (see bindings.gd)
 var fullscreen := false
 var room_brightness := 1.0
@@ -63,7 +64,8 @@ func load_from_disk() -> void:
 	mouse_sensitivity = clampf(file.get_value("display", "mouse_sensitivity", mouse_sensitivity), 0.2, 3.0)
 	show_stats = file.get_value("display", "show_stats", show_stats)
 	show_meter = file.get_value("display", "show_meter", show_meter)
-	pre_fader_meters = file.get_value("display", "pre_fader_meters", pre_fader_meters)
+	pre_fader_meters = file.get_value("display", "metering", "pre") != "post"  # (the old "pre_fader_meters" key is left behind: before is the default now)
+	pedalboard_open = file.get_value("display", "pedalboard_open", pedalboard_open)
 	fullscreen = file.get_value("display", "fullscreen", fullscreen)
 	room_brightness = clampf(file.get_value("display", "room_brightness", room_brightness), 0.5, 3.0)
 	bindings = file.get_value("controls", "keys", bindings)
@@ -92,7 +94,8 @@ func save_to_disk() -> void:
 	file.set_value("display", "mouse_sensitivity", mouse_sensitivity)
 	file.set_value("display", "show_stats", show_stats)
 	file.set_value("display", "show_meter", show_meter)
-	file.set_value("display", "pre_fader_meters", pre_fader_meters)
+	file.set_value("display", "metering", "pre" if pre_fader_meters else "post")
+	file.set_value("display", "pedalboard_open", pedalboard_open)
 	file.set_value("display", "fullscreen", fullscreen)
 	file.set_value("display", "room_brightness", room_brightness)
 	file.set_value("controls", "keys", bindings)

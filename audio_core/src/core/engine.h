@@ -191,6 +191,10 @@ public:
     int addPedal(int id, PedalKind kind, int at = -1);
     bool removePedal(int id, int index);
     bool movePedal(int id, int from, int to);
+    // A second of a pedal, as Option-dragging one does: the same kind, switched the same way, with the same controls
+    // (a Plug-in pedal holds the same plug-in, with the same settings), put on this amp's board or another's at `at`
+    // (-1: the end). A loop pedal comes without its loop. Where it went, or -1 with the reason.
+    int copyPedal(int from_id, int index, int to_id, int at, std::string* error);
     void setPedalOn(int id, int index, bool on);
     void setPedalControl(int id, int index, int control, float value);
     std::vector<PedalStatus> pedals(int id) const;

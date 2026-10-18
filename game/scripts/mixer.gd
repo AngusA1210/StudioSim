@@ -9,12 +9,16 @@ extends CanvasLayer
 ## hold Option while dropping to copy it instead, settings and all. They play on the instrument's sound in order,
 ## before its fader.
 ## Click a strip's name to open the instrument's own window (an amp's panel and pedals, a pattern, a Speaker's panel),
-## right-click it to remove the instrument from the room. You can walk about while the window is open. As in Pro Tools, the peak readout holds the highest peak
-## until it is clicked (Alt-click clears them all), and clicking a meter does the same.
-## It docks along the bottom of the screen so the room stays in view, and the music keeps playing.
+## right-click it to duplicate the instrument or remove it from the room. As in Pro Tools, the peak readout holds the
+## highest peak until it is clicked (Alt-click clears them all), and clicking a meter does the same. The channel meters
+## read before the fader; right-click any fader to have them read after it instead.
+## Rather than instructions written across it, the line at the foot of the window describes whatever the mouse is over.
+## It docks along the bottom of the screen so the room stays in view, you can walk about while it is open, and the
+## music keeps playing.
 
 const Fader := preload("res://scripts/fader.gd")
 const LevelMeter := preload("res://scripts/level_meter.gd")
+const Hints := preload("res://scripts/hints.gd")
 
 const STRIP_WIDTH := 96.0
 const STRIP_BG := Color(0.16, 0.17, 0.19, 0.98)
@@ -36,7 +40,8 @@ var _menu_for := []  # [instrument, slot] that menu is open for
 var _name_menu: PopupMenu  # what a right-click on a strip's name offers
 var _name_menu_for = null
 var _confirm: ConfirmationDialog  # removing an instrument
-var _pre_fader: CheckButton
+var _meter_menu: PopupMenu  # what a right-click on a fader or meter offers: the meters before the fader or after it
+var _hint: Label  # the line at the foot: what the mouse is over
 var _signature := ""
 var _input_channels := -1
 var _master := {}
@@ -68,6 +73,7 @@ func open() -> void:
 func close() -> void:
 	_root.visible = false
 	_insert_menu.hide()
+	_meter_menu.hide()
 	app.plugin_browser.hide()
 	for inst in app.instruments:
 		app.hide_insert_editors(inst)
@@ -91,6 +97,7 @@ func _process(_delta: float) -> void:
 	_panel.position = Vector2(12, vp.y - height - 12)
 	_panel.size = Vector2(vp.x - 24, height)
 	_refresh()
+	_hint.text = Hints.under_mouse(_panel)
 
 
 # ── Building ────────────────────────────────────────────────────────────────────────────────────────────────
@@ -125,12 +132,6 @@ func _build() -> void:
 	_status.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_status.clip_text = true
 	header.add_child(_status)
-	_pre_fader = CheckButton.new()
-	_pre_fader.text = "Pre-fader meters"
-	_pre_fader.focus_mode = Control.FOCUS_NONE
-	_pre_fader.tooltip_text = "The channel meters show the signal before the fader (after the inserts), as Pro Tools' pre-fader metering does."
-	_pre_fader.toggled.connect(func(on: bool) -> void: app.set_pre_fader_meters(on))
-	header.add_child(_pre_fader)
 	var close_button := Button.new()
 	close_button.text = "Close  (Tab)"
 	close_button.pressed.connect(close)
@@ -161,13 +162,14 @@ func _build() -> void:
 	_confirm.ok_button_text = "Remove"
 	_confirm.confirmed.connect(_on_remove_confirmed)
 	_root.add_child(_confirm)
+	_meter_menu = PopupMenu.new()
+	_meter_menu.add_radio_check_item("Pre-fader metering", 0)
+	_meter_menu.add_radio_check_item("Post-fader metering", 1)
+	_meter_menu.id_pressed.connect(func(id: int) -> void: app.set_pre_fader_meters(id == 0))
+	_root.add_child(_meter_menu)
 
-	var hint := Label.new()
-	hint.text = "Inserts: click an empty one for a plug-in, a full one for its window, Cmd-click to bypass it (blue), drag to move (Option to copy), right-click for more.   Drag a fader (Shift for fine moves), or double-click or Alt-click it for 0 dB. Under each fader: its level, and the highest peak since you last clicked it (Alt-click clears them all).   I  input on: the keyboard plays it, or a Speaker or amp plays its input.   M  mute.   S  solo."
-	hint.add_theme_font_size_override("font_size", 12)
-	hint.add_theme_color_override("font_color", DIM)
-	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	box.add_child(hint)
+	_hint = Hints.line()
+	box.add_child(_hint)
 
 
 func _build_master() -> PanelContainer:
@@ -178,7 +180,7 @@ func _build_master() -> PanelContainer:
 	box.add_child(level_with_inserts)
 	_small(box, "OUTPUT")
 	var limiter := _toggle("LIMIT", Color(0.55, 0.78, 1.0))
-	limiter.tooltip_text = "On: the mix can't go over full scale on its way into the master fader. Off: the plain sum of the mix. Either way, what leaves the master fader over full scale is cut off."
+	Hints.give(limiter, "Limiter, before the master fader: on, the mix can't go over full scale; off, the plain sum. What leaves the fader over full scale is cut off either way.")
 	limiter.toggled.connect(_on_limiter_toggled)
 	limiter.custom_minimum_size = Vector2(76, 24)
 	limiter.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
@@ -207,6 +209,8 @@ func _build_strip(inst) -> Dictionary:
 		midi.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		midi.custom_minimum_size.y = 24
 		midi.add_theme_font_size_override("font_size", 13)
+		Hints.give(midi, func() -> String: return "Played over MIDI: your MIDI keyboard, or the computer's (%s), while its input is on" % (
+			app.bindings.label("keyboard")))
 		source = midi
 	else:
 		var choice := OptionButton.new()
@@ -214,6 +218,7 @@ func _build_strip(inst) -> Dictionary:
 		choice.fit_to_longest_item = false
 		choice.custom_minimum_size = Vector2(STRIP_WIDTH - 16, 24)
 		choice.item_selected.connect(_on_source_selected.bind(inst))
+		Hints.give(choice, "Which of your interface's inputs it plays")
 		source = choice
 	box.add_child(source)
 	var buttons := HBoxContainer.new()
@@ -221,15 +226,15 @@ func _build_strip(inst) -> Dictionary:
 	buttons.alignment = BoxContainer.ALIGNMENT_CENTER
 	box.add_child(buttons)
 	var input := _toggle("I", INPUT_GREEN)
-	input.tooltip_text = "Input: the MIDI keyboard plays it" if inst.playable else "Input: it plays the hardware input chosen above"
+	Hints.give(input, "Input: the MIDI keyboard plays it" if inst.playable else "Input: it plays the hardware input chosen above")
 	input.toggled.connect(_on_input_toggled.bind(inst))
 	buttons.add_child(input)
 	var mute := _toggle("M", MUTE_ORANGE)
-	mute.tooltip_text = "Mute"
+	Hints.give(mute, "Mute")
 	mute.toggled.connect(_on_mute_toggled.bind(inst))
 	buttons.add_child(mute)
 	var solo := _toggle("S", SOLO_YELLOW)
-	solo.tooltip_text = "Solo: while anything is soloed, everything else is silent"
+	Hints.give(solo, "Solo: while anything is soloed, everything else is silent")
 	solo.toggled.connect(_on_solo_toggled.bind(inst))
 	buttons.add_child(solo)
 	var pair := _fader_and_meter(box, 1, inst)
@@ -274,6 +279,7 @@ func _build_inserts(box: VBoxContainer, inst) -> Array:
 			_on_insert_clicked(inst, slot, Input.is_key_pressed(KEY_META) or Input.is_key_pressed(KEY_CTRL)))
 		button.gui_input.connect(_on_insert_input.bind(inst, slot))
 		button.set_drag_forwarding(_insert_drag.bind(inst, slot), _insert_can_drop.bind(inst, slot), _insert_drop.bind(inst, slot))
+		Hints.give(button, _insert_hint.bind(inst, slot))
 		column.add_child(button)
 		slots.append({"button": button, "style": style})
 	return slots
@@ -309,12 +315,20 @@ func _fader_and_meter(box: VBoxContainer, channels: int, inst) -> Dictionary:
 	box.add_child(row)
 	var fader := Fader.new()
 	fader.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	fader.gui_input.connect(_on_fader_area_input.bind(fader))
+	Hints.give(fader, "%s: drag (Shift for fine moves), double-click or Alt-click for 0 dB.  Right-click: pre- or post-fader meters" % (
+		"Master fader, after the limiter" if inst == null else "Fader"))
 	row.add_child(fader)
 	var meter := LevelMeter.new()
 	meter.vertical = true
 	meter.clickable = true
-	meter.tooltip_text = "Click to clear the peak (Alt-click: every peak)"
 	meter.pressed.connect(_on_peak_pressed.bind(inst))
+	meter.gui_input.connect(_on_fader_area_input.bind(meter))
+	if inst == null:
+		Hints.give(meter, "Output meter: what goes to your speakers.  Click to clear its peak (Alt-click: every peak)")
+	else:
+		Hints.give(meter, func() -> String: return "Meter, %s the fader.  Click to clear its peak (Alt-click: every peak).  Right-click: pre or post" % (
+			"before" if app.settings.pre_fader_meters else "after"))
 	meter.custom_minimum_size = Vector2(8 * channels + 2 * (channels - 1), 60)
 	meter.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	row.add_child(meter)
@@ -331,14 +345,15 @@ func _readouts(box: VBoxContainer, inst) -> Dictionary:
 	value.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	value.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	value.add_theme_font_size_override("font_size", 12)
-	value.tooltip_text = "The fader's level"
+	Hints.give(value, "The fader's level")
 	row.add_child(value)
 	var peak := Button.new()
 	peak.focus_mode = Control.FOCUS_NONE
 	peak.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	peak.custom_minimum_size = Vector2(0, 20)
 	peak.add_theme_font_size_override("font_size", 12)
-	peak.tooltip_text = "The highest peak since this was last clicked. Click to clear it (Alt-click: every peak)."
+	Hints.give(peak, func() -> String: return "The highest peak%s since this was clicked.  Click to clear it (Alt-click: every peak)" % (
+		"" if inst == null else (" before the fader" if app.settings.pre_fader_meters else " after the fader")))
 	for state in ["normal", "hover", "pressed", "hover_pressed"]:
 		var style := StyleBoxFlat.new()
 		style.bg_color = Color(0.03, 0.035, 0.04) if not state.begins_with("hover") else Color(0.08, 0.085, 0.1)
@@ -371,7 +386,7 @@ func _name_plate(text: String, color: Color, inst) -> Button:
 		plate.disabled = true
 		plate.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	else:
-		plate.tooltip_text = "Click to open the %s; right-click to remove it" % _editor_name(inst)
+		Hints.give(plate, "Click to open the %s.  Right-click to duplicate or remove it" % _editor_name(inst))
 		plate.gui_input.connect(_on_name_input.bind(inst, plate))
 	return plate
 
@@ -458,18 +473,20 @@ func _refresh() -> void:
 	_master.value.text = _db_text(settings.master_volume_db)
 	_show_peak(_master.peak, app.master_peak_hold)
 	_master.limiter.set_pressed_no_signal(settings.limiter)
-	_pre_fader.set_pressed_no_signal(settings.pre_fader_meters)
 	if Time.get_ticks_msec() < _problem_until:
 		pass
 	elif app.meter_clipped:
-		_status.text = "Clipping: the output is going over full scale. Bring the master or an instrument down."
+		_status.text = "Clipping"
 		_status.add_theme_color_override("font_color", LevelMeter.RED)
+		Hints.give(_status, "The output is going over full scale and being cut off: bring the master or an instrument down")
 	elif app.meter_reduction_db > 0.1:
-		_status.text = "Limiting by %.1f dB. Bring an instrument down to stop it (the limiter comes before the master fader)." % app.meter_reduction_db
+		_status.text = "Limiting %.1f dB" % app.meter_reduction_db
 		_status.add_theme_color_override("font_color", WARN)
+		Hints.give(_status, "The limiter is holding the mix under full scale. It comes before the master fader: bring an instrument down to stop it")
 	else:
-		_status.text = "Limiter idle" if settings.limiter else "Limiter off  ·  no clipping"
+		_status.text = "Limiter idle" if settings.limiter else "Limiter off"
 		_status.add_theme_color_override("font_color", DIM)
+		Hints.give(_status, "")
 
 
 func _db_text(db: float) -> String:
@@ -484,8 +501,6 @@ func _show_inserts(slots: Array, inserts: Array) -> void:
 		var button: Button = slots[slot].button
 		var style: StyleBoxFlat = slots[slot].style
 		button.text = name
-		button.tooltip_text = ("Insert %s: %s (%s). Click for its window, Cmd-click to bypass, right-click for more." % [
-			char(65 + slot), name, insert.get("plugin_maker", "")]) if name != "" else "Insert %s: click to choose a plug-in" % char(65 + slot)
 		if name == "":
 			style.bg_color = Color(0.1, 0.105, 0.12)
 		elif insert.get("on", true):
@@ -549,6 +564,14 @@ func _on_insert_clicked(inst, slot: int, command: bool) -> void:
 		app.show_insert_editor(inst, slot, not insert.get("editor_open", false))
 
 
+func _insert_hint(inst, slot: int) -> String:
+	var insert: Dictionary = inst.inserts[slot] if slot < inst.inserts.size() else {}
+	if insert.get("plugin_name", "") == "":
+		return "Insert %s: click to choose a plug-in" % char(65 + slot)
+	return "Insert %s: %s (%s%s).  Click for its window, Cmd-click to bypass, drag to move (Option: copy), right-click for more" % [
+		char(65 + slot), insert.plugin_name, insert.get("plugin_maker", ""), "" if insert.get("on", true) else ", bypassed"]
+
+
 ## Picking an insert up: what it holds, to drop on another slot.
 func _insert_drag(_at: Vector2, inst, slot: int):
 	var insert: Dictionary = inst.inserts[slot] if slot < inst.inserts.size() else {}
@@ -585,9 +608,7 @@ func drop_insert(data: Dictionary, inst, slot: int, copy: bool) -> void:
 	if copy:
 		var problem: String = app.copy_insert(data.inst, data.slot, inst, slot)
 		if problem != "":
-			_status.text = "It couldn't be copied: %s." % problem
-			_status.add_theme_color_override("font_color", WARN)
-			_problem_until = Time.get_ticks_msec() + 5000
+			_report("It couldn't be copied: %s." % problem)
 	else:
 		app.move_insert(data.inst, data.slot, inst, slot)
 
@@ -636,9 +657,7 @@ func _choose_insert(inst, slot: int, near: Control) -> void:
 				return
 			var problem: String = app.set_insert(inst, slot, plugin.id)
 			if problem != "":
-				_status.text = "%s couldn't be loaded: %s." % [plugin.name, problem]
-				_status.add_theme_color_override("font_color", WARN)
-				_problem_until = Time.get_ticks_msec() + 5000
+				_report("%s couldn't be loaded: %s." % [plugin.name, problem])
 			else:
 				app.show_insert_editor(inst, slot, true))
 
@@ -652,9 +671,10 @@ func _on_name_input(event: InputEvent, inst, plate: Button) -> void:
 		_name_menu_for = inst
 		_name_menu.clear()
 		_name_menu.add_item("Open the %s" % _editor_name(inst), 0)
+		_name_menu.add_item("Duplicate", 2)
 		_name_menu.add_separator()
 		_name_menu.add_item("Remove the %s from the room…" % inst.display_name, 1)
-		_name_menu.position = Vector2i(plate.get_screen_position() - Vector2(0, 70))
+		_name_menu.position = Vector2i(plate.get_screen_position() - Vector2(0, 96))
 		_name_menu.popup()
 	plate.accept_event()
 
@@ -678,9 +698,37 @@ func _on_name_menu_chosen(id: int) -> void:
 		return
 	if id == 0:
 		open_editor(inst)
+	elif id == 2:
+		duplicate_instrument(inst)
 	else:
 		_confirm.dialog_text = "Remove the %s from the room? Its pattern, pedals and plug-ins go with it." % inst.display_name
 		_confirm.popup_centered()
+
+
+## A second of an instrument, settings, pedals and plug-ins and all, beside it in the room, its strip next to this one.
+func duplicate_instrument(inst) -> void:
+	if app.duplicate_instrument(inst) == null:
+		_report("The room is full: there's no space for another instrument.")
+	elif app.copy_problem != "":
+		_report("Not all of it could be copied: %s." % app.copy_problem)
+
+
+## A problem, in the status line for a few seconds.
+func _report(text: String) -> void:
+	_status.text = text
+	_status.add_theme_color_override("font_color", WARN)
+	_problem_until = Time.get_ticks_msec() + 5000
+
+
+## A right-click on a fader or a meter: whether the channel meters read before the fader or after it.
+func _on_fader_area_input(event: InputEvent, control: Control) -> void:
+	if not (event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_RIGHT):
+		return
+	_meter_menu.set_item_checked(0, app.settings.pre_fader_meters)
+	_meter_menu.set_item_checked(1, not app.settings.pre_fader_meters)
+	_meter_menu.position = Vector2i(control.get_screen_position() + event.position)
+	_meter_menu.popup()
+	control.accept_event()
 
 
 func _on_remove_confirmed() -> void:

@@ -36,6 +36,7 @@ settings, and enter the room. The menu inside the room has a button to come back
 | Shift | run |
 | G or click | pick up the instrument you're facing, put it down (it turns to face you) |
 | N | the instrument menu: add an instrument to the room |
+| V | duplicate the instrument you're facing or carrying, with its settings, pedals and plug-ins: the copy is in your hands to put down |
 | Backspace, twice | remove the instrument you're facing or carrying |
 | E | play the instrument you're next to; Q stops |
 | A S D F G H J K L ; | white keys while playing (W E T Y U O P are the black keys, Z/X change octave) |
@@ -127,10 +128,12 @@ the interface's instrument input; the amp is the only processing it needs. Wear 
 
 An amp starts with an empty board. The amp panel's **Pedalboard** runs the way the signal does: from the input through
 up to eight pedals, in order, then the amp. **+ Pedal** adds one at the end of the line; click a pedal to set it up
-underneath, where its knobs read in real units (decibels, milliseconds, hertz), **Earlier** and **Later** move it
-along the board, and its footswitch, or its number key (1 to 8, in the panel or facing the amp in the room), switches
-it on or off. A pedal switched off passes the guitar through untouched. The pedals stand on the floor in front of the
-amp, each with a light that is lit while it is on.
+underneath, where its knobs read in real units (decibels, milliseconds, hertz), and its footswitch, or its number key
+(1 to 8, in the panel or facing the amp in the room), switches it on or off. Drag a pedal along the board to move it
+(a blue mark shows the gap it will go in); hold Option as you drop it to put a second one there instead, knobs and
+plug-in settings and all. A pedal switched off passes the guitar through untouched. Click the **Pedalboard** heading
+to fold the board away when you only want the amp; the number keys still work. The pedals stand on the floor in
+front of the amp, each with a light that is lit while it is on. Move the mouse over a pedal for what it does.
 
 | Pedal | Controls | What it does |
 | --- | --- | --- |
@@ -203,8 +206,10 @@ Tab opens the mix window, docked along the bottom of the screen so the room stay
 mixing desk: a channel strip for every instrument, side by side, and the master strip on the right.
 
 - **Names**: click a strip's name to open the instrument's own window (an amp's knobs and pedals, a pattern, a
-  Speaker's panel); the mix window comes back when it closes. Right-click the name to remove the instrument from the
-  room.
+  Speaker's panel); the mix window comes back when it closes. Right-click the name to **duplicate** the instrument
+  (as Pro Tools duplicates a track: the copy stands beside it, its strip comes next, and it has the same fader,
+  pattern, volume, head, cabinet, knobs, pedals and inserts, plug-in settings included; its input starts off, and a
+  loop pedal comes without its loop) or to remove it from the room.
 - **Inserts** at the top of each strip, A to E, as in Pro Tools: plug-ins played in order on the instrument's sound
   before its fader (on an amp, after its pedals and the amp). Click an empty one to choose a plug-in, a full one to
   open or close its window, Cmd-click (or Ctrl-click) to bypass it, which turns it blue, and right-click to replace or
@@ -217,8 +222,10 @@ mixing desk: a channel strip for every instrument, side by side, and the master 
   Drag one to move it (Shift for fine moves), turn the scroll wheel to nudge it, or double-click or Alt-click it for
   0 dB. 0 dB is the level the instrument was made at, heard from right beside it, and the strip's meter reads it at
   that level, as a DAW's track meter reads what the track sends to the master.
-- **Pre-fader meters** (in the window's header): the channel meters read before the fader, after the inserts, as
-  Pro Tools' pre-fader metering does. Off, they read after it.
+- **Metering**: the channel meters read before the fader (after the inserts), as with Pro Tools' pre-fader
+  metering, so a fader pulled down or a mute doesn't hide what the channel is doing. Right-click any fader or meter
+  to have them read after the fader instead; the choice is remembered. The master's meter always reads what goes to
+  the speakers.
 - **Peak readouts**: as in Pro Tools, the number beside each fader's level holds the highest peak (in dBFS) until
   you click it, and turns red once anything reaches full scale. Clicking a meter clears it too; Alt-click clears
   every one, the master's included.
@@ -228,6 +235,9 @@ mixing desk: a channel strip for every instrument, side by side, and the master 
   decibels it is being held back whenever it is: the cue to bring an instrument down. With it off, the mix is the
   plain sum of the instruments. Either way, whatever leaves the master fader over full scale is cut off and
   reported as clipping, so a master pushed above 0 dB can clip even with the limiter on.
+
+Rather than instructions written across it, the line at the foot of the window says what the mouse is over: an
+insert, a button, a fader, the limiter. The amp and Speaker panels work the same way.
 
 The output is set to leave headroom right beside an instrument, so from across the room the mix is fairly quiet:
 raise the master to taste and watch the meter. An instrument is at its own level within 1.5 m of it and gets no
@@ -360,7 +370,10 @@ To do, roughly in this order:
    and Windows.
 4. **The room's sound**: a reverb amount you can set, then wall materials, each absorbing and diffusing sound in its
    own way, which shape how the room's reverb rings.
-5. **Multiplayer**, the final goal: a session server, a networked clock, note events and low-latency audio streams.
+5. **You in the room**: an avatar whose height you can set (the ears and eyes go with it; the view is a little tall
+   for some now), which multiplayer will show to the others; and a free camera, detached from the avatar, that flies
+   about the room with nothing in its way.
+6. **Multiplayer**, the final goal: a session server, a networked clock, note events and low-latency audio streams.
 
 Also wanted along the way: MIDI on Windows and Linux, and VR through OpenXR.
 

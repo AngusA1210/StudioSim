@@ -1670,6 +1670,23 @@ int main(int argc, char** argv) {
         room.engine.removePedal(amp, 1);  // the delay
         check(full && room.engine.pedals(amp).size() == 2, "a board holds 8 pedals, and they can be taken off again", "");
 
+        // Copying pedals (Option-drag, or duplicating the amp): the same kind, switch and knobs, on this board or another.
+        const int amp2 = room.engine.addSource(InstrumentKind::GuitarCombo, {2.0f, 0.3f, 2.0f}, 1.0f, 0.4f);
+        std::string copy_error;
+        const int copied_drive = room.engine.copyPedal(amp, 1, amp2, -1, &copy_error);
+        const int copied_tuner = room.engine.copyPedal(amp, 0, amp2, 0, &copy_error);
+        const int same_board = room.engine.copyPedal(amp, 1, amp, 0, &copy_error);
+        const std::vector<PedalStatus> copies = room.engine.pedals(amp2);
+        const bool onto_drums = room.engine.copyPedal(amp, 0, room.drums, -1, &copy_error) < 0;
+        room.engine.addPedal(amp2, PedalKind::Looper);
+        const bool second_looper = room.engine.copyPedal(amp2, 2, amp2, -1, &copy_error) < 0;
+        check(copied_drive == 0 && copied_tuner == 0 && copies.size() == 2 && copies[0].kind == PedalKind::Tuner && !copies[0].on &&
+                  copies[1].kind == PedalKind::Overdrive && copies[1].on && copies[1].controls[0] == 10.0f && same_board == 0 &&
+                  room.engine.pedals(amp)[0].kind == PedalKind::Overdrive && room.engine.pedals(amp).size() == 3 && onto_drums && second_looper,
+              "a pedal can be copied, switch and knobs and all, onto its own board or another amp's (but not a second loop pedal)", copy_error);
+        room.engine.removePedal(amp, 0);
+        room.engine.removeSource(amp2);
+
         std::vector<float> e_string(size_t(kRate * 2));
         for (size_t i = 0; i < e_string.size(); ++i)
             for (int h = 1; h <= 4; ++h) e_string[i] += 0.04f / float(h) * float(std::sin(6.2831853 * 82.41 * h * double(i) / kRate));
@@ -1766,6 +1783,12 @@ int main(int argc, char** argv) {
         check(loaded && !wrong && !not_a_plugin_pedal && board[0].kind == PedalKind::Plugin && board[0].plugin.name == "AUDelay" && with_plugin.finite &&
                   with_plugin.rms_l > 0.001,
               "the Plug-in pedal on an amp holds AUDelay, and the amp plays through it", load_error.empty() ? "loaded" : load_error);
+        const int amp3 = room.engine.addSource(InstrumentKind::GuitarCombo, {2.0f, 0.3f, 2.0f}, 1.0f, 0.4f);
+        const int plugin_copy = room.engine.copyPedal(amp, slot, amp3, -1, &load_error);
+        const std::vector<PedalStatus> amp3_board = room.engine.pedals(amp3);
+        check(plugin_copy == 0 && amp3_board.size() == 1 && amp3_board[0].plugin.name == "AUDelay" && amp3_board[0].plugin.id == au_delay,
+              "copying a Plug-in pedal loads a second of its plug-in onto the other amp, with its settings", load_error);
+        room.engine.removeSource(amp3);
         room.engine.removePedal(amp, slot);
         renderSeconds(room.engine, 0.1);
 

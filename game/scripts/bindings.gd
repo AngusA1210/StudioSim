@@ -22,6 +22,7 @@ const ACTIONS := [
 	["loop", "Its loop on / off (a Speaker or amp: mute)", KEY_M],
 	["carry", "Pick up, put down", KEY_G],
 	["add", "Add an instrument", KEY_N],
+	["duplicate", "Duplicate what you face, with all its settings", KEY_V],
 	["remove", "Remove what you face (twice)", KEY_BACKSPACE],
 	["mixer", "The mix window", KEY_TAB],
 	["transport", "Start / stop the patterns", KEY_SPACE],
