@@ -181,7 +181,14 @@ struct AudioEngine::Source {
         TrackAutomation automation;
     };
     std::unique_ptr<Track> track;
-    bool read_volume = true, read_mute = true, read_sustain = true;  // its automation read (the audio thread's)
+    bool read_volume = true, read_mute = true, read_sustain = true, read_params = true;  // its automation read (the audio thread's)
+    struct Send {
+        int bus = -1;
+        float gain = 0.0f, gain_target = 0.0f;
+        bool pre = false, on = true;
+    };
+    std::array<Send, AudioEngine::kMaxSends> sends;  // the audio thread's
+    std::vector<float> pre, out_l, out_r;  // a block of its sound before its fader, and placed in the room (for sends)
     float auto_mute = 1.0f;     // its mute automation's share of it heard, glided
     bool auto_sustain = false;  // the sustain pedal down by automation
     Track* track_rt = nullptr;
@@ -348,6 +355,7 @@ bool AudioEngine::configure(int sample_rate, int block_size, std::string* error)
         s->mono.assign(size_t(block_), 0.0f);
         s->bus_l.assign(size_t(block_), 0.0f);
         s->bus_r.assign(size_t(block_), 0.0f);
+        for (auto* buffer : {&s->pre, &s->out_l, &s->out_r}) buffer->assign(size_t(block_), 0.0f);
         if (!s->spatializer.init(steam_, error)) return false;
     }
     return true;
@@ -565,8 +573,11 @@ LooperStatus AudioEngine::looperStatus(int id) const {
 bool AudioEngine::sendBoard(Source& s, bool inserts) {
     Command c; c.type = Command::PedalBoardSet; c.id = s.id; c.v[0] = inserts ? 1.0f : 0.0f;
     if (inserts) {
-        for (const auto& slot : s.inserts)
-            if (slot.pedal) c.pedals[c.count++] = slot.pedal.get();
+        for (size_t i = 0; i < s.inserts.size(); ++i)
+            if (s.inserts[i].pedal) {
+                c.slots[c.count] = int8_t(i);
+                c.pedals[c.count++] = s.inserts[i].pedal.get();
+            }
     } else {
         for (const auto& slot : s.pedals) c.pedals[c.count++] = slot.pedal.get();
     }
@@ -577,6 +588,9 @@ bool AudioEngine::sendBoard(Source& s, bool inserts) {
 }
 
 void AudioEngine::reapPedals() {
+    const uint32_t master_applied = master_applied_.load(std::memory_order_acquire);
+    retired_master_.erase(std::remove_if(retired_master_.begin(), retired_master_.end(), [&](const auto& r) { return r.second <= master_applied; }),
+                          retired_master_.end());
     for (auto& s : owned_) {
         if (!s || (s->retired.empty() && s->retired_tracks.empty())) continue;
         const uint32_t applied = s->board_applied.load(std::memory_order_acquire);
@@ -659,10 +673,34 @@ double AudioEngine::audioSeconds(const std::string& path) {
     return audio ? audio->seconds() : 0.0;
 }
 
-void AudioEngine::setAutomationRead(int id, bool volume, bool mute, bool sustain) {
+void AudioEngine::setAutomationRead(int id, bool volume, bool mute, bool sustain, bool params) {
     Command c; c.type = Command::AutomationRead; c.id = id;
-    c.v[0] = volume ? 1.0f : 0.0f; c.v[1] = mute ? 1.0f : 0.0f; c.v[2] = sustain ? 1.0f : 0.0f;
+    c.v[0] = volume ? 1.0f : 0.0f; c.v[1] = mute ? 1.0f : 0.0f; c.v[2] = sustain ? 1.0f : 0.0f; c.v[3] = params ? 1.0f : 0.0f;
     push(c);
+}
+
+void AudioEngine::setSend(int id, int slot, int bus, float gain, bool pre, bool on) {
+    if (slot < 0 || slot >= kMaxSends) return;
+    const Source* target = bus >= 0 ? owned(bus) : nullptr;
+    if (bus >= 0 && (!target || !isBus(target->kind) || bus == id)) bus = -1;
+    Command c; c.type = Command::SendSet; c.id = id;
+    c.v[0] = float(slot); c.v[1] = float(bus); c.v[2] = std::clamp(gain, 0.0f, 16.0f); c.v[3] = pre ? 1.0f : 0.0f; c.v[4] = on ? 1.0f : 0.0f;
+    push(c);
+}
+
+void AudioEngine::setMasterAutomation(const std::vector<AutoPoint>& volume) {
+    reapPedals();
+    auto lane = std::make_unique<std::vector<AutoPoint>>(volume);
+    std::stable_sort(lane->begin(), lane->end(), [](const AutoPoint& a, const AutoPoint& b) { return a.step < b.step; });
+    Command c; c.type = Command::MasterAutomation; c.data = lane.get(); c.epoch = master_sent_ + 1;
+    if (!commands_.push(c)) return;
+    master_sent_ = c.epoch;
+    if (master_auto_) retired_master_.emplace_back(std::move(master_auto_), master_sent_);
+    master_auto_ = std::move(lane);
+}
+
+void AudioEngine::setMasterAutomationRead(bool read) {
+    Command c; c.type = Command::MasterRead; c.v[0] = read ? 1.0f : 0.0f; push(c);
 }
 
 void AudioEngine::setRecordArm(int id, bool armed) {
@@ -1031,6 +1069,27 @@ bool AudioEngine::loadFactoryPreset(int id, PluginPlace place, int index, int pr
     return plugin && plugin->loadFactoryPreset(preset);
 }
 
+std::vector<PluginParameter> AudioEngine::pluginParameters(int id, PluginPlace place, int index) const {
+    const PluginInstance* plugin = pluginAt(id, place, index);
+    return plugin ? plugin->parameters() : std::vector<PluginParameter>{};
+}
+
+float AudioEngine::pluginParameter(int id, PluginPlace place, int index, uint32_t param) const {
+    const PluginInstance* plugin = pluginAt(id, place, index);
+    return plugin ? plugin->parameter(param) : 0.0f;
+}
+
+void AudioEngine::setPluginParameter(int id, PluginPlace place, int index, uint32_t param, float value) {
+    if (PluginInstance* plugin = pluginAt(id, place, index)) {
+        plugin->setParameter(param, value);
+        plugin->notifyParameter(param);
+    }
+}
+
+void AudioEngine::notifyPluginParameter(int id, PluginPlace place, int index, uint32_t param) {
+    if (PluginInstance* plugin = pluginAt(id, place, index)) plugin->notifyParameter(param);
+}
+
 // ── Plug-in instruments (game thread) ──────────────────────────────────────────────────────────────────────
 bool AudioEngine::setInstrumentPlugin(int id, const std::string& plugin_id, std::string* error, const std::vector<uint8_t>* state) {
     reapPedals();
@@ -1165,6 +1224,7 @@ int AudioEngine::addSource(InstrumentKind kind, Vec3 position, float gain, float
     src->mono.assign(size_t(block_), 0.0f);
     src->bus_l.assign(size_t(block_), 0.0f);
     src->bus_r.assign(size_t(block_), 0.0f);
+    for (auto* buffer : {&src->pre, &src->out_l, &src->out_r}) buffer->assign(size_t(block_), 0.0f);
     if (isBus(kind)) reverb_send = 0.0f;  // (its tracks feed the reverb themselves)
     src->via = src->via_target = src->position = position;
     src->gain = src->gain_target = gain;
@@ -1540,11 +1600,28 @@ void AudioEngine::drainCommands() {
             case Command::SourceOutput:
                 if (s) s->output = int(c.v[0]);
                 break;
+            case Command::SendSet:
+                if (s) {
+                    auto& send = s->sends[size_t(int(c.v[0]))];
+                    send.bus = int(c.v[1]);
+                    send.gain_target = c.v[2];
+                    send.pre = c.v[3] > 0.5f;
+                    send.on = c.v[4] > 0.5f;
+                }
+                break;
+            case Command::MasterAutomation:
+                master_auto_rt_ = static_cast<std::vector<AutoPoint>*>(c.data);
+                master_applied_.store(c.epoch, std::memory_order_release);
+                break;
+            case Command::MasterRead:
+                master_read_ = c.v[0] > 0.5f;
+                break;
             case Command::AutomationRead:
                 if (s) {
                     s->read_volume = c.v[0] > 0.5f;
                     s->read_mute = c.v[1] > 0.5f;
                     s->read_sustain = c.v[2] > 0.5f;
+                    s->read_params = c.v[3] > 0.5f;
                     if (!s->read_sustain && s->auto_sustain) {
                         s->auto_sustain = false;
                         s->instrument->sustain(false);
@@ -1707,7 +1784,10 @@ void AudioEngine::drainCommands() {
             case Command::PedalBoardSet:
                 if (s) {
                     PedalBoard& board = c.v[0] > 0.5f ? s->insert_board : s->board;
-                    for (int i = 0; i < int(c.count); ++i) board.pedals[size_t(i)] = c.pedals[i];
+                    for (int i = 0; i < int(c.count); ++i) {
+                        board.pedals[size_t(i)] = c.pedals[i];
+                        board.slots[size_t(i)] = c.slots[i];
+                    }
                     board.count = int(c.count);
                     s->board_applied.store(c.epoch, std::memory_order_release);  // the pedals it left out may now be freed
                 }
@@ -1940,6 +2020,8 @@ void AudioEngine::renderTimeline() {
 
 namespace {
 
+constexpr float kDryPan = 0.70710678f;  // a sound sent straight, as an equal-power pan has it at the centre
+
 // Volume's value where the music is: glided between its points, level before the first and after the last.
 float rampAt(const std::vector<AutoPoint>& points, double step) {
     if (step <= points.front().step) return points.front().value;
@@ -2000,6 +2082,41 @@ void AudioEngine::chaseSustain(double step) {
     }
 }
 
+// A source's controls as their automation has them where the music is (at the block's start): an amp's knobs, the
+// plug-ins' controls (on its inserts, its Plug-in pedals, a plug-in instrument's own), its sends' levels. Each set only
+// when it changes.
+void AudioEngine::applyParams(Source& s, double at) {
+    for (ParamLane& lane : s.track_rt->automation.params) {
+        if (lane.points.empty()) continue;
+        const float value = rampAt(lane.points, at);
+        if (std::fabs(value - lane.last) < 1e-6f) continue;
+        lane.last = value;
+        PluginInstance* plugin = nullptr;
+        switch (lane.target) {
+            case ParamLane::AmpKnob:
+                if (isAmp(s.kind) && lane.index >= 0 && lane.index < kAmpControls)
+                    static_cast<Amp*>(s.instrument.get())->setControl(AmpControl(lane.index), value);
+                break;
+            case ParamLane::Insert:
+                for (int i = 0; i < s.insert_board.count; ++i)
+                    if (s.insert_board.slots[size_t(i)] == lane.index && s.insert_board.pedals[size_t(i)]->kind() == PedalKind::Plugin)
+                        plugin = static_cast<PluginPedal*>(s.insert_board.pedals[size_t(i)])->plugin();
+                break;
+            case ParamLane::Pedal:
+                if (lane.index >= 0 && lane.index < s.board.count && s.board.pedals[size_t(lane.index)]->kind() == PedalKind::Plugin)
+                    plugin = static_cast<PluginPedal*>(s.board.pedals[size_t(lane.index)])->plugin();
+                break;
+            case ParamLane::Instrument:
+                if (s.kind == InstrumentKind::PluginSynth) plugin = static_cast<PluginSynth*>(s.instrument.get())->plugin();
+                break;
+            case ParamLane::Send:
+                if (lane.index >= 0 && lane.index < kMaxSends) s.sends[size_t(lane.index)].gain_target = gainOf(value);
+                break;
+        }
+        if (plugin) plugin->setParameter(lane.param, value);
+    }
+}
+
 void AudioEngine::renderBlock() {
     const auto t0 = std::chrono::steady_clock::now();
     drainCommands();
@@ -2024,6 +2141,11 @@ void AudioEngine::renderBlock() {
     std::fill(click_.begin(), click_.end(), 0.0f);
     sequencer_.process(clock_ + block_, *this);
     renderTimeline();
+    if (sequencer_.running()) {  // the tracks' controls, as their automation has them
+        const double at = sequencer_.position(clock_);
+        for (Source* s : sources_)
+            if (s && s->track_rt && s->read_params && !s->track_rt->automation.params.empty()) applyParams(*s, at);
+    }
     const int64_t next_bar = sequencer_.nextBarAt(clock_);
     bar_timing_[0] = next_bar < 0 ? -1 : next_bar - clock_;
     bar_timing_[1] = int64_t(std::llround(sequencer_.barSamples()));
@@ -2069,9 +2191,16 @@ void AudioEngine::renderBlock() {
         double energy = 0.0, pre_energy = 0.0;
         float peak = 0.0f, pre_peak = 0.0f;
         Automating automating(*this, *s);
+        bool sending = false, sending_pre = false;  // its sends: to an aux track's bus, after its fader or before
+        for (const auto& send : s->sends)
+            if (send.bus >= 0 && (send.on || send.gain > 1e-6f)) {
+                sending = true;
+                sending_pre = sending_pre || send.pre;
+            }
         for (int i = 0; i < block_; ++i) {
             s->volume += (s->volume_target - s->volume) * mute_coef;
             mono[i] *= s->volume;
+            if (sending_pre) s->pre[size_t(i)] = mono[i];
             pre_energy += double(mono[i]) * mono[i];  // what reaches the fader
             pre_peak = std::max(pre_peak, std::fabs(mono[i]));
             s->mute_gain += (s->mute_target - s->mute_gain) * mute_coef;
@@ -2100,8 +2229,36 @@ void AudioEngine::renderBlock() {
         p.binaural_to = binaural_mix_;
         p.falloff = falloff_;
         Source* bus = s->output >= 0 && size_t(s->output) < sources_.size() ? sources_[size_t(s->output)] : nullptr;
-        if (bus && isBus(bus->kind)) s->spatializer.process(mono, bus->bus_l.data(), bus->bus_r.data(), p);  // into its folder
-        else s->spatializer.process(mono, mix_l_.data(), mix_r_.data(), p);
+        float* to_l = bus && isBus(bus->kind) ? bus->bus_l.data() : mix_l_.data();  // into its folder, or the master
+        float* to_r = bus && isBus(bus->kind) ? bus->bus_r.data() : mix_r_.data();
+        if (!sending) {
+            s->spatializer.process(mono, to_l, to_r, p);
+        } else {  // placed in the room on its own first, for its sends to take a copy of
+            std::fill(s->out_l.begin(), s->out_l.end(), 0.0f);
+            std::fill(s->out_r.begin(), s->out_r.end(), 0.0f);
+            s->spatializer.process(mono, s->out_l.data(), s->out_r.data(), p);
+            for (int i = 0; i < block_; ++i) {
+                to_l[i] += s->out_l[size_t(i)];
+                to_r[i] += s->out_r[size_t(i)];
+            }
+            const float muted = s->mute_gain * s->auto_mute;
+            for (auto& send : s->sends) {
+                Source* aux = send.bus >= 0 && size_t(send.bus) < sources_.size() ? sources_[size_t(send.bus)] : nullptr;
+                if (!aux || !isBus(aux->kind)) continue;
+                const float target = send.on ? send.gain_target : 0.0f;
+                for (int i = 0; i < block_; ++i) {
+                    send.gain += (target - send.gain) * mute_coef;
+                    if (send.pre) {  // its own sound, straight, as at the centre of the stereo
+                        const float v = s->pre[size_t(i)] * kDryPan * muted * send.gain;
+                        aux->bus_l[size_t(i)] += v;
+                        aux->bus_r[size_t(i)] += v;
+                    } else {
+                        aux->bus_l[size_t(i)] += s->out_l[size_t(i)] * send.gain;
+                        aux->bus_r[size_t(i)] += s->out_r[size_t(i)] * send.gain;
+                    }
+                }
+            }
+        }
 
         if (s->fade_blocks >= 0 && --s->fade_blocks < 0) {  // removed and faded out: forget it and hand it back
             sources_[index] = nullptr;
@@ -2198,8 +2355,16 @@ void AudioEngine::renderBlock() {
         if (lowest < meter_gain_.load(std::memory_order_relaxed)) meter_gain_.store(lowest, std::memory_order_relaxed);
     }
     uint32_t clipped = 0;
+    // The master fader: as set, or while the music plays, as its automation has it (glided every 32 samples).
+    const bool master_automated = sequencer_.running() && master_read_ && master_auto_rt_ && !master_auto_rt_->empty();
+    float master_ramp = 0.0f;
     for (int i = 0; i < block_; ++i) {
-        master_gain_ += (master_target_ - master_gain_) * slow;
+        if (master_automated && i % Automating::kEvery == 0) {
+            const int chunk = std::min(Automating::kEvery, block_ - i);
+            master_ramp = (gainOf(rampAt(*master_auto_rt_, sequencer_.position(clock_ + i + chunk))) - master_gain_) / float(chunk);
+        }
+        if (master_automated) master_gain_ += master_ramp;
+        else master_gain_ += (master_target_ - master_gain_) * slow;
         for (float* v : {&mix_l_[size_t(i)], &mix_r_[size_t(i)]}) {
             *v *= master_gain_;
             if (std::fabs(*v) > 1.0f) {

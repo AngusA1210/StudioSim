@@ -1639,7 +1639,8 @@ func _run() -> void:
 	var view = edit.view
 	check(main.hud.keys_prompt().contains("Tab  mix window  ·  R  edit window"), "the screen says R opens the edit window, beside Tab for the mix window",
 		main.hud.keys_prompt())
-	check(edit.is_open() and view.tracks().size() == 6 and not main.hud._root.visible, "R opens the edit window: a track for each instrument")
+	check(edit.is_open() and view.tracks().size() == 7 and view.tracks().back() == main.master_track and not main.hud._root.visible,
+		"R opens the edit window: a track for each instrument, and the master at the foot")
 	check(edit._panel.get_combined_minimum_size().x <= main.get_viewport().get_visible_rect().size.x - 24.0,
 		"its buttons all fit across the window", "%.0f px wide" % edit._panel.get_combined_minimum_size().x)
 	await tap(KEY_SPACE)
@@ -2275,6 +2276,108 @@ func _run() -> void:
 	timeline._take_pedal(keys_inst, [[2.0, 1.0], [6.0, 0.0]], 0.0, 16.0)
 	check(auto.points(keys_inst, "sustain") == [[0.0, 0.0], [2.0, 1.0], [6.0, 0.0]], "the sustain pedal played as an instrument records goes in its lane",
 		str(auto.points(keys_inst, "sustain")))
+
+	print("Automating knobs, plug-ins and the master")
+	var amp_auto = main.add_instrument("guitar_combo", Vector3(-2.0, 0.0, 2.0))
+	await frames(2)
+	var amp_row: int = view.tracks().find(amp_auto)
+	view.scroll_y = 0.0
+	view.scroll_y = clampf(view.row_top(amp_row) - view.RULER, 0.0, view._most_scroll())
+	view.press(view._lane_buttons(amp_auto, view.lane_top(amp_row))[0].rect.get_center())  # what its lane shows
+	var offers_knobs: bool = view._lane_choices.has("amp:master") and view._lane_choices.has("amp:gain")
+	view._lane_menu.id_pressed.emit(view._lane_choices.find("amp:master"))
+	view._lane_menu.hide()
+	amp_auto.automation["amp:master"] = [[0.0, 5.0], [16.0, 2.0]]
+	timeline.sync(amp_auto)
+	timeline.locate(8.0)
+	await frames(3)
+	check(offers_knobs and amp_auto.lanes[0] == "amp:master" and absf(float(amp_auto.amp_controls.master) - 3.5) < 0.01 and
+		absf(auto.shown(amp_auto, "amp:master") - 3.5) < 0.01, "an amp's knobs can be automated: stopped, its Master is where its lane has it at the playhead",
+		"%.2f" % float(amp_auto.amp_controls.master))
+	view.press(view._lane_buttons(amp_auto, view.lane_top(amp_row))[2].rect.get_center())  # +
+	var two_lanes: int = amp_auto.lanes.size()
+	view.press(view._lane_buttons(amp_auto, view.lane_top(amp_row, 1), 1)[3].rect.get_center())  # × on the second
+	check(two_lanes == 2 and amp_auto.lanes.size() == 1 and is_equal_approx(view.height_of(amp_auto), view.ROW + view.LANE),
+		"+ adds another lane under the track, × takes one away")
+	var delay_problem: String = main.set_insert(keys_inst, 0, "AU:61756678:64656c79:6170706c")
+	var keys_plugins: Array = auto.plugin_params(keys_inst)
+	var first_control: Dictionary = keys_plugins[0].params[0] if not keys_plugins.is_empty() and not keys_plugins[0].params.is_empty() else {}
+	var control_param: String = first_control.get("param", "")
+	view.show_param(keys_inst, 0, control_param)
+	keys_inst.automation[control_param] = [[0.0, 0.25]]
+	timeline.sync(keys_inst)
+	timeline.locate(4.0)
+	await frames(3)
+	var control_info: Dictionary = auto.plugin_control(keys_inst, control_param)
+	var control_now: float = control_info.get("value", -1.0)
+	var control_wanted: float = lerpf(control_info.get("min", 0.0), control_info.get("max", 1.0), 0.25)
+	check(delay_problem == "" and keys_plugins[0].name.begins_with("AUDelay") and control_param.begins_with("insert:0:") and
+		absf(control_now - control_wanted) < 0.01 * maxf(1.0, absf(control_info.get("max", 1.0) - control_info.get("min", 0.0))),
+		"a plug-in's controls are offered in its own submenu, and one automated is set where its lane has it", "%s at %.2f" % [first_control.get("name", ""), control_now])
+	keys_inst.automation.erase(control_param)
+	keys_inst.auto_mode = "latch"
+	timeline.locate(0.0)
+	timeline.start_playing()
+	await seconds(0.3)
+	var control_parts: Array = auto.plugin_parts(control_param)
+	var turned_to: float = lerpf(control_info.get("min", 0.0), control_info.get("max", 1.0), 0.6)
+	audio.set_plugin_parameter(keys_inst.source_id, control_parts[0], control_parts[1], control_parts[2], turned_to)  # as if turned in its window
+	await seconds(0.4)
+	var plugin_written: bool = auto.is_writing(keys_inst, control_param)
+	timeline.stop()
+	await frames(3)
+	check(plugin_written and auto.has_points(keys_inst, control_param) and auto.points(keys_inst, control_param).any(func(p): return absf(float(p[1]) - 0.6) < 0.01),
+		"a plug-in's control turned in its window as it plays (in Latch) is written into its lane")
+	keys_inst.auto_mode = "read"
+	keys_inst.automation.erase(control_param)
+	keys_inst.lanes = ["volume"]
+	main.clear_insert(keys_inst, 0)
+	main.remove_instrument(amp_auto)
+	var master_row: int = view.tracks().size() - 1
+	check(view.tracks()[master_row] == main.master_track and auto.params_for(main.master_track) == ["volume"],
+		"the master has a row at the foot of the edit window, its volume's lane under it")
+	main.master_track.automation.volume = [[0.0, 0.0], [16.0, -12.0]]
+	timeline.sync(main.master_track)
+	timeline.locate(8.0)
+	main.mixer.open()
+	await frames(3)
+	var master_shown: float = main.mixer._master.fader.value
+	main.mixer.close()
+	main.edit_window.open()
+	check(absf(master_shown + 6.0) < 0.1 and is_equal_approx(main.master_volume_db, 0.0), "the master fader shows its automation where the playhead is (the fader itself left as it was)",
+		"%.1f dB" % master_shown)
+
+	print("Aux tracks and sends")
+	var aux = main.add_aux()
+	var drums_send = main.find_instrument("drums")
+	main.mixer.open()
+	await frames(3)
+	main.mixer.set_show_sends(true)
+	await frames(2)
+	var drums_send_strip: Dictionary = main.mixer._strip_for(drums_send)
+	var aux_strip: Dictionary = main.mixer._strip_for(aux)
+	main.mixer.show_send_menu(drums_send, 0, drums_send_strip.sends[0].button)
+	var offered_aux: bool = main.mixer._send_menu.get_item_index(100) >= 0
+	main.mixer._send_menu.id_pressed.emit(100)
+	main.mixer._send_menu.hide()
+	await frames(2)
+	check(aux != null and not aux_strip.is_empty() and aux_strip.source.text == "1 send in" and offered_aux and drums_send.sends[0].get("aux") == aux and
+		drums_send_strip.sends[0].button.text.begins_with(aux.display_name) and drums_send_strip.sends[0].button.get_parent().get_parent().visible,
+		"an aux track has a strip of its own; in the sends view, a track's empty send offers it, and sends to it", drums_send_strip.sends[0].button.text)
+	timeline.locate(0.0)
+	timeline.start_playing()
+	await seconds(0.8)
+	var aux_heard: float = aux.peak_hold
+	timeline.stop()
+	main.mixer.show_send_menu(drums_send, 0, drums_send_strip.sends[0].button)
+	main.mixer._send_menu.id_pressed.emit(1)  # before the fader
+	main.set_send_level(drums_send, 0, -6.0)
+	check(aux_heard > 0.001 and drums_send.sends[0].pre and is_equal_approx(float(drums_send.sends[0].level_db), -6.0) and
+		auto.params_for(drums_send).has("send:0"), "it plays into the aux (its meter reads it), before the fader or after, at a level that can be automated too",
+		"%.0f dBFS" % linear_to_db(maxf(aux_heard, 1e-9)))
+	main.mixer.set_show_sends(false)
+	main.mixer.close()
+	check(view.tracks().has(aux) and view.tracks().find(aux) == view.tracks().size() - 2, "the aux has a row in the edit window, after the tracks")
 	await tap(KEY_A)
 	check(not view.show_automation, "and A hides the lanes again")
 	main.edit_window.close()
@@ -2301,6 +2404,14 @@ func _run() -> void:
 	var reopened_keys_volume: Array = main.automation.points(reopened_keys, "volume")
 	check(reopened_keys_volume.size() == 2 and main.automation.points(reopened_keys, "sustain").size() == 3, "its automation is kept with the room",
 		str(reopened_keys_volume))
+	var reopened_aux = main.auxes[0] if main.auxes.size() == 1 else null
+	var reopened_drums_send: Dictionary = main.find_instrument("drums").sends[0]
+	check(reopened_aux != null and reopened_drums_send.get("aux") == reopened_aux and reopened_drums_send.get("pre", false) and
+		main.automation.points(main.master_track, "volume").size() == 2, "and its aux track, the sends to it, and the master's automation")
+	main.remove_aux(reopened_aux)
+	check(main.auxes.is_empty() and main.find_instrument("drums").sends[0].is_empty(), "an aux track taken away takes the sends to it with it")
+	main.master_track.automation = {}
+	timeline.sync(main.master_track)
 	main.remove_folder(reopened_folder)
 	check(main.folders.is_empty() and main.folder_of(main.find_instrument("drums")) == null, "a folder taken away leaves its tracks going to the master")
 	main.mixer.open()

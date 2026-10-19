@@ -12,7 +12,11 @@ extends CanvasLayer
 ## Shift-click or Cmd-click it to choose tracks (Cmd-G puts those chosen in a new folder); right-click it to rename it,
 ## colour it, put it in a folder or take it out, duplicate it or remove it from the room. Under its input, each strip's
 ## output: the master, or a routing folder. A folder's strip (before its tracks') has its inserts, its mute and solo,
-## and its fader, through which its tracks reach the master. As in Pro Tools, the peak readout holds the
+## and its fader, through which its tracks reach the master. An aux track's strip (after the tracks') has its inserts
+## (a reverb, a delay), mute and solo and its fader: the tracks' sends play into it. The buttons at the top switch the
+## strips' top between their inserts and their sends, A to E as Pro Tools has them: click an empty send to send to an
+## aux (or a new one); drag a send up or down for its level (Shift for fine moves), double-click it for 0 dB, Cmd-click
+## to switch it off and on, right-click it for before the fader or after, another aux, or none. As in Pro Tools, the peak readout holds the
 ## highest peak until it is clicked (Alt-click clears them all), and clicking a meter does the same. The channel meters
 ## read before the fader; right-click any fader to have them read after it instead.
 ## Rather than instructions written across it, the line at the foot of the window describes whatever the mouse is over.
@@ -41,6 +45,12 @@ var _panel: PanelContainer
 var _strip_row: HBoxContainer
 var _strips: Array = []  # {inst (an instrument or a folder), fader, meter, value, peak, input, mute, solo, source, output, inserts: [{button, style}], plate, frame}
 var _colors: PopupMenu   # the Colour submenu of a track's menu
+var show_sends := false  # the strips' top showing their sends rather than their inserts
+var _view_inserts: Button
+var _view_sends: Button
+var _send_menu: PopupMenu  # an empty send's auxes to choose from, or a full one's options
+var _send_menu_for := []   # [instrument, slot]
+var _send_drag := {}       # a send's level being dragged: {inst, slot, from_y, from_db}
 var _modes: PopupMenu    # and its Automation submenu
 var _insert_menu: PopupMenu  # what a right-click on a full insert offers
 var _menu_for := []  # [instrument, slot] that menu is open for
@@ -91,7 +101,7 @@ func close() -> void:
 	_meter_menu.hide()
 	_plugin_menu.hide()
 	app.plugin_browser.hide()
-	for folder in app.folders:
+	for folder in app.folders + app.auxes:
 		app.hide_insert_editors(folder)
 	for inst in app.instruments:
 		app.hide_insert_editors(inst)
@@ -171,6 +181,11 @@ func _build() -> void:
 	_status.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_status.clip_text = true
 	header.add_child(_status)
+	var view_group := ButtonGroup.new()
+	_view_inserts = _view_button(header, "Inserts", view_group, "The strips' inserts at their top, A to E")
+	_view_sends = _view_button(header, "Sends", view_group, "The strips' sends at their top, A to E: copies of a track's sound to aux tracks")
+	_view_inserts.button_pressed = true
+	_view_sends.toggled.connect(func(on: bool) -> void: set_show_sends(on))
 	_to_edit = Button.new()
 	_to_edit.text = "Edit window  (R)"
 	_to_edit.focus_mode = Control.FOCUS_NONE
@@ -217,6 +232,9 @@ func _build() -> void:
 		if _name_menu_for != null and app.has_track(_name_menu_for):
 			app.set_track_color(_name_menu_for, color))
 	_name_menu.add_child(_colors)
+	_send_menu = PopupMenu.new()
+	_send_menu.id_pressed.connect(_on_send_menu_chosen)
+	_root.add_child(_send_menu)
 	_modes = TrackMenu.modes_menu(app, func(mode: String) -> void:
 		if _name_menu_for != null and app.has_track(_name_menu_for):
 			app.automation.set_mode(_name_menu_for, mode))
@@ -252,7 +270,7 @@ func _build_reverb() -> PanelContainer:
 	box.add_child(level_with_inserts)
 	_small(box, "RETURN")
 	var gap := Control.new()
-	gap.custom_minimum_size.y = 54
+	gap.custom_minimum_size.y = 84
 	box.add_child(gap)
 	var pair := _fader_and_meter(box, 2, REVERB)
 	pair.fader.value_changed.connect(func(db: float) -> void: app.set_reverb_db(db))
@@ -276,7 +294,7 @@ func _build_master() -> PanelContainer:
 	limiter.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	box.add_child(limiter)
 	var gap := Control.new()
-	gap.custom_minimum_size.y = 24
+	gap.custom_minimum_size.y = 54
 	box.add_child(gap)
 	var pair := _fader_and_meter(box, 2, null)
 	pair.fader.value_changed.connect(_on_master_changed)
@@ -291,6 +309,7 @@ func _build_strip(inst) -> Dictionary:
 	var strip := _strip_panel(STRIP_WIDTH)
 	var box: VBoxContainer = strip.get_child(0)
 	var inserts := _build_inserts(box, inst)
+	var sends := _build_sends(box, inst)
 	_small(box, "INSTRUMENT" if inst.plays_plugin else "INPUT")
 	var source: Control
 	if inst.plays_plugin:  # the plug-in it plays, in place of where its input comes from
@@ -358,7 +377,8 @@ func _build_strip(inst) -> Dictionary:
 	box.add_child(plate)
 	_strip_row.add_child(strip)
 	return {"inst": inst, "fader": pair.fader, "meter": pair.meter, "value": readouts.value, "peak": readouts.peak, "input": input,
-		"mute": mute, "solo": solo, "source": source, "output": output, "inserts": inserts, "plate": plate, "frame": strip.get_theme_stylebox("panel")}
+		"mute": mute, "solo": solo, "source": source, "output": output, "inserts": inserts, "sends": sends, "plate": plate,
+		"frame": strip.get_theme_stylebox("panel"), "panel": strip}
 
 
 ## A routing folder's strip: its inserts (in stereo), how many tracks it has, mute and solo, and its fader, through
@@ -367,12 +387,14 @@ func _build_folder_strip(folder) -> Dictionary:
 	var strip := _strip_panel(STRIP_WIDTH)
 	var box: VBoxContainer = strip.get_child(0)
 	var inserts := _build_inserts(box, folder)
-	_small(box, "FOLDER")
+	var sends := _build_sends(box, folder)
+	_small(box, "AUX" if folder.is_aux else "FOLDER")
 	var count := Label.new()
 	count.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	count.custom_minimum_size.y = 24
 	count.add_theme_font_size_override("font_size", 12)
-	Hints.give(count, "The tracks in it play into it, and through its inserts and fader to the master")
+	Hints.give(count, "The tracks' sends to it play into it, and through its inserts and fader to the master" if folder.is_aux else
+		"The tracks in it play into it, and through its inserts and fader to the master")
 	box.add_child(count)
 	var gap := Control.new()  # (where a track has its output)
 	gap.custom_minimum_size.y = 24
@@ -396,7 +418,8 @@ func _build_folder_strip(folder) -> Dictionary:
 	box.add_child(plate)
 	_strip_row.add_child(strip)
 	return {"inst": folder, "fader": pair.fader, "meter": pair.meter, "value": readouts.value, "peak": readouts.peak, "input": null,
-		"mute": mute, "solo": solo, "source": count, "output": null, "inserts": inserts, "plate": plate, "frame": strip.get_theme_stylebox("panel")}
+		"mute": mute, "solo": solo, "source": count, "output": null, "inserts": inserts, "sends": sends, "plate": plate,
+		"frame": strip.get_theme_stylebox("panel"), "panel": strip}
 
 
 const INSERT_HEIGHT := 19.0
@@ -406,12 +429,17 @@ func _inserts_height() -> float:
 	return 14.0 + 6.0 + audio.get_max_inserts() * (INSERT_HEIGHT + 2.0)
 
 
-## A strip's insert slots, A to E as in Pro Tools.
+## A strip's insert slots, A to E as in Pro Tools; and in the same place (shown instead, in the sends view), its sends.
 func _build_inserts(box: VBoxContainer, inst) -> Array:
-	_small(box, "INSERTS")
+	var section := VBoxContainer.new()
+	section.add_theme_constant_override("separation", 6)
+	section.visible = not show_sends
+	section.set_meta("inserts", true)
+	box.add_child(section)
+	_small(section, "INSERTS")
 	var column := VBoxContainer.new()
 	column.add_theme_constant_override("separation", 2)
-	box.add_child(column)
+	section.add_child(column)
 	var slots := []
 	for slot in audio.get_max_inserts():
 		var button := Button.new()
@@ -435,6 +463,176 @@ func _build_inserts(box: VBoxContainer, inst) -> Array:
 		column.add_child(button)
 		slots.append({"button": button, "style": style})
 	return slots
+
+
+## A strip's sends, A to E as Pro Tools has them (an aux's or a folder's strip has none: the place is kept, empty).
+func _build_sends(box: VBoxContainer, inst) -> Array:
+	var section := VBoxContainer.new()
+	section.add_theme_constant_override("separation", 6)
+	section.visible = show_sends
+	section.set_meta("sends", true)
+	box.add_child(section)
+	box.move_child(section, 1)
+	_small(section, "SENDS")
+	var column := VBoxContainer.new()
+	column.add_theme_constant_override("separation", 2)
+	section.add_child(column)
+	var slots := []
+	for slot in audio.get_max_sends():
+		var button := Button.new()
+		button.focus_mode = Control.FOCUS_NONE
+		button.custom_minimum_size = Vector2(STRIP_WIDTH - 12, INSERT_HEIGHT)
+		button.clip_text = true
+		button.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		button.add_theme_font_size_override("font_size", 11)
+		var style := StyleBoxFlat.new()
+		style.set_corner_radius_all(3)
+		style.set_border_width_all(1)
+		style.content_margin_left = 4
+		style.content_margin_right = 4
+		for state in ["normal", "hover", "pressed", "hover_pressed"]:
+			button.add_theme_stylebox_override(state, style)
+		if inst.is_folder:
+			button.disabled = true
+			button.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		else:
+			button.gui_input.connect(_on_send_input.bind(inst, slot, button))
+			Hints.give(button, _send_hint.bind(inst, slot))
+		column.add_child(button)
+		slots.append({"button": button, "style": style})
+	return slots
+
+
+func _view_button(header: Control, text: String, group: ButtonGroup, hint: String) -> Button:
+	var button := Button.new()
+	button.text = text
+	button.toggle_mode = true
+	button.button_group = group
+	button.focus_mode = Control.FOCUS_NONE
+	Hints.give(button, hint)
+	header.add_child(button)
+	return button
+
+
+## The strips' top: their sends, or their inserts.
+func set_show_sends(on: bool) -> void:
+	show_sends = on
+	_view_sends.set_pressed_no_signal(on)
+	_view_inserts.set_pressed_no_signal(not on)
+	for strip in _strips:
+		for child in strip.panel.get_child(0).get_children():
+			if child.has_meta("inserts"):
+				child.visible = not on
+			elif child.has_meta("sends"):
+				child.visible = on
+
+
+## What each send shows: the aux it goes to and its level (as its automation has it, playing), pre-fader marked,
+## dim while it is off.
+func _show_sends(strip: Dictionary) -> void:
+	var inst = strip.inst
+	for slot in strip.sends.size():
+		var button: Button = strip.sends[slot].button
+		var style: StyleBoxFlat = strip.sends[slot].style
+		var send: Dictionary = {} if inst.is_folder else inst.sends[slot]
+		if send.is_empty():
+			button.text = ""
+			style.bg_color = Color(0.1, 0.105, 0.12)
+			style.border_color = Color(0, 0, 0, 0.5)
+			continue
+		var db: float = app.automation.shown(inst, "send:%d" % slot)
+		button.text = "%s  %s%s" % [send.aux.display_name, _db_text(db), "  pre" if send.pre else ""]
+		style.bg_color = send.aux.color.darkened(0.55) if send.on else Color(0.18, 0.18, 0.2)
+		style.border_color = send.aux.color.darkened(0.2) if send.on else Color(0, 0, 0, 0.5)
+		var ink := Color(0.93, 0.94, 0.97) if send.on else Color(0.55, 0.57, 0.62)
+		for state in ["font_color", "font_hover_color", "font_pressed_color"]:
+			button.add_theme_color_override(state, ink)
+
+
+func _send_hint(inst, slot: int) -> String:
+	var send: Dictionary = inst.sends[slot]
+	if send.is_empty():
+		return "Send %s: click to send a copy of the track to an aux track (or a new one)" % char(65 + slot)
+	return "Send %s to %s, %s the fader%s: drag up or down for its level (Shift: fine), double-click for 0 dB, Cmd-click: %s, right-click for more" % [
+		char(65 + slot), send.aux.display_name, "before" if send.pre else "after", "" if send.on else ", off", "on" if not send.on else "off"]
+
+
+## A send pressed: empty, the auxes to send to; full, its level dragged (or with Cmd, switched; double-click, 0 dB);
+## right-clicked, its options.
+func _on_send_input(event: InputEvent, inst, slot: int, button: Button) -> void:
+	if event is InputEventMouseButton:
+		var e: InputEventMouseButton = event
+		var send: Dictionary = inst.sends[slot]
+		if e.pressed and e.button_index in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN] and not send.is_empty():
+			app.set_send_level(inst, slot, float(send.level_db) + (0.5 if e.button_index == MOUSE_BUTTON_WHEEL_UP else -0.5))
+		elif e.button_index == MOUSE_BUTTON_LEFT and e.pressed:
+			if send.is_empty():
+				show_send_menu(inst, slot, button)
+			elif e.meta_pressed or e.ctrl_pressed:
+				app.set_send(inst, slot, send.aux, send.level_db, send.pre, not send.on)
+			elif e.double_click:
+				app.set_send_level(inst, slot, 0.0)
+			else:
+				_send_drag = {"inst": inst, "slot": slot, "from_y": e.global_position.y, "from_db": float(send.level_db)}
+				app.automation.touch(inst, true, "send:%d" % slot)
+		elif e.button_index == MOUSE_BUTTON_LEFT and not e.pressed and not _send_drag.is_empty():
+			app.automation.touch(_send_drag.inst, false, "send:%d" % _send_drag.slot)
+			_send_drag = {}
+		elif e.button_index == MOUSE_BUTTON_RIGHT and e.pressed and not send.is_empty():
+			show_send_menu(inst, slot, button)
+		button.accept_event()
+	elif event is InputEventMouseMotion and not _send_drag.is_empty():
+		var fine: bool = event.shift_pressed
+		var travel: float = Fader.position_of(_send_drag.from_db) + (_send_drag.from_y - event.global_position.y) / (80.0 if not fine else 400.0)
+		app.set_send_level(_send_drag.inst, _send_drag.slot, snappedf(Fader.level_at(travel), 0.1))
+		button.accept_event()
+
+
+## The send menu: for an empty send, the aux tracks (and a new one); for a full one, before or after the fader, on or
+## off, another aux, or none.
+func show_send_menu(inst, slot: int, near: Control) -> void:
+	_send_menu_for = [inst, slot]
+	_send_menu.clear()
+	var send: Dictionary = inst.sends[slot]
+	if not send.is_empty():
+		_send_menu.add_check_item("Before the fader (pre)", 1)
+		_send_menu.set_item_checked(_send_menu.item_count - 1, send.pre)
+		_send_menu.add_check_item("On", 2)
+		_send_menu.set_item_checked(_send_menu.item_count - 1, send.on)
+		_send_menu.add_separator()
+	for i in app.auxes.size():
+		if send.is_empty() or app.auxes[i] != send.aux:
+			_send_menu.add_item(("To %s" if not send.is_empty() else "%s") % app.auxes[i].display_name, 100 + i)
+	_send_menu.add_item("To a new aux track" if not send.is_empty() else "A new aux track", 3)
+	if not send.is_empty():
+		_send_menu.add_separator()
+		_send_menu.add_item("Remove", 4)
+	_send_menu.position = Vector2i(near.get_screen_position() + Vector2(0, near.size.y))
+	_send_menu.popup()
+
+
+func _on_send_menu_chosen(id: int) -> void:
+	if _send_menu_for.is_empty() or not app.instruments.has(_send_menu_for[0]):
+		return
+	var inst = _send_menu_for[0]
+	var slot: int = _send_menu_for[1]
+	var send: Dictionary = inst.sends[slot]
+	match id:
+		1:
+			app.set_send(inst, slot, send.aux, send.level_db, not send.pre, send.on)
+		2:
+			app.set_send(inst, slot, send.aux, send.level_db, send.pre, not send.on)
+		3:
+			var aux = app.add_aux()
+			if aux == null:
+				_report("There's no room for another aux track.")
+			else:
+				app.set_send(inst, slot, aux, send.get("level_db", 0.0), send.get("pre", false), send.get("on", true))
+		4:
+			app.set_send(inst, slot, null)
+		_:
+			if id >= 100 and id - 100 < app.auxes.size():
+				app.set_send(inst, slot, app.auxes[id - 100], send.get("level_db", 0.0), send.get("pre", false), send.get("on", true))
 
 
 func _strip_panel(width: float) -> PanelContainer:
@@ -541,7 +739,7 @@ func _name_plate(text: String, color: Color, inst) -> Button:
 		plate.disabled = true
 		plate.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	elif inst.is_folder:
-		Hints.give(plate, "Click to choose it (Shift or Cmd-click for more).  Right-click to rename it, colour it or take it away")
+		Hints.give(plate, "Click to choose it (Shift or Cmd-click for more).  Right-click to rename it, colour it, its automation, or take it away")
 		plate.gui_input.connect(_on_name_input.bind(inst, plate))
 	else:
 		Hints.give(plate, "Click to open the %s, Shift or Cmd-click to choose it (%s: the chosen in a folder).  Right-click: rename, colour, folder, duplicate, remove" % [
@@ -603,7 +801,7 @@ func _refresh() -> void:
 			child.queue_free()
 		_strips.clear()
 		for track in app.track_order():
-			_strips.append(_build_folder_strip(track) if track.is_folder else _build_strip(track))
+			_strips.append(_build_folder_strip(track) if track.is_folder else _build_strip(track))  # (an aux's as a folder's)
 		_input_channels = -1
 	var channels: int = app.input_channel_count()
 	var relist := channels != _input_channels
@@ -625,6 +823,11 @@ func _refresh() -> void:
 		strip.meter.feed([inst.meter_peak], [inst.meter_rms])
 		_show_peak(strip.peak, inst.peak_hold)
 		_show_inserts(strip.inserts, inst.inserts)
+		_show_sends(strip)
+		if inst.is_aux:
+			var sending: int = app.instruments.filter(func(i): return i.sends.any(func(send): return send.get("aux") == inst)).size()
+			strip.source.text = "%d send%s in" % [sending, "" if sending == 1 else "s"]
+			continue
 		if inst.is_folder:
 			strip.source.text = "%d track%s" % [inst.members.size(), "" if inst.members.size() == 1 else "s"]
 			continue
@@ -642,9 +845,14 @@ func _refresh() -> void:
 
 	var m: Dictionary = app.meter
 	_master.meter.feed([m.get("peak_l", 0.0), m.get("peak_r", 0.0)], [m.get("rms_l", 0.0), m.get("rms_r", 0.0)])
-	if not _master.fader._dragging:
-		_master.fader.set_value_no_signal(app.master_volume_db)
-	_master.value.text = _db_text(app.master_volume_db)
+	var master_held: bool = _master.fader._dragging
+	if master_held != _master.get("held", false):  # (Touch and Latch write while it is held, as a track's)
+		_master.held = master_held
+		app.automation.touch(app.master_track, master_held)
+	var master_level: float = app.master_volume_db if master_held else app.automation.shown_level(app.master_track)
+	if not master_held:
+		_master.fader.set_value_no_signal(master_level)
+	_master.value.text = _db_text(master_level)
 	_show_peak(_master.peak, app.master_peak_hold)
 	_reverb.meter.feed([m.get("reverb_peak_l", 0.0), m.get("reverb_peak_r", 0.0)], [m.get("reverb_rms_l", 0.0), m.get("reverb_rms_r", 0.0)])
 	if not _reverb.fader._dragging:

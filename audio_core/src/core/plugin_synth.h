@@ -22,6 +22,7 @@ public:
     // Audio thread (or the game thread while the device is closed). Whatever was waiting to be sent is let go.
     void setPlugin(PluginInstance* plugin);
     void setBeatSamples(double beat_samples) { beat_samples_ = beat_samples; }  // the room's tempo, for the plug-in
+    PluginInstance* plugin() const { return plugin_; }
 
     void noteOn(int note, float velocity) override;
     void noteOff(int note) override;

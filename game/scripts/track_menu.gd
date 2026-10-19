@@ -7,6 +7,8 @@ const RENAME := 500
 const NEW_FOLDER := 501
 const OUT := 502
 const REMOVE_FOLDER := 503
+const NEW_AUX := 504
+const REMOVE_AUX := 505
 const INTO := 600  # and on, a folder each
 
 
@@ -39,9 +41,15 @@ static func add_items(menu: PopupMenu, app, track, colors: PopupMenu, modes: Pop
 			modes.set_item_checked(i, app.automation.MODES[i] == track.auto_mode)
 		menu.add_submenu_node_item("Automation: %s" % app.automation.MODE_NAMES[track.auto_mode], modes)
 	menu.add_separator()
+	if track.is_aux:
+		menu.add_item("New aux track", NEW_AUX)
+		menu.add_item("Remove the aux track (and the sends to it)", REMOVE_AUX)
+		return
 	if track.is_folder:
+		menu.add_item("New aux track", NEW_AUX)
 		menu.add_item("Remove the folder (its tracks go straight to the master)", REMOVE_FOLDER)
 		return
+	menu.add_item("New aux track", NEW_AUX)
 	var chosen: int = app.chosen_tracks.filter(func(t): return not t.is_folder).size() if app.chosen_tracks.has(track) else 1
 	menu.add_item("New folder with %s  (%s)" % ["the %d chosen tracks" % chosen if chosen > 1 else "it", app.bindings.label("group")], NEW_FOLDER)
 	var own = app.folder_of(track)
@@ -70,6 +78,10 @@ static func chosen(app, track, id: int) -> bool:
 				app.put_in_folder(inst, null)
 		REMOVE_FOLDER:
 			app.remove_folder(track)
+		NEW_AUX:
+			app.add_aux()
+		REMOVE_AUX:
+			app.remove_aux(track)
 		_:
 			if id < INTO or id - INTO >= app.folders.size():
 				return false

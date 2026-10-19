@@ -360,6 +360,45 @@ PackedStringArray SoundRoomAudio::get_factory_presets(int id, const String& plac
 bool SoundRoomAudio::load_factory_preset(int id, const String& place, int index, int preset) {
     return engine_ && engine_->loadFactoryPreset(id, placeOf(place), index, preset);
 }
+Array SoundRoomAudio::get_plugin_parameters(int id, const String& place, int index) const {
+    Array out;
+    if (!engine_) return out;
+    const sr::PluginPlace where = placeOf(place);
+    for (const sr::PluginParameter& p : engine_->pluginParameters(id, where, index)) {
+        Dictionary d;
+        d["id"] = int64_t(p.id);
+        d["name"] = str(p.name);
+        d["unit"] = str(p.unit);
+        d["min"] = p.min;
+        d["max"] = p.max;
+        d["default"] = p.initial;
+        d["value"] = engine_->pluginParameter(id, where, index, p.id);
+        out.push_back(d);
+    }
+    return out;
+}
+float SoundRoomAudio::get_plugin_parameter(int id, const String& place, int index, int param) const {
+    return engine_ ? engine_->pluginParameter(id, placeOf(place), index, uint32_t(param)) : 0.0f;
+}
+void SoundRoomAudio::set_plugin_parameter(int id, const String& place, int index, int param, float value) {
+    if (engine_) engine_->setPluginParameter(id, placeOf(place), index, uint32_t(param), value);
+}
+void SoundRoomAudio::notify_plugin_parameter(int id, const String& place, int index, int param) {
+    if (engine_) engine_->notifyPluginParameter(id, placeOf(place), index, uint32_t(param));
+}
+void SoundRoomAudio::set_send(int id, int slot, int bus, float gain, bool pre, bool on) {
+    if (engine_) engine_->setSend(id, slot, bus, gain, pre, on);
+}
+void SoundRoomAudio::set_master_automation(const Array& volume) {
+    if (!engine_) return;
+    std::vector<sr::AutoPoint> points;
+    for (int64_t i = 0; i < volume.size(); ++i) {
+        const Array p = volume[i];
+        if (p.size() >= 2) points.push_back({double(p[0]), float(p[1])});
+    }
+    engine_->setMasterAutomation(points);
+}
+void SoundRoomAudio::set_master_automation_read(bool read) { if (engine_) engine_->setMasterAutomationRead(read); }
 bool SoundRoomAudio::write_plugin_preset(const String& path, const String& name, const PackedByteArray& state) {
     std::string err;
     if (sr::writePluginPreset(str(path), str(name), bytes(state), &err)) return true;
@@ -513,12 +552,26 @@ bool SoundRoomAudio::set_track(int id, const Array& notes, const Array& clips, c
     }
     sr::TrackAutomation lanes;  // {volume, mute, sustain}: each [[step, value], ...]
     const std::pair<const char*, std::vector<sr::AutoPoint>*> named[3] = {{"volume", &lanes.volume}, {"mute", &lanes.mute}, {"sustain", &lanes.sustain}};
-    for (const auto& [name, lane] : named) {
-        const Array points = automation.get(name, Array());
+    auto read = [](const Array& points, std::vector<sr::AutoPoint>* lane) {
         for (int64_t i = 0; i < points.size(); ++i) {
             const Array p = points[i];
             if (p.size() >= 2) lane->push_back({double(p[0]), float(p[1])});
         }
+    };
+    for (const auto& [name, lane] : named) read(automation.get(name, Array()), lane);
+    // Its controls: [{target ("amp", "insert", "pedal", "instrument" or "send"), index, param, points}]
+    const Array params = automation.get("params", Array());
+    for (int64_t i = 0; i < params.size(); ++i) {
+        const Dictionary d = params[i];
+        sr::ParamLane lane;
+        const String target = d.get("target", "amp");
+        lane.target = target == "insert" ? sr::ParamLane::Insert : target == "pedal" ? sr::ParamLane::Pedal
+                    : target == "instrument" ? sr::ParamLane::Instrument : target == "send" ? sr::ParamLane::Send : sr::ParamLane::AmpKnob;
+        lane.index = int(d.get("index", 0));
+        lane.param = uint32_t(int64_t(d.get("param", 0)));
+        read(d.get("points", Array()), &lane.points);
+        std::stable_sort(lane.points.begin(), lane.points.end(), [](const sr::AutoPoint& a, const sr::AutoPoint& b) { return a.step < b.step; });
+        lanes.params.push_back(std::move(lane));
     }
     std::string err;
     if (engine_->setTrack(id, n, c, &err, lanes)) return true;
@@ -595,8 +648,8 @@ Dictionary SoundRoomAudio::take_recording() {
     return d;
 }
 
-void SoundRoomAudio::set_automation_read(int id, bool volume, bool mute, bool sustain) {
-    if (engine_) engine_->setAutomationRead(id, volume, mute, sustain);
+void SoundRoomAudio::set_automation_read(int id, bool volume, bool mute, bool sustain, bool params) {
+    if (engine_) engine_->setAutomationRead(id, volume, mute, sustain, params);
 }
 void SoundRoomAudio::set_tempo(float bpm) { if (engine_) engine_->setTempo(bpm); }
 void SoundRoomAudio::set_swing(float amount) { if (engine_) engine_->setSwing(amount); }
@@ -759,7 +812,15 @@ void SoundRoomAudio::_bind_methods() {
     ClassDB::bind_method(D_METHOD("set_loop_range", "on", "start_step", "end_step"), &SoundRoomAudio::set_loop_range);
     ClassDB::bind_method(D_METHOD("get_timeline_position"), &SoundRoomAudio::get_timeline_position);
     ClassDB::bind_method(D_METHOD("set_track", "id", "notes", "clips", "automation"), &SoundRoomAudio::set_track, DEFVAL(Dictionary()));
-    ClassDB::bind_method(D_METHOD("set_automation_read", "id", "volume", "mute", "sustain"), &SoundRoomAudio::set_automation_read);
+    ClassDB::bind_method(D_METHOD("set_automation_read", "id", "volume", "mute", "sustain", "params"), &SoundRoomAudio::set_automation_read, DEFVAL(true));
+    ClassDB::bind_method(D_METHOD("get_plugin_parameters", "id", "place", "index"), &SoundRoomAudio::get_plugin_parameters);
+    ClassDB::bind_method(D_METHOD("get_plugin_parameter", "id", "place", "index", "param"), &SoundRoomAudio::get_plugin_parameter);
+    ClassDB::bind_method(D_METHOD("set_plugin_parameter", "id", "place", "index", "param", "value"), &SoundRoomAudio::set_plugin_parameter);
+    ClassDB::bind_method(D_METHOD("notify_plugin_parameter", "id", "place", "index", "param"), &SoundRoomAudio::notify_plugin_parameter);
+    ClassDB::bind_method(D_METHOD("set_send", "id", "slot", "bus", "gain", "pre", "on"), &SoundRoomAudio::set_send);
+    ClassDB::bind_method(D_METHOD("set_master_automation", "volume"), &SoundRoomAudio::set_master_automation);
+    ClassDB::bind_method(D_METHOD("set_master_automation_read", "read"), &SoundRoomAudio::set_master_automation_read);
+    ClassDB::bind_method(D_METHOD("get_max_sends"), &SoundRoomAudio::get_max_sends);
     ClassDB::bind_method(D_METHOD("get_audio_peaks", "path", "per_second"), &SoundRoomAudio::get_audio_peaks);
     ClassDB::bind_method(D_METHOD("get_audio_seconds", "path"), &SoundRoomAudio::get_audio_seconds);
     ClassDB::bind_method(D_METHOD("set_record_arm", "id", "armed"), &SoundRoomAudio::set_record_arm);

@@ -118,6 +118,7 @@ private:
 // The pedals in front of one amp, in the order the signal passes through them: the audio thread's copy of the order.
 struct PedalBoard {
     std::array<Pedal*, kMaxPedals> pedals{};
+    std::array<int8_t, kMaxPedals> slots{};  // (inserts: the slot each is in)
     int count = 0;
 };
 

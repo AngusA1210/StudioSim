@@ -87,6 +87,8 @@ var title  # the title screen
 var room  # its size and the walls inside it
 var instruments: Array = []
 var folders: Array = []        # the routing folders (folder.gd)
+var auxes: Array = []          # the aux tracks (folder.gd, is_aux): buses the tracks' sends play into
+var master_track               # the master, as a track for automation (master_track.gd)
 var chosen_tracks: Array = []  # the tracks chosen by their names in the edit and mix windows: instruments and folders
 var speaker  # the Speaker the room starts with: the one whose input choice is remembered between runs
 # The room's clock. These belong to the room rather than the player's settings, so they start from the defaults.
@@ -156,6 +158,8 @@ func _ready() -> void:
 	automation.name = "Automation"
 	add_child(automation)
 	automation.setup(self)
+	master_track = preload("res://scripts/master_track.gd").new()
+	master_track.app = self
 	load_default_room()  # behind the title screen, until a room is made or opened
 	if options.has("room"):
 		var dims: PackedStringArray = options.room.split(",")
@@ -331,7 +335,7 @@ func _read_meter(delta: float) -> void:
 		inst.meter_peak = peaks[int(pre)] * scale  # so the other doesn't hold an old peak for when it is chosen
 		inst.meter_rms = audio.get_source_level(inst.source_id, pre) * scale
 		inst.peak_hold = maxf(inst.peak_hold, inst.meter_peak)
-	for folder in folders:  # (its bus's meters read dBFS as it reaches the master already)
+	for folder in folders + auxes:  # (its bus's meters read dBFS as it reaches the master already)
 		var peaks := [audio.get_source_peak(folder.source_id, false), audio.get_source_peak(folder.source_id, true)]
 		folder.meter_peak = peaks[int(pre)]
 		folder.meter_rms = audio.get_source_level(folder.source_id, pre)
@@ -373,7 +377,7 @@ func reset_bindings() -> void:
 func set_pre_fader_meters(on: bool) -> void:
 	settings.pre_fader_meters = on
 	settings.save_to_disk()
-	for inst in instruments + folders:
+	for inst in instruments + folders + auxes:
 		inst.peak_hold = 0.0
 
 
@@ -386,7 +390,7 @@ func set_pedalboard_open(on: bool) -> void:
 func clear_all_peaks() -> void:
 	master_peak_hold = 0.0
 	reverb_peak_hold = 0.0
-	for inst in instruments + folders:
+	for inst in instruments + folders + auxes:
 		inst.peak_hold = 0.0
 
 
@@ -710,7 +714,7 @@ func hide_plugin_editors(inst) -> void:
 ## set as the one clicked now is.
 func set_on_all(what: String, on: bool) -> void:
 	if what in ["mute", "solo"]:
-		for folder in folders:
+		for folder in folders + auxes:
 			if what == "mute":
 				folder.muted = on
 			else:
@@ -745,7 +749,8 @@ func set_soloed(inst, on: bool) -> void:
 ## Mute and solo, as Pro Tools has them, folders too: a folder muted silences its tracks, a folder soloed solos them,
 ## and a track soloed lets its folder be heard.
 func _apply_channels() -> void:
-	var any_solo := instruments.any(func(inst): return inst.soloed) or folders.any(func(folder): return folder.soloed)
+	var any_solo := instruments.any(func(inst): return inst.soloed) or folders.any(func(folder): return folder.soloed) or \
+		auxes.any(func(aux): return aux.soloed)
 	for inst in instruments:
 		var folder = folder_of(inst)
 		var soloed_here: bool = inst.soloed or (folder != null and folder.soloed)
@@ -754,6 +759,9 @@ func _apply_channels() -> void:
 	for folder in folders:
 		var heard: bool = folder.soloed or folder.members.any(func(inst): return inst.soloed)
 		audio.set_source_muted(folder.source_id, folder.muted or (any_solo and not heard))
+	for aux in auxes:  # heard while soloed, or while a track sending to it is
+		var heard: bool = aux.soloed or instruments.any(func(inst): return inst.soloed and inst.sends.any(func(send): return send.get("aux") == aux))
+		audio.set_source_muted(aux.source_id, aux.muted or (any_solo and not heard))
 
 
 # ── Tracks and folders ──────────────────────────────────────────────────────────────────────────────────────
@@ -767,7 +775,7 @@ const TRACK_COLORS := [["Red", Color(0.92, 0.26, 0.24)], ["Orange", Color(1.0, 0
 
 
 func has_track(track) -> bool:
-	return instruments.has(track) or folders.has(track)
+	return instruments.has(track) or folders.has(track) or auxes.has(track)
 
 
 ## Every track in order, as the edit and mix windows show them: each folder just before its tracks, and any folder
@@ -782,7 +790,7 @@ func track_order() -> Array:
 	for folder in folders:
 		if not out.has(folder):
 			out.append(folder)
-	return out
+	return out + auxes
 
 
 ## The folder an instrument's track is in, or null.
@@ -851,6 +859,69 @@ func remove_folder(folder) -> void:
 func set_folder_level(folder, db: float) -> void:
 	folder.level_db = clampf(db, -80.0, 12.0)
 	audio.set_source_gain(folder.source_id, 0.0 if folder.level_db <= -79.0 else db_to_linear(folder.level_db))
+
+
+## A new aux track, as Pro Tools' aux input: a bus that the tracks' sends play into (a reverb or a delay on its
+## inserts, say), and from there through its fader to the master. Null if the room's channels are all in use.
+func add_aux(the_name := ""):
+	var id: int = audio.add_source("bus", Vector3.ZERO, 1.0, 0.0)
+	if id < 0:
+		return null
+	var aux := Folder.new()
+	aux.is_aux = true
+	aux.source_id = id
+	aux.color = TRACK_COLORS[7][1]
+	aux.inserts = audio.get_inserts(id)
+	var number := 1
+	while auxes.any(func(other): return other.display_name == "Aux %d" % number):
+		number += 1
+	aux.display_name = the_name if the_name != "" else "Aux %d" % number
+	auxes.append(aux)
+	_apply_channels()
+	return aux
+
+
+## Takes an aux track away, and the sends to it.
+func remove_aux(aux) -> void:
+	if not auxes.has(aux):
+		return
+	for inst in instruments:
+		for slot in inst.sends.size():
+			if inst.sends[slot].get("aux") == aux:
+				set_send(inst, slot, null)
+	hide_insert_editors(aux)
+	auxes.erase(aux)
+	chosen_tracks.erase(aux)
+	audio.remove_source(aux.source_id)
+	_apply_channels()
+
+
+## A track's send (A to E), as Pro Tools': to an aux track (null takes it away), at a level in dB, after its fader
+## (the track as heard in the room) or `pre` before it (its own sound, straight), on or off.
+func set_send(inst, slot: int, aux, level_db := 0.0, pre := false, on := true) -> void:
+	inst.sends[slot] = {} if aux == null else {"aux": aux, "level_db": clampf(level_db, -80.0, 12.0), "pre": pre, "on": on}
+	_send_send(inst, slot)
+
+
+func set_send_level(inst, slot: int, db: float) -> void:
+	if not inst.sends[slot].is_empty():
+		inst.sends[slot].level_db = clampf(db, -80.0, 12.0)
+		_send_send(inst, slot)
+
+
+func _send_send(inst, slot: int) -> void:
+	var send: Dictionary = inst.sends[slot]
+	if send.is_empty():
+		audio.set_send(inst.source_id, slot, -1, 0.0, false, false)
+		return
+	var db := float(send.level_db)
+	var gain: float = 0.0 if db <= -79.0 else db_to_linear(db) * (inst.normal_gain() if send.pre else 1.0)  # (before the fader: as at 0 dB)
+	audio.set_send(inst.source_id, slot, send.aux.source_id, gain, send.pre, send.on)
+
+
+## The master fader at a gain, as its automation has it (stopped, at the playhead), without moving the fader.
+func apply_master_gain(gain: float) -> void:
+	audio.set_master_volume(gain * _stage_gain)
 
 
 ## Cmd-G: the tracks chosen, in a new folder (one already in a folder moves to the new one).
@@ -1069,6 +1140,11 @@ func clear_room() -> void:
 		remove_instrument(inst)
 	for folder in folders.duplicate():
 		remove_folder(folder)
+	for aux in auxes.duplicate():
+		remove_aux(aux)
+	master_track.automation = {}
+	master_track.auto_mode = "read"
+	master_track.lanes = ["volume"]
 
 
 ## A room has just been filled (the default one, or a template's): mute and solo take effect, the Speaker whose input
@@ -1101,6 +1177,9 @@ func duplicate_instrument(inst, at = null):
 	copy.set_color(inst.color)
 	if folder_of(inst) != null:  # in the same folder, just after it
 		put_in_folder(copy, folder_of(inst), inst)
+	for slot in inst.sends.size():  # its sends, to the same auxes
+		if not inst.sends[slot].is_empty():
+			set_send(copy, slot, inst.sends[slot].aux, inst.sends[slot].level_db, inst.sends[slot].pre, inst.sends[slot].on)
 	var problems := []
 	if inst.plays_plugin and str(inst.instrument_plugin.get("plugin_id", "")) != "":
 		var problem := set_instrument_plugin(copy, inst.instrument_plugin.plugin_id, audio.get_plugin_state(inst.source_id, "instrument", 0))

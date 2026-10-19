@@ -2420,6 +2420,116 @@ int main(int argc, char** argv) {
                   std::fabs(pedal_take.sustain[1].step - pedal_take.sustain[0].step - 0.5 / pedal_take.step_seconds) < 0.2,
               "the sustain pedal is recorded with the notes: where it went down and came up",
               two ? fmt("down at step %.1f, ", pedal_take.sustain[0].step) + fmt("up at %.1f", pedal_take.sustain[1].step) : auto_error);
+
+        // An amp's knob automated: its Master from 5 down to 0 over a bar, the guitar going with it.
+        Room amp_room;
+        amp_room.soloOnly(-1);
+        amp_room.engine.setReverb(false);
+        amp_room.engine.setLimiter(false);
+        amp_room.engine.setTempo(120.0);
+        const int amp = amp_room.engine.addSource(InstrumentKind::GuitarCombo, {0.0f, 0.3f, 2.0f}, 1.0f, 0.4f);
+        amp_room.engine.setSourceInput(amp, true);
+        int64_t strummed = 0;
+        auto guitar = [&](int64_t) { return 0.2f * float(std::sin(6.2831853 * 196.0 * double(strummed++) / 48000.0)); };
+        TrackAutomation knob;
+        ParamLane master_knob;
+        master_knob.target = ParamLane::AmpKnob;
+        master_knob.index = int(AmpControl::Master);
+        master_knob.points = {{0.0, 5.0f}, {8.0, 5.0f}, {16.0, 0.0f}};
+        knob.params.push_back(master_knob);
+        amp_room.engine.setTrack(amp, {}, {}, &auto_error, knob);
+        amp_room.engine.playFrom(0.0);
+        renderSeconds(amp_room.engine, 0.3, guitar);
+        const Render loud_amp = renderSeconds(amp_room.engine, 0.5, guitar);
+        renderSeconds(amp_room.engine, 1.4, guitar);
+        const Render turned_down = renderSeconds(amp_room.engine, 0.3, guitar);
+        check(loud_amp.rms_l > 0.003 && turned_down.rms_l < 0.1 * loud_amp.rms_l, "an amp's knob automated turns as it plays: its Master down from 5 to 0",
+              fmt("%.0f dB lower", db(loud_amp.rms_l) - db(turned_down.rms_l)));
+
+        // A plug-in's control automated: AUDelay on an insert, its first control set where the music is.
+        const std::string au_delay = "AU:61756678:64656c79:6170706c";
+        std::string delay_error;
+        const bool delay_on = amp_room.engine.setInsert(amp, 0, au_delay, &delay_error);
+        const std::vector<PluginParameter> controls = amp_room.engine.pluginParameters(amp, PluginPlace::Insert, 0);
+        bool control_set = false;
+        float control_at = 0.0f, control_wanted = 0.0f;
+        if (delay_on && !controls.empty()) {
+            const PluginParameter& first = controls[0];
+            control_wanted = first.min + 0.25f * (first.max - first.min);
+            TrackAutomation plugged;
+            ParamLane lane;
+            lane.target = ParamLane::Insert;
+            lane.index = 0;
+            lane.param = first.id;
+            lane.points = {{0.0, control_wanted}};
+            plugged.params.push_back(lane);
+            amp_room.engine.setTrack(amp, {}, {}, &auto_error, plugged);
+            amp_room.engine.playFrom(0.0);
+            renderSeconds(amp_room.engine, 0.2, guitar);
+            control_at = amp_room.engine.pluginParameter(amp, PluginPlace::Insert, 0, first.id);
+            control_set = std::fabs(control_at - control_wanted) < 1e-3f * std::max(1.0f, std::fabs(first.max - first.min));
+        }
+        check(delay_on && controls.size() >= 2 && control_set,
+              "a plug-in lists its controls, and one automated is set as the music plays",
+              delay_on ? fmt("%.0f controls; ", double(controls.size())) + (controls.empty() ? std::string() : controls[0].name) + fmt(" at %.2f", control_at)
+                       : delay_error);
+        amp_room.engine.setSequencerRunning(false);
+
+        // The master fader automated: the whole mix down to silence by bar 2.
+        amp_room.engine.clearInsert(amp, 0);
+        amp_room.engine.setTrack(amp, {}, {}, &auto_error);
+        amp_room.engine.setAmpControl(amp, AmpControl::Master, 5.0f);  // (where its automation left it, back up)
+        amp_room.engine.setMasterAutomation({{0.0, 0.0f}, {8.0, 0.0f}, {16.0, -80.0f}});
+        amp_room.engine.playFrom(0.0);
+        renderSeconds(amp_room.engine, 0.3, guitar);
+        const Render master_up = renderSeconds(amp_room.engine, 0.5, guitar);
+        renderSeconds(amp_room.engine, 1.4, guitar);
+        const Render master_down = renderSeconds(amp_room.engine, 0.3, guitar);
+        amp_room.engine.setMasterAutomationRead(false);
+        renderSeconds(amp_room.engine, 0.2, guitar);
+        const Render master_fader = renderSeconds(amp_room.engine, 0.3, guitar);
+        check(master_up.rms_l > 0.003 && master_down.peak < 1e-6 && master_fader.rms_l > 0.5 * master_up.rms_l,
+              "the master fader's automation brings the whole mix down; not read, the master fader is heard again",
+              fmt("%.0f dBFS, then ", db(master_up.rms_l)) + fmt("%.0f", db(master_down.peak)));
+        amp_room.engine.setSequencerRunning(false);
+    }
+
+    {
+        std::printf("\nAux tracks and sends\n");
+        // An aux's bus, sent to from the drums: after their fader, at unity, it carries them as heard in the room; before
+        // it, with their fader down, still their own sound; switched off, nothing.
+        Room sends;
+        sends.quietRoom(sends.drums);
+        sends.engine.setLimiter(false);
+        const int aux = sends.engine.addSource(InstrumentKind::Bus, {0.0f, 0.0f, 0.0f}, 1.0f, 0.0f);
+        sends.engine.setSourceMuted(aux, false);
+        auto hit = [&]() {
+            sends.engine.noteOn(sends.drums, 38, 0.9f);
+            renderSeconds(sends.engine, 0.1);
+            const float drums_peak = sends.engine.sourcePeak(sends.drums), aux_peak = sends.engine.sourcePeak(aux);
+            renderSeconds(sends.engine, 0.8);
+            sends.engine.sourcePeak(sends.drums);
+            sends.engine.sourcePeak(aux);
+            return std::make_pair(drums_peak, aux_peak);
+        };
+        renderSeconds(sends.engine, 0.1);
+        const auto none = hit();
+        sends.engine.setSend(sends.drums, 0, aux, 1.0f, false, true);
+        renderSeconds(sends.engine, 0.3);  // (settled)
+        const auto post = hit();
+        sends.engine.setSourceGain(sends.drums, 0.0f);
+        renderSeconds(sends.engine, 0.3);  // (settled)
+        const auto post_down = hit();
+        sends.engine.setSend(sends.drums, 0, aux, 1.0f, true, true);
+        renderSeconds(sends.engine, 0.3);  // (settled)
+        const auto pre_down = hit();
+        sends.engine.setSend(sends.drums, 0, aux, 1.0f, true, false);
+        renderSeconds(sends.engine, 0.3);  // (settled)
+        const auto off = hit();
+        check(none.second < 1e-6f && post.second > 0.01f && post_down.second < 1e-5f && pre_down.second > 0.01f && off.second < 1e-5f,
+              "a send to an aux's bus: after the fader it follows it, before the fader it doesn't, and off it sends nothing",
+              fmt("none %.0f, ", db(none.second)) + fmt("aux %.0f dBFS after the fader, ", db(post.second)) + fmt("%.0f with it down, ", db(post_down.second)) +
+                  fmt("%.0f before it with the fader down, ", db(pre_down.second)) + fmt("%.0f off", db(off.second)));
     }
 
     {

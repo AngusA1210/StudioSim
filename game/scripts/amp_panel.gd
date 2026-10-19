@@ -206,8 +206,12 @@ func _process(_delta: float) -> void:
 
 func _refresh() -> void:
 	for control in _knobs:
-		if not _knobs[control]._dragging:
-			_knobs[control].set_value_no_signal(inst.amp_controls[control])
+		var held: bool = _knobs[control]._dragging
+		if held != _knobs[control].get_meta("held", false):  # taken hold of, or let go: Touch and Latch write while it is held
+			_knobs[control].set_meta("held", held)
+			app.automation.touch(inst, held, "amp:" + control)
+		if not held:  # (as its automation has it, while that is read)
+			_knobs[control].set_value_no_signal(app.automation.shown(inst, "amp:" + control))
 		_knobs[control].modulate.a = 1.0 if inst.head_on or control == "master" else 0.35  # the head's knobs, bypassed with it
 	_head_choice.select(_index_of(Catalog.AMP_HEADS, inst.amp_head))
 	_cabinet_choice.select(_index_of(Catalog.AMP_CABINETS, inst.amp_cabinet))

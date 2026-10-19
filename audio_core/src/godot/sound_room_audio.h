@@ -137,6 +137,14 @@ public:
     bool set_plugin_state(int id, const String& place, int index, const PackedByteArray& state);
     PackedStringArray get_factory_presets(int id, const String& place, int index) const;
     bool load_factory_preset(int id, const String& place, int index, int preset);
+    Array get_plugin_parameters(int id, const String& place, int index) const;  // [{id, name, unit, min, max, default, value}]
+    float get_plugin_parameter(int id, const String& place, int index, int param) const;
+    void set_plugin_parameter(int id, const String& place, int index, int param, float value);
+    void notify_plugin_parameter(int id, const String& place, int index, int param);
+    void set_send(int id, int slot, int bus, float gain, bool pre, bool on);
+    void set_master_automation(const Array& volume);  // [[step, dB]]
+    void set_master_automation_read(bool read);
+    int get_max_sends() const { return sr::AudioEngine::kMaxSends; }
     // Preset files as every Audio Unit host shares them (.aupreset): writing a plug-in's settings under a name (false
     // with the reason in get_error()), and reading one back: {plugin_id, name, state}, or {} if it can't be read.
     bool write_plugin_preset(const String& path, const String& name, const PackedByteArray& state);
@@ -182,7 +190,7 @@ public:
     // A track's clips: notes [{step, length (steps), note, velocity}] and audio [{path, start, offset, length} (seconds)].
     // False with the reason in get_error() if a file couldn't be read (the rest are used).
     bool set_track(int id, const Array& notes, const Array& clips, const Dictionary& automation = Dictionary());  // (automation: {volume, mute, sustain}: [[step, value]])
-    void set_automation_read(int id, bool volume, bool mute, bool sustain);
+    void set_automation_read(int id, bool volume, bool mute, bool sustain, bool params = true);
     PackedFloat32Array get_audio_peaks(const String& path, double per_second);  // the loudest sample in each slice
     double get_audio_seconds(const String& path);  // 0 if it can't be read
     // Recording: arming a track; starting (`files` [[source id, WAV path]] for the armed Speakers and amps; the

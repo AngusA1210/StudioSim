@@ -130,8 +130,20 @@ struct AutoPoint {
     double step = 0.0;
     float value = 0.0f;
 };
+// A control's automation, glided between its points as volume is: an amp's knob (`index` the AmpControl, 0 to 10), a
+// plug-in's control on an insert (`index` its slot), on a Plug-in pedal (`index` its place on the amp's board) or a
+// plug-in instrument's (`param` the plug-in's own id for it, in its own range), or a send's level (`index` the send, in
+// dB as volume is).
+struct ParamLane {
+    enum Target : uint8_t { AmpKnob, Insert, Pedal, Instrument, Send } target = AmpKnob;
+    int index = 0;
+    uint32_t param = 0;
+    std::vector<AutoPoint> points;  // in order of their steps
+    float last = -1e30f;            // (the audio thread's: what it last set)
+};
 struct TrackAutomation {
     std::vector<AutoPoint> volume, mute, sustain;  // each in order of its steps
+    std::vector<ParamLane> params;
 };
 
 // What a recording took: each audio track's file (begun `start_step` into the timeline), and the notes played on
@@ -298,6 +310,11 @@ public:
     bool setPluginState(int id, PluginPlace place, int index, const std::vector<uint8_t>& state);
     std::vector<std::string> factoryPresets(int id, PluginPlace place, int index) const;
     bool loadFactoryPreset(int id, PluginPlace place, int index, int preset);
+    // The controls of the plug-in there that automation can move, each one's value now, and setting one (game thread).
+    std::vector<PluginParameter> pluginParameters(int id, PluginPlace place, int index) const;
+    float pluginParameter(int id, PluginPlace place, int index, uint32_t param) const;
+    void setPluginParameter(int id, PluginPlace place, int index, uint32_t param, float value);  // (its window told too)
+    void notifyPluginParameter(int id, PluginPlace place, int index, uint32_t param);  // its window shown what automation set
 
     // ── Plug-in instruments ──────────────────────────────────────────────────────────────────────────────
     // A source of kind PluginSynth plays one of the instrument plug-ins installed. Loading one replaces what it held
@@ -354,9 +371,17 @@ public:
     // one couldn't be read; the rest are used.
     bool setTrack(int id, const std::vector<TimelineNote>& notes, const std::vector<ClipSpec>& clips, std::string* error,
                   const TrackAutomation& automation = {});
-    // Whether a track's automation is read as it plays (each of volume, mute and the sustain pedal): off while it is
-    // being written (a fader held in Touch, say), so that the fader is heard.
-    void setAutomationRead(int id, bool volume, bool mute, bool sustain);
+    // Whether a track's automation is read as it plays (each of volume, mute, the sustain pedal, and its controls):
+    // off while it is being written (a fader held in Touch, say), so that the fader is heard.
+    void setAutomationRead(int id, bool volume, bool mute, bool sustain, bool params = true);
+    // A track's sends, as Pro Tools' (kMaxSends of them): a copy of its sound to a bus (an aux track's, a source added
+    // as InstrumentKind::Bus; -1 for none), at `gain`. After its fader it is the track as heard in the room, as its
+    // output is; before its fader (`pre`), the track's own sound, straight, in both ears. Off, it sends nothing.
+    static constexpr int kMaxSends = 5;
+    void setSend(int id, int slot, int bus, float gain, bool pre, bool on);
+    // The master fader's automation (dB, as a track's volume), and whether it is read.
+    void setMasterAutomation(const std::vector<AutoPoint>& volume);
+    void setMasterAutomationRead(bool read);
     // An audio file's loudest sample in each `1 / per_second` of a second, for drawing its clips (read once and kept).
     std::vector<float> audioPeaks(const std::string& path, double per_second);
     double audioSeconds(const std::string& path);  // 0 if it can't be read
@@ -423,7 +448,8 @@ private:
             PatternNoteSet, PatternNoteRemove, PatternClear, PatternSteps, SourceLoop, SourceVolume,
             SequencerRunning, Tempo, Swing, Click, ClickVolume, Reverb2, SourceGain, Falloff, LimiterOn,
             AmpKnob, AmpHeadSet, AmpCabinetSet, LooperMemory, LooperAct, PedalBoardSet, PedalOn, PedalControl, SynthPlugin,
-            TimelinePlay, TimelineLoop, TrackSet, RecordArm, RecordStart, RecordStop, SourceOutput, AutomationRead,
+            TimelinePlay, TimelineLoop, TrackSet, RecordArm, RecordStart, RecordStop, SourceOutput, AutomationRead, SendSet,
+            MasterAutomation, MasterRead,
         } type = AddSource;
         int id = 0;
         float v[9] = {};
@@ -434,6 +460,7 @@ private:
         // PedalControl, LooperMemory and LooperAct: the pedal, [0]. SynthPlugin: the plug-in instrument's, [0]
         // (a PluginPedal holding it), or none.
         Pedal* pedals[kMaxPedals] = {};
+        int8_t slots[kMaxPedals] = {};  // PedalBoardSet (inserts): each one's slot
         uint32_t epoch = 0;
         void* data = nullptr;  // TrackSet: the track's timeline; RecordStart: the recorder
     };
@@ -464,6 +491,15 @@ private:
     // StepSink: plays every source's pattern notes for this step, and the click.
     void step(int64_t index, double at, double step_samples) override;
     struct Automating;               // a source's fader and mute, as its automation has them while it plays (engine.cpp)
+    void applyParams(Source& s, double at);  // its controls' automation, where the music is
+    // The master fader's automation: the game thread's, and the audio thread's copy (replaced, the old one freed once
+    // it has been let go, as tracks' are).
+    std::unique_ptr<std::vector<AutoPoint>> master_auto_;
+    std::vector<AutoPoint>* master_auto_rt_ = nullptr;
+    std::vector<std::pair<std::unique_ptr<std::vector<AutoPoint>>, uint32_t>> retired_master_;
+    uint32_t master_sent_ = 0;
+    std::atomic<uint32_t> master_applied_{0};
+    bool master_read_ = true;
     void chaseSustain(double step);  // the sustain pedals as their automation has them where the music starts
 
     int sr_, block_;

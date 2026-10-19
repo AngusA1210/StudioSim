@@ -50,6 +50,7 @@ var show_automation := false  # A, as in Logic: a lane under each track for its 
 var chosen_points: Array = []  # the automation points chosen: [{track, param, point}] (the point its Array itself)
 var _lane_menu: PopupMenu      # what a lane shows, or its track's automation mode
 var _lane_menu_for := {}
+var _lane_choices := []  # the params its menu offers, by id
 var _takes_menu: PopupMenu  # a clip's takes, on a right-click
 var _track_menu: PopupMenu  # a track's, on a right-click on its name
 var _track_menu_for = null
@@ -154,47 +155,76 @@ func step_at(x: float) -> float:
 	return scroll_x + (x - HEADER) / zoom
 
 
-## How tall a track's place is: its row, and its automation lane under it while they show.
+## How tall a track with one automation lane is: its row, and the lane while they show.
 func row_height() -> float:
 	return ROW + (LANE if show_automation else 0.0)
 
 
+## How tall a track's place is: its row, and its automation lanes under it while they show.
+func height_of(track) -> float:
+	return ROW + (LANE * track.lanes.size() if show_automation else 0.0)
+
+
 func row_top(i: int) -> float:
-	return RULER + i * row_height() - scroll_y
+	var y := RULER - scroll_y
+	var rows := tracks()
+	for k in mini(i, rows.size()):
+		y += height_of(rows[k])
+	return y
 
 
-func lane_top(i: int) -> float:
-	return row_top(i) + ROW
+## The top of a track's automation lane `k` (its first, to begin with).
+func lane_top(i: int, k := 0) -> float:
+	return row_top(i) + ROW + k * LANE
 
 
-## The track whose row is at a height (not its lane), or -1.
-func row_at(y: float) -> int:
+## The track whose place (its row and its lanes) is at a height, or -1 below the last.
+func _row_of(y: float) -> int:
 	if y < RULER:
 		return -1
-	var i := int(floor((y - RULER + scroll_y) / row_height()))
-	return i if y - row_top(i) < ROW else -1
+	var top := RULER - scroll_y
+	var rows := tracks()
+	for i in rows.size():
+		var height := height_of(rows[i])
+		if y < top + height:
+			return i
+		top += height
+	return -1
 
 
-## The track whose automation lane is at a height, or -1.
+## The track whose row is at a height (not one of its lanes), or -1.
+func row_at(y: float) -> int:
+	var i := _row_of(y)
+	return i if i >= 0 and y - row_top(i) < ROW else -1
+
+
+## The track whose automation lane is at a height, or -1 (lane_number_at says which of its lanes).
 func lane_at(y: float) -> int:
-	if y < RULER or not show_automation:
-		return -1
-	var i := int(floor((y - RULER + scroll_y) / row_height()))
-	return i if y - row_top(i) >= ROW else -1
+	var i := _row_of(y)
+	return i if show_automation and i >= 0 and y - row_top(i) >= ROW else -1
 
 
-## The track whose place (its row or its lane) is at a height, for dragging clips over them.
+func lane_number_at(y: float, i: int) -> int:
+	return clampi(int(floor((y - row_top(i) - ROW) / LANE)), 0, tracks()[i].lanes.size() - 1)
+
+
+## The track whose place (its row or its lanes) is at a height, for dragging clips over them.
 func row_near(y: float) -> int:
-	return clampi(int(floor((y - RULER + scroll_y) / row_height())), 0, maxi(tracks().size() - 1, 0))
+	var i := _row_of(y)
+	return clampi(i if i >= 0 else tracks().size() - 1, 0, maxi(tracks().size() - 1, 0))
 
 
 func _most_scroll() -> float:
-	return maxf(tracks().size() * row_height() - (size.y - RULER), 0.0)
+	var total := 0.0
+	for track in tracks():
+		total += height_of(track)
+	return maxf(total - (size.y - RULER), 0.0)
 
 
-## The rows: every track in order, each folder before its tracks (those of a folder that is closed left out).
+## The rows: every track in order, each folder before its tracks (those of a folder that is closed left out), the aux
+## tracks after them, and the master at the foot.
 func tracks() -> Array:
-	return app.track_order().filter(func(t): return t.is_folder or app.folder_of(t) == null or app.folder_of(t).open)
+	return app.track_order().filter(func(t): return t.is_folder or app.folder_of(t) == null or app.folder_of(t).open) + [app.master_track]
 
 
 # ── Drawing ──────────────────────────────────────────────────────────────────────────────────────────────────
@@ -208,7 +238,7 @@ func _draw() -> void:
 	for i in tracks().size():
 		var inst = tracks()[i]
 		var top := row_top(i)
-		if top > size.y or top + row_height() < RULER:
+		if top > size.y or top + height_of(inst) < RULER:
 			continue
 		draw_rect(Rect2(HEADER, top, size.x - HEADER, ROW - 1), Color(0.07, 0.075, 0.09) if inst.is_folder else
 			(Color(0.12, 0.125, 0.145) if i % 2 == 0 else Color(0.105, 0.11, 0.13)))
@@ -219,7 +249,8 @@ func _draw() -> void:
 				draw_line(Vector2(x, top), Vector2(x, top + ROW - 1), Color(1, 1, 1, 0.12 if int(step) % 16 == 0 else 0.04))
 			step += 4.0
 		if show_automation:
-			_draw_lane(inst, top + ROW, font, first_bar, last_step)
+			for k in inst.lanes.size():
+				_draw_lane(inst, k, top + ROW + k * LANE, font, first_bar, last_step)
 		if inst.is_folder:  # a folder's lane: no clips of its own
 			_draw_header(inst, top, font)
 			continue
@@ -333,11 +364,13 @@ func _gain_rect(x0: float, top: float) -> Rect2:
 	return Rect2(x0 + EDGE + 4.0, top + ROW - 19, 11, 15)
 
 
-## A track's automation lane: on its left what it shows (its menu) and the track's automation mode (its menu), and
-## along it the points and the line between them, as the audio core plays it.
-func _draw_lane(track, top: float, font: Font, first_bar: int, last_step: float) -> void:
-	var param: String = track.lane if app.automation.params_for(track).has(track.lane) else "volume"
-	var lane: Array = app.automation.points(track, param)
+## A track's automation lane `k`: on its left what it shows (its menu), the track's automation mode (its menu), and
+## buttons for another lane (+) and none of this one (×); along it the points and the line between them, as the audio
+## core plays it.
+func _draw_lane(track, k: int, top: float, font: Font, first_bar: int, last_step: float) -> void:
+	var auto = app.automation
+	var param: String = track.lanes[k]
+	var lane: Array = auto.points(track, param)
 	var off: bool = track.auto_mode == "off"
 	draw_rect(Rect2(HEADER, top, size.x - HEADER, LANE - 1), Color(0.085, 0.09, 0.105))
 	var step := float(first_bar * 4)
@@ -347,15 +380,15 @@ func _draw_lane(track, top: float, font: Font, first_bar: int, last_step: float)
 		step += 4.0
 	var ink: Color = track.color.lightened(0.35)
 	ink.a = 0.4 if off else 1.0
-	var writing: Array = app.automation._writing.get(track, {}).get(param, [])
-	if lane.is_empty():  # where it is without any: the fader, or off
-		var y := _lane_y(track.level_db if param == "volume" else 0.0, param, top)
+	var writing: Array = auto._writing.get(track, {}).get(param, [])
+	if lane.is_empty():  # where it is without any: the control as it is
+		var y := _lane_y(auto.now(track, param), param, top)
 		draw_dashed_line(Vector2(HEADER, y), Vector2(size.x, y), Color(ink, 0.45 * ink.a), 1.0, 4.0)
 	else:
 		var last := Vector2(HEADER, _lane_y(float(lane[0][1]), param, top))
 		for p in lane:
 			var at := Vector2(x_of(float(p[0])), _lane_y(float(p[1]), param, top))
-			if param != "volume":  # on or off from each point: a step
+			if auto.is_switch(param):  # on or off from each point: a step
 				draw_line(last, Vector2(at.x, last.y), ink, 1.5)
 				draw_line(Vector2(at.x, last.y), at, ink, 1.5)
 			else:
@@ -371,56 +404,110 @@ func _draw_lane(track, top: float, font: Font, first_bar: int, last_step: float)
 		for i in range(1, writing.size()):
 			draw_line(Vector2(x_of(float(writing[i - 1][0])), _lane_y(float(writing[i - 1][1]), param, top)),
 				Vector2(x_of(float(writing[i][0])), _lane_y(float(writing[i][1]), param, top)), RECORD_RED, 2.0)
-	# Its header: what it shows, and the mode.
+	# Its header: what it shows, the mode, another lane and none of this one; and the value where the music is.
 	draw_rect(Rect2(0, top, HEADER, LANE - 1), Color(0.12, 0.125, 0.14))
 	draw_rect(Rect2(0, top, 5, LANE - 1), Color(track.color, 0.5))
-	for b in _lane_buttons(track, top):
+	for b in _lane_buttons(track, top, k):
 		draw_rect(b.rect, b.color)
-		draw_string(font, b.rect.position + Vector2(5, 13), b.text, HORIZONTAL_ALIGNMENT_LEFT, b.rect.size.x - 8, 11, Color(0.9, 0.91, 0.94))
-	var now: float = app.automation.value_at(lane, param, timeline.position()) if not lane.is_empty() else (track.level_db if param == "volume" else 0.0)
-	draw_string(font, Vector2(14, top + 38), _value_text(now, param), HORIZONTAL_ALIGNMENT_LEFT, HEADER - 20, 11, DIM)
+		draw_string(font, b.rect.position + Vector2(4, 13), b.text, HORIZONTAL_ALIGNMENT_LEFT, b.rect.size.x - 6, 11, Color(0.9, 0.91, 0.94))
+	var now: float = auto.value_at(lane, param, timeline.position()) if not lane.is_empty() else auto.now(track, param)
+	draw_string(font, Vector2(14, top + 38), auto.value_text(track, param, now), HORIZONTAL_ALIGNMENT_LEFT, HEADER - 20, 11, DIM)
 
 
-## A lane's two buttons: what it shows, and the track's automation mode (drawn, and pressed, as the clips are).
-func _lane_buttons(track, top: float) -> Array:
-	var param: String = track.lane if app.automation.params_for(track).has(track.lane) else "volume"
-	var mode_color: Color = {"off": Color(0.3, 0.31, 0.34), "read": Color(0.24, 0.45, 0.32), "touch": Color(0.62, 0.45, 0.18), "latch": Color(0.6, 0.38, 0.2),
-		"write": Color(0.7, 0.24, 0.22)}[track.auto_mode]
-	return [
-		{"what": "param", "text": "%s ▾" % app.automation.NAMES[param], "rect": Rect2(12, top + 6, 100, 18), "color": Color(0.22, 0.23, 0.27)},
-		{"what": "mode", "text": "%s ▾" % app.automation.MODE_NAMES[track.auto_mode], "rect": Rect2(116, top + 6, 64, 18), "color": mode_color},
+## A lane's buttons: what it shows, the track's automation mode, another lane (+) and none of this one (×).
+func _lane_buttons(track, top: float, k := 0) -> Array:
+	var param: String = track.lanes[k]
+	var mode_color: Color = {"off": Color(0.3, 0.31, 0.34), "read": Color(0.24, 0.45, 0.32), "touch": Color(0.62, 0.45, 0.18),
+		"latch": Color(0.6, 0.38, 0.2), "write": Color(0.7, 0.24, 0.22)}[track.auto_mode]
+	var out := [
+		{"what": "param", "text": "%s ▾" % app.automation.name_of(track, param), "rect": Rect2(10, top + 6, 88, 18), "color": Color(0.22, 0.23, 0.27)},
+		{"what": "mode", "text": "%s ▾" % app.automation.MODE_NAMES[track.auto_mode], "rect": Rect2(101, top + 6, 50, 18), "color": mode_color},
 	]
+	if not track.get("is_master"):
+		out.append({"what": "add", "text": "+", "rect": Rect2(154, top + 6, 16, 18), "color": Color(0.22, 0.23, 0.27)})
+	if track.lanes.size() > 1:
+		out.append({"what": "remove", "text": "×", "rect": Rect2(172, top + 6, 16, 18), "color": Color(0.22, 0.23, 0.27)})
+	return out
 
 
-## Where a value is drawn in a lane: volume on the fader's own scale, a switch at its top (on) or foot (off).
+## Where a value is drawn in a lane: on the fader's own scale (volume, sends), across a knob's or a control's range,
+## or a switch at its top (on) or foot (off).
 func _lane_y(value: float, param: String, top: float) -> float:
-	if param == "volume":
-		return top + 4 + (1.0 - Fader.position_of(value)) * (LANE - 9)
-	return top + 8 if value > 0.5 else top + LANE - 9
+	if app.automation.is_switch(param):
+		return top + 8 if value > 0.5 else top + LANE - 9
+	return top + 4 + (1.0 - app.automation.height_of(param, value)) * (LANE - 9)
 
 
 ## The value a height in a lane stands for.
 func _lane_value(y: float, param: String, top: float) -> float:
-	if param == "volume":
-		return snappedf(Fader.level_at(1.0 - (y - top - 4) / (LANE - 9)), 0.1)
-	return 1.0 if y < top + LANE / 2 else 0.0
+	if app.automation.is_switch(param):
+		return 1.0 if y < top + LANE / 2 else 0.0
+	return app.automation.value_from(param, 1.0 - (y - top - 4) / (LANE - 9))
 
 
-static func _value_text(value: float, param: String) -> String:
-	if param == "volume":
-		return "-inf" if value <= -79.0 else "%+.1f dB" % value
-	return "on" if value > 0.5 else "off"
+## The lane menus: what a lane shows (the track's own controls, then each plug-in's in a submenu of its own), or the
+## track's automation mode.
+func _show_lane_menu(track, k: int, what: String, at: Vector2) -> void:
+	_lane_menu_for = {"track": track, "lane": k, "what": what}
+	_lane_menu.clear()
+	for child in _lane_menu.get_children():
+		child.queue_free()
+	_lane_choices = []
+	if what == "param":
+		var params: Array = app.automation.params_for(track)
+		for param in params:
+			_lane_menu.add_radio_check_item(app.automation.name_of(track, param), _lane_choices.size())
+			_lane_menu.set_item_checked(_lane_menu.item_count - 1, param == track.lanes[k])
+			_lane_choices.append(param)
+		for plugin in app.automation.plugin_params(track):
+			var sub := PopupMenu.new()
+			for control in plugin.params:
+				sub.add_radio_check_item(control.name, _lane_choices.size())
+				sub.set_item_checked(sub.item_count - 1, control.param == track.lanes[k])
+				_lane_choices.append(control.param)
+			sub.id_pressed.connect(_on_lane_menu)
+			_lane_menu.add_child(sub)
+			_lane_menu.add_submenu_node_item(plugin.name, sub)
+	else:
+		for i in app.automation.MODES.size():
+			_lane_menu.add_radio_check_item(app.automation.MODE_NAMES[app.automation.MODES[i]], i)
+			_lane_menu.set_item_checked(i, app.automation.MODES[i] == track.auto_mode)
+	_lane_menu.position = Vector2i(get_screen_position() + at)
+	_lane_menu.popup()
 
 
 func _on_lane_menu(id: int) -> void:
 	var track = _lane_menu_for.get("track")
-	if track == null or not app.has_track(track):
+	if track == null or not (app.has_track(track) or track == app.master_track):
 		return
 	if _lane_menu_for.what == "param":
-		track.lane = app.automation.params_for(track)[id]
-		chosen_points = []
+		if id >= 0 and id < _lane_choices.size():
+			show_param(track, _lane_menu_for.lane, _lane_choices[id])
 	else:
 		app.automation.set_mode(track, app.automation.MODES[id])
+
+
+## A lane shows a param (one shown in another of the track's lanes trades places with it).
+func show_param(track, k: int, param: String) -> void:
+	var already: int = track.lanes.find(param)
+	if already >= 0:
+		track.lanes[already] = track.lanes[k]
+	track.lanes[k] = param
+	chosen_points = []
+	if app.automation.is_plugin(param) or param.begins_with("amp:") or param.begins_with("send:"):
+		timeline.sync(track)  # (the audio core plays every control with points: nothing new, but its lanes are read anew)
+
+
+## Another lane under a track: the first of its controls it doesn't show yet.
+func add_lane(track) -> void:
+	var choices: Array = app.automation.params_for(track)
+	for plugin in app.automation.plugin_params(track):
+		for control in plugin.params:
+			choices.append(control.param)
+	for param in choices:
+		if not track.lanes.has(param):
+			track.lanes.append(param)
+			return
 
 
 ## A crossfade where clip `c` meets the next: the two curves crossing over the seam, in a box.
@@ -489,11 +576,19 @@ func _draw_header(inst, top: float, font: Font) -> void:
 	draw_rect(Rect2(0, top, HEADER, ROW - 1), Color(0.24, 0.26, 0.31) if chosen_track else Color(0.16, 0.17, 0.19))
 	draw_rect(Rect2(indent, top, 5, ROW - 1), inst.color)
 	var name_x := 12.0 + indent
-	if inst.is_folder:  # its arrow, to show or hide its tracks
+	if _folds(inst):  # its arrow, to show or hide its tracks
 		draw_string(font, Vector2(10, top + 20), "▾" if inst.open else "▸", HORIZONTAL_ALIGNMENT_LEFT, -1, 13, inst.color.lightened(0.45))
 		name_x = 26.0
 	draw_string(font, Vector2(name_x, top + 20), inst.display_name, HORIZONTAL_ALIGNMENT_LEFT, HEADER - name_x - 8, 13, inst.color.lightened(0.45))
-	var what: String = "folder · %d" % inst.members.size() if inst.is_folder else ("audio" if not inst.playable else "MIDI")
+	var what: String
+	if inst.get("is_master"):
+		what = "master"
+	elif inst.is_aux:
+		what = "aux"
+	elif inst.is_folder:
+		what = "folder · %d" % inst.members.size()
+	else:
+		what = "audio" if not inst.playable else "MIDI"
 	draw_string(font, Vector2(name_x, top + 40), what, HORIZONTAL_ALIGNMENT_LEFT, 60, 11, DIM)
 	for b in _buttons(inst, top):
 		var lit: bool = b.on
@@ -503,8 +598,15 @@ func _draw_header(inst, top: float, font: Font) -> void:
 
 
 ## A track's header buttons: R (armed), I (input), M (muted), S (soloed).
+## Whether a row folds its tracks away (a folder's does; an aux's and the master's don't).
+static func _folds(track) -> bool:
+	return track.is_folder and not track.is_aux and not track.get("is_master")
+
+
 func _buttons(inst, top: float) -> Array:
 	var y := top + 28
+	if inst.get("is_master"):
+		return []
 	if inst.is_folder:  # (a folder records nothing, and takes no input)
 		return [
 			{"what": "mute", "text": "M", "on": inst.muted, "color": MUTE_ORANGE, "rect": Rect2(126, y, 20, 19)},
@@ -568,7 +670,7 @@ func _on_button(e: InputEventMouseButton) -> void:
 			app.edit_window.edit_notes(found.inst, found.index)
 			return
 		if found.get("zone", "") == "header" and not _buttons(found.inst, row_top(found.row)).any(func(b): return b.rect.has_point(e.position)) and \
-				not (found.inst.is_folder and e.position.x < 24.0):
+				not (_folds(found.inst) and e.position.x < 24.0) and not found.inst.get("is_master"):
 			app.ask_track_name(found.inst)
 			return
 	if e.pressed:
@@ -643,11 +745,12 @@ func cursor_at(at: Vector2) -> CursorShape:
 ## What is at a point in a track's automation lane: its buttons ("lane_button"), one of its points ("point"), or a
 ## place to add one ("lane").
 func _lane_zone(track, row: int, at: Vector2) -> Dictionary:
-	var top := lane_top(row)
-	var param: String = track.lane if app.automation.params_for(track).has(track.lane) else "volume"
-	var found := {"zone": "lane", "inst": track, "row": row, "param": param, "top": top}
+	var k := lane_number_at(at.y, row)
+	var top := lane_top(row, k)
+	var param: String = track.lanes[k]
+	var found := {"zone": "lane", "inst": track, "row": row, "lane": k, "param": param, "top": top}
 	if at.x < HEADER:
-		for b in _lane_buttons(track, top):
+		for b in _lane_buttons(track, top, k):
 			if b.rect.has_point(at):
 				found.zone = "lane_button"
 				found.button = b.what
@@ -670,18 +773,21 @@ func hint_at(at: Vector2) -> String:
 		"ruler":
 			return "Click to put the playhead here; drag along to loop the range  ·  L loop playback on or off, U loops the chosen clip"
 		"lane_button":
-			return "What this lane shows: volume, mute or (an instrument's) sustain pedal" if found.button == "param" else \
-				"The track's automation mode: Off, Read, Touch (written while its fader is held), Latch (from then until it stops) or Write (all the while it plays)"
+			return {"param": "What this lane shows: volume, mute, an instrument's sustain pedal, an amp's knobs, sends, or a plug-in's controls",
+				"mode": "The track's automation mode: Off, Read, Touch (written while a control is held), Latch (from then until it stops) or Write (as it plays)",
+				"add": "Another lane under the track, for another of its controls", "remove": "No lane for this one (its points are kept)"}[found.button]
 		"lane_header":
 			return "%s's automation (A shows or hides the lanes)" % found.inst.display_name
 		"point":
 			return "%s %s at %s: drag to move it (the chosen points with it), Shift-click to choose more, Option-click to take it away, Delete" % [
-				app.automation.NAMES[found.param], _value_text(float(found.point[1]), found.param), _bar_beat(float(found.point[0]))]
+				app.automation.name_of(found.inst, found.param), app.automation.value_text(found.inst, found.param, float(found.point[1])),
+				_bar_beat(float(found.point[0]))]
 		"lane":
-			return "Click to add a point (%s here), dragging to place it" % _value_text(_lane_value(at.y, found.param, found.top), found.param)
+			return "Click to add a point (%s here), dragging to place it" % app.automation.value_text(found.inst, found.param,
+				_lane_value(at.y, found.param, found.top))
 		"header":
 			var track = found.inst
-			if track.is_folder and at.x < 24.0:
+			if _folds(track) and at.x < 24.0:
 				return "Show or hide its tracks"
 			for b in _buttons(track, row_top(found.row)):
 				if b.rect.has_point(at):
@@ -736,7 +842,7 @@ func press(at: Vector2, all := false, add := false, command := false) -> void:
 		"ruler":
 			_drag = {"what": "ruler", "from_x": at.x, "from": step_at(at.x)}
 		"header":
-			if found.inst.is_folder and at.x < 24.0:  # its arrow
+			if _folds(found.inst) and at.x < 24.0:  # its arrow
 				found.inst.open = not found.inst.open
 				return
 			if not _buttons(found.inst, row_top(found.row)).any(func(b): return b.rect.has_point(at)):  # its name: choosing tracks
@@ -790,19 +896,14 @@ func press(at: Vector2, all := false, add := false, command := false) -> void:
 func _press_lane(found: Dictionary, at: Vector2, all: bool, add: bool) -> void:
 	var track = found.inst
 	if found.zone == "lane_button":
-		_lane_menu_for = {"track": track, "what": found.button}
-		_lane_menu.clear()
-		if found.button == "param":
-			var params: Array = app.automation.params_for(track)
-			for i in params.size():
-				_lane_menu.add_radio_check_item(app.automation.NAMES[params[i]], i)
-				_lane_menu.set_item_checked(i, params[i] == found.param)
-		else:
-			for i in app.automation.MODES.size():
-				_lane_menu.add_radio_check_item(app.automation.MODE_NAMES[app.automation.MODES[i]], i)
-				_lane_menu.set_item_checked(i, app.automation.MODES[i] == track.auto_mode)
-		_lane_menu.position = Vector2i(get_screen_position() + at)
-		_lane_menu.popup()
+		match found.button:
+			"add":
+				add_lane(track)
+			"remove":
+				track.lanes.remove_at(found.lane)
+				chosen_points = []
+			_:
+				_show_lane_menu(track, found.lane, found.button, at)
 		return
 	var param: String = found.param
 	var point: Array
@@ -838,6 +939,10 @@ func _press_lane(found: Dictionary, at: Vector2, all: bool, add: bool) -> void:
 
 
 func _lane_changed(track) -> void:
+	if track.get("is_master"):
+		timeline.sync(track)
+		timeline.changed.emit()
+		return
 	timeline.sync(track)
 	timeline.changed.emit()
 
@@ -849,7 +954,7 @@ func delete_chosen_points() -> bool:
 	timeline.remember("Delete points")
 	var touched := []
 	for c in chosen_points:
-		if app.has_track(c.track):
+		if app.has_track(c.track) or c.track == app.master_track:
 			c.track.automation.get(c.param, []).erase(c.point)
 			if not touched.has(c.track):
 				touched.append(c.track)
@@ -869,14 +974,14 @@ func _on_drag(at: Vector2) -> void:
 			var i: int = _drag.points.find(_drag.anchor)
 			var along: float = maxf(timeline.snap(_drag.steps[i] + step_at(at.x) - _drag.grab_step), 0.0) - _drag.steps[i]
 			var param: String = _drag.param
+			var auto = app.automation
 			for k in _drag.points.size():
 				var p: Array = _drag.points[k]
 				p[0] = maxf(_drag.steps[k] + along, 0.0)
-				if param == "volume":  # up or down the fader's own scale
-					var travel: float = Fader.position_of(_drag.values[k]) + (_drag.grab_y - at.y) / (LANE - 9)
-					p[1] = snappedf(Fader.level_at(travel), 0.1)
-				else:
+				if auto.is_switch(param):
 					p[1] = _lane_value(at.y, param, _drag.top)
+				else:  # up or down its own scale (a fader's, for volume and sends)
+					p[1] = auto.value_from(param, auto.height_of(param, _drag.values[k]) + (_drag.grab_y - at.y) / (LANE - 9))
 			_drag.track.automation[param].sort_custom(func(a, b): return float(a[0]) < float(b[0]))
 		"ruler":
 			if absf(at.x - _drag.from_x) > 4.0:
@@ -945,6 +1050,8 @@ func release(at: Vector2, copy := false) -> void:
 
 ## A track's menu (a right-click on its name): rename it, colour it, and its folder.
 func show_track_menu(track, at: Vector2) -> void:
+	if track.get("is_master"):
+		return
 	_track_menu_for = track
 	_track_menu.clear()
 	TrackMenu.add_items(_track_menu, app, track, _colors, _modes)

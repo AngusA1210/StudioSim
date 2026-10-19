@@ -307,7 +307,9 @@ func room_data() -> Dictionary:
 		var entry := {"kind": inst.kind, "position": [inst.global_position.x, inst.global_position.z], "yaw": inst.rotation.y,
 			"level_db": inst.level_db, "muted": inst.muted, "soloed": inst.soloed, "input_channel": inst.input_channel,
 			"settings": instrument_settings(inst), "clips": inst.clips.duplicate(true), "color": _color_data(inst.color),
-			"automation": inst.automation.duplicate(true), "auto_mode": inst.auto_mode}
+			"automation": inst.automation.duplicate(true), "auto_mode": inst.auto_mode, "lanes": inst.lanes.duplicate(),
+			"sends": inst.sends.map(func(send): return null if send.is_empty() else {"aux": app.auxes.find(send.aux), "level_db": send.level_db,
+				"pre": send.pre, "on": send.on})}
 		if inst.named:
 			entry.name = inst.display_name
 		if inst.playable:
@@ -324,11 +326,17 @@ func room_data() -> Dictionary:
 	for folder in app.folders:
 		folders.append({"name": folder.display_name, "color": _color_data(folder.color), "level_db": folder.level_db, "muted": folder.muted,
 			"soloed": folder.soloed, "open": folder.open, "members": folder.members.map(func(inst): return app.instruments.find(inst)),
-			"inserts": inserts_data(folder), "automation": folder.automation.duplicate(true), "auto_mode": folder.auto_mode})
+			"inserts": inserts_data(folder), "automation": folder.automation.duplicate(true), "auto_mode": folder.auto_mode, "lanes": folder.lanes.duplicate()})
+	var auxes := []
+	for aux in app.auxes:
+		auxes.append({"name": aux.display_name, "color": _color_data(aux.color), "level_db": aux.level_db, "muted": aux.muted, "soloed": aux.soloed,
+			"inserts": inserts_data(aux), "automation": aux.automation.duplicate(true), "auto_mode": aux.auto_mode, "lanes": aux.lanes.duplicate()})
+	var master = app.master_track
 	return {"soundroom": "room", "version": VERSION, "mode": app.timeline.mode, "timeline": app.timeline.to_data(),
 		"tempo": app.tempo, "swing": app.swing, "master_db": app.master_volume_db, "reverb_db": app.reverb_db,
 		"room": {"size": [size.x, size.y, size.z], "walls": walls},
-		"player": {"position": [stood.x, stood.z], "yaw": app.player.yaw}, "instruments": instruments, "folders": folders}
+		"player": {"position": [stood.x, stood.z], "yaw": app.player.yaw}, "instruments": instruments, "folders": folders, "auxes": auxes,
+		"master_automation": {"automation": master.automation.duplicate(true), "auto_mode": master.auto_mode, "lanes": master.lanes.duplicate()}}
 
 
 static func _color_data(color: Color) -> Array:
@@ -452,6 +460,7 @@ func apply_room_data(data: Dictionary, carry := {}, size = null, mode := "") -> 
 		if keep.call("mix"):  # its automation, as the mix's
 			inst.automation = entry.get("automation", {}).duplicate(true)
 			inst.auto_mode = str(entry.get("auto_mode", "read"))
+			inst.lanes = entry.get("lanes", ["volume"]).duplicate()
 	for entry in data.get("folders", []) if keep.call("instruments") else []:  # the routing folders, their tracks in them
 		var members := []
 		for index in entry.get("members", []):
@@ -466,6 +475,7 @@ func apply_room_data(data: Dictionary, carry := {}, size = null, mode := "") -> 
 		if keep.call("mix"):
 			folder.automation = entry.get("automation", {}).duplicate(true)
 			folder.auto_mode = str(entry.get("auto_mode", "read"))
+			folder.lanes = entry.get("lanes", ["volume"]).duplicate()
 		if keep.call("mix"):
 			app.set_folder_level(folder, float(entry.get("level_db", 0.0)))
 			folder.muted = bool(entry.get("muted", false))
@@ -473,6 +483,35 @@ func apply_room_data(data: Dictionary, carry := {}, size = null, mode := "") -> 
 		var problem := apply_inserts(folder, entry.get("inserts", []) if keep.call("plugins") else [])
 		if problem != "":
 			problems.append("%s: %s" % [folder.display_name, problem])
+	var auxes := []  # the aux tracks, and then the tracks' sends to them
+	for entry in data.get("auxes", []) if keep.call("instruments") else []:
+		var aux = app.add_aux(str(entry.get("name", "")))
+		auxes.append(aux)
+		if aux == null:
+			problems.append("an aux track (the room is full)")
+			continue
+		aux.color = _color_from(entry.get("color"), aux.color)
+		if keep.call("mix"):
+			app.set_folder_level(aux, float(entry.get("level_db", 0.0)))
+			aux.muted = bool(entry.get("muted", false))
+			aux.soloed = bool(entry.get("soloed", false))
+			aux.automation = entry.get("automation", {}).duplicate(true)
+			aux.auto_mode = str(entry.get("auto_mode", "read"))
+			aux.lanes = entry.get("lanes", ["volume"]).duplicate()
+		var problem := apply_inserts(aux, entry.get("inserts", []) if keep.call("plugins") else [])
+		if problem != "":
+			problems.append("%s: %s" % [aux.display_name, problem])
+	var entries: Array = data.get("instruments", []) if keep.call("instruments") else []
+	for i in mini(entries.size(), made.size()):
+		var sends: Array = entries[i].get("sends", []) if made[i] != null and keep.call("mix") else []
+		for slot in mini(sends.size(), audio.get_max_sends()):
+			var send = sends[slot]
+			if send is Dictionary and int(send.get("aux", -1)) >= 0 and int(send.aux) < auxes.size() and auxes[int(send.aux)] != null:
+				app.set_send(made[i], slot, auxes[int(send.aux)], float(send.get("level_db", 0.0)), bool(send.get("pre", false)), bool(send.get("on", true)))
+	var master_part: Dictionary = data.get("master_automation", {}) if keep.call("mix") else {}
+	app.master_track.automation = master_part.get("automation", {}).duplicate(true)
+	app.master_track.auto_mode = str(master_part.get("auto_mode", "read"))
+	app.master_track.lanes = master_part.get("lanes", ["volume"]).duplicate()
 	app.settle_new_room()
 	var player: Dictionary = data.get("player", {})
 	var stood: Array = player.get("position", [])

@@ -318,18 +318,27 @@ In a Record room:
   - **⌘Z** undoes an edit (a recording, a move, a trim, a fade, a split...), up to 32 of them, and **⌘X** (or ⌘⇧Z)
     redoes it.
 - **Automation**, as Pro Tools and Logic have it: **A** (or the edit window's Auto button) shows a lane under each
-  track (a folder's too). A lane shows one thing, chosen with its first button: **Volume**, **Mute**, or an
-  instrument's **Sustain pedal**. Click it to add a point (dragging as you add it to place it); drag a point to move
+  track (a folder's, an aux's, and the master's, whose row is at the foot of the edit window). A lane shows one
+  thing, chosen with its first button: **Volume**, **Mute**, an instrument's **Sustain pedal**, an amp's knobs
+  (**Gain** to **Master**), a send's level (**Send A** to **E**), or any of the controls of the plug-ins on the
+  track, each plug-in's in a submenu of its own (on its inserts, its Plug-in pedals, a plug-in instrument's own);
+  the master's lane is its fader. **+** adds another lane under the track, for another control, and **×** takes one
+  away (its points are kept). Click a lane to add a point (dragging as you add it to place it); drag a point to move
   it (to the grid along; up and down on the fader's own scale), Shift-click for more, Option-click (or Delete, with
   them chosen) to take points away. Volume glides from point to point, and holds level before the first and after
   the last; mute and the pedal switch at each point. Played, a track's automation takes the place of its fader (which
-  moves to show it, stopped too, at the playhead) and its mute button, to the sample.
+  moves to show it, stopped too, at the playhead) and its mute button, to the sample; an amp's knobs (its panel shows
+  them turning), the plug-ins' controls (their windows show them moving) and the sends' levels follow theirs, to the
+  block. Stopped, each is where its lane has it at the playhead.
   - **Modes** (a lane's second button, or Automation in a track's menu in either window), as Pro Tools': **Off** (its
-    automation ignored), **Read** (played; the default), **Touch** (written while its fader is held as the music
-    plays, going back to what was there when it is let go), **Latch** (written from when the fader is first held until
-    the music stops) and **Write** (written all the while the music plays; afterwards the track is in Touch). A mute
-    button pressed while it plays in Touch, Latch or Write is written until it stops, the button itself left as it
-    was. Written moves are thinned to the points that bend the line, and undo as any edit does (⌘Z).
+    automation ignored), **Read** (played; the default), **Touch** (written while a control is held as the music
+    plays, going back to what was there when it is let go), **Latch** (written from when a control is first held until
+    the music stops) and **Write** (the volume written all the while the music plays, and any other control once
+    held; afterwards the track is in Touch). The controls are its fader, an amp's knobs in its panel, its sends in the
+    mix window, and a plug-in's controls in the plug-in's own window (with a lane showing them: a control seen to
+    move as the music plays is written, and in Touch goes back once it has been still a moment); the master fader
+    writes the master's. A mute button pressed while it plays in Touch, Latch or Write is written until it stops, the
+    button itself left as it was. Written moves are thinned to the points that bend the line, and undo as any edit does (⌘Z).
   - **The sustain pedal** played on an armed instrument as it records is written in its Sustain pedal lane, over what
     was recorded (a loop recording's, as in the take shown), and played back with its notes.
   - Automation is kept with the room, and in templates.
@@ -402,12 +411,24 @@ Each instrument is a track, in the mix window and (in a Record room) the edit wi
   would, so its fader is their direct sound. In the edit window the folder's row comes over its tracks', which are
   set in under it; its arrow shows or hides them. A track's menu moves it **into** another folder or **out of** its
   own, and so does its output in the mix window; a folder's menu takes it away, its tracks going straight to the
-  master again. Folders, names and colours are all kept with the room (and in templates).
+  master again.
+- **Aux tracks and sends**, as in Pro Tools: **New aux track** (in a track's menu, or an empty send's) makes an aux
+  track, a bus with its own inserts (a reverb or a delay, say), mute, solo and fader, playing to the master. A
+  track's **sends**, A to E, play a copy of it into an aux: after the track's fader, the track as heard in the room
+  (it follows the fader and mute), or **before the fader**, its own sound straight (it doesn't), at a level of its
+  own. In the mix window the buttons at the top switch the strips between their **Inserts** and their **Sends**: click
+  an empty send to send to an aux (or a new one); drag a send up or down for its level (Shift for fine moves; the
+  scroll wheel nudges it), double-click it for 0 dB, Cmd-click it off and on, right-click it for before or after the
+  fader, another aux, or none. An aux's strip comes after the tracks', saying how many sends come in; soloing a track
+  lets the auxes it sends to be heard. An aux has a row in the edit window, after the tracks.
+- Folders, aux tracks, sends, names and colours are all kept with the room (and in templates).
 
 ## The mix window
 
 Tab opens the mix window, docked along the bottom of the screen so the room stays in view. It is laid out like a
-mixing desk: a channel strip for every instrument, side by side, and the master strip on the right.
+mixing desk: a channel strip for every instrument, side by side (then the folders' and aux tracks'), and the master
+strip on the right. **Inserts** and **Sends** at the top switch what the strips show at their top (see Aux tracks and
+sends). A fader whose track's automation is read moves with it, and in Touch, Latch or Write, holding one writes it.
 
 - **Names**: click a strip's name to open the instrument's own window (an amp's knobs and pedals, a pattern, a
   Speaker's panel); the mix window comes back when it closes. Right-click the name to **duplicate** the instrument
@@ -534,7 +555,8 @@ game/                      Godot project: the room, player, instruments, HUD, me
   scripts/timeline.gd      a room's mode; a Record room's transport, recording and clips
   scripts/edit_window.gd   the edit window (its tracks and clips drawn by timeline_view.gd, a clip's notes by midi_editor.gd)
   scripts/folder.gd        a routing folder: its bus, fader, inserts and tracks (track_menu.gd: a track's menu)
-  scripts/automation.gd    the tracks' automation: what the faders show, Touch, Latch and Write, its points
+  scripts/automation.gd    the tracks' automation: what the controls show, Touch, Latch and Write, its points
+  scripts/master_track.gd  the master, as a track for automation
   scripts/preset_menu.gd   the Presets menu of a plug-in or an instrument
 audio_core/
   src/core/                the audio engine, plain C++ with no Godot dependency
@@ -588,13 +610,14 @@ templates, auto-save and backups), presets and copy and paste for plug-ins and i
 timeline, an edit window, recording audio and MIDI to clips (with a count-in, a pre-roll and post-roll, punching in and out, and loop recording
 into takes), editing them (trims, fades and crossfades, clip gain, splits, nudges, several at once, a MIDI editor
 for the notes, undo), tracks with names and colours, in routing folders with faders and inserts of their own, and
-automation of volume, mute and the sustain pedal, drawn or written as it plays.
+automation (volume, mute, the sustain pedal, an amp's knobs, plug-ins' controls, sends and the master), drawn or
+written as it plays, and aux tracks with sends.
 
 To do, roughly in this order:
 
-1. **More of the edit window**: automation of plug-ins' controls, an amp's knobs and the master; comping from takes
-   (a part of one, a part of another); sends to aux tracks of their own (beside the routing folders); folders within
-   folders; and audio read from disk as it plays (for long rooms; takes are held in memory now).
+1. **More of the edit window**: comping from takes (a part of one, a part of another); sends on folders and aux
+   tracks too, and an aux in a folder; folders within folders; the pedals' knobs automated; and audio read from disk
+   as it plays (for long rooms; takes are held in memory now).
    Perhaps later a free version with Jam rooms only, Record rooms coming with the full one.
 2. **Microphones**: a new kind of track, placed anywhere in the room with precision, that records what the room
    sounds like from where it stands (the instruments as they reach it, from their direction, with the walls and the

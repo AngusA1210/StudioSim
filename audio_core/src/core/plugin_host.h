@@ -21,6 +21,14 @@ struct PluginDescription {
     bool instrument = false;  // an instrument (it makes its own sound from MIDI) rather than an effect
 };
 
+// One of a plug-in's controls, as it lists them: what automation can move.
+struct PluginParameter {
+    uint32_t id = 0;
+    std::string name;
+    std::string unit;  // "dB", "Hz", "%"... ("" for none it names)
+    float min = 0.0f, max = 1.0f, initial = 0.0f;
+};
+
 // What kind of effect a plug-in is, from its name, its maker and any tags it carries (plugin_category.cpp); and the
 // same for an instrument plug-in ("Synths", "Pianos & keys", "Drums & percussion", "Samplers"...).
 std::string guessPluginCategory(const std::string& name, const std::string& maker, const std::vector<std::string>& tags);
@@ -66,6 +74,13 @@ public:
     // putting them back: for copying a plug-in with its settings, and for saving them (game thread).
     virtual std::vector<uint8_t> saveState() const = 0;
     virtual bool loadState(const std::vector<uint8_t>& state) = 0;
+    // Its controls that can be set (game thread), each control's value now (any thread), and setting one (any thread:
+    // the audio thread, as automation plays, between blocks).
+    virtual std::vector<PluginParameter> parameters() const { return {}; }
+    virtual float parameter(uint32_t /*id*/) const { return 0.0f; }
+    virtual void setParameter(uint32_t /*id*/, float /*value*/) {}
+    // Tells its window a control was set from outside it, so that it shows it (game thread).
+    virtual void notifyParameter(uint32_t /*id*/) {}
     // The presets the plug-in comes with, by name, and switching to one (game thread).
     virtual std::vector<std::string> factoryPresets() const = 0;
     virtual bool loadFactoryPreset(int index) = 0;

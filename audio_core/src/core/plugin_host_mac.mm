@@ -410,6 +410,54 @@ public:
         }
         return done;
     }
+    std::vector<PluginParameter> parameters() const override {
+        std::vector<PluginParameter> out;
+        UInt32 size = 0;
+        Boolean writable = false;
+        if (AudioUnitGetPropertyInfo(unit_, kAudioUnitProperty_ParameterList, kAudioUnitScope_Global, 0, &size, &writable) != noErr || size == 0)
+            return out;
+        std::vector<AudioUnitParameterID> ids(size / sizeof(AudioUnitParameterID));
+        if (AudioUnitGetProperty(unit_, kAudioUnitProperty_ParameterList, kAudioUnitScope_Global, 0, ids.data(), &size) != noErr) return out;
+        for (AudioUnitParameterID id : ids) {
+            AudioUnitParameterInfo info{};
+            UInt32 info_size = sizeof(info);
+            if (AudioUnitGetProperty(unit_, kAudioUnitProperty_ParameterInfo, kAudioUnitScope_Global, id, &info, &info_size) != noErr) continue;
+            // Only what can be set, and not a meter.
+            if (!(info.flags & kAudioUnitParameterFlag_IsWritable) || (info.flags & kAudioUnitParameterFlag_MeterReadOnly)) continue;
+            PluginParameter p;
+            p.id = id;
+            if ((info.flags & kAudioUnitParameterFlag_HasCFNameString) && info.cfNameString) {
+                p.name = toString(info.cfNameString);
+                if (info.flags & kAudioUnitParameterFlag_CFNameRelease) CFRelease(info.cfNameString);
+            } else {
+                p.name = info.name;
+            }
+            static const std::pair<AudioUnitParameterUnit, const char*> kUnits[] = {
+                {kAudioUnitParameterUnit_Decibels, "dB"}, {kAudioUnitParameterUnit_Hertz, "Hz"}, {kAudioUnitParameterUnit_Percent, "%"},
+                {kAudioUnitParameterUnit_Seconds, "s"}, {kAudioUnitParameterUnit_Milliseconds, "ms"}, {kAudioUnitParameterUnit_Cents, "cents"}};
+            for (const auto& [unit, name] : kUnits)
+                if (info.unit == unit) p.unit = name;
+            p.min = info.minValue;
+            p.max = info.maxValue > info.minValue ? info.maxValue : info.minValue + 1.0f;
+            p.initial = info.defaultValue;
+            if (!p.name.empty()) out.push_back(p);
+        }
+        return out;
+    }
+
+    float parameter(uint32_t id) const override {
+        AudioUnitParameterValue value = 0.0f;
+        AudioUnitGetParameter(unit_, id, kAudioUnitScope_Global, 0, &value);
+        return value;
+    }
+
+    void setParameter(uint32_t id, float value) override { AudioUnitSetParameter(unit_, id, kAudioUnitScope_Global, 0, value, 0); }
+
+    void notifyParameter(uint32_t id) override {
+        AudioUnitParameter p{unit_, id, kAudioUnitScope_Global, 0};
+        AUParameterListenerNotify(nullptr, nullptr, &p);
+    }
+
     std::vector<std::string> factoryPresets() const override {
         std::vector<std::string> out;
         CFArrayRef presets = nullptr;
