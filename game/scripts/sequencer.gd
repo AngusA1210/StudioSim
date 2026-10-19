@@ -1,5 +1,5 @@
 extends CanvasLayer
-## The pattern editor (Enter at an instrument): a step grid for the loop that instrument plays, one bar at a time,
+## The pattern editor (' at an instrument): a step grid for the loop that instrument plays, one bar at a time,
 ## with the tempo and the metronome click along the top. The music keeps playing while it's open, so every change
 ## is heard on the next time round. While it's open, a MIDI controller plays the instrument being edited.
 
@@ -24,6 +24,7 @@ const NOTE_ROW := 20.0
 const HELP := "Click a square to add a note, click a note to remove it. Right-click a note to change how hard it is hit. Click a name on the left to hear it."
 
 var app
+var _close_button: Button  # its label says which key closes it too
 var audio: SoundRoomAudio
 var inst = null  # the instrument whose pattern is open
 var bar := 0
@@ -66,6 +67,7 @@ func is_open() -> bool:
 
 ## Opens the editor on an instrument's pattern, at the bar that is playing (or `at_bar`, counted from 0).
 func open(instrument, at_bar := -1, from_mixer := false) -> void:
+	_close_button.text = "Close  (%s)" % app.bindings.label("edit")
 	if instrument == null or not instrument.playable:
 		return
 	_back_to_mixer = from_mixer
@@ -182,7 +184,7 @@ func _build() -> void:
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header.add_child(spacer)
 	var close_button := Button.new()
-	close_button.text = "Close  (Enter)"
+	_close_button = close_button
 	close_button.pressed.connect(close)
 	header.add_child(close_button)
 

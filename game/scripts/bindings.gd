@@ -18,16 +18,18 @@ const ACTIONS := [
 	["octave_down", "Octave down (while playing)", KEY_Z],
 	["octave_up", "Octave up (while playing)", KEY_X],
 	["input", "Input on / off", KEY_I],
-	["edit", "Its pattern, an amp's panel, a Speaker's panel", KEY_ENTER],
+	["edit", "Its pattern, an amp's panel, a Speaker's panel", KEY_APOSTROPHE],
 	["plugin_window", "A plug-in instrument's own window", KEY_P],
 	["loop", "Its loop on / off (a Speaker or amp: mute)", KEY_M],
 	["carry", "Pick up, put down", KEY_G],
-	["add", "Add an instrument", KEY_N],
+	["add", "Add an instrument", KEY_T],
 	["duplicate", "Duplicate what you face, with all its settings", KEY_V],
 	["remove", "Remove what you face (twice)", KEY_BACKSPACE],
 	["mixer", "The mix window", KEY_TAB],
 	["edit_window", "The edit window (a Record room), from the room or the mix window", KEY_R],
 	["transport", "Start / stop the patterns", KEY_SPACE],
+	["to_start", "The playhead back to the start (a Record room)", KEY_ENTER],
+	["follow", "Insertion follows playback on / off (a Record room)", KEY_N],
 	["click", "Metronome click", KEY_C],
 	["binaural", "Binaural on / off", KEY_B],
 	["loop_switch", "Loop pedal: record, play, overdub", KEY_L],
@@ -40,7 +42,7 @@ const FIXED := {KEY_ESCAPE: "Esc: back out", KEY_UP: "walk", KEY_DOWN: "walk", K
 	KEY_1: "pedal 1", KEY_2: "pedal 2", KEY_3: "pedal 3", KEY_4: "pedal 4", KEY_5: "pedal 5", KEY_6: "pedal 6", KEY_7: "pedal 7",
 	KEY_8: "pedal 8"}
 # Second keys for a few actions, as on most keyboards.
-const ALSO := {KEY_KP_ENTER: "edit", KEY_DELETE: "remove"}
+const ALSO := {KEY_KP_ENTER: "to_start", KEY_DELETE: "remove"}
 # The computer keyboard as a piano, the usual DAW layout: semitones above the C the octave starts on.
 const NOTES := {
 	KEY_A: 0, KEY_W: 1, KEY_S: 2, KEY_E: 3, KEY_D: 4, KEY_F: 5, KEY_T: 6, KEY_G: 7, KEY_Y: 8,
@@ -88,6 +90,8 @@ static func name_of(keycode: int) -> String:
 	match keycode:
 		KEY_SEMICOLON:
 			return ";"
+		KEY_APOSTROPHE:
+			return "'"
 		KEY_BACKSPACE:
 			return "Backspace"
 	return OS.get_keycode_string(keycode)

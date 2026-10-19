@@ -40,6 +40,7 @@ var autosave_minutes := 5
 var backups := true        # a copy of the room in its Room Backups folder every so often
 var backup_minutes := 10
 var backups_kept := 10     # the oldest copies go past this many
+var insertion_follows := false  # a Record room: stopping leaves the playhead where the music stopped (N), as Pro Tools' option
 
 var path := "user://settings.cfg"
 var persist := true  # automated runs switch this off so they neither read nor change the player's settings
@@ -83,6 +84,7 @@ func load_from_disk() -> void:
 	backups = file.get_value("rooms", "backups", backups)
 	backup_minutes = clampi(file.get_value("rooms", "backup_minutes", backup_minutes), 1, 120)
 	backups_kept = clampi(file.get_value("rooms", "backups_kept", backups_kept), 1, 100)
+	insertion_follows = file.get_value("rooms", "insertion_follows_playback", insertion_follows)
 
 
 func save_to_disk() -> void:
@@ -119,4 +121,5 @@ func save_to_disk() -> void:
 	file.set_value("rooms", "backups", backups)
 	file.set_value("rooms", "backup_minutes", backup_minutes)
 	file.set_value("rooms", "backups_kept", backups_kept)
+	file.set_value("rooms", "insertion_follows_playback", insertion_follows)
 	file.save(path)

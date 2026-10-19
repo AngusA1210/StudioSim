@@ -171,7 +171,7 @@ struct AudioEngine::Source {
     struct Track {
         std::vector<TimelineNote> notes;  // in order of their steps
         struct Clip {
-            double start = 0.0, offset = 0.0, length = 0.0;
+            double start = 0.0, offset = 0.0, length = 0.0, fade_in = 0.0, fade_out = 0.0;
             std::shared_ptr<const AudioData> audio;
         };
         std::vector<Clip> clips;
@@ -613,7 +613,8 @@ bool AudioEngine::setTrack(int id, const std::vector<TimelineNote>& notes, const
             all = false;
             continue;
         }
-        track->clips.push_back({spec.start, spec.offset, spec.length, audio});
+        const double fade_in = std::clamp(spec.fade_in, 0.0, spec.length), fade_out = std::clamp(spec.fade_out, 0.0, spec.length - fade_in);
+        track->clips.push_back({spec.start, spec.offset, spec.length, fade_in, fade_out, audio});
     }
     Command c; c.type = Command::TrackSet; c.id = id; c.data = track.get(); c.epoch = s->board_sent + 1;
     if (!commands_.push(c)) {
@@ -1790,7 +1791,10 @@ void AudioEngine::renderTimeline() {
                 const size_t k = size_t(at);
                 if (k + 1 >= x.size()) continue;
                 const float frac = float(at - double(k));
-                out[i] += x[k] + (x[k + 1] - x[k]) * frac;
+                float gain = 1.0f;  // equal power: a quarter of a sine up, or down
+                if (t < clip.fade_in) gain = float(std::sin(0.5 * kPi * t / clip.fade_in));
+                if (clip.length - t < clip.fade_out) gain *= float(std::sin(0.5 * kPi * (clip.length - t) / clip.fade_out));
+                out[i] += (x[k] + (x[k + 1] - x[k]) * frac) * gain;
             }
         }
     }

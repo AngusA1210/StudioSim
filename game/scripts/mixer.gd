@@ -105,8 +105,10 @@ func _input(event: InputEvent) -> void:
 	elif action == "edit_window" and app.timeline.is_record():  # over to the edit window
 		close()
 		app.edit_window.open()
-	elif event.physical_keycode in [KEY_ENTER, KEY_KP_ENTER] and app.timeline.is_record():  # back to the start
+	elif action == "to_start" and app.timeline.is_record():  # back to the start
 		app.timeline.locate(0.0)
+	elif action == "follow" and app.timeline.is_record():
+		app.toggle_follow()
 	else:
 		return
 	get_viewport().set_input_as_handled()

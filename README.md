@@ -36,7 +36,7 @@ to the title, which then offers to go back into the room.
 | W A S D, mouse | move, look (click to capture the mouse); the arrow keys walk and turn too |
 | Shift | run |
 | G or click | pick up the instrument you're facing, put it down (it turns to face you) |
-| N | the instrument menu: add an instrument to the room |
+| T | the instrument menu: add an instrument to the room |
 | V | duplicate the instrument you're facing or carrying, with its settings, pedals and plug-ins: the copy is in your hands to put down |
 | Backspace, twice | remove the instrument you're facing or carrying |
 | E | play the instrument you're next to; Q stops |
@@ -44,7 +44,7 @@ to the title, which then offers to go back into the room.
 | K | the keyboard: the letter keys play every instrument whose input is on, from wherever you stand. The arrow keys walk and turn meanwhile; Q or Esc closes it |
 | I | that instrument's input on/off (see below) |
 | MIDI keyboard | plays every instrument whose input is on, with velocity (and the sustain pedal on the Keys); plug in any time |
-| Enter | open the pattern editor for the instrument you're next to or playing (at an amp: its knobs and pedals; at a Speaker: its volume and input) |
+| ' (beside Return) | open the pattern editor for the instrument you're next to or playing (at an amp: its knobs and pedals; at a Speaker: its volume and input) |
 | P | at a plug-in instrument, open its plug-in's window above the on-screen keyboard, the letter keys playing it; a click in the room, Esc or Q puts it away |
 | M | switch that instrument's loop off or on (for a Speaker or an amp: mute) |
 | L O U J | at an amp with a loop pedal: L the footswitch (record, close the loop, overdub), O stop or play, U undo or redo the last overdub, J twice to clear |
@@ -53,7 +53,9 @@ to the title, which then offers to go back into the room.
 | Space | start or stop every instrument's pattern (a Record room: play from the playhead, or stop) |
 | ⌘Space | a Record room: record the armed tracks from the playhead; again (or Space) to stop |
 | R | a Record room: the edit window, from the room or the mix window (⌘= swaps the two) |
-| Enter (edit or mix window) | a Record room: the playhead back to the start |
+| Enter | a Record room: the playhead back to the start, from the room, the edit window or the mix window |
+| N | a Record room: insertion follows playback on/off (stopping leaves the playhead where the music stopped, rather than going back to where it started), as in Pro Tools |
+| ⌘Z, ⌘⇧Z | a Record room: undo the last edit to the clips (a recording, a move, a trim...), and redo it |
 | C | metronome click on/off |
 | Esc | the menu (see below), including the room's size and walls; the music keeps playing while it's open |
 | ⌘S | save the room |
@@ -68,7 +70,7 @@ you get up or close it.
 
 ## Instruments
 
-There are two families of instrument, and the instrument menu (N) adds either to the room, up to 32 in all:
+There are two families of instrument, and the instrument menu (T) adds either to the room, up to 32 in all:
 
 - **MIDI instruments** (a drum machine, a garage kit, a studio kit, bass, pad, bells, keys, and plug-in instruments) are played from
   the computer keyboard or a MIDI controller, and each can loop a pattern on the sequencer.
@@ -109,7 +111,7 @@ Pick one and it appears in your hands: walk it to where it should stand and clic
 instrument starts with an empty pattern, so it is silent until you play it or write it a pattern (the pattern editor
 can load the default one). A new Speaker plays the hardware input chosen in the menu, which can be changed later in
 its mix window strip or on the I/O page; several Speakers can each play a different input. A Speaker's own
-**volume** (Enter at it, or click its name in the mix window) goes up to +24 dB, as on a big powered PA speaker, so that
+**volume** (' at it, or click its name in the mix window) goes up to +24 dB, as on a big powered PA speaker, so that
 it can fill a large room; it comes after the Speaker's inserts and before its fader. A second instrument of a kind is numbered and a
 paler colour, to tell them apart. Everything in the room is saved with it (see Rooms).
 
@@ -129,7 +131,7 @@ starts switched off, so an open microphone never meets a pair of speakers by sur
 
 An amp is a **head** and a **cabinet**, and any head goes with any cabinet. The four in the instrument menu start as a
 Crunch head in a 1x12 combo (Guitar Combo), a High Gain head on a 4x12 (Guitar Stack), a Bass Round 1x15 combo (Bass
-Combo) and a Bass Punch head on an 8x10 (Bass Stack); the amp panel (Enter) changes either, and the amp in the room is
+Combo) and a Bass Punch head on an 8x10 (Bass Stack); the amp panel (') changes either, and the amp in the room is
 drawn with the cabinet it has.
 
 | Head | | Cabinet | |
@@ -149,8 +151,8 @@ for a plug-in that brings its own cabinet.
 
 The head has the knobs of a real amp, 0 to 10: **Gain** (how hard the preamp is driven, from clean into distortion),
 **Bass**, **Middle** and **Treble** (flat at 5), **Presence** (the top end the power amp lets through) and **Master**
-(the amp's volume: 5 is unity, 10 is +12 dB, and it works with the head bypassed too). Enter, facing an amp,
-opens its panel: drag a knob up or down (Shift for fine moves), turn the scroll wheel over it, or double-click it for
+(the amp's volume: 5 is unity, 10 is +12 dB, and it works with the head bypassed too). Press ' facing an amp to
+open its panel: drag a knob up or down (Shift for fine moves), turn the scroll wheel over it, or double-click it for
 5. The panel also has the amp's input switch and which hardware input it plays. Plug a guitar or bass straight into
 the interface's instrument input; the amp is the only processing it needs. Wear headphones.
 
@@ -273,16 +275,29 @@ either way later; nothing it holds is lost.
 In a Record room:
 
 - **The transport**: Space plays from the playhead and stops, the playhead going back to where it started (as Pro
-  Tools does); Enter, in the edit or mix window, puts it back at the start. The screen's top right says where the
-  music is (bar | beat, and minutes and seconds), whether it is recording, and the loop.
+  Tools does); Enter puts it back at the start. With **insertion following playback** (N, or the edit window's Follow
+  button, as Pro Tools has it), stopping leaves the playhead where the music stopped instead; the screen says FOLLOWS
+  PLAYBACK while it does, and the choice is remembered. The screen's top right says where the music is (bar | beat,
+  and minutes and seconds), whether it is recording, and the loop.
 - **The edit window** (R from the room or the mix window, or the mix window's Edit window button): a row for each instrument, its name in its colour,
   and its clips along the bars. On each track's header, **R** arms it for recording (and puts its input on, to be
   heard and played), **I** its input, **M** mute and **S** solo. Above them the ruler: click it to put the playhead
   there, drag along it to loop that range (Loop switches loop playback on and off). The counter at the top shows bar |
   beat with the time beside it; click it and type a bar (`5`), a bar and beat (`5 | 3`) or a time (`1:24`), then
-  Enter, to go there. Clips and the ruler snap to the grid (Bar, Beat, 1/8, 1/16, or Off for anywhere). Click one to choose it and drag it along its track or to another that takes its kind;
-  hold Option as you drop it for a copy; **⌘D** puts a second of it just after it; **Delete** takes it away; **L** loops it, from its start to its end exactly. Scroll
-  to move about (Shift for along), ⌘ and the wheel (or a pinch) to zoom. Tab, or ⌘=, goes over to the mix window.
+  Enter, to go there. Clips and the ruler snap to the grid (Bar, Beat, 1/8, 1/16, or Off for anywhere). Scroll to
+  move about (Shift for along), ⌘ and the wheel (or a pinch) to zoom. Tab, or ⌘=, goes over to the mix window. The
+  cursor and the line at the foot of the window say what a press would do where the mouse is.
+- **Editing clips**, with the mouse as with Pro Tools' Smart Tool:
+  - Click a clip to choose it (stopped, the playhead goes where you clicked too), and drag it along its track or to
+    another that takes its kind; hold Option as you drop it for a copy.
+  - Drag either **end** to trim it. An audio clip only ever shows more or less of its file, never past either end of
+    it; a MIDI clip keeps the notes trimmed off, and drawn out again they are back.
+  - Drag an audio clip's **top corners** to fade it in or out (equal-power curves, drawn over the waveform).
+  - **⌘E** splits the chosen clip at the playhead (with none chosen, every clip under it), as Pro Tools' Separate: the
+    halves meet exactly, the first keeping the fade in and the second the fade out, named `Speaker_01-01` and so on.
+  - **,** and **.** (or - and + on the number pad) nudge it a grid line earlier or later (10 ms with the grid off).
+  - **⌘D** puts a second of it just after it, **Delete** takes it away, **L** loops it from its start to its end exactly.
+  - **⌘Z** undoes an edit (a recording, a move, a trim, a fade, a split...), up to 32 of them, and **⌘⇧Z** redoes it.
 - **Recording** (⌘Space, or Record): the armed tracks record from the playhead (or from where it is playing), loop
   playback waiting meanwhile. An armed Speaker or amp records its hardware input as it comes in, before its pedals,
   amp and inserts, to a WAV file (32-bit float) in the room's **Audio Files** folder, named after the track
@@ -308,7 +323,7 @@ inserts, an amp's head, cabinet, knobs and pedals (the plug-ins on its pedals to
 instrument's plug-in with its settings. They are on
 the **Presets** button of an amp's or a Speaker's panel, and under **Presets** when you right-click an instrument's name
 in the mix window. A preset loads onto any instrument of its family (an amp's onto any amp, a guitar combo's onto a bass
-stack even), and the instrument menu (N) lists them under **Your presets**, to bring one into the room as a new
+stack even), and the instrument menu (T) lists them under **Your presets**, to bring one into the room as a new
 instrument. They are kept in `SoundRoom/Instrument Presets`.
 
 **Copy settings** and **Paste settings** sit in the same Presets menus, as in Pro Tools: a plug-in's settings paste
@@ -363,8 +378,8 @@ has it. That can be made gentler (down to 0, where distance makes no difference)
 Settings page of the menu.
 
 In the room, the master meter stands at the top right of the screen (it can be switched off in Settings). Under it
-is the recent peak, or "limit" or "CLIP" when either is happening. Beside the tempo, two lamps show whether
-binaural rendering (B) and the room reverb (its fader in the mix window above the bottom) are on.
+is the recent peak, or "limit" or "CLIP" when either is happening. Beside the tempo, a lamp shows whether
+binaural rendering (B) is on, and in a Record room another says FOLLOWS PLAYBACK while insertion follows playback (N).
 
 ## The room
 
@@ -394,8 +409,8 @@ computer keyboard becomes a small piano for it, and any MIDI controller plays it
 work like a drum machine: each key is a drum, laid out like a General MIDI kit
 (C kick, D snare, F# closed hat, A# open hat, F and A toms, D# clap, C# crash) and repeated in every octave.
 
-Each instrument also has a pattern that the sequencer loops. The room starts with the default groove. Press Enter at
-an instrument to edit its pattern on a step grid, one bar at a time:
+Each instrument also has a pattern that the sequencer loops. The room starts with the default groove. Press ' (the key beside
+Return) at an instrument to edit its pattern on a step grid, one bar at a time:
 
 - click a square to add a note, click a note to remove it, right-click a note to step through loud, medium, soft
   and "now and then" (a soft note that plays one time in four)
@@ -488,21 +503,26 @@ Speakers, guitar and bass amps with boards of effect pedals (a loop pedal and a 
 screen, a mix window laid out like a DAW's with plug-in inserts on every channel, a room whose size and walls
 can be changed, with sound bending round the walls and a reverb that follows the size (on a fader of its own), rooms saved as sessions (with
 templates, auto-save and backups), presets and copy and paste for plug-ins and instruments, and Record rooms: a
-timeline, an edit window, and recording audio and MIDI to clips.
+timeline, an edit window, recording audio and MIDI to clips, and editing them (trims, fades, splits, nudges, undo).
 
 To do, roughly in this order:
 
-1. **More of the edit window**: trimming clips' ends and splitting them, fades and crossfades, automation, loop
-   recording (takes stacked to choose from), pre-roll and post-roll and a count-in, the sustain pedal in recorded
-   MIDI, editing a MIDI clip's notes, nudging, and audio read from disk as it plays (for long rooms; takes are held
-   in memory now). Perhaps later a free version with Jam rooms only, Record rooms coming with the full one.
-2. **More plug-ins**: inserts on the master, and perhaps VST3 and Windows.
-3. **The room's sound**: wall materials, each absorbing and diffusing sound in its
+1. **More of the edit window**: crossfades, clip gain, automation, loop recording (takes stacked to choose from),
+   pre-roll and post-roll and a count-in, the sustain pedal in recorded MIDI, editing a MIDI clip's notes, choosing
+   several clips at once, and audio read from disk as it plays (for long rooms; takes are held in memory now).
+   Perhaps later a free version with Jam rooms only, Record rooms coming with the full one.
+2. **Microphones**: a new kind of track, placed anywhere in the room with precision, that records what the room
+   sounds like from where it stands (the instruments as they reach it, from their direction, with the walls and the
+   reverb), as a mic on a stand does, rather than the instrument's own input. A perfectly flat one first, then
+   pickup patterns (omni, cardioid, figure-8) and models of real dynamics, condensers and ribbons with their
+   frequency responses and proximity effect; then stereo pairs.
+3. **More plug-ins**: inserts on the master, and perhaps VST3 and Windows.
+4. **The room's sound**: wall materials, each absorbing and diffusing sound in its
    own way, which shape how the room's reverb rings.
-4. **You in the room**: an avatar whose height you can set (the ears and eyes go with it; the view is a little tall
+5. **You in the room**: an avatar whose height you can set (the ears and eyes go with it; the view is a little tall
    for some now), which multiplayer will show to the others; and a free camera, detached from the avatar, that flies
    about the room with nothing in its way.
-5. **Multiplayer**, the final goal: a session server, a networked clock, note events and low-latency audio streams.
+6. **Multiplayer**, the final goal: a session server, a networked clock, note events and low-latency audio streams.
 
 Also wanted along the way: MIDI on Windows and Linux, and VR through OpenXR.
 

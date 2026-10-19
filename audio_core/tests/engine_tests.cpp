@@ -2208,6 +2208,19 @@ int main(int argc, char** argv) {
                   std::fabs(peaks[10] - 0.25f) < 0.01f,
               "played back from its clip, the take is heard from the Speaker where it was recorded, and its peaks can be drawn",
               fmt("%.1f dBFS while it plays", db(during.rms_l)));
+
+        // Given fades, the clip comes up from silence over its first half second and goes down over its last.
+        ClipSpec faded{result.audio[0].path, start_seconds, 0.0, result.audio[0].seconds, 0.5, 0.5};
+        take.engine.setTrack(take.speaker, {}, {faded}, &track_error);
+        take.engine.playFrom(result.start_step);
+        const Render fading_in = renderSeconds(take.engine, 0.1);
+        renderSeconds(take.engine, 0.45);
+        const Render full = renderSeconds(take.engine, 0.15);
+        renderSeconds(take.engine, 0.47);
+        const Render fading_out = renderSeconds(take.engine, 0.08);
+        check(full.rms_l > 0.005 && fading_in.rms_l < 0.45 * full.rms_l && fading_out.rms_l < 0.45 * full.rms_l,
+              "a clip's fades bring it in from silence and take it out again",
+              fmt("%.1f dB in, ", db(fading_in.rms_l) - db(full.rms_l)) + fmt("%.1f dB out against the middle", db(fading_out.rms_l) - db(full.rms_l)));
         std::filesystem::remove_all(folder);
     }
 

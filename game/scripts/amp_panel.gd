@@ -1,5 +1,5 @@
 extends CanvasLayer
-## An amp's panel (Enter at an amp): its head and cabinet, its knobs and input, and the board of pedals on the floor
+## An amp's panel (' at an amp): its head and cabinet, its knobs and input, and the board of pedals on the floor
 ## in front of it. Any head goes with any cabinet, and either can be bypassed: without its head, the amp plays what
 ## reaches it straight through the cabinet (a plug-in amp on a Plug-in pedal can be the head); without its cabinet it
 ## is a flat full-range speaker.
@@ -37,6 +37,7 @@ const STATES := {
 const NUMBER_KEYS := [KEY_1, KEY_2, KEY_3, KEY_4, KEY_5, KEY_6, KEY_7, KEY_8]
 
 var app
+var _close_button: Button  # its label says which key closes it too
 var audio: SoundRoomAudio
 var inst = null
 var selected := -1  # the pedal being set up under the board; -1 for none
@@ -124,6 +125,7 @@ func is_open() -> bool:
 
 
 func open(amp, from_mixer := false) -> void:
+	_close_button.text = "Close  (%s)" % app.bindings.label("edit")
 	_back_to_mixer = from_mixer
 	if inst != amp:
 		selected = 0 if not amp.pedals.is_empty() else -1
@@ -615,7 +617,7 @@ func _build() -> void:
 	gap_before_close.custom_minimum_size.x = 8
 	header.add_child(gap_before_close)
 	var close_button := Button.new()
-	close_button.text = "Close  (Enter)"
+	_close_button = close_button
 	close_button.pressed.connect(close)
 	header.add_child(close_button)
 	_amp_presets = PresetMenu.new()

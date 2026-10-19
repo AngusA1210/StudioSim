@@ -113,10 +113,12 @@ struct TimelineNote {
     float velocity = 0.8f;
 };
 // An audio clip: part of a WAV file (from `offset` seconds into it, `length` long), placed `start` seconds from the
-// start of bar 1. Many clips can share one file, as Pro Tools' clips refer to their parent file.
+// start of bar 1. Many clips can share one file, as Pro Tools' clips refer to their parent file. It fades in over its
+// first `fade_in` seconds and out over its last `fade_out` (equal-power curves).
 struct ClipSpec {
     std::string path;
     double start = 0.0, offset = 0.0, length = 0.0;
+    double fade_in = 0.0, fade_out = 0.0;
 };
 // What a recording took: each audio track's file (begun `start_step` into the timeline), and the notes played on
 // each MIDI track, as steps on the timeline.

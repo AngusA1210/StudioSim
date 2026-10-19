@@ -270,6 +270,12 @@ func _handle_key(event: InputEventKey) -> void:
 				app.set_muted(at, not at.muted)
 		"transport":
 			app.toggle_transport()
+		"to_start":  # as Return is in Pro Tools
+			if app.timeline.is_record():
+				app.timeline.locate(0.0)
+		"follow":
+			if app.timeline.is_record():
+				app.toggle_follow()
 		"edit_window":
 			if app.timeline.is_record():
 				app.edit_window.open()

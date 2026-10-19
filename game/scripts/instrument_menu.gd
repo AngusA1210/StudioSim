@@ -1,5 +1,5 @@
 extends CanvasLayer
-## The instrument menu (N): pick a kind of instrument and it appears in your hands, to be walked to where it
+## The instrument menu (T): pick a kind of instrument and it appears in your hands, to be walked to where it
 ## should stand and put down. Two families: MIDI instruments, which are played and sequenced, and live inputs,
 ## which bring a microphone or a plugged-in instrument into the room. Under them, any instrument presets saved
 ## (an amp with its pedals and plug-ins, say), each of which comes in as a new instrument set up that way.
@@ -9,6 +9,7 @@ const DIM := Color(0.62, 0.65, 0.74)
 const WARN := Color(1.0, 0.61, 0.48)
 
 var app
+var _close_button: Button  # its label says which key closes it too
 var audio: SoundRoomAudio
 
 var _root: Control
@@ -37,6 +38,7 @@ func is_open() -> bool:
 
 
 func open() -> void:
+	_close_button.text = "Close  (%s)" % app.bindings.label("add")
 	app.player.release_keys()
 	_root.visible = true
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
@@ -113,7 +115,7 @@ func _build() -> void:
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header.add_child(spacer)
 	var close_button := Button.new()
-	close_button.text = "Close  (N)"
+	_close_button = close_button
 	close_button.pressed.connect(close)
 	header.add_child(close_button)
 

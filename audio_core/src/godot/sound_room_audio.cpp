@@ -506,7 +506,8 @@ bool SoundRoomAudio::set_track(int id, const Array& notes, const Array& clips) {
     std::vector<sr::ClipSpec> c;
     for (int64_t i = 0; i < clips.size(); ++i) {
         const Dictionary d = clips[i];
-        c.push_back({str(String(d.get("path", ""))), double(d.get("start", 0.0)), double(d.get("offset", 0.0)), double(d.get("length", 0.0))});
+        c.push_back({str(String(d.get("path", ""))), double(d.get("start", 0.0)), double(d.get("offset", 0.0)), double(d.get("length", 0.0)),
+                     double(d.get("fade_in", 0.0)), double(d.get("fade_out", 0.0))});
     }
     std::string err;
     if (engine_->setTrack(id, n, c, &err)) return true;

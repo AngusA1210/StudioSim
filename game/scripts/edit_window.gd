@@ -1,10 +1,11 @@
 extends CanvasLayer
 ## The edit window (R, in a Record room), as a DAW's: every track along the timeline (timeline_view.gd), and the
 ## transport above them: play and stop (Space), record (Cmd-Space), loop playback, where the music is (bar | beat, and
-## minutes and seconds: click the bar | beat and type one, or a time, to go there), the grid clips snap to, and zoom.
-## Enter goes back to the start. Delete takes the chosen clip away, Cmd-D puts a second of it just after it, and L
-## loops it. Tab (or Cmd-=) goes over to the mix window. It docks along the bottom of the screen, the room in view
-## above it, and you can walk about while it is open.
+## minutes and seconds: click the bar | beat and type one, or a time, to go there), whether insertion follows playback
+## (N), the grid clips snap to, and zoom. Enter goes back to the start. Delete takes the chosen clip away, Cmd-D puts a
+## second of it just after it, Cmd-E splits it at the playhead, comma and full stop (or - and + on the number pad)
+## nudge it, and L loops it; Cmd-Z undoes an edit and Cmd-Shift-Z does it again. Tab (or Cmd-=) goes over to the mix
+## window. It docks along the bottom of the screen, the room in view above it, and you can walk about while it is open.
 
 const TimelineView := preload("res://scripts/timeline_view.gd")
 const Hints := preload("res://scripts/hints.gd")
@@ -20,6 +21,7 @@ var _panel: PanelContainer
 var _play: Button
 var _record: Button
 var _loop: Button
+var _follow: Button
 var _counter: LineEdit  # bar | beat, which can be typed into
 var _clock: Label       # minutes and seconds
 var _close: Button
@@ -79,10 +81,17 @@ func _input(event: InputEvent) -> void:
 		view.selected = {}
 	elif key == KEY_D and command and not view.selected.is_empty():
 		duplicate_selected()
-	elif key in [KEY_ENTER, KEY_KP_ENTER] and not command:  # back to the start, as Return is in Pro Tools
+	elif action == "to_start" and not command:  # back to the start, as Return is in Pro Tools
 		timeline.locate(0.0)
+	elif action == "follow" and not command:
+		app.toggle_follow()
 	elif key == KEY_L and not command and not view.selected.is_empty():
 		loop_selected()
+	elif key == KEY_E and command:
+		separate_selected()
+	elif key in [KEY_COMMA, KEY_PERIOD, KEY_KP_SUBTRACT, KEY_KP_ADD] and not command and not view.selected.is_empty():
+		var later := key in [KEY_PERIOD, KEY_KP_ADD]
+		view.selected = {"inst": view.selected.inst, "index": timeline.nudge(view.selected.inst, view.selected.index, 1 if later else -1)}
 	else:
 		return
 	get_viewport().set_input_as_handled()
@@ -132,6 +141,28 @@ func clock_text(step: float) -> String:
 	return "%d:%05.2f" % [int(seconds / 60.0), fmod(seconds, 60.0)]
 
 
+## Cmd-E: the chosen clip split in two at the playhead (the second half chosen then); with none chosen, every clip the
+## playhead is in.
+func separate_selected() -> void:
+	var at: float = timeline.position()
+	if not view.selected.is_empty():
+		var second: int = timeline.separate(view.selected.inst, view.selected.index, at)
+		if second >= 0:
+			view.selected = {"inst": view.selected.inst, "index": second}
+		else:
+			app.session.notice.emit("The playhead isn't in the chosen clip")
+		return
+	var split := 0
+	for inst in app.instruments:
+		for c in inst.clips.size():
+			var span: Vector2 = timeline.clip_steps(inst.clips[c])
+			if at > span.x and at < span.y and timeline.separate(inst, c, at) >= 0:
+				split += 1
+				break  # (clips on a track don't overlap)
+	if split == 0:
+		app.session.notice.emit("There's no clip under the playhead to split")
+
+
 ## Cmd-D: a second of the chosen clip, just after it.
 func duplicate_selected() -> void:
 	var inst = view.selected.inst
@@ -159,6 +190,7 @@ func _process(_delta: float) -> void:
 	_record.add_theme_color_override("font_color", RECORD_RED if timeline.recording else Color(0.9, 0.6, 0.58))
 	_record.text = "●  Recording" if timeline.recording else "●  Record"
 	_loop.set_pressed_no_signal(timeline.loop_on)
+	_follow.set_pressed_no_signal(app.settings.insertion_follows)
 	if Time.get_ticks_msec() >= _status_until:
 		var armed: Array = app.instruments.filter(func(i): return i.armed)
 		_status.text = "Armed: " + ", ".join(armed.map(func(i): return i.display_name)) if not armed.is_empty() else ""
@@ -196,6 +228,10 @@ func _build() -> void:
 	_record.custom_minimum_size.x = 120
 	_loop = _button(header, "⟳  Loop", func() -> void: timeline.set_loop(not timeline.loop_on), "Loop playback round the range marked on the ruler (drag along the ruler to mark another, or press L to loop the chosen clip)")
 	_loop.toggle_mode = true
+	_follow = _button(header, "↦  Follow", func() -> void: app.toggle_follow(), func() -> String:
+		return "Insertion follows playback (%s): stopping leaves the playhead where the music stopped, rather than going back to where it started" % \
+			app.bindings.label("follow"))
+	_follow.toggle_mode = true
 	_counter = LineEdit.new()
 	_counter.add_theme_font_size_override("font_size", 20)
 	_counter.custom_minimum_size.x = 104
@@ -244,12 +280,12 @@ func _build() -> void:
 	box.add_child(_hint)
 
 
-func _button(parent: Control, text: String, on_pressed: Callable, hint: String) -> Button:
+func _button(parent: Control, text: String, on_pressed: Callable, hint) -> Button:
 	var button := Button.new()
 	button.text = text
 	button.focus_mode = Control.FOCUS_NONE
 	button.pressed.connect(on_pressed)
-	if hint != "":
+	if not (hint is String and hint == ""):
 		Hints.give(button, hint)
 	parent.add_child(button)
 	return button

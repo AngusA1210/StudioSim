@@ -901,7 +901,7 @@ func _fill_live_rows(live_instruments: Array) -> void:
 		_field(_live_rows, "%s plays input" % inst.display_name).add_child(grid)
 		_fill_grid(grid, _input_channels, true, _live_label.bind(inst), _on_live_clicked.bind(inst))
 	if live_instruments.is_empty():
-		_note(_live_rows, "There is no Speaker in the room to play an input. Add one from the instrument menu (N).")
+		_note(_live_rows, "There is no Speaker in the room to play an input. Add one from the instrument menu (%s)." % app.bindings.label("add"))
 
 
 func _live_label(channel: int, inst) -> String:

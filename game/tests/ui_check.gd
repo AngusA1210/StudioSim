@@ -48,6 +48,19 @@ func tap(code: int) -> void:
 	await frames(2)
 
 
+## A key pressed and let go with Cmd held (and Shift, with `shift`).
+func command_tap(code: int, shift := false) -> void:
+	for pressed in [true, false]:
+		var e := InputEventKey.new()
+		e.physical_keycode = code
+		e.keycode = code
+		e.meta_pressed = true
+		e.shift_pressed = shift
+		e.pressed = pressed
+		view.push_input(e)
+		await frames(2)
+
+
 func click(pos: Vector2, button := MOUSE_BUTTON_LEFT) -> void:
 	var move := InputEventMouseMotion.new()
 	move.position = pos
@@ -207,7 +220,7 @@ func _run() -> void:
 		title._status.text.begins_with("Playing through"), "with no room open yet, New room is ready under the keyboard",
 		title._status.text.replace("\n", " / "))
 	var stood: Vector3 = player.global_position
-	for code in [KEY_E, KEY_TAB, KEY_N, KEY_M, KEY_SPACE]:
+	for code in [KEY_E, KEY_TAB, KEY_T, KEY_N, KEY_M, KEY_APOSTROPHE, KEY_SPACE]:
 		await tap(code)
 	check(player.playing == null and not seq.is_open() and not main.instrument_menu.is_open() and not main.mixer.is_open() and
 		main.sequence_running and player.global_position.is_equal_approx(stood), "the room's own keys do nothing here")
@@ -266,26 +279,24 @@ func _run() -> void:
 		main.session.path)
 	check(main.hud._meter_panel.visible and main.hud._meter.vertical and main.hud._meter_text.text.ends_with(" dB") and main.hud._meter.held_db() > -40.0,
 		"the master meter stands upright on screen, reading the music", main.hud._meter_text.text)
-	check(main.hud._binaural_chip.text == "BINAURAL" and main.hud._reverb_chip.text == "REVERB" and main.hud._modes_panel.visible,
-		"the screen shows that binaural and the room reverb are on")
+	check(main.hud._binaural_chip.text == "BINAURAL" and main.hud._modes_panel.visible and not main.hud._follow_chip.visible,
+		"the screen shows that binaural is on (the reverb has a fader now, so no lamp)")
 	await tap(KEY_B)
-	main.set_reverb_db(-80.0)  # the reverb's fader all the way down
-	await tap(KEY_R)  # which no longer switches it (in a Jam room it does nothing)
+	await tap(KEY_R)  # the edit window's key: in a Jam room it does nothing
+	await tap(KEY_N)  # and insertion following playback is for Record rooms too
 	await frames(2)
-	check(main.hud._binaural_chip.text == "BINAURAL OFF" and main.hud._reverb_chip.text == "REVERB OFF" and not main.settings.binaural and
-		not main.edit_window.is_open(), "B switches binaural off, and the reverb's fader all the way down puts the reverb out, which it shows",
-		"%s, %s" % [main.hud._binaural_chip.text, main.hud._reverb_chip.text])
+	check(main.hud._binaural_chip.text == "BINAURAL OFF" and not main.settings.binaural and not main.edit_window.is_open() and
+		not main.settings.insertion_follows, "B switches binaural off, which it shows; R and N do nothing in a Jam room", main.hud._binaural_chip.text)
 	await tap(KEY_B)
-	main.set_reverb_db(0.0)
 	await frames(2)
-	check(main.settings.binaural and main.hud._reverb_chip.text == "REVERB" and main.hud._binaural_chip.text == "BINAURAL", "and on again")
+	check(main.settings.binaural and main.hud._binaural_chip.text == "BINAURAL", "and on again")
 	check(not title.is_open() and not title.visible and player.camera.current and main.hud._root.visible, "Enter goes into the room, in the player's view",
 		"title open %s, title showing %s, player camera %s, hud %s" % [title.is_open(), title.visible, player.camera.current, main.hud._root.visible])
 
 	print("Walking up to an instrument")
 	check(speaker.display_name == "Speaker", "the live input is called the Speaker", speaker.display_name)
-	await tap(KEY_ENTER)
-	check(not seq.is_open(), "Enter does nothing when you aren't at an instrument")
+	await tap(KEY_APOSTROPHE)
+	check(not seq.is_open(), "' does nothing when you aren't at an instrument")
 	await tap(KEY_TAB)
 	check(main.mixer.is_open(), "Tab opens the mix window from anywhere")
 	await tap(KEY_TAB)
@@ -294,7 +305,7 @@ func _run() -> void:
 	await frames(5)
 	check(player.target == drums and player.can_play_target(), "standing at the drums, they are what you're facing")
 	var card: Array = main.hud.hint_lines()
-	check(card == ["Drums", "E play", "Enter edit its pattern", "I input on", "M loop off", "G carry", "V duplicate", "Backspace remove (press twice)"],
+	check(card == ["Drums", "E play", "' edit its pattern", "I input on", "M loop off", "G carry", "V duplicate", "Backspace remove (press twice)"],
 		"a card lists what each key does, one per line, with removing at the bottom", " / ".join(card))
 	var parts := 0
 	for node in drums._model.find_children("*", "MeshInstance3D", true, false):
@@ -322,8 +333,8 @@ func _run() -> void:
 	check(drums.loop_on, "M works while playing too, and brings the loop back")
 
 	print("The pattern editor")
-	await tap(KEY_ENTER)
-	check(seq.is_open() and seq.inst == drums and seq._title.text == "Drums pattern", "Enter opens the drums' pattern", seq._title.text)
+	await tap(KEY_APOSTROPHE)
+	check(seq.is_open() and seq.inst == drums and seq._title.text == "Drums pattern", "' opens the drums' pattern", seq._title.text)
 	check(seq._grid.rows.size() == 8 and seq._grid.rows[7].label == "Kick" and seq._grid.rows[0].label == "Crash", "eight rows, kick at the bottom",
 		"%d rows" % seq._grid.rows.size())
 	check(not seq._note_length_box.visible, "no note-length choice for drums")
@@ -390,8 +401,8 @@ func _run() -> void:
 	seq._click.button_pressed = true
 	await frames(2)
 	check(main.settings.click and audio.get_transport().click, "the click switch turns the metronome on")
-	await tap(KEY_ENTER)
-	check(not seq.is_open() and player.playing == drums, "Enter closes the editor; you are still at the drums")
+	await tap(KEY_APOSTROPHE)
+	check(not seq.is_open() and player.playing == drums, "' closes the editor; you are still at the drums")
 	await tap(KEY_C)
 	check(not main.settings.click, "C switches the click off")
 	check(main.hud._beat.text.contains("120 BPM"), "the beat readout shows the tempo", main.hud._beat.text)
@@ -421,8 +432,8 @@ func _run() -> void:
 	print("A melodic instrument")
 	main._sit_at("bass")
 	await frames(5)
-	await tap(KEY_ENTER)
-	check(seq.is_open() and seq.inst == bass and player.playing == bass, "Enter opens the bass pattern straight from facing it", seq._title.text)
+	await tap(KEY_APOSTROPHE)
+	check(seq.is_open() and seq.inst == bass and player.playing == bass, "' opens the bass pattern straight from facing it", seq._title.text)
 	check(seq._note_length_box.visible and seq._grid.rows.size() >= 33, "a row for each note, and a note-length choice", "%d rows" % seq._grid.rows.size())
 	await frames(4)
 	seq._on_bar_pressed(0)
@@ -451,7 +462,7 @@ func _run() -> void:
 	var count_before: int = main.instruments.size()
 	await tap(KEY_BACKSPACE)
 	check(player.target == null and player.remove_pending == null, "Backspace does nothing when you aren't facing an instrument")
-	await tap(KEY_N)
+	await tap(KEY_T)
 	check(im.is_open() and im._cards.size() == 13 and not im._cards[0].disabled, "N opens the instrument menu, with the amps among the live inputs",
 		im._footer.text)
 	await click(im._card_for.bass.get_global_rect().get_center())
@@ -473,11 +484,11 @@ func _run() -> void:
 	var sounding: float = audio.get_source_level(bass2.source_id)
 	key(KEY_A, false)
 	check(player.playing == bass2 and silent_before < 0.0005 and sounding > 0.01, "it is silent until you play it", "before %.4f, playing %.3f" % [silent_before, sounding])
-	await tap(KEY_ENTER)
+	await tap(KEY_APOSTROPHE)
 	check(seq.is_open() and seq._title.text == "Bass 2 pattern", "and it has its own pattern to edit", seq._title.text)
 	await tap(KEY_BACKSPACE)
 	check(main.instruments.has(bass2), "Backspace is ignored while the pattern editor is open")
-	await tap(KEY_ENTER)
+	await tap(KEY_APOSTROPHE)
 	await tap(KEY_BACKSPACE)
 	await frames(2)
 	check(player.remove_pending == bass2 and main.instruments.has(bass2) and main.hud.hint_lines()[0] == "Remove Bass 2?",
@@ -487,7 +498,7 @@ func _run() -> void:
 	check(not main.instruments.has(bass2) and main.instruments.size() == count_before and audio.get_source_count() == count_before
 		and player.playing == null and not is_instance_valid(bass2), "a second one removes it")
 
-	await tap(KEY_N)
+	await tap(KEY_T)
 	im._input_option.select(im._input_option.item_count - 1)  # the last hardware input there is
 	im._on_input_selected(im._input_option.selected)
 	await click(im._card_for.live.get_global_rect().get_center())
@@ -529,10 +540,10 @@ func _run() -> void:
 		if extra == null:
 			break
 		extras.append(extra)
-	await tap(KEY_N)
+	await tap(KEY_T)
 	check(main.instruments.size() == audio.get_max_sources() and im._cards[0].disabled and im._footer.text.begins_with("The room is full"),
 		"a full room says so and offers nothing more", "%d instruments, the last one is %s" % [main.instruments.size(), extras[-1].display_name])
-	await tap(KEY_N)
+	await tap(KEY_T)
 	for extra in extras:
 		main.remove_instrument(extra)
 	await seconds(0.4)
@@ -545,7 +556,7 @@ func _run() -> void:
 	main.set_tempo(240.0)  # bars of one second, so the pedal doesn't keep the test waiting
 	player.place(Vector3(0.0, 0.0, 3.6), 0.0)
 	await frames(3)
-	await tap(KEY_N)
+	await tap(KEY_T)
 	await click(im._card_for.guitar_combo.get_global_rect().get_center())
 	var amp = player.carried
 	check(amp != null and amp.display_name == "Guitar Combo" and amp.is_amp and not amp.playable and amp.pedals.is_empty(),
@@ -555,10 +566,10 @@ func _run() -> void:
 	var bare_card: Array = main.hud.hint_lines()
 	await tap(KEY_L)
 	await frames(2)
-	check(player.target == amp and bare_card.has("Enter amp and pedals") and not bare_card.has("L record a loop") and not bare_card.has("E play") and
+	check(player.target == amp and bare_card.has("' amp and pedals") and not bare_card.has("L record a loop") and not bare_card.has("E play") and
 		amp.looper.get("state", "") == "none" and amp._led == null, "without a loop pedal its card offers the amp and pedals, and L does nothing",
 		" / ".join(bare_card))
-	await tap(KEY_ENTER)
+	await tap(KEY_APOSTROPHE)
 	await frames(3)
 	var panel = main.amp_panel
 	check(panel.is_open() and panel._tiles.is_empty() and panel._empty_page.visible, "its panel says the board is empty")
@@ -569,7 +580,7 @@ func _run() -> void:
 	check(amp.pedals.size() == 1 and amp.pedals[0].kind == "looper" and panel._loop_page.visible and panel._display.text == "EMPTY" and
 		panel._add_menu.is_item_disabled(load("res://scripts/catalog.gd").PEDAL_ORDER.find("looper")),
 		"+ Pedal puts a loop pedal on the board, and then offers no second one")
-	await tap(KEY_ENTER)
+	await tap(KEY_APOSTROPHE)
 	await frames(5)
 	var amp_card: Array = main.hud.hint_lines()
 	check(not panel.is_open() and amp_card.has("L record a loop") and amp_card.has("1 stamp on a pedal") and amp._led != null and
@@ -603,10 +614,10 @@ func _run() -> void:
 	await tap(KEY_O)
 	await frames(3)
 	check(amp.looper.get("state", "") == "stopped" and amp._loop_label.text.contains("stopped"), "O stops the loop", amp._loop_label.text)
-	await tap(KEY_ENTER)
+	await tap(KEY_APOSTROPHE)
 	await frames(4)
 	check(panel.is_open() and panel.inst == amp and panel._display.text == "■ STOPPED" and panel._footswitch.text.begins_with("Play"),
-		"Enter opens the amp's panel: its knobs and the loop pedal", panel._display.text)
+		"' opens the amp's panel: its knobs and the loop pedal", panel._display.text)
 	var gain_knob = panel._knobs.gain
 	var knob_at: Vector2 = gain_knob.get_global_rect().get_center() - Vector2(0, 20)
 	var grab := InputEventMouseButton.new()
@@ -655,13 +666,17 @@ func _run() -> void:
 	panel._head_choice.item_selected.emit(1)
 	await frames(2)
 	await click(panel._footswitch.get_global_rect().get_center())
+	for wait in 10:  # (the audio thread takes it up a block later)
+		if amp.looper.get("state", "") == "playing":
+			break
+		await frames(3)
 	check(amp.looper.get("state", "") == "playing", "the pedal's footswitch button plays it again", "%s, footswitch at %s, panel %s" % [amp.looper.get("state", ""), panel._footswitch.get_global_rect(), panel._panel.get_global_rect()])
 	await tap(KEY_J)
 	await tap(KEY_J)
 	await frames(3)
 	check(amp.looper.get("state", "") == "empty", "J twice clears the loop, from the panel too")
-	await tap(KEY_ENTER)
-	check(not panel.is_open(), "Enter closes the panel")
+	await tap(KEY_APOSTROPHE)
+	check(not panel.is_open(), "' closes the panel")
 	await tap(KEY_L)
 	await frames(2)
 	await tap(KEY_L)  # cancel the wait
@@ -672,7 +687,7 @@ func _run() -> void:
 
 	print("Effect pedals")
 	var order: Array = load("res://scripts/catalog.gd").PEDAL_ORDER
-	await tap(KEY_ENTER)
+	await tap(KEY_APOSTROPHE)
 	await frames(3)
 	await click(panel._remove.get_global_rect().get_center())
 	check(panel.is_open() and panel._tiles.is_empty() and panel._empty_page.visible and panel._add_button.visible and amp.looper.state == "none",
@@ -750,7 +765,7 @@ func _run() -> void:
 	browser._by_type.button_pressed = true
 	await click(panel._remove.get_global_rect().get_center())
 	check(amp.pedals.size() == 2 and panel.selected == 1, "a pedal can be taken off the board again")
-	await tap(KEY_ENTER)
+	await tap(KEY_APOSTROPHE)
 	await frames(4)
 	var with_pedals: Array = main.hud.hint_lines()
 	check(not panel.is_open() and with_pedals.has("1-2 stamp on the pedals") and amp._pedal_row.get_child_count() == 2,
@@ -784,24 +799,24 @@ func _run() -> void:
 	player.place(Vector3(from.x, 0.0, from.z), 0.0)
 	await frames(5)
 	var speaker_card: Array = main.hud.hint_lines()
-	check(player.target == speaker and speaker_card == ["Speaker", "I input on", "Enter volume and input", "M mute", "G carry",
+	check(player.target == speaker and speaker_card == ["Speaker", "I input on", "' volume and input", "M mute", "G carry",
 		"V duplicate", "Backspace remove (press twice)"], "the Speaker's card offers input, its panel and mute, but not playing", " / ".join(speaker_card))
 	await tap(KEY_M)
 	check(speaker.muted, "M mutes it")
 	await tap(KEY_E)
 	check(player.playing == null and not seq.is_open(), "E does nothing at the Speaker: it isn't played")
 	await tap(KEY_M)
-	await tap(KEY_ENTER)
+	await tap(KEY_APOSTROPHE)
 	await frames(3)
 	var speaker_panel = main.speaker_panel
 	check(speaker_panel.is_open() and speaker_panel.inst == speaker and speaker_panel._volume.readout == "+0.0 dB",
-		"Enter opens the Speaker's panel, its volume at 0 dB", speaker_panel._volume.readout)
+		"' opens the Speaker's panel, its volume at 0 dB", speaker_panel._volume.readout)
 	await turn(speaker_panel._volume, 75.0)  # 5 knob steps: right to the top
 	check(absf(speaker.volume_db - 24.0) < 0.6 and speaker_panel._volume.readout == "+24.0 dB",
 		"its volume goes up to +24 dB, as a big PA speaker's would", speaker_panel._volume.readout)
 	main.set_speaker_volume(speaker, 0.0)
-	await tap(KEY_ENTER)
-	check(not speaker_panel.is_open(), "Enter closes it")
+	await tap(KEY_APOSTROPHE)
+	check(not speaker_panel.is_open(), "' closes it")
 	await tap(KEY_ESCAPE)
 	check(main.menu.is_open() and main.menu._tabs.get_tab_title(0) == "Metronome", "Esc opens the menu, Metronome page first", main.menu._tabs.get_tab_title(main.menu._tabs.current_tab))
 	main.menu._tempo_slider.value = 100
@@ -1307,7 +1322,7 @@ func _run() -> void:
 		"a Speaker's copied settings paste onto another Speaker (volume and plug-ins), not onto an amp")
 	main.set_speaker_volume(speaker, 0.0)
 	await tap(KEY_TAB)
-	await tap(KEY_N)
+	await tap(KEY_T)
 	check(im.is_open() and im._preset_box.visible and im._preset_buttons.size() == 1 and im._preset_buttons[0].text.begins_with("Lead rig"),
 		"the instrument menu offers the presets saved")
 	(im._preset_box.get_parent().get_parent() as ScrollContainer).ensure_control_visible(im._preset_buttons[0])
@@ -1321,7 +1336,7 @@ func _run() -> void:
 	print("More instruments")
 	player.place(Vector3(0.0, 0.0, 3.6), 0.0)
 	await frames(3)
-	await tap(KEY_N)
+	await tap(KEY_T)
 	await click(im._card_for.garage_drums.get_global_rect().get_center())
 	var garage = player.carried
 	check(im._card_for.has("studio_drums") and main.Catalog.KINDS.studio_drums.drum_kit and
@@ -1343,7 +1358,7 @@ func _run() -> void:
 
 	player.place(Vector3(3.0, 0.0, 3.6), 0.0)  # somewhere else to set the next one down
 	await frames(3)
-	await tap(KEY_N)
+	await tap(KEY_T)
 	await click(im._card_for.plugin_synth.get_global_rect().get_center())
 	check(picker.visible and picker._title.text == "A plug-in instrument" and picker.plugins.any(func(p): return p.name == "DLSMusicDevice") and
 		not picker.plugins.any(func(p): return p.name == "AUDelay"), "Plug-in Instrument offers the instrument plug-ins, not the effects",
@@ -1631,11 +1646,11 @@ func _run() -> void:
 	check(audio_clip.get("file", "") != "" and timeline.peaks(audio_clip).size() > 50, "a take's waveform can be drawn")
 	var clip_start: float = float(midi_clip.start)
 	var clip_y: float = view.row_top(keys_row) + 30
-	view.drag_to(Vector2(view.x_of(clip_start + 1.0), clip_y), Vector2(view.x_of(clip_start + 17.2), clip_y))
+	view.drag_to(Vector2(view.x_of(clip_start + 3.0), clip_y), Vector2(view.x_of(clip_start + 19.2), clip_y))  # by its middle
 	check(keys_inst.clips.size() == 1 and is_equal_approx(float(keys_inst.clips[0].start), timeline.snap(clip_start + 16.2)),
 		"a clip dragged along its track moves, snapping to the grid", "%.2f" % float(keys_inst.clips[0].start))
 	var moved_start: float = float(keys_inst.clips[0].start)
-	view.drag_to(Vector2(view.x_of(moved_start + 1.0), clip_y), Vector2(view.x_of(moved_start + 33.0), clip_y), true)
+	view.drag_to(Vector2(view.x_of(moved_start + 3.0), clip_y), Vector2(view.x_of(moved_start + 35.0), clip_y), true)
 	check(keys_inst.clips.size() == 2, "dropped with Option held, it is copied")
 	view.selected = {"inst": keys_inst, "index": 1}
 	edit.duplicate_selected()
@@ -1672,11 +1687,113 @@ func _run() -> void:
 	await tap(KEY_R)
 	check(edit.is_open() and not main.mixer.is_open(), "and R from the mix window back to the edit window")
 	var speaker_row: int = view.tracks().find(speaker_inst)
-	view.drag_to(Vector2(view.x_of(timeline.clip_steps(audio_clip).x + 1.0), view.row_top(speaker_row) + 30),
-		Vector2(view.x_of(timeline.clip_steps(audio_clip).x + 1.0), view.row_top(keys_row) + 30))
+	view.drag_to(Vector2(view.x_of(timeline.clip_steps(audio_clip).x + 3.0), view.row_top(speaker_row) + 30),
+		Vector2(view.x_of(timeline.clip_steps(audio_clip).x + 3.0), view.row_top(keys_row) + 30))
 	check(speaker_inst.clips.size() == 1 and keys_inst.clips.size() == 2, "an audio clip can't be dropped on an instrument's track")
+
+	print("Editing clips")
+	view.zoom = 24.0  # a bar 384 pixels wide
+	view.scroll_x = 0.0
+	timeline.locate(0.0)
+	var before_edits: Array = speaker_inst.clips.duplicate(true)
+	var take: Dictionary = speaker_inst.clips[0].duplicate(true)
+	var take_steps: Vector2 = timeline.clip_steps(take)
+	var file_length: float = timeline.file_seconds(take)
+	var lane_y: float = view.row_top(speaker_row) + 34  # below its name strip
+	var strip_y: float = view.row_top(speaker_row) + 8   # in it
+	check(view.hint_at(Vector2(view.x_of(take_steps.y) - 2.0, lane_y)).begins_with("Drag to trim the clip's end") and
+		view.zone_at(Vector2(view.x_of(take_steps.x) + 1.0, strip_y)).get("zone", "") == "fade_in" and
+		view.hint_at(Vector2(view.x_of((take_steps.x + take_steps.y) / 2.0), lane_y)).contains("Cmd-E splits"),
+		"a clip's ends trim it and its top corners fade it, as the hint line says with the mouse over them",
+		view.hint_at(Vector2(view.x_of(take_steps.y) - 2.0, lane_y)))
+	var end_x: float = view.x_of(take_steps.y - 4.0)
+	view.drag_to(Vector2(view.x_of(take_steps.y) - 2.0, lane_y), Vector2(end_x, lane_y))
+	check(speaker_inst.clips.size() == 1 and absf(timeline.clip_steps(speaker_inst.clips[0]).y - timeline.snap(view.step_at(end_x))) < 0.01 and
+		is_equal_approx(float(speaker_inst.clips[0].start), float(take.start)) and float(speaker_inst.clips[0].offset) == 0.0,
+		"dragging a clip's end trims it, to the grid", "ends at step %.2f" % timeline.clip_steps(speaker_inst.clips[0]).y)
+	view.drag_to(Vector2(view.x_of(timeline.clip_steps(speaker_inst.clips[0]).y) - 2.0, lane_y), Vector2(view.x_of(take_steps.y + 40.0), lane_y))
+	check(absf(float(speaker_inst.clips[0].length) - file_length) < 0.001, "drawn out again, an audio clip reaches the end of its file and no further",
+		"%.3f s of %.3f" % [float(speaker_inst.clips[0].length), file_length])
+	var start_x: float = view.x_of(take_steps.x + 4.0)
+	view.drag_to(Vector2(view.x_of(take_steps.x) + 2.0, lane_y), Vector2(start_x, lane_y))
+	var new_start: float = timeline.snap(view.step_at(start_x)) * timeline.step_seconds()
+	var trimmed: Dictionary = speaker_inst.clips[0]
+	check(absf(float(trimmed.start) - new_start) < 0.001 and absf(float(trimmed.offset) - (new_start - float(take.start))) < 0.001 and
+		absf(float(trimmed.start) + float(trimmed.length) - (float(take.start) + file_length)) < 0.001,
+		"its start trims the same way: the clip shows its file from later on, its end staying put", "starts %.3f s, %.3f s into its file" % [float(trimmed.start), float(trimmed.offset)])
+	var span_now: Vector2 = timeline.clip_steps(trimmed)
+	view.drag_to(Vector2(view.x_of(span_now.x) + 1.0, strip_y), Vector2(view.x_of(span_now.x + 1.0), strip_y))
+	view.drag_to(Vector2(view.x_of(span_now.y) - 1.0, strip_y), Vector2(view.x_of(span_now.y - 1.0), strip_y))
+	check(absf(float(speaker_inst.clips[0].fade_in) - timeline.step_seconds()) < 0.01 and absf(float(speaker_inst.clips[0].fade_out) - timeline.step_seconds()) < 0.01,
+		"dragging a clip's top corners fades it in and out", "%.3f s in, %.3f s out" % [float(speaker_inst.clips[0].fade_in), float(speaker_inst.clips[0].fade_out)])
+	var cut_at: float = (span_now.x + span_now.y) / 2.0
+	view.release(Vector2(view.x_of(cut_at), lane_y))  # (nothing pressed: nothing happens)
+	view.press(Vector2(view.x_of(cut_at), lane_y))
+	view.release(Vector2(view.x_of(cut_at), lane_y))
+	var clicked_to: float = timeline.playhead
+	timeline.locate(cut_at)
+	await command_tap(KEY_E)
+	var first_half: Dictionary = speaker_inst.clips[0]
+	var second_half: Dictionary = speaker_inst.clips[1] if speaker_inst.clips.size() > 1 else {}
+	check(is_equal_approx(clicked_to, timeline.snap(cut_at)) and speaker_inst.clips.size() == 2 and
+		absf(float(first_half.start) + float(first_half.length) - float(second_half.start)) < 1e-6 and
+		absf(float(second_half.offset) - (float(first_half.offset) + float(first_half.length))) < 1e-6 and float(first_half.fade_in) > 0.0 and
+		float(first_half.fade_out) == 0.0 and float(second_half.fade_in) == 0.0 and float(second_half.fade_out) > 0.0 and
+		str(second_half.name) == str(take.name) + "-01" and view.selected.get("index", -1) == 1,
+		"clicking a clip (stopped) puts the playhead there, and Cmd-E splits it there: the halves meet, each keeping its outer fade", str(second_half.get("name", "")))
+	var second_start: float = float(second_half.start)
+	await tap(KEY_PERIOD)
+	var nudged: Dictionary = speaker_inst.clips[view.selected.index]
+	check(absf(float(nudged.start) - (second_start + timeline.grid * timeline.step_seconds())) < 1e-6,
+		"full stop nudges the chosen clip a grid line later (comma, earlier)", "%.3f s to %.3f s" % [second_start, float(nudged.start)])
+	await command_tap(KEY_Z)
+	check(speaker_inst.clips.size() == 2 and is_equal_approx(float(speaker_inst.clips[1].start), second_start), "Cmd-Z undoes the nudge")
+	for undo in 6:
+		await command_tap(KEY_Z)
+	check(speaker_inst.clips == before_edits and view.selected.is_empty(), "and the split, the fades and the trims, one by one, back to the take as it was")
+	await command_tap(KEY_Z, true)
+	check(absf(timeline.clip_steps(speaker_inst.clips[0]).y - timeline.snap(view.step_at(end_x))) < 0.01, "Cmd-Shift-Z does the first trim again")
+	await command_tap(KEY_Z)
+	check(speaker_inst.clips == before_edits, "(and undone)")
+	var midi: Dictionary = keys_inst.clips[0]
+	var midi_end: float = float(midi.start) + float(midi.length)
+	var note_step: float = float(midi.notes[0].step)
+	timeline.trim_clip(keys_inst, 0, "end", float(midi.start) + note_step - 0.1)
+	var cut_off: bool = float(midi.notes[0].step) >= float(midi.length)
+	timeline.trim_clip(keys_inst, 0, "end", midi_end)
+	check(cut_off and midi.notes.size() == 1 and is_equal_approx(float(midi.notes[0].step), note_step) and is_equal_approx(float(midi.length), midi_end - float(midi.start)),
+		"a MIDI clip trimmed short keeps the notes it no longer shows, and drawn out again they are back")
+	view.zoom = 6.0
 	await tap(KEY_R)
 	check(not edit.is_open(), "R closes it again")
+
+	print("Insertion follows playback")
+	timeline.locate(8.0)
+	await tap(KEY_ENTER)
+	check(is_equal_approx(timeline.playhead, 0.0), "Enter in the room puts the playhead back at the start too")
+	await tap(KEY_N)
+	await frames(2)
+	check(main.settings.insertion_follows and main.hud._follow_chip.visible and main.hud._follow_chip.text == "FOLLOWS PLAYBACK",
+		"N: insertion follows playback, which the screen shows")
+	timeline.set_loop(false)
+	timeline.start_playing()
+	await seconds(0.6)
+	await tap(KEY_SPACE)
+	check(not timeline.playing and timeline.playhead > 1.5, "stopping then leaves the playhead where the music stopped", "step %.2f" % timeline.playhead)
+	await tap(KEY_R)
+	await tap(KEY_N)
+	await frames(2)
+	check(edit.is_open() and not main.settings.insertion_follows and not edit._follow.button_pressed,
+		"N in the edit window switches it off again, as its Follow button shows")
+	var played_from: float = timeline.playhead
+	timeline.start_playing()
+	await seconds(0.4)
+	await tap(KEY_SPACE)
+	check(is_equal_approx(timeline.playhead, played_from), "and stopping goes back to where playing started")
+	await tap(KEY_R)
+	await frames(2)
+	check(not main.hud._follow_chip.visible, "and the screen no longer says it follows")
+	timeline.set_loop(true)
 	session.save()
 	var record_file: String = session.path
 	var saved_loop := Vector2(timeline.loop_start, timeline.loop_end)

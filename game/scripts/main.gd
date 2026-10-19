@@ -68,9 +68,9 @@ var hud
 var menu
 var sequencer  # the pattern editor
 var mixer  # the mix window (Tab)
-var amp_panel  # an amp's knobs and its pedals (Enter at an amp)
+var amp_panel  # an amp's knobs and its pedals (' at an amp)
 var plugin_browser  # the effect plug-ins on the computer, to choose one for an insert or a Plug-in pedal
-var speaker_panel  # a Speaker's volume and input (Enter at a Speaker)
+var speaker_panel  # a Speaker's volume and input (' at a Speaker)
 var bindings  # the keys, as set on the Controls page
 var library  # rooms' and templates' contents, presets, and settings copied to be pasted
 var session  # the room that is open: its file, saving, backups
@@ -252,6 +252,11 @@ func _input(event: InputEvent) -> void:
 		return
 	if event.physical_keycode == KEY_SPACE and command:
 		toggle_record()
+	elif event.physical_keycode == KEY_Z and command and timeline.is_record() and not timeline.recording:  # the edits, undone or done again
+		var what: String = timeline.redo() if event.shift_pressed else timeline.undo()
+		edit_window.view.selected = {}
+		session.notice.emit(("Redo " if event.shift_pressed else "Undo ") + what if what != "" else
+			("Nothing to redo" if event.shift_pressed else "Nothing to undo"))
 	elif event.physical_keycode == KEY_EQUAL and command and timeline.is_record():  # the mix window and the edit window, in turn
 		if edit_window.is_open():
 			edit_window.close()
@@ -740,6 +745,14 @@ func toggle_transport() -> void:
 		timeline.toggle_play()
 	else:
 		set_sequence_running(not sequence_running)
+
+
+## N, in a Record room: whether stopping leaves the playhead where the music stopped, or takes it back to where it
+## started (Pro Tools' Insertion Follows Playback).
+func toggle_follow() -> void:
+	settings.insertion_follows = not settings.insertion_follows
+	settings.save_to_disk()
+	session.notice.emit("Insertion follows playback" if settings.insertion_follows else "Insertion doesn't follow playback: stopping goes back to where it started")
 
 
 ## Cmd-Space: recording, in a Record room.

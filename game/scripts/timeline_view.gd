@@ -2,10 +2,14 @@ extends Control
 ## The edit window's tracks along the timeline. A row for each instrument: its header on the left (its name in its
 ## colour; R arms it for recording, M mutes it, S solos it), and its lane, with its clips (audio drawn as its waveform,
 ## MIDI as its notes), across the bars. Above them the ruler: click it to put the playhead there, drag along it to
-## loop that range. Click a clip to choose it and drag it along its track, or to another track that takes its kind
-## (hold Option as you drop it for a copy); clips snap to the grid unless it is off. Click an empty lane to put the
-## playhead there. The scroll wheel and trackpad move about (Shift for along), Cmd and the wheel (or a pinch) zoom.
+## loop that range. Click a clip to choose it (stopped, the playhead goes where you clicked, to split it there) and
+## drag it along its track, or to another track that takes its kind (hold Option as you drop it for a copy); clips snap
+## to the grid unless it is off. Drag either end of a clip to trim it, as Pro Tools' trim tool does, and an audio
+## clip's top corners to fade it in or out. Click an empty lane to put the playhead there. The scroll wheel and
+## trackpad move about (Shift for along), Cmd and the wheel (or a pinch) zoom. The cursor and the hint line say what a
+## press would do.
 
+const Hints := preload("res://scripts/hints.gd")
 const HEADER := 190.0
 const RULER := 30.0
 const ROW := 54.0
@@ -15,6 +19,8 @@ const RECORD_RED := Color(1.0, 0.3, 0.28)
 const INPUT_GREEN := Color(0.36, 0.9, 0.5)
 const MUTE_ORANGE := Color(1.0, 0.62, 0.25)
 const SOLO_YELLOW := Color(0.98, 0.86, 0.3)
+const NAME_STRIP := 15.0  # a clip's top strip, with its name: its corners hold the fade handles
+const EDGE := 7.0         # how near an end of a clip a press trims it
 
 var app
 var timeline
@@ -31,11 +37,17 @@ func setup(the_app) -> void:
 	clip_contents = true
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	focus_mode = Control.FOCUS_NONE
+	Hints.give(self, func() -> String: return hint_at(get_local_mouse_position()))
 
 
 func _process(_delta: float) -> void:
 	if not is_visible_in_tree():
 		return
+	if not selected.is_empty() and (not app.instruments.has(selected.inst) or selected.index >= selected.inst.clips.size()):
+		selected = {}  # undone, or its track removed
+	if _drag.is_empty():
+		var zone: String = zone_at(get_local_mouse_position()).get("zone", "")
+		mouse_default_cursor_shape = CURSOR_HSIZE if zone in ["trim_start", "trim_end", "fade_in", "fade_out"] else CURSOR_ARROW
 	if timeline.playing:  # keep the playhead in view
 		var at: float = timeline.position()
 		var span := (size.x - HEADER) / zoom
@@ -157,13 +169,44 @@ func _draw_clip(inst, index: int, top: float, font: Font) -> void:
 			high = maxi(high, int(n.note))
 		var spread := maxf(high - low, 12)
 		for n in clip.notes:
+			if float(n.step) < 0.0 or float(n.step) >= float(clip.length):  # trimmed off
+				continue
 			var nx := x_of(span.x + float(n.step))
 			var ny := inner.end.y - 3 - (int(n.note) - low) / spread * (inner.size.y - 6)
 			var w := maxf(float(n.length) * zoom, 2.0)
 			if nx + w > inner.position.x and nx < inner.end.x:
 				draw_rect(Rect2(maxf(nx, inner.position.x), ny - 1.5, minf(w, inner.end.x - maxf(nx, inner.position.x)), 3), ink)
+	if clip.kind == "audio":
+		_draw_fades(clip, x0, x1, inner, rect, ink)
 	draw_rect(rect, Color.WHITE if chosen else Color(0, 0, 0, 0.6), false, 1.0)
 	draw_string(font, rect.position + Vector2(5, 12), str(clip.get("name", "")), HORIZONTAL_ALIGNMENT_LEFT, maxf(rect.size.x - 8, 1.0), 11, ink)
+
+
+## An audio clip's fades: the part they take down shaded, the curve drawn over the waveform, and a handle at each top
+## corner (at the fade's end) to drag.
+func _draw_fades(clip: Dictionary, x0: float, x1: float, inner: Rect2, rect: Rect2, ink: Color) -> void:
+	var px_per_second: float = zoom / timeline.step_seconds()
+	var fade_in: float = float(clip.get("fade_in", 0.0)) * px_per_second
+	var fade_out: float = float(clip.get("fade_out", 0.0)) * px_per_second
+	for side in [[x0, fade_in, 1.0], [x1, fade_out, -1.0]]:
+		var from: float = side[0]
+		var width: float = side[1]
+		var way: float = side[2]
+		if width >= 1.0:
+			var last := Vector2.INF
+			var d := 0.0
+			while d <= width:
+				var x: float = from + d * way
+				var y: float = inner.end.y - sin(0.5 * PI * d / width) * inner.size.y
+				if x >= rect.position.x and x <= rect.end.x:
+					draw_line(Vector2(x, inner.position.y), Vector2(x, y), Color(0, 0, 0, 0.32))
+					if last != Vector2.INF:
+						draw_line(last, Vector2(x, y), Color(ink, 0.95), 1.2)
+					last = Vector2(x, y)
+				d += 1.0
+		var handle: float = from + width * way
+		if handle >= rect.position.x and handle <= rect.end.x:
+			draw_rect(Rect2(handle - 3.0, rect.position.y + 1.0, 6.0, 6.0), Color(ink, 0.9))
 
 
 func _draw_header(inst, top: float, font: Font) -> void:
@@ -230,43 +273,105 @@ func _on_button(e: InputEventMouseButton) -> void:
 		release(e.position, e.alt_pressed)
 
 
-## A press at a point: on the ruler, a header's button, a clip, or an empty lane. (The automated checks call these.)
-func press(at: Vector2) -> void:
-	_drag = {}
+## What is at a point: {zone, inst, index, row}, the zone one of "ruler", "header", "fade_in", "fade_out" (an audio
+## clip's top corners), "trim_start", "trim_end" (a clip's ends), "clip", "lane", or nothing.
+func zone_at(at: Vector2) -> Dictionary:
+	if at.y < 0.0 or at.x < 0.0 or at.x > size.x or at.y > size.y:
+		return {}
 	if at.y < RULER:
-		if at.x >= HEADER:
-			_drag = {"what": "ruler", "from_x": at.x, "from": step_at(at.x)}
-		return
+		return {"zone": "ruler"} if at.x >= HEADER else {}
 	var row := row_at(at.y)
 	if row < 0 or row >= tracks().size():
-		return
+		return {}
 	var inst = tracks()[row]
 	if at.x < HEADER:
-		for b in _buttons(inst, row_top(row)):
-			if b.rect.has_point(at):
-				match b.what:
-					"arm":
-						timeline.set_armed(inst, not inst.armed)
-					"input":
-						app.set_input(inst, not inst.input_on)
-					"mute":
-						app.set_muted(inst, not inst.muted)
-					"solo":
-						app.set_soloed(inst, not inst.soloed)
-		return
-	var step := step_at(at.x)
+		return {"zone": "header", "inst": inst, "row": row}
+	var top := row_top(row)
 	for c in range(inst.clips.size() - 1, -1, -1):  # the one on top
-		var span: Vector2 = timeline.clip_steps(inst.clips[c])
-		if step >= span.x and step < span.y:
+		var clip: Dictionary = inst.clips[c]
+		var span: Vector2 = timeline.clip_steps(clip)
+		var x0 := x_of(span.x)
+		var x1 := x_of(span.y)
+		if at.x < x0 - 2.0 or at.x > x1 + 2.0:
+			continue
+		var found := {"inst": inst, "index": c, "row": row, "zone": "clip"}
+		var edge := minf(EDGE, (x1 - x0) / 4.0)  # a short clip keeps its middle for moving
+		if clip.kind == "audio" and at.y < top + 2.0 + NAME_STRIP:
+			var px_per_second: float = zoom / timeline.step_seconds()
+			var in_handle := x0 + float(clip.get("fade_in", 0.0)) * px_per_second
+			var out_handle := x1 - float(clip.get("fade_out", 0.0)) * px_per_second
+			if absf(at.x - in_handle) <= maxf(edge, 4.0) and at.x - x0 < (x1 - x0) / 2.0:
+				found.zone = "fade_in"
+			elif absf(at.x - out_handle) <= maxf(edge, 4.0):
+				found.zone = "fade_out"
+		elif at.x - x0 <= edge:
+			found.zone = "trim_start"
+		elif x1 - at.x <= edge:
+			found.zone = "trim_end"
+		return found
+	return {"zone": "lane", "inst": inst, "row": row}
+
+
+## What the hint line says, with the mouse at a point.
+func hint_at(at: Vector2) -> String:
+	var found := zone_at(at)
+	match found.get("zone", ""):
+		"ruler":
+			return "Click to put the playhead here; drag along to loop the range (L loops the chosen clip)"
+		"header":
+			for b in _buttons(found.inst, row_top(found.row)):
+				if b.rect.has_point(at):
+					return {"arm": "Arm the track for recording (its input goes on, to be heard)", "input": "Its input on or off",
+						"mute": "Mute", "solo": "Solo"}[b.what]
+			return found.inst.display_name
+		"fade_in":
+			return "Drag along to fade the clip in"
+		"fade_out":
+			return "Drag along to fade the clip out"
+		"trim_start", "trim_end":
+			return "Drag to trim the clip%s" % ("'s start" if found.zone == "trim_start" else "'s end") + \
+				(": an audio clip only ever shows more or less of its file" if found.inst.clips[found.index].kind == "audio" else "")
+		"clip":
+			return "Drag to move it (Option as you drop: a copy)  ·  Cmd-E splits it at the playhead  ·  , and . nudge it  ·  L loops it  ·  Delete"
+		"lane":
+			return "Click to put the playhead here"
+	return ""
+
+
+## A press at a point: on the ruler, a header's button, a clip (its body, an end, a fade handle), or an empty lane.
+## (The automated checks call these.)
+func press(at: Vector2) -> void:
+	_drag = {}
+	var found := zone_at(at)
+	match found.get("zone", ""):
+		"ruler":
+			_drag = {"what": "ruler", "from_x": at.x, "from": step_at(at.x)}
+		"header":
+			for b in _buttons(found.inst, row_top(found.row)):
+				if b.rect.has_point(at):
+					match b.what:
+						"arm":
+							timeline.set_armed(found.inst, not found.inst.armed)
+						"input":
+							app.set_input(found.inst, not found.inst.input_on)
+						"mute":
+							app.set_muted(found.inst, not found.inst.muted)
+						"solo":
+							app.set_soloed(found.inst, not found.inst.soloed)
+		"clip", "trim_start", "trim_end", "fade_in", "fade_out":
+			var inst = found.inst
+			var c: int = found.index
+			var span: Vector2 = timeline.clip_steps(inst.clips[c])
 			selected = {"inst": inst, "index": c}
-			_drag = {"what": "clip", "inst": inst, "index": c, "grab": step - span.x, "row": row}
-			return
-	selected = {}
-	timeline.locate(timeline.snap(step))
+			_drag = {"what": found.zone, "inst": inst, "index": c, "grab": step_at(at.x) - span.x, "row": found.row, "at": step_at(at.x)}
+		"lane":
+			selected = {}
+			timeline.locate(timeline.snap(step_at(at.x)))
 
 
 func _on_drag(at: Vector2) -> void:
-	match _drag.get("what", ""):
+	var what: String = _drag.get("what", "")
+	match what:
 		"ruler":
 			if absf(at.x - _drag.from_x) > 4.0:
 				var unit: int = timeline.grid  # with the grid off, anywhere
@@ -278,6 +383,18 @@ func _on_drag(at: Vector2) -> void:
 			_drag.to_step = maxf(timeline.snap(step_at(at.x) - _drag.grab), 0.0)
 			var row := clampi(row_at(at.y), 0, tracks().size() - 1)
 			_drag.to_row = row if timeline.fits(_drag.inst.clips[_drag.index], tracks()[row]) else _drag.row
+		"trim_start", "trim_end":
+			if not _drag.get("moved", false):
+				timeline.remember("Trim clip")
+				_drag.moved = true
+			timeline.trim_clip(_drag.inst, _drag.index, "start" if what == "trim_start" else "end", timeline.snap(step_at(at.x)), false)
+		"fade_in", "fade_out":
+			if not _drag.get("moved", false):
+				timeline.remember("Fade")
+				_drag.moved = true
+			var span: Vector2 = timeline.clip_steps(_drag.inst.clips[_drag.index])
+			var steps: float = step_at(at.x) - span.x if what == "fade_in" else span.y - step_at(at.x)
+			timeline.set_fade(_drag.inst, _drag.index, what, steps * timeline.step_seconds(), false)
 
 
 func release(at: Vector2, copy := false) -> void:
@@ -289,11 +406,17 @@ func release(at: Vector2, copy := false) -> void:
 				timeline.set_loop(true, drag.loop.x, drag.loop.y)
 			else:
 				timeline.locate(timeline.snap(step_at(at.x)))
-		"clip":
-			if drag.get("moved", false):
+		"clip", "trim_start", "trim_end", "fade_in", "fade_out":
+			if not drag.get("moved", false):  # a click: chosen, and (stopped) the playhead where it was clicked
+				if not timeline.playing:
+					timeline.locate(timeline.snap(drag.at))
+			elif drag.what == "clip":
 				var to = tracks()[drag.to_row]
 				timeline.place_clip(drag.inst, drag.index, to, drag.to_step, copy)
 				selected = {"inst": to, "index": to.clips.size() - 1}
+			else:  # trimmed or faded as it went: now it is heard so
+				timeline.sync(drag.inst)
+				timeline.changed.emit()
 
 
 ## Lets the automated checks drag: a press, moves, a release.

@@ -1,5 +1,5 @@
 extends CanvasLayer
-## A Speaker's panel (Enter at a Speaker, or its name in the mix window): which hardware input it plays, its input
+## A Speaker's panel (' at a Speaker, or its name in the mix window): which hardware input it plays, its input
 ## switch, and its own volume, as on the back of a powered PA speaker. The volume goes up to +24 dB, so that a Speaker
 ## can fill a big room as a big PA would; it comes after the Speaker's inserts (an amp simulator on one keeps its
 ## sound whatever the volume) and before its fader.
@@ -12,6 +12,7 @@ const WARN := Color(1.0, 0.61, 0.48)
 const MAX_DB := 24.0
 
 var app
+var _close_button: Button  # its label says which key closes it too
 var inst = null
 
 var _root: Control
@@ -51,6 +52,7 @@ func is_open() -> bool:
 
 
 func open(speaker, from_mixer := false) -> void:
+	_close_button.text = "Close  (%s)" % app.bindings.label("edit")
 	inst = speaker
 	_back_to_mixer = from_mixer
 	app.player.release_keys()
@@ -150,7 +152,7 @@ func _build() -> void:
 	gap_before_close.custom_minimum_size.x = 8
 	header.add_child(gap_before_close)
 	var close_button := Button.new()
-	close_button.text = "Close  (Enter)"
+	_close_button = close_button
 	close_button.pressed.connect(close)
 	header.add_child(close_button)
 	_speaker_presets = PresetMenu.new()

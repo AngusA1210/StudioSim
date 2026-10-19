@@ -8,7 +8,7 @@ const PANEL_BG := Color(0.05, 0.06, 0.09, 0.82)
 const DIM := Color(0.62, 0.65, 0.74)
 const WARN := Color(1.0, 0.61, 0.48)
 const BINAURAL_BLUE := Color(0.55, 0.78, 1.0)
-const REVERB_TEAL := Color(0.4, 0.88, 0.78)
+const FOLLOW_AMBER := Color(0.98, 0.76, 0.36)
 const WHITE_KEYS := [[KEY_A, "A"], [KEY_S, "S"], [KEY_D, "D"], [KEY_F, "F"], [KEY_G, "G"], [KEY_H, "H"], [KEY_J, "J"],
 	[KEY_K, "K"], [KEY_L, "L"], [KEY_SEMICOLON, ";"]]
 const BLACK_KEYS := [[KEY_W, "W", 0], [KEY_E, "E", 1], [KEY_T, "T", 3], [KEY_Y, "Y", 4], [KEY_U, "U", 5],
@@ -34,7 +34,7 @@ var _beat_panel: PanelContainer
 var _beat: Label
 var _modes_panel: PanelContainer
 var _binaural_chip: Label
-var _reverb_chip: Label
+var _follow_chip: Label  # a Record room's insertion following playback, shown while it does
 var _meter_panel: PanelContainer
 var _meter
 var _meter_text: Label
@@ -103,14 +103,14 @@ func setup(the_app) -> void:
 	_beat.add_theme_font_size_override("font_size", 14)
 	_beat_panel.add_child(_beat)
 
-	# Whether binaural rendering (B) and the room reverb (its fader not all the way down) are on, lit when they are.
+	# Whether binaural rendering (B) is on, lit when it is; and in a Record room, whether insertion follows playback (N).
 	_modes_panel = _panel(_root)
 	var modes := HBoxContainer.new()
 	modes.add_theme_constant_override("separation", 6)
 	modes.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_modes_panel.add_child(modes)
 	_binaural_chip = _chip(modes)
-	_reverb_chip = _chip(modes)
+	_follow_chip = _chip(modes)
 
 	# The master meter, standing upright as on a mixing desk: the output level, and under it the recent peak, or a
 	# word when the limiter is working or the output is clipping.
@@ -200,7 +200,8 @@ func _process(_delta: float) -> void:
 	_beat_panel.position = Vector2(vp.x - _beat_panel.size.x - 14, 14)
 
 	_light_chip(_binaural_chip, "BINAURAL", app.settings.binaural, BINAURAL_BLUE)
-	_light_chip(_reverb_chip, "REVERB", app.reverb_db > -79.0, REVERB_TEAL)
+	_follow_chip.visible = timeline.is_record() and app.settings.insertion_follows
+	_light_chip(_follow_chip, "FOLLOWS PLAYBACK", true, FOLLOW_AMBER)
 	_modes_panel.reset_size()
 	_modes_panel.position = Vector2(_beat_panel.position.x - _modes_panel.size.x - 8, 14)
 
@@ -242,7 +243,9 @@ func _process(_delta: float) -> void:
 			_label_piano(inst)
 		_piano_title.text = "Playing the %s" % inst.display_name
 		var octave := "" if inst.drum_kit else "%s (lowest key C%d)  ·  " % [octaves, 4 + player.octave]
-		_piano_help.text = "%s  stop  ·  %s%s  pattern  ·  %s  input %s  ·  %s  loop %s" % [keys.label("stop"), octave, keys.label("edit"),
+		# Its pattern's key, unless that key is a note just now (then the pattern waits until you get up).
+		var pattern := "" if keys.NOTES.has(keys.key("edit")) else "%s  pattern  ·  " % keys.label("edit")
+		_piano_help.text = "%s  stop  ·  %s%s%s  input %s  ·  %s  loop %s" % [keys.label("stop"), octave, pattern,
 			keys.label("input"), "off" if inst.input_on else "on", keys.label("loop"), "on" if not inst.loop_on else "off"]
 		_light_piano(inst.color)
 	elif player.plugin_open != null:
