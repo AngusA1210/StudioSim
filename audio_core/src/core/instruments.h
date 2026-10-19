@@ -15,13 +15,15 @@ namespace sr {
 
 // GarageDrums and StudioDrums are acoustic kits (AcousticKit); PluginSynth plays an instrument plug-in (plugin_synth.h).
 enum class InstrumentKind : uint8_t {
-    Drums, Bass, Pad, Bells, Keys, GarageDrums, StudioDrums, PluginSynth, Live, GuitarCombo, GuitarStack, BassCombo, BassStack
+    Drums, Bass, Pad, Bells, Keys, GarageDrums, StudioDrums, PluginSynth, Live, GuitarCombo, GuitarStack, BassCombo, BassStack,
+    Bus  // not an instrument: a routing folder's bus, an aux input that tracks play into (see AudioEngine::setSourceOutput)
 };
-constexpr int kInstrumentKinds = 13;
+constexpr int kInstrumentKinds = 14;
 
 // The kinds that play an audio input (the Speaker and the amps) rather than notes.
-inline bool isLiveInput(InstrumentKind kind) { return kind >= InstrumentKind::Live; }
-inline bool isAmp(InstrumentKind kind) { return kind >= InstrumentKind::GuitarCombo; }
+inline bool isLiveInput(InstrumentKind kind) { return kind >= InstrumentKind::Live && kind != InstrumentKind::Bus; }
+inline bool isAmp(InstrumentKind kind) { return kind >= InstrumentKind::GuitarCombo && kind != InstrumentKind::Bus; }
+inline bool isBus(InstrumentKind kind) { return kind == InstrumentKind::Bus; }
 
 class Instrument {
 public:
@@ -310,6 +312,13 @@ struct InputBus {
     static constexpr int kMaxChannels = 8;
     std::array<std::vector<float>, kMaxChannels> channel;
     int active = 0;  // how many inputs the open device delivers
+};
+
+// A bus's stand-in for an instrument: it plays nothing of its own (what it carries comes from the tracks routed to it).
+class Silence : public Instrument {
+public:
+    using Instrument::Instrument;
+    void render(float*, int) override {}
 };
 
 // Whatever is plugged into the audio input (a microphone, a guitar), placed in the room like any instrument.

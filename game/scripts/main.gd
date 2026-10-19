@@ -22,6 +22,7 @@ extends Node3D
 ##   --quit-after=seconds     print stats and quit after this long
 
 const Instrument := preload("res://scripts/instrument.gd")
+const Folder := preload("res://scripts/folder.gd")
 const Player := preload("res://scripts/player.gd")
 const Hud := preload("res://scripts/hud.gd")
 const Menu := preload("res://scripts/menu.gd")
@@ -84,6 +85,8 @@ var instrument_menu
 var title  # the title screen
 var room  # its size and the walls inside it
 var instruments: Array = []
+var folders: Array = []        # the routing folders (folder.gd)
+var chosen_tracks: Array = []  # the tracks chosen by their names in the edit and mix windows: instruments and folders
 var speaker  # the Speaker the room starts with: the one whose input choice is remembered between runs
 # The room's clock. These belong to the room rather than the player's settings, so they start from the defaults.
 var tempo := DEFAULT_TEMPO
@@ -272,6 +275,10 @@ func _input(event: InputEvent) -> void:
 			if not timeline.is_record() or timeline.recording:
 				return
 			undo_edit(shortcut == "redo")
+		"group":  # the tracks chosen, in a new folder
+			if not (mixer.is_open() or edit_window.is_open()):
+				return
+			group_chosen()
 		_:
 			if (mixer.is_open() or edit_window.is_open()) and bindings.action_for(event.physical_keycode) == "transport" and not command:
 				toggle_transport()  # Space works in the mix and edit windows too
@@ -319,6 +326,11 @@ func _read_meter(delta: float) -> void:
 		inst.meter_peak = peaks[int(pre)] * scale  # so the other doesn't hold an old peak for when it is chosen
 		inst.meter_rms = audio.get_source_level(inst.source_id, pre) * scale
 		inst.peak_hold = maxf(inst.peak_hold, inst.meter_peak)
+	for folder in folders:  # (its bus's meters read dBFS as it reaches the master already)
+		var peaks := [audio.get_source_peak(folder.source_id, false), audio.get_source_peak(folder.source_id, true)]
+		folder.meter_peak = peaks[int(pre)]
+		folder.meter_rms = audio.get_source_level(folder.source_id, pre)
+		folder.peak_hold = maxf(folder.peak_hold, folder.meter_peak)
 	var reduction := -linear_to_db(maxf(meter.get("limiter_gain", 1.0), 0.001))
 	_reduction_age += delta
 	if reduction >= meter_reduction_db or _reduction_age > 1.5:
@@ -356,7 +368,7 @@ func reset_bindings() -> void:
 func set_pre_fader_meters(on: bool) -> void:
 	settings.pre_fader_meters = on
 	settings.save_to_disk()
-	for inst in instruments:
+	for inst in instruments + folders:
 		inst.peak_hold = 0.0
 
 
@@ -369,7 +381,7 @@ func set_pedalboard_open(on: bool) -> void:
 func clear_all_peaks() -> void:
 	master_peak_hold = 0.0
 	reverb_peak_hold = 0.0
-	for inst in instruments:
+	for inst in instruments + folders:
 		inst.peak_hold = 0.0
 
 
@@ -604,7 +616,8 @@ func set_instrument_plugin(inst, plugin_id: String, state := PackedByteArray()) 
 	if not audio.set_instrument_plugin(inst.source_id, plugin_id, state):
 		return audio.get_error()
 	inst.instrument_plugin = audio.get_instrument_plugin(inst.source_id)
-	inst.set_display_name(unique_name(inst.instrument_plugin.plugin_name, inst))
+	if not inst.named:  # (a track given a name keeps it)
+		inst.set_display_name(unique_name(inst.instrument_plugin.plugin_name, inst))
 	return ""
 
 
@@ -691,6 +704,12 @@ func hide_plugin_editors(inst) -> void:
 ## Option-clicked, as Pro Tools' all-tracks modifier: every track's input ("input"), mute, solo or record arm ("arm")
 ## set as the one clicked now is.
 func set_on_all(what: String, on: bool) -> void:
+	if what in ["mute", "solo"]:
+		for folder in folders:
+			if what == "mute":
+				folder.muted = on
+			else:
+				folder.soloed = on
 	for inst in instruments:
 		match what:
 			"input":
@@ -715,10 +734,174 @@ func set_soloed(inst, on: bool) -> void:
 	_apply_channels()
 
 
+## Mute and solo, as Pro Tools has them, folders too: a folder muted silences its tracks, a folder soloed solos them,
+## and a track soloed lets its folder be heard.
 func _apply_channels() -> void:
-	var any_solo := instruments.any(func(inst): return inst.soloed)
+	var any_solo := instruments.any(func(inst): return inst.soloed) or folders.any(func(folder): return folder.soloed)
 	for inst in instruments:
-		inst.set_channel(inst.muted, inst.soloed, inst.muted or (any_solo and not inst.soloed))
+		var folder = folder_of(inst)
+		var soloed_here: bool = inst.soloed or (folder != null and folder.soloed)
+		var muted_here: bool = inst.muted or (folder != null and folder.muted)
+		inst.set_channel(inst.muted, inst.soloed, muted_here or (any_solo and not soloed_here))
+	for folder in folders:
+		var heard: bool = folder.soloed or folder.members.any(func(inst): return inst.soloed)
+		audio.set_source_muted(folder.source_id, folder.muted or (any_solo and not heard))
+
+
+# ── Tracks and folders ──────────────────────────────────────────────────────────────────────────────────────
+
+## Colours a track can be given, as Pro Tools' palette: [name, colour].
+const TRACK_COLORS := [["Red", Color(0.92, 0.26, 0.24)], ["Orange", Color(1.0, 0.52, 0.22)], ["Amber", Color(1.0, 0.7, 0.24)],
+	["Yellow", Color(0.98, 0.88, 0.3)], ["Lime", Color(0.66, 0.88, 0.3)], ["Green", Color(0.32, 0.8, 0.42)], ["Teal", Color(0.25, 0.8, 0.72)],
+	["Cyan", Color(0.3, 0.78, 0.95)], ["Blue", Color(0.38, 0.55, 1.0)], ["Indigo", Color(0.5, 0.45, 0.95)], ["Violet", Color(0.66, 0.4, 0.95)],
+	["Magenta", Color(0.9, 0.38, 0.85)], ["Pink", Color(1.0, 0.5, 0.7)], ["Brown", Color(0.66, 0.46, 0.32)], ["Grey", Color(0.66, 0.68, 0.74)],
+	["White", Color(0.92, 0.93, 0.96)]]
+
+
+func has_track(track) -> bool:
+	return instruments.has(track) or folders.has(track)
+
+
+## Every track in order, as the edit and mix windows show them: each folder just before its tracks, and any folder
+## without tracks at the end.
+func track_order() -> Array:
+	var out := []
+	for inst in instruments:
+		var folder = folder_of(inst)
+		if folder != null and not out.has(folder):
+			out.append(folder)
+		out.append(inst)
+	for folder in folders:
+		if not out.has(folder):
+			out.append(folder)
+	return out
+
+
+## The folder an instrument's track is in, or null.
+func folder_of(inst):
+	for folder in folders:
+		if folder.members.has(inst):
+			return folder
+	return null
+
+
+## A new routing folder (Cmd-G), with these tracks in it: its bus in the audio core, its tracks playing into it rather
+## than the master. Null if the room's channels are all in use.
+func add_folder(members: Array, the_name := ""):
+	var id: int = audio.add_source("bus", Vector3.ZERO, 1.0, 0.0)
+	if id < 0:
+		return null
+	var folder := Folder.new()
+	folder.source_id = id
+	folder.display_name = the_name if the_name != "" else _folder_name()
+	folder.inserts = audio.get_inserts(id)
+	folders.append(folder)
+	for inst in members:
+		put_in_folder(inst, folder)
+	_apply_channels()
+	return folder
+
+
+## "Folder 1", "Folder 2"...: the first not taken.
+func _folder_name() -> String:
+	var number := 1
+	while folders.any(func(folder): return folder.display_name == "Folder %d" % number):
+		number += 1
+	return "Folder %d" % number
+
+
+## Puts a track in a folder (null: out of any, to the master), as assigning its output to the folder's bus does in Pro
+## Tools; it goes after the folder's last track (or `after`, one of them), so that a folder's tracks stay together.
+func put_in_folder(inst, folder, after = null) -> void:
+	var was = folder_of(inst)
+	if was != null:
+		was.members.erase(inst)
+	if folder != null:
+		var next_to = after if after != null and folder.members.has(after) else (folder.members.back() if not folder.members.is_empty() else null)
+		if next_to != null and next_to != inst:
+			instruments.erase(inst)
+			instruments.insert(instruments.find(next_to) + 1, inst)
+		folder.members.append(inst)
+		folder.members.sort_custom(func(a, b): return instruments.find(a) < instruments.find(b))
+	audio.set_source_output(inst.source_id, folder.source_id if folder != null else -1)
+	_apply_channels()
+
+
+## Takes a folder away: its tracks go straight to the master again.
+func remove_folder(folder) -> void:
+	if not folders.has(folder):
+		return
+	for inst in folder.members.duplicate():
+		put_in_folder(inst, null)
+	hide_insert_editors(folder)
+	folders.erase(folder)
+	chosen_tracks.erase(folder)
+	audio.remove_source(folder.source_id)
+	_apply_channels()
+
+
+func set_folder_level(folder, db: float) -> void:
+	folder.level_db = clampf(db, -80.0, 12.0)
+	audio.set_source_gain(folder.source_id, 0.0 if folder.level_db <= -79.0 else db_to_linear(folder.level_db))
+
+
+## Cmd-G: the tracks chosen, in a new folder (one already in a folder moves to the new one).
+func group_chosen() -> void:
+	var tracks: Array = instruments.filter(func(inst): return chosen_tracks.has(inst))
+	if tracks.is_empty():
+		session.notice.emit("Choose the tracks for a folder first: click their names (Shift or Cmd-click for more), then %s" % bindings.label("group"))
+		return
+	var folder = add_folder(tracks)
+	if folder == null:
+		session.notice.emit("There's no room for another folder")
+		return
+	chosen_tracks = [folder]
+	session.notice.emit("%s, with %d track%s" % [folder.display_name, tracks.size(), "" if tracks.size() == 1 else "s"])
+
+
+## Choosing tracks by their names, as Pro Tools does: "only" this one, "toggle" (Cmd-click) one more or one fewer,
+## "range" (Shift-click) every one from the last chosen to this.
+func choose_track(track, how := "only") -> void:
+	match how:
+		"toggle":
+			if chosen_tracks.has(track):
+				chosen_tracks.erase(track)
+			else:
+				chosen_tracks.append(track)
+		"range":
+			var order := track_order()
+			var from: int = order.find(chosen_tracks.back()) if not chosen_tracks.is_empty() else order.find(track)
+			var to: int = order.find(track)
+			for i in range(mini(from, to), maxi(from, to) + 1):
+				if not chosen_tracks.has(order[i]):
+					chosen_tracks.append(order[i])
+		_:
+			chosen_tracks = [track]
+
+
+## A track's name (an instrument's in the room too), given it: kept from then on.
+func rename_track(track, new_name: String) -> void:
+	new_name = new_name.strip_edges()
+	if new_name == "":
+		return
+	if track.is_folder:
+		track.display_name = new_name
+	else:
+		track.named = true
+		track.set_display_name(new_name)
+
+
+func set_track_color(track, color: Color) -> void:
+	if track.is_folder:
+		track.color = color
+	else:
+		track.set_color(color)
+
+
+## Renaming a track, in the name prompt.
+func ask_track_name(track) -> void:
+	name_prompt.ask("Rename the %s" % ("folder" if track.is_folder else "track"), track.display_name,
+		func(new_name: String) -> void: rename_track(track, new_name))
 
 
 ## Which hardware input a live-input instrument plays (-1 = all of them).
@@ -876,6 +1059,8 @@ func clear_room() -> void:
 	player.put_down()
 	for inst in instruments.duplicate():
 		remove_instrument(inst)
+	for folder in folders.duplicate():
+		remove_folder(folder)
 
 
 ## A room has just been filled (the default one, or a template's): mute and solo take effect, the Speaker whose input
@@ -905,6 +1090,9 @@ func duplicate_instrument(inst, at = null):
 		return null
 	instruments.erase(copy)
 	instruments.insert(instruments.find(inst) + 1, copy)
+	copy.set_color(inst.color)
+	if folder_of(inst) != null:  # in the same folder, just after it
+		put_in_folder(copy, folder_of(inst), inst)
 	var problems := []
 	if inst.plays_plugin and str(inst.instrument_plugin.get("plugin_id", "")) != "":
 		var problem := set_instrument_plugin(copy, inst.instrument_plugin.plugin_id, audio.get_plugin_state(inst.source_id, "instrument", 0))
@@ -962,6 +1150,10 @@ func remove_instrument(inst) -> void:
 	if speaker_panel.is_open() and speaker_panel.inst == inst:
 		speaker_panel.close()
 	player.forget(inst)
+	var folder = folder_of(inst)
+	if folder != null:
+		folder.members.erase(inst)
+	chosen_tracks.erase(inst)
 	instruments.erase(inst)
 	if inst == speaker:
 		speaker = null

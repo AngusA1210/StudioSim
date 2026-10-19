@@ -64,6 +64,7 @@ public:
     bool is_room_settled();          // false while the reverb is still changing over to a new size
     float get_room_decay() const;    // the reverb time (RT60) that goes with the room's size, in seconds
     void set_source_muted(int id, bool muted);
+    void set_source_output(int id, int bus);  // a bus's id (a source added as "bus"), or -1 for the master
     void set_source_input_channel(int id, int channel);  // live sources: 0-based hardware input, or -1 for all
     // Whether a source takes input: an instrument plays what MIDI controllers send, a live source plays its
     // hardware input. Every source starts with its input off.
@@ -189,7 +190,8 @@ public:
     // notes: [{source, step, length, note, velocity}]}, or {} until then.
     void set_record_arm(int id, bool armed);
     // (a count-in first, the timeline stopped; with `loop`, round the loop, a take a pass)
-    bool start_recording(const Array& files, double from_step, double count_in_steps = 0.0, bool loop = false);
+    bool start_recording(const Array& files, double from_step, double count_in_steps = 0.0, bool loop = false, double preroll_steps = 0.0,
+                         double punch_out_step = -1.0);  // (and a pre-roll first; with `punch_out_step`, stopping recording there)
     int get_count_in() const;  // beats of a count-in still to come
     void stop_recording();
     bool is_recording() const;

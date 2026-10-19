@@ -47,6 +47,7 @@ const COMMANDS := [
 	["separate", "Split the chosen clip at the playhead", KEY_E],
 	["duplicate_clip", "A second of the chosen clip, just after it", KEY_D],
 	["swap_windows", "The mix window and the edit window, in turn", KEY_EQUAL],
+	["group", "Put the chosen tracks in a new folder", KEY_G],
 ]
 const MODIFIERS := [KEY_META, KEY_CTRL, KEY_SHIFT, KEY_ALT]
 # Keys that always mean the same, whatever is bound.

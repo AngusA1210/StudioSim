@@ -24,6 +24,7 @@
 // A pedal's memory is allocated by prepare(), on the game thread, before it is handed to the audio thread (or while
 // the audio device is closed). After that only the audio thread touches it, to process it and turn its controls.
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <memory>
@@ -86,6 +87,8 @@ public:
     }
     void setControl(int index, float value);
     void process(float* io, int n, const PedalTiming& timing);  // in place, n up to kMaxPedalBlock
+    // Two channels, in place (a bus's insert): a Plug-in pedal plays them as two; a stock pedal, as one, in both.
+    void processStereo(float* left, float* right, int n, const PedalTiming& timing);
 
 protected:
     explicit Pedal(PedalKind kind);
@@ -93,6 +96,11 @@ protected:
     virtual void update() {}  // the controls changed: work out what they mean (audio thread, before the next block)
     virtual void clear() {}   // coming back on after being bypassed: forget what it held
     virtual void run(float* io, int n, const PedalTiming& timing) = 0;  // the effect itself, while on
+    virtual void runStereo(float* left, float* right, int n, const PedalTiming& timing) {
+        for (int i = 0; i < n; ++i) left[i] = 0.5f * (left[i] + right[i]);
+        run(left, n, timing);
+        std::copy(left, left + n, right);
+    }
     // A pedal whose sound rings on after it is switched off takes care of its own bypass: what it hears is faded from
     // `feed_from` to `feed_to` over the block (1 = on, 0 = off), and what it makes is always added to the signal.
     virtual bool trails() const { return false; }
@@ -167,16 +175,19 @@ public:
     explicit PluginPedal(std::unique_ptr<PluginInstance> plugin = nullptr);
     ~PluginPedal() override;
     PluginInstance* plugin() const { return plugin_.get(); }
-    void prepare(float sample_rate) override;  // readies the plug-in too
+    void prepare(float sample_rate) override;  // readies the plug-in too (in two channels, with setStereo)
+    void setStereo(bool stereo) { stereo_ = stereo; }  // for a bus's insert; before prepare
+    bool stereo() const { return stereo_; }
     bool ready() const { return ready_; }
     const std::string& error() const { return error_; }  // why it isn't ready
 
 protected:
     void run(float* io, int n, const PedalTiming& timing) override;
+    void runStereo(float* left, float* right, int n, const PedalTiming& timing) override;
 
 private:
     std::unique_ptr<PluginInstance> plugin_;
-    bool ready_ = false;
+    bool ready_ = false, stereo_ = false;
     std::string error_;
 };
 

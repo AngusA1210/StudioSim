@@ -140,6 +140,8 @@ struct AudioEngine::Source {
     std::unique_ptr<Instrument> instrument;
     SourceSpatializer spatializer;
     std::vector<float> mono;
+    std::vector<float> bus_l, bus_r;  // a bus: what its tracks play into it this block
+    int output = -1;                  // where it plays (the audio thread's): a bus's id, or -1 for the master
     float gain = 1.0f, gain_target = 1.0f, send = 1.0f;
     float volume = 1.0f, volume_target = 1.0f;  // its own volume, before the fader (setSourceVolume)
     float mute_target = 1.0f, mute_gain = 1.0f;
@@ -265,6 +267,8 @@ std::unique_ptr<Instrument> AudioEngine::makeInstrument(InstrumentKind kind) con
         case InstrumentKind::BassCombo:
         case InstrumentKind::BassStack:
             return std::make_unique<Amp>(sr, kind, &input_bus_, block_);
+        case InstrumentKind::Bus:
+            return std::make_unique<Silence>(sr);
     }
     return nullptr;
 }
@@ -338,6 +342,8 @@ bool AudioEngine::configure(int sample_rate, int block_size, std::string* error)
             }
         }
         s->mono.assign(size_t(block_), 0.0f);
+        s->bus_l.assign(size_t(block_), 0.0f);
+        s->bus_r.assign(size_t(block_), 0.0f);
         if (!s->spatializer.init(steam_, error)) return false;
     }
     return true;
@@ -648,7 +654,7 @@ void AudioEngine::setRecordArm(int id, bool armed) {
 }
 
 bool AudioEngine::startRecording(const std::vector<std::pair<int, std::string>>& files, double from_step, std::string* error,
-                                 double count_in_steps, bool loop) {
+                                 double count_in_steps, bool loop, double preroll_steps, double punch_out_step) {
     if (recording_wanted_ || recorder_) {
         if (error) *error = "it is recording already";
         return false;
@@ -660,6 +666,8 @@ bool AudioEngine::startRecording(const std::vector<std::pair<int, std::string>>&
     Command c; c.type = Command::RecordStart; c.data = recorder.get(); c.v[0] = float(std::max(from_step, 0.0));
     c.v[1] = float(std::max(count_in_steps, 0.0));
     c.v[2] = loop ? 1.0f : 0.0f;
+    c.v[3] = float(std::max(preroll_steps, 0.0));
+    c.v[4] = float(punch_out_step);
     if (!commands_.push(c)) {
         if (error) *error = "the audio engine is busy: try again";
         return false;
@@ -886,10 +894,11 @@ bool AudioEngine::showPluginEditor(int id, int index, bool show, const std::stri
 
 // ── Inserts (game thread) ──────────────────────────────────────────────────────────────────────────────────
 std::unique_ptr<PluginPedal> AudioEngine::makePluginPedal(const std::string& plugin_id, const std::vector<uint8_t>* state,
-                                                          std::string* error) {
+                                                          std::string* error, bool stereo) {
     std::unique_ptr<PluginInstance> plugin = PluginInstance::load(plugin_id, error);
     if (!plugin) return nullptr;
     auto pedal = std::make_unique<PluginPedal>(std::move(plugin));
+    pedal->setStereo(stereo);
     pedal->prepare(float(sr_));
     if (!pedal->ready()) {
         if (error) *error = pedal->error();
@@ -906,7 +915,7 @@ bool AudioEngine::setInsert(int id, int slot, const std::string& plugin_id, std:
         if (error) *error = "there is no such insert";
         return false;
     }
-    std::unique_ptr<PluginPedal> pedal = makePluginPedal(plugin_id, state, error);
+    std::unique_ptr<PluginPedal> pedal = makePluginPedal(plugin_id, state, error, isBus(s->kind));
     return pedal && placeInsert(*s, slot, std::move(pedal), true, error);
 }
 
@@ -935,6 +944,10 @@ bool AudioEngine::moveInsert(int from_id, int from_slot, int to_id, int to_slot)
     if (!a || !b || from_slot < 0 || from_slot >= kMaxInserts || to_slot < 0 || to_slot >= kMaxInserts || !a->inserts[size_t(from_slot)].pedal)
         return false;
     if (a == b && from_slot == to_slot) return true;
+    if (isBus(a->kind) != isBus(b->kind)) {  // between a track (one channel) and a bus (two): made again there, settings and all
+        if (b->inserts[size_t(to_slot)].pedal) return false;  // (only into an empty slot)
+        return copyInsert(from_id, from_slot, to_id, to_slot, nullptr) && clearInsert(from_id, from_slot);
+    }
     auto& from = a->inserts[size_t(from_slot)];
     auto& to = b->inserts[size_t(to_slot)];
     Source::PedalSlot moving = std::move(from), displaced = std::move(to);
@@ -964,7 +977,7 @@ bool AudioEngine::copyInsert(int from_id, int from_slot, int to_id, int to_slot,
     }
     if (a == b && from_slot == to_slot) return true;
     const std::vector<uint8_t> state = original->saveState();
-    std::unique_ptr<PluginPedal> copy = makePluginPedal(original->description().id, &state, error);
+    std::unique_ptr<PluginPedal> copy = makePluginPedal(original->description().id, &state, error, isBus(b->kind));
     return copy && placeInsert(*b, to_slot, std::move(copy), a->inserts[size_t(from_slot)].on, error);
 }
 
@@ -1130,6 +1143,9 @@ int AudioEngine::addSource(InstrumentKind kind, Vec3 position, float gain, float
     connect(*src);
     if (!src->spatializer.init(steam_, nullptr)) return -1;
     src->mono.assign(size_t(block_), 0.0f);
+    src->bus_l.assign(size_t(block_), 0.0f);
+    src->bus_r.assign(size_t(block_), 0.0f);
+    if (isBus(kind)) reverb_send = 0.0f;  // (its tracks feed the reverb themselves)
     src->via = src->via_target = src->position = position;
     src->gain = src->gain_target = gain;
     src->send = reverb_send;
@@ -1189,6 +1205,7 @@ bool AudioEngine::sourceBlocked(int id) const {
 
 // ── The room (game thread) ─────────────────────────────────────────────────────────────────────────────────
 void AudioEngine::updatePath(Source& s) {
+    if (isBus(s.kind)) return;  // not in the room
     if (geometry_.empty()) {  // no walls: straight from where it stands
         s.blocked = false;
         Command c; c.type = Command::SourcePosition; c.id = s.id;
@@ -1247,6 +1264,11 @@ void AudioEngine::setSourceDirectPath(int id, Vec3 via, float extra_length, cons
 }
 void AudioEngine::setSourceMuted(int id, bool muted) {
     Command c; c.type = Command::SourceMuted; c.id = id; c.v[0] = muted ? 1.0f : 0.0f; push(c);
+}
+void AudioEngine::setSourceOutput(int id, int bus) {
+    const Source* target = bus >= 0 ? owned(bus) : nullptr;
+    if (bus >= 0 && (!target || !isBus(target->kind) || bus == id)) bus = -1;  // (no bus into itself: one level of folders)
+    Command c; c.type = Command::SourceOutput; c.id = id; c.v[0] = float(bus); push(c);
 }
 void AudioEngine::setSourceInputChannel(int id, int channel) {
     if (Source* s = owned(id)) s->input_channel = channel;  // remembered across reconfigures
@@ -1472,12 +1494,12 @@ void AudioEngine::drainCommands() {
                 break;
             case Command::NoteOn:
                 if (s) s->instrument->noteOn(int(c.v[0]), c.v[1]);
-                if (s && recording_ && s->armed && !isLiveInput(s->kind) && clock_ >= count_in_end_)
+                if (s && s->armed && !isLiveInput(s->kind) && punchedIn())
                     captured_.push({s->id, int(c.v[0]), c.v[1], true, recordedSteps()});
                 break;
             case Command::NoteOff:
                 if (s) s->instrument->noteOff(int(c.v[0]));
-                if (s && recording_ && s->armed && !isLiveInput(s->kind) && clock_ >= count_in_end_)
+                if (s && recording_ && s->armed && !isLiveInput(s->kind) && clock_ >= punch_clock_)
                     captured_.push({s->id, int(c.v[0]), 0.0f, false, recordedSteps()});
                 break;
             case Command::TimelinePlay:
@@ -1494,6 +1516,9 @@ void AudioEngine::drainCommands() {
                     s->board_applied.store(c.epoch, std::memory_order_release);
                 }
                 break;
+            case Command::SourceOutput:
+                if (s) s->output = int(c.v[0]);
+                break;
             case Command::RecordArm:
                 if (s) {
                     s->armed = c.v[0] > 0.5f;
@@ -1503,23 +1528,34 @@ void AudioEngine::drainCommands() {
             case Command::RecordStart: {
                 count_in_end_ = 0;
                 punch_clock_ = clock_;
+                punch_out_clock_ = INT64_MAX;
+                punch_out_step_ = -1.0;
                 double from = sequencer_.position(clock_);
+                const double punch_in = double(c.v[0]), punch_out = double(c.v[4]);
                 if (!sequencer_.running()) {
                     for (Source* each : sources_)
                         if (each) each->instrument->stopSequenced();
                     // A count-in: the timeline starts once the click has counted it (whole beats, at least one).
                     const int beats = c.v[1] > 0.0f ? std::max(1, int(std::lround(c.v[1] / 4.0f))) : 0;
                     const double beat_samples = 4.0 * sequencer_.stepSamples();
-                    sequencer_.start(clock_ + int64_t(std::llround(beats * beat_samples)), double(c.v[0]));
+                    // The music from the pre-roll's start (after the count-in, if there is one); the recording from the step
+                    // asked for, and to the punch out.
+                    const double play_from = std::max(punch_in - double(c.v[3]), 0.0);
+                    sequencer_.start(clock_ + int64_t(std::llround(beats * beat_samples)), play_from);
                     if (beats > 0) {
-                        count_in_end_ = int64_t(std::llround(sequencer_.timeOfStep(double(c.v[0]))));
+                        count_in_end_ = int64_t(std::llround(sequencer_.timeOfStep(play_from)));
                         count_in_beats_ = beats;
                         count_in_beat_samples_ = beat_samples;
-                        punch_clock_ = count_in_end_;
                     }
-                    // Where the timeline is at the first sample recorded (a little before the step it starts on, as it
-                    // starts a moment after it is asked to: before bar 1, even).
-                    from = double(c.v[0]) - (sequencer_.timeOfStep(double(c.v[0])) - double(punch_clock_)) / sequencer_.stepSamples();
+                    punch_clock_ = int64_t(std::llround(sequencer_.timeOfStep(punch_in)));
+                    from = punch_in;
+                    if (punch_out > punch_in) {
+                        punch_out_clock_ = int64_t(std::llround(sequencer_.timeOfStep(punch_out)));
+                        punch_out_step_ = punch_out;
+                    }
+                } else if (punch_out > from) {  // already playing: from here, to the punch out
+                    punch_out_clock_ = clock_ + int64_t(std::llround((punch_out - from) * sequencer_.stepSamples()));
+                    punch_out_step_ = punch_out;
                 }
                 sequencer_.suspendLoop(c.v[2] < 0.5f);  // round the loop only when loop recording
                 recorder_rt_ = static_cast<Recorder*>(c.data);
@@ -1529,7 +1565,8 @@ void AudioEngine::drainCommands() {
                 break;
             }
             case Command::RecordStop:
-                if (recording_) record_end_.store(std::max(recordedSteps(), record_start_.load()));
+                if (recording_)
+                    record_end_.store(std::max(punch_out_step_ >= 0.0 ? std::min(recordedSteps(), punch_out_step_) : recordedSteps(), record_start_.load()));
                 recording_ = false;
                 count_in_end_ = 0;
                 recorder_rt_ = nullptr;
@@ -1676,7 +1713,7 @@ void AudioEngine::drainMidi() {
     while (midi_queue_.pop(e)) {
         for (Source* s : sources_) {  // every instrument with its input on, or armed for recording (as Pro Tools' MIDI thru)
             if (!s || !(s->input_on || s->armed) || isLiveInput(s->kind)) continue;
-            const bool take = recording_ && s->armed && clock_ >= count_in_end_;
+            const bool take = s->armed && punchedIn();
             switch (e.type) {
                 case MidiEvent::NoteOn:
                     s->instrument->noteOn(e.note, e.velocity);
@@ -1684,7 +1721,7 @@ void AudioEngine::drainMidi() {
                     break;
                 case MidiEvent::NoteOff:
                     s->instrument->noteOff(e.note);
-                    if (take) captured_.push({s->id, e.note, 0.0f, false, recordedSteps()});
+                    if (recording_ && s->armed && clock_ >= punch_clock_) captured_.push({s->id, e.note, 0.0f, false, recordedSteps()});
                     break;
                 case MidiEvent::Sustain: s->instrument->sustain(e.note != 0); break;
                 case MidiEvent::Control: s->instrument->controlChange(e.note, e.value); break;
@@ -1811,17 +1848,22 @@ void AudioEngine::renderTimeline() {
             free_click->start(float(sr_), int(at - clock_), false, pitch, pitch, 0.01f, kClickLevel * click_volume_, 0.05f);
         }
     }
+    // What of this block is recorded: from the punch in, to the punch out.
+    const int record_from = int(std::clamp<int64_t>(punch_clock_ - clock_, 0, block_));
+    const int record_to = int(std::clamp<int64_t>(punch_out_clock_ == INT64_MAX ? block_ : punch_out_clock_ - clock_, 0, block_));
+    const bool punching = recording_ && clock_ + block_ > punch_clock_ && clock_ < punch_out_clock_;
     for (Source* s : sources_) {
         if (!s || !isLiveInput(s->kind)) continue;
         std::fill(s->playback.begin(), s->playback.end(), 0.0f);
         // What is heard from it, as Pro Tools has it: its input while input monitoring (I) is on, or while it is armed
-        // and either stopped or recording (Auto Input); what it recorded before, otherwise.
-        const bool hear_input = s->input_on || (s->armed && (recording_ || !playing));
+        // and either stopped or recording (Auto Input: punched in, not in the pre-roll or post-roll); what it recorded
+        // before, otherwise.
+        const bool hear_input = s->input_on || (s->armed && (punching || !playing));
         s->instrument->setInputEnabled(hear_input);
-        if (recording_ && s->armed && recorder_rt_ && counting < block_) {  // its input as it comes in, before the pedals, amp and inserts
+        if (punching && s->armed && recorder_rt_ && record_to > record_from) {  // its input as it comes in, before the pedals, amp and inserts
             std::fill(take_.begin(), take_.end(), 0.0f);
             s->instrument->readInput(take_.data(), block_);
-            recorder_rt_->write(recorder_rt_->slotOf(s->id), take_.data() + counting, block_ - counting);
+            recorder_rt_->write(recorder_rt_->slotOf(s->id), take_.data() + record_from, record_to - record_from);
         }
         if (!playing || hear_input || !s->track_rt || s->track_rt->clips.empty()) continue;
         float* out = s->playback.data();
@@ -1892,9 +1934,14 @@ void AudioEngine::renderBlock() {
     falloff_ += (falloff_target_ - falloff_) * wall_glide;
     const float mute_coef = 1.0f - std::exp(-1.0f / (0.01f * float(sr_)));
 
+    for (Source* s : sources_)
+        if (s && isBus(s->kind)) {
+            std::fill(s->bus_l.begin(), s->bus_l.end(), 0.0f);
+            std::fill(s->bus_r.begin(), s->bus_r.end(), 0.0f);
+        }
     for (size_t index = 0; index < sources_.size(); ++index) {
         Source* s = sources_[index];
-        if (!s) continue;
+        if (!s || isBus(s->kind)) continue;  // (buses after the tracks that play into them)
         float* mono = s->mono.data();
         std::fill(s->mono.begin(), s->mono.end(), 0.0f);
         if (s->kind == InstrumentKind::PluginSynth)  // the room's tempo, for plug-ins that keep time
@@ -1937,7 +1984,9 @@ void AudioEngine::renderBlock() {
         p.binaural_from = binaural_from;
         p.binaural_to = binaural_mix_;
         p.falloff = falloff_;
-        s->spatializer.process(mono, mix_l_.data(), mix_r_.data(), p);
+        Source* bus = s->output >= 0 && size_t(s->output) < sources_.size() ? sources_[size_t(s->output)] : nullptr;
+        if (bus && isBus(bus->kind)) s->spatializer.process(mono, bus->bus_l.data(), bus->bus_r.data(), p);  // into its folder
+        else s->spatializer.process(mono, mix_l_.data(), mix_r_.data(), p);
 
         if (s->fade_blocks >= 0 && --s->fade_blocks < 0) {  // removed and faded out: forget it and hand it back
             sources_[index] = nullptr;
@@ -1946,6 +1995,48 @@ void AudioEngine::renderBlock() {
             pre_levels_[index].store(0.0f, std::memory_order_relaxed);
             pre_peaks_[index].store(0.0f, std::memory_order_relaxed);
             s->released.store(true, std::memory_order_release);  // must be the last thing this thread does with it
+        }
+    }
+
+    // The buses: what their tracks played into them, through their inserts (in two channels) and faders to the master.
+    for (size_t index = 0; index < sources_.size(); ++index) {
+        Source* s = sources_[index];
+        if (!s || !isBus(s->kind)) continue;
+        float* l = s->bus_l.data();
+        float* r = s->bus_r.data();
+        if (s->insert_board.count > 0) {
+            const PedalTiming timing{double(bar_timing_[1]) / 4.0, bar_timing_[0], bar_timing_[1]};
+            for (int p = 0; p < s->insert_board.count; ++p) s->insert_board.pedals[size_t(p)]->processStereo(l, r, block_, timing);
+        }
+        double energy = 0.0, pre_energy = 0.0;
+        float peak = 0.0f, pre_peak = 0.0f;
+        for (int i = 0; i < block_; ++i) {
+            pre_energy += 0.5 * (double(l[i]) * l[i] + double(r[i]) * r[i]);
+            pre_peak = std::max(pre_peak, std::max(std::fabs(l[i]), std::fabs(r[i])));
+            s->mute_gain += (s->mute_target - s->mute_gain) * mute_coef;
+            s->gain += (s->gain_target - s->gain) * mute_coef;
+            const float g = s->gain * s->mute_gain;
+            l[i] *= g;
+            r[i] *= g;
+            energy += 0.5 * (double(l[i]) * l[i] + double(r[i]) * r[i]);
+            peak = std::max(peak, std::max(std::fabs(l[i]), std::fabs(r[i])));
+            mix_l_[size_t(i)] += l[i];
+            mix_r_[size_t(i)] += r[i];
+        }
+        // Metered as it reaches the master, before the master fader: as dBFS.
+        levels_[size_t(s->id)].store(float(std::sqrt(energy / block_)) * kMasterGain, std::memory_order_relaxed);
+        if (peak * kMasterGain > peaks_[size_t(s->id)].load(std::memory_order_relaxed))
+            peaks_[size_t(s->id)].store(peak * kMasterGain, std::memory_order_relaxed);
+        pre_levels_[size_t(s->id)].store(float(std::sqrt(pre_energy / block_)) * kMasterGain, std::memory_order_relaxed);
+        if (pre_peak * kMasterGain > pre_peaks_[size_t(s->id)].load(std::memory_order_relaxed))
+            pre_peaks_[size_t(s->id)].store(pre_peak * kMasterGain, std::memory_order_relaxed);
+        if (s->fade_blocks >= 0 && --s->fade_blocks < 0) {  // removed and faded out
+            sources_[index] = nullptr;
+            levels_[index].store(0.0f, std::memory_order_relaxed);
+            peaks_[index].store(0.0f, std::memory_order_relaxed);
+            pre_levels_[index].store(0.0f, std::memory_order_relaxed);
+            pre_peaks_[index].store(0.0f, std::memory_order_relaxed);
+            s->released.store(true, std::memory_order_release);
         }
     }
 

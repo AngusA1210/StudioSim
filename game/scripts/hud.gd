@@ -188,8 +188,8 @@ func _process(_delta: float) -> void:
 	if timeline.is_record():  # a Record room: where the music is on the timeline, and whether it is recording
 		var at: float = timeline.position()
 		var counting: int = timeline.counting_in()
-		var state: String = ("●  COUNT-IN %d" % counting if counting > 0 else ("●  LOOP REC" if timeline._looping else "●  REC")) if timeline.recording else \
-			("▶" if timeline.playing else "■")
+		var state: String = {"count-in": "●  COUNT-IN %d" % counting, "pre-roll": "●  PRE-ROLL", "post-roll": "●  POST-ROLL",
+			"recording": "●  LOOP REC" if timeline._looping else "●  REC"}.get(timeline.phase(), "▶" if timeline.playing else "■")
 		var seconds: float = maxf(at, 0.0) * timeline.step_seconds()
 		_beat.text = "%s   %d | %d   %d:%04.1f   ·   %s%d BPM%s" % [state, int(at / 16.0) + 1, int(fmod(at, 16.0) / 4.0) + 1,
 			int(seconds / 60.0), fmod(seconds, 60.0),

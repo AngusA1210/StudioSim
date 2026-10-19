@@ -43,6 +43,9 @@ var backups_kept := 10     # the oldest copies go past this many
 var insertion_follows := false  # a Record room: stopping leaves the playhead where the music stopped (N), as Pro Tools' option
 var count_in_bars := 0          # a Record room: bars of the click before recording starts (0, 1 or 2), as Pro Tools' Count Off
 var loop_record := false        # a Record room: recording goes round the loop, a take each time (Option-L), as Pro Tools' Loop Record
+var preroll_bars := 0           # a Record room: bars of the music before where playing or recording starts (0, 1 or 2)
+var postroll_bars := 0          # and after a punch out, before it stops
+var punch := false              # recording punches in and out over the range on the ruler, as a timeline selection does
 
 var path := "user://settings.cfg"
 var persist := true  # automated runs switch this off so they neither read nor change the player's settings
@@ -89,6 +92,9 @@ func load_from_disk() -> void:
 	insertion_follows = file.get_value("rooms", "insertion_follows_playback", insertion_follows)
 	count_in_bars = clampi(file.get_value("rooms", "count_in_bars", count_in_bars), 0, 2)
 	loop_record = file.get_value("rooms", "loop_record", loop_record)
+	preroll_bars = clampi(file.get_value("rooms", "preroll_bars", preroll_bars), 0, 2)
+	postroll_bars = clampi(file.get_value("rooms", "postroll_bars", postroll_bars), 0, 2)
+	punch = file.get_value("rooms", "punch", punch)
 
 
 func save_to_disk() -> void:
@@ -128,4 +134,7 @@ func save_to_disk() -> void:
 	file.set_value("rooms", "insertion_follows_playback", insertion_follows)
 	file.set_value("rooms", "count_in_bars", count_in_bars)
 	file.set_value("rooms", "loop_record", loop_record)
+	file.set_value("rooms", "preroll_bars", preroll_bars)
+	file.set_value("rooms", "postroll_bars", postroll_bars)
+	file.set_value("rooms", "punch", punch)
 	file.save(path)

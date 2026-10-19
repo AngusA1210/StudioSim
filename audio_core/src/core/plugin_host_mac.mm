@@ -148,7 +148,7 @@ public:
 
     const PluginDescription& description() const override { return description_; }
 
-    bool prepare(double sample_rate, int max_frames, std::string* error) override {
+    bool prepare(double sample_rate, int max_frames, std::string* error, bool stereo = false) override {
         if (initialized_) {
             AudioUnitUninitialize(unit_);
             initialized_ = false;
@@ -174,9 +174,10 @@ public:
                 break;
             }
         }
-        // An effect: one channel in and out if it will take that, which suits a pedal; otherwise stereo, or mono into stereo.
-        const int layouts[3][2] = {{1, 1}, {2, 2}, {1, 2}};
-        for (const auto& layout : layouts) {
+        // An effect: one channel in and out if it will take that, which suits a pedal; otherwise stereo, or mono into
+        // stereo. On a bus, stereo first.
+        const int mono_first[3][2] = {{1, 1}, {2, 2}, {1, 2}}, stereo_first[3][2] = {{2, 2}, {1, 2}, {1, 1}};
+        for (const auto& layout : stereo ? stereo_first : mono_first) {
             if (description_.instrument) break;
             const AudioStreamBasicDescription in = streamFormat(sample_rate, layout[0]), out = streamFormat(sample_rate, layout[1]);
             if (AudioUnitSetProperty(unit_, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input, 0, &in, sizeof(in)) != noErr ||
@@ -197,6 +198,8 @@ public:
         initialized_ = true;
         max_frames_ = max_frames;
         input_.assign(size_t(max_frames), 0.0f);
+        input_right_.assign(size_t(max_frames), 0.0f);
+        stereo_in_ = false;
         for (auto& side : output_) side.assign(size_t(max_frames), 0.0f);
         list_.assign(offsetof(AudioBufferList, mBuffers) + 2 * sizeof(AudioBuffer), 0);
         Float64 latency = 0.0;
@@ -231,6 +234,41 @@ public:
         const float* a = static_cast<const float*>(list->mBuffers[0].mData);
         const float* b = out_channels_ > 1 ? static_cast<const float*>(list->mBuffers[1].mData) : a;
         for (int i = 0; i < n; ++i) out[i] += 0.5f * (a[i] + b[i]);
+    }
+
+    void processStereo(float* left, float* right, int n) override {
+        if (!initialized_ || n > max_frames_ || description_.instrument) return;
+        if (in_channels_ < 2 && out_channels_ < 2) {  // a one-channel plug-in: the two together, played in both
+            PluginInstance::processStereo(left, right, n);
+            return;
+        }
+        if (in_channels_ >= 2) {
+            std::copy(left, left + n, input_.begin());
+            std::copy(right, right + n, input_right_.begin());
+        } else {
+            for (int i = 0; i < n; ++i) input_[size_t(i)] = 0.5f * (left[i] + right[i]);
+        }
+        stereo_in_ = in_channels_ >= 2;
+        frames_now_ = n;
+        auto* list = reinterpret_cast<AudioBufferList*>(list_.data());
+        list->mNumberBuffers = UInt32(out_channels_);
+        for (int c = 0; c < out_channels_; ++c) {
+            list->mBuffers[c].mNumberChannels = 1;
+            list->mBuffers[c].mDataByteSize = UInt32(n) * sizeof(float);
+            list->mBuffers[c].mData = output_[c].data();
+        }
+        AudioUnitRenderActionFlags flags = 0;
+        AudioTimeStamp stamp{};
+        stamp.mSampleTime = sample_time_;
+        stamp.mFlags = kAudioTimeStampSampleTimeValid;
+        const OSStatus status = AudioUnitRender(unit_, &flags, &stamp, 0, UInt32(n), list);
+        sample_time_ += n;
+        stereo_in_ = false;
+        if (status != noErr) return;  // the signal passes as it came
+        const float* a = static_cast<const float*>(list->mBuffers[0].mData);
+        const float* b = out_channels_ > 1 ? static_cast<const float*>(list->mBuffers[1].mData) : a;
+        std::copy(a, a + n, left);
+        std::copy(b, b + n, right);
     }
 
     void process(float* io, int n) override {
@@ -416,11 +454,12 @@ private:
         const UInt32 have = std::min(frames, UInt32(self->frames_now_));
         for (UInt32 b = 0; b < data->mNumberBuffers; ++b) {
             auto* dst = static_cast<float*>(data->mBuffers[b].mData);
+            const std::vector<float>& from = self->stereo_in_ && b == 1 ? self->input_right_ : self->input_;  // (a bus's right)
             if (!dst) {  // it would rather read from ours
-                data->mBuffers[b].mData = self->input_.data();
+                data->mBuffers[b].mData = const_cast<float*>(from.data());
                 continue;
             }
-            std::memcpy(dst, self->input_.data(), have * sizeof(float));
+            std::memcpy(dst, from.data(), have * sizeof(float));
             if (frames > have) std::memset(dst + have, 0, (frames - have) * sizeof(float));
         }
         return noErr;
@@ -487,7 +526,8 @@ private:
     int in_channels_ = 1, out_channels_ = 1, max_frames_ = 0, latency_ = 0, frames_now_ = 0;
     double sample_rate_ = 48000.0, sample_time_ = 0.0;
     std::atomic<double> tempo_{120.0};
-    std::vector<float> input_, output_[2];
+    std::vector<float> input_, input_right_, output_[2];
+    bool stereo_in_ = false;  // processing a bus's two channels: the second buffer it asks for is the right
     std::vector<uint8_t> list_;  // an AudioBufferList with room for two buffers
     NSWindow* window_ = nil;
     NSViewController* view_controller_ = nil;

@@ -2035,6 +2035,103 @@ func _run() -> void:
 	timeline.grid = 4
 	main.edit_window.close()
 	timeline.set_loop(true)
+
+	print("Pre-roll, punching in and out, post-roll")
+	var tempo_was: float = main.tempo
+	main.set_tempo(200.0)  # (a bar 1.2 seconds, to get through it quickly)
+	var punch_loop := Vector2(timeline.loop_start, timeline.loop_end)
+	timeline.set_loop(false, 16.0, 20.0)
+	main.settings.preroll_bars = 1
+	main.settings.postroll_bars = 1
+	main.settings.punch = true
+	var punch_clips: int = main.speaker.clips.size()
+	check(timeline.start_recording() == "" and is_equal_approx(timeline.playhead, 16.0) and is_equal_approx(timeline.punch_out, 20.0),
+		"with punching on, recording is from the range on the ruler: in at its start, out at its end")
+	await seconds(0.5)
+	var preroll_phase: String = timeline.phase()
+	var preroll_text: String = main.hud._beat.text
+	var preroll_at: float = audio.get_timeline_position()
+	await seconds(1.0)
+	var punch_phase: String = timeline.phase()
+	await seconds(0.6)
+	var postroll_phase: String = timeline.phase()
+	for wait in 40:
+		await frames(3)
+		if not timeline.playing and not timeline._taking:
+			break
+	var punched_take: Dictionary = main.speaker.clips.back() if main.speaker.clips.size() > punch_clips else {}
+	var take_end: float = float(punched_take.get("start", 0.0)) + float(punched_take.get("length", 0.0))
+	check(preroll_phase == "pre-roll" and preroll_text.contains("PRE-ROLL") and preroll_at < 16.0 and preroll_at > 1.0 and punch_phase == "recording" and
+		postroll_phase == "post-roll", "a bar of pre-roll plays first, then it records, then a bar of post-roll", "%s, %s, %s" % [preroll_phase, punch_phase, postroll_phase])
+	check(not timeline.recording and not timeline.playing and is_equal_approx(timeline.playhead, 16.0) and not punched_take.is_empty() and
+		absf(take_end - 20.0 * timeline.step_seconds()) < 0.02 and absf(float(punched_take.length) - 4.0 * timeline.step_seconds()) < 0.03,
+		"after the post-roll it stops of itself, and the take is just the range punched", "%.3f s long" % float(punched_take.get("length", 0.0)))
+	timeline.undo()
+	main.settings.punch = false
+	main.settings.postroll_bars = 0
+	timeline.locate(32.0)
+	timeline.start_playing()
+	await seconds(0.25)
+	var played_from_preroll: float = audio.get_timeline_position()
+	timeline.stop()
+	check(played_from_preroll < 24.0 and played_from_preroll > 16.0 and is_equal_approx(timeline.playhead, 32.0),
+		"with a pre-roll, playing starts a bar early too, and stopping goes back to the playhead", "%.1f" % played_from_preroll)
+	main.settings.preroll_bars = 0
+	main.set_tempo(tempo_was)
+	timeline.set_loop(true, punch_loop.x, punch_loop.y)
+	timeline.locate(0.0)
+	check(main.speaker.clips.size() == punch_clips, "(the punched take undone)")
+
+	print("Tracks and folders")
+	main.rename_track(keys_inst, "Rhodes")
+	main.set_track_color(keys_inst, main.TRACK_COLORS[8][1])
+	await frames(2)
+	check(keys_inst.display_name == "Rhodes" and keys_inst.named and keys_inst._label.text.begins_with("Rhodes") and keys_inst.color == main.TRACK_COLORS[8][1] and
+		keys_inst.model_color != keys_inst.color, "a track can be renamed and given a colour: its name over it in the room too, its paint left as it was")
+	main.edit_window.open()
+	await frames(2)
+	var folder_drums = main.find_instrument("drums")
+	var folder_bass = main.find_instrument("bass")
+	view.press(Vector2(40, view.row_top(view.tracks().find(folder_drums)) + 10))
+	view.press(Vector2(40, view.row_top(view.tracks().find(folder_bass)) + 10), false, true)  # Shift: those between too
+	var chosen_range: Array = main.chosen_tracks.duplicate()
+	view.press(Vector2(40, view.row_top(view.tracks().find(folder_bass)) + 10), false, false, true)  # Cmd: one fewer
+	check(chosen_range.has(folder_drums) and chosen_range.has(folder_bass) and not main.chosen_tracks.has(folder_bass) and main.chosen_tracks.has(folder_drums),
+		"clicking a track's name chooses it, Shift-click those between, Cmd-click one more or one fewer")
+	main.chosen_tracks = [folder_drums, folder_bass]
+	await command_tap(KEY_G)
+	var the_folder = main.folders[0] if not main.folders.is_empty() else null
+	check(the_folder != null and the_folder.members == [folder_drums, folder_bass] and main.chosen_tracks == [the_folder] and view.tracks().find(the_folder) == view.tracks().find(folder_drums) - 1 and
+		main.instruments.find(folder_bass) == main.instruments.find(folder_drums) + 1, "Cmd-G puts the chosen tracks in a new folder, its row over theirs",
+		"%s" % [the_folder.display_name if the_folder != null else "no folder"])
+	timeline.start_playing()
+	await seconds(0.6)
+	var folder_heard: float = the_folder.peak_hold if the_folder != null else 0.0
+	main.set_muted(the_folder, true)
+	await seconds(0.2)
+	var muted_drums: float = audio.get_source_level(folder_drums.source_id)
+	main.set_muted(the_folder, false)
+	timeline.stop()
+	check(folder_heard > 0.001 and muted_drums < 1e-5 and not folder_drums.muted, "its tracks play into it (its meter reads them), and muting it silences them",
+		"%.0f dBFS" % linear_to_db(maxf(folder_heard, 1e-9)))
+	the_folder.open = false
+	var hidden: bool = not view.tracks().has(folder_drums) and view.tracks().has(the_folder)
+	view.press(Vector2(14, view.row_top(view.tracks().find(the_folder)) + 10))  # its arrow
+	check(hidden and the_folder.open and view.tracks().has(folder_drums), "its arrow hides its tracks in the edit window and shows them again")
+	main.mixer.open()
+	await frames(3)
+	var new_folder_strip: Dictionary = main.mixer._strip_for(the_folder)
+	var drums_out_strip: Dictionary = main.mixer._strip_for(folder_drums)
+	check(not new_folder_strip.is_empty() and new_folder_strip.source.text == "2 tracks" and drums_out_strip.output.selected == 1 and
+		main.mixer._strip_row.get_child(main.mixer._strips.find(new_folder_strip)) != null, "in the mix window the folder has a strip of its own, and its tracks' outputs say they go to it")
+	var problem_on_bus: String = main.set_insert(the_folder, 0, "AU:61756678:64656c79:6170706c")
+	check(problem_on_bus == "" and str(the_folder.inserts[0].plugin_name) == "AUDelay", "a folder takes plug-ins on its inserts, as a track does", problem_on_bus)
+	main.mixer._strip_for(folder_bass).output.item_selected.emit(0)
+	check(the_folder.members == [folder_drums] and main.folder_of(folder_bass) == null, "a track's output set to the master takes it out of the folder")
+	main.mixer.close()
+	main.edit_window.close()
+	main.put_in_folder(folder_bass, the_folder)
+	main.rename_track(the_folder, "Rhythm")
 	session.save()
 	var record_file: String = session.path
 	var saved_loop := Vector2(timeline.loop_start, timeline.loop_end)
@@ -2050,6 +2147,12 @@ func _run() -> void:
 	check(timeline.is_record() and reopened_keys.clips.size() == 2 and main.speaker.clips.size() == 1 and is_equal_approx(timeline.loop_start, saved_loop.x) and
 		is_equal_approx(timeline.loop_end, saved_loop.y), "saved and opened again, the room is a Record room with its clips and loop",
 		"%.2f to %.2f" % [timeline.loop_start, timeline.loop_end])
+	var reopened_folder = main.folders[0] if main.folders.size() == 1 else null
+	check(reopened_keys.display_name == "Rhodes" and reopened_keys.named and reopened_keys.color == main.TRACK_COLORS[8][1] and reopened_folder != null and
+		reopened_folder.display_name == "Rhythm" and reopened_folder.members.map(func(i): return i.kind) == ["drums", "bass"] and
+		str(reopened_folder.inserts[0].plugin_name) == "AUDelay", "and its tracks' names and colours, and its folder with its tracks and inserts")
+	main.remove_folder(reopened_folder)
+	check(main.folders.is_empty() and main.folder_of(main.find_instrument("drums")) == null, "a folder taken away leaves its tracks going to the master")
 	main.mixer.open()
 	await seconds(0.6)
 	var reverb_heard: float = main.mixer._reverb.meter.held_db()

@@ -207,6 +207,12 @@ public:
     // It holds until the source or the listener next moves.
     void setSourceDirectPath(int id, Vec3 via, float extra_length, const float* path_differences, int count, bool blocked);
     void setSourceMuted(int id, bool muted);
+    // Where a source's sound goes: the master (-1), or a bus (a source added as InstrumentKind::Bus), as a track's
+    // output is assigned in Pro Tools. A bus is a routing folder's aux input: what its tracks play there (placed in the
+    // room as ever, in stereo) goes through its inserts, in two channels, and its fader to the master; it plays nothing
+    // into the room's reverb itself (the tracks do that, as their own sends would). Its meters read what it sends the
+    // master, as dBFS before the master fader.
+    void setSourceOutput(int id, int bus);
     // For live-input sources: which hardware input to play (0-based), or LiveInput::kAllInputs.
     void setSourceInputChannel(int id, int channel);
     // Whether a source takes input, as a track's input is switched on in a DAW. An instrument with its input on plays
@@ -339,11 +345,15 @@ public:
     void setRecordArm(int id, bool armed);
     // From the next block: the armed tracks record (audio to `files`, one per armed audio track: [source, path]),
     // the timeline playing on from where it is, or from `from_step` if it is stopped. Loop playback waits meanwhile.
-    // With `count_in_steps` (and the timeline stopped), the click counts that long first, the timeline waiting, and
-    // the recording starts when it ends. With `loop`, loop playback goes on round while it records (Pro Tools' Loop
-    // Record): the takes follow one another in the files, for the game to cut into a take for each pass.
+    // From the timeline stopped: with `count_in_steps`, the click counts that long first, the timeline waiting; with
+    // `preroll_steps`, the music starts that much before `from_step` (bar 1 at the soonest) and the recording when it
+    // reaches it; and with `punch_out_step` (0 or more), the recording stops there while the music plays on (the game
+    // stops it after its post-roll), as Pro Tools punches in and out. Armed tracks are heard through their inputs only
+    // while it records (Auto Input). With `loop`, loop playback goes on round while it records (Pro Tools' Loop
+    // Record): the takes follow one another in the files, for the game to cut into a take for each pass. Already
+    // playing, it records from where the music is, straight away.
     bool startRecording(const std::vector<std::pair<int, std::string>>& files, double from_step, std::string* error,
-                        double count_in_steps = 0.0, bool loop = false);
+                        double count_in_steps = 0.0, bool loop = false, double preroll_steps = 0.0, double punch_out_step = -1.0);
     // How many beats of a count-in are still to come (0: none, or it has ended).
     int countInLeft() const { return count_in_left_.load(std::memory_order_relaxed); }
     void stopRecording();  // from the next block; takeRecording then has it
@@ -390,7 +400,7 @@ private:
             PatternNoteSet, PatternNoteRemove, PatternClear, PatternSteps, SourceLoop, SourceVolume,
             SequencerRunning, Tempo, Swing, Click, ClickVolume, Reverb2, SourceGain, Falloff, LimiterOn,
             AmpKnob, AmpHeadSet, AmpCabinetSet, LooperMemory, LooperAct, PedalBoardSet, PedalOn, PedalControl, SynthPlugin,
-            TimelinePlay, TimelineLoop, TrackSet, RecordArm, RecordStart, RecordStop,
+            TimelinePlay, TimelineLoop, TrackSet, RecordArm, RecordStart, RecordStop, SourceOutput,
         } type = AddSource;
         int id = 0;
         float v[9] = {};
@@ -416,7 +426,8 @@ private:
     LooperPedal* looperOf(const Source& source) const;     // the loop pedal on its board, if any
     PluginInstance* pluginAt(int id, PluginPlace place, int index) const;
     // A Plug-in pedal holding this plug-in, ready to play (and given these settings, if any); null, with the reason.
-    std::unique_ptr<PluginPedal> makePluginPedal(const std::string& plugin_id, const std::vector<uint8_t>* state, std::string* error);
+    std::unique_ptr<PluginPedal> makePluginPedal(const std::string& plugin_id, const std::vector<uint8_t>* state, std::string* error,
+                                                 bool stereo = false);
     bool placeInsert(Source& source, int slot, std::unique_ptr<PluginPedal> pedal, bool on, std::string* error);
     void reapPedals();              // frees pedals (and tracks' timelines) the audio thread has let go of
     void renderTimeline();          // this block's place on the timeline, and each track's recorded audio
@@ -511,6 +522,9 @@ private:
     std::atomic<double> record_start_{0.0}, record_end_{0.0}, record_step_seconds_{0.0};
     int64_t count_in_end_ = 0;          // the sample a count-in ends on, and the recording starts (0: no count-in)
     int64_t punch_clock_ = 0;           // the sample the recording starts on (its files' first)
+    int64_t punch_out_clock_ = INT64_MAX;  // and the one it stops on, punching out (INT64_MAX: when it is stopped)
+    double punch_out_step_ = -1.0;
+    bool punchedIn() const { return recording_ && clock_ >= punch_clock_ && clock_ < punch_out_clock_; }
     // Steps since the recording started, counted on past a loop's end, from `start_step` (see RecordingResult).
     double recordedSteps() const { return record_start_.load() + double(clock_ - punch_clock_) / sequencer_.stepSamples(); }
     int count_in_beats_ = 0;

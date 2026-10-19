@@ -12,6 +12,7 @@ extends Control
 ## one. Double-click a MIDI clip for its notes.
 
 const Hints := preload("res://scripts/hints.gd")
+const TrackMenu := preload("res://scripts/track_menu.gd")
 const HEADER := 190.0
 const RULER := 30.0
 const ROW := 54.0
@@ -41,6 +42,9 @@ var selected: Dictionary:
 	set(value):
 		chosen = [] if value.is_empty() else [{"inst": value.inst, "clip": value.inst.clips[value.index]}]
 var _takes_menu: PopupMenu  # a clip's takes, on a right-click
+var _track_menu: PopupMenu  # a track's, on a right-click on its name
+var _track_menu_for = null
+var _colors: PopupMenu
 var _takes_for := {}        # the clip it is for: {inst, clip}
 var _drag := {}       # what a press is doing: moving a clip, or along the ruler
 
@@ -60,6 +64,13 @@ func setup(the_app) -> void:
 			timeline.choose_take(_takes_for.inst, at, id)
 			chosen = [{"inst": _takes_for.inst, "clip": _takes_for.inst.clips.back()}])
 	add_child(_takes_menu)
+	_track_menu = PopupMenu.new()
+	_track_menu.id_pressed.connect(func(id: int) -> void: TrackMenu.chosen(app, _track_menu_for, id))
+	add_child(_track_menu)
+	_colors = TrackMenu.colors_menu(app, func(color: Color) -> void:
+		if _track_menu_for != null and app.has_track(_track_menu_for):
+			app.set_track_color(_track_menu_for, color))
+	_track_menu.add_child(_colors)
 
 
 func _process(_delta: float) -> void:
@@ -113,7 +124,7 @@ func is_chosen(inst, clip: Dictionary) -> bool:
 ## Chooses every clip on every track (Cmd-A).
 func choose_all() -> void:
 	chosen = []
-	for inst in tracks():
+	for inst in app.instruments:
 		for clip in inst.clips:
 			chosen.append({"inst": inst, "clip": clip})
 
@@ -134,8 +145,9 @@ func row_at(y: float) -> int:
 	return int(floor((y - RULER + scroll_y) / ROW)) if y >= RULER else -1
 
 
+## The rows: every track in order, each folder before its tracks (those of a folder that is closed left out).
 func tracks() -> Array:
-	return app.instruments
+	return app.track_order().filter(func(t): return t.is_folder or app.folder_of(t) == null or app.folder_of(t).open)
 
 
 # ── Drawing ──────────────────────────────────────────────────────────────────────────────────────────────────
@@ -151,13 +163,17 @@ func _draw() -> void:
 		var top := row_top(i)
 		if top > size.y or top + ROW < RULER:
 			continue
-		draw_rect(Rect2(HEADER, top, size.x - HEADER, ROW - 1), Color(0.12, 0.125, 0.145) if i % 2 == 0 else Color(0.105, 0.11, 0.13))
+		draw_rect(Rect2(HEADER, top, size.x - HEADER, ROW - 1), Color(0.07, 0.075, 0.09) if inst.is_folder else
+			(Color(0.12, 0.125, 0.145) if i % 2 == 0 else Color(0.105, 0.11, 0.13)))
 		var step := float(first_bar * 4)
 		while step <= last_step:
 			var x := x_of(step)
 			if x >= HEADER:
 				draw_line(Vector2(x, top), Vector2(x, top + ROW - 1), Color(1, 1, 1, 0.12 if int(step) % 16 == 0 else 0.04))
 			step += 4.0
+		if inst.is_folder:  # a folder's lane: no clips of its own
+			_draw_header(inst, top, font)
+			continue
 		for c in inst.clips.size():
 			_draw_clip(inst, c, top, font)
 		for c in inst.clips.size():
@@ -171,7 +187,8 @@ func _draw() -> void:
 	draw_rect(Rect2(0, 0, size.x, RULER), Color(0.14, 0.145, 0.17))
 	var band := Rect2(maxf(x_of(timeline.loop_start), HEADER), 2, 0, 9)
 	band.size.x = maxf(x_of(timeline.loop_end) - band.position.x, 0.0)
-	draw_rect(band, LOOP_ON if timeline.loop_on else Color(0.45, 0.47, 0.52))
+	var punching: bool = app.settings.punch and not app.settings.loop_record  # (the range is where recording punches in and out: red)
+	draw_rect(band, RECORD_RED if punching else (LOOP_ON if timeline.loop_on else Color(0.45, 0.47, 0.52)))
 	if _drag.get("what", "") == "ruler" and _drag.has("loop"):
 		var r := Rect2(x_of(_drag.loop.x), 2, (_drag.loop.y - _drag.loop.x) * zoom, 9)
 		draw_rect(r, Color(LOOP_ON, 0.6))
@@ -328,10 +345,17 @@ func _draw_fades(clip: Dictionary, x0: float, x1: float, inner: Rect2, rect: Rec
 
 
 func _draw_header(inst, top: float, font: Font) -> void:
-	draw_rect(Rect2(0, top, HEADER, ROW - 1), Color(0.16, 0.17, 0.19))
-	draw_rect(Rect2(0, top, 5, ROW - 1), inst.color)
-	draw_string(font, Vector2(12, top + 20), inst.display_name, HORIZONTAL_ALIGNMENT_LEFT, HEADER - 20, 13, inst.color.lightened(0.45))
-	draw_string(font, Vector2(12, top + 40), "audio" if not inst.playable else "MIDI", HORIZONTAL_ALIGNMENT_LEFT, 60, 11, DIM)
+	var chosen_track: bool = app.chosen_tracks.has(inst)
+	var indent := 12.0 if not inst.is_folder and app.folder_of(inst) != null else 0.0  # a folder's tracks, under it
+	draw_rect(Rect2(0, top, HEADER, ROW - 1), Color(0.24, 0.26, 0.31) if chosen_track else Color(0.16, 0.17, 0.19))
+	draw_rect(Rect2(indent, top, 5, ROW - 1), inst.color)
+	var name_x := 12.0 + indent
+	if inst.is_folder:  # its arrow, to show or hide its tracks
+		draw_string(font, Vector2(10, top + 20), "▾" if inst.open else "▸", HORIZONTAL_ALIGNMENT_LEFT, -1, 13, inst.color.lightened(0.45))
+		name_x = 26.0
+	draw_string(font, Vector2(name_x, top + 20), inst.display_name, HORIZONTAL_ALIGNMENT_LEFT, HEADER - name_x - 8, 13, inst.color.lightened(0.45))
+	var what: String = "folder · %d" % inst.members.size() if inst.is_folder else ("audio" if not inst.playable else "MIDI")
+	draw_string(font, Vector2(name_x, top + 40), what, HORIZONTAL_ALIGNMENT_LEFT, 60, 11, DIM)
 	for b in _buttons(inst, top):
 		var lit: bool = b.on
 		draw_rect(b.rect, b.color if lit else Color(0.3, 0.31, 0.34))
@@ -342,6 +366,11 @@ func _draw_header(inst, top: float, font: Font) -> void:
 ## A track's header buttons: R (armed), I (input), M (muted), S (soloed).
 func _buttons(inst, top: float) -> Array:
 	var y := top + 28
+	if inst.is_folder:  # (a folder records nothing, and takes no input)
+		return [
+			{"what": "mute", "text": "M", "on": inst.muted, "color": MUTE_ORANGE, "rect": Rect2(126, y, 20, 19)},
+			{"what": "solo", "text": "S", "on": inst.soloed, "color": SOLO_YELLOW, "rect": Rect2(150, y, 20, 19)},
+		]
 	return [
 		{"what": "arm", "text": "R", "on": inst.armed, "color": RECORD_RED, "rect": Rect2(78, y, 20, 19)},
 		{"what": "input", "text": "I", "on": inst.input_on, "color": INPUT_GREEN, "rect": Rect2(102, y, 20, 19)},
@@ -386,19 +415,25 @@ func _on_button(e: InputEventMouseButton) -> void:
 		var found := zone_at(e.position)
 		if found.get("zone", "") == "clip":
 			show_takes(found.inst, found.index, e.position)
+		elif found.get("zone", "") == "header":
+			show_track_menu(found.inst, e.position)
 		accept_event()
 		return
 	if e.button_index != MOUSE_BUTTON_LEFT:
 		return
 	accept_event()
-	if e.pressed and e.double_click:  # a MIDI clip's notes, in the MIDI editor
+	if e.pressed and e.double_click:  # a MIDI clip's notes, in the MIDI editor; a track's name, renamed
 		var found := zone_at(e.position)
 		if found.get("zone", "") == "clip" and found.inst.clips[found.index].kind == "midi":
 			_drag = {}
 			app.edit_window.edit_notes(found.inst, found.index)
 			return
+		if found.get("zone", "") == "header" and not _buttons(found.inst, row_top(found.row)).any(func(b): return b.rect.has_point(e.position)) and \
+				not (found.inst.is_folder and e.position.x < 24.0):
+			app.ask_track_name(found.inst)
+			return
 	if e.pressed:
-		press(e.position, e.alt_pressed, e.shift_pressed)
+		press(e.position, e.alt_pressed, e.shift_pressed, e.meta_pressed or e.ctrl_pressed)
 	else:
 		release(e.position, e.alt_pressed)
 
@@ -417,6 +452,8 @@ func zone_at(at: Vector2) -> Dictionary:
 	var inst = tracks()[row]
 	if at.x < HEADER:
 		return {"zone": "header", "inst": inst, "row": row}
+	if inst.is_folder:
+		return {"zone": "lane", "inst": inst, "row": row}
 	var top := row_top(row)
 	if at.y < top + 2.0 + NAME_STRIP:  # the top of a seam: a crossfade
 		for c in inst.clips.size():
@@ -468,12 +505,22 @@ func hint_at(at: Vector2) -> String:
 		"ruler":
 			return "Click to put the playhead here; drag along to loop the range  ·  L loop playback on or off, U loops the chosen clip"
 		"header":
-			for b in _buttons(found.inst, row_top(found.row)):
+			var track = found.inst
+			if track.is_folder and at.x < 24.0:
+				return "Show or hide its tracks"
+			for b in _buttons(track, row_top(found.row)):
 				if b.rect.has_point(at):
-					return {"arm": "Record-ready: it records when recording starts, and its input is heard while stopped or recording",
-						"input": "Input monitoring: its input is heard, rather than what it recorded" if not found.inst.playable else
-							"Input: the MIDI keyboard plays it", "mute": "Mute", "solo": "Solo"}[b.what] + "  ·  Option-click: every track"
-			return found.inst.display_name
+					match b.what:
+						"arm":
+							return "Record-ready: it records when recording starts, and its input is heard while stopped or recording  ·  Option-click: every track"
+						"input":
+							return ("Input: the MIDI keyboard plays it" if track.playable else "Input monitoring: its input is heard, rather than what it recorded") + \
+								"  ·  Option-click: every track"
+						"mute":
+							return ("Mute: its tracks are silent" if track.is_folder else "Mute") + "  ·  Option-click: every track"
+					return ("Solo: its tracks are soloed" if track.is_folder else "Solo") + "  ·  Option-click: every track"
+			return "%s: click to choose it (Shift or Cmd-click for more; %s: the chosen in a new folder), double-click to rename it, right-click for more" % [
+				track.display_name, app.bindings.label("group")]
 		"xfade":
 			return "Drag along to crossfade the two clips, each reaching into the other with the audio its file has beyond the cut"
 		"fade_in":
@@ -500,13 +547,19 @@ func hint_at(at: Vector2) -> String:
 ## lane. With `all` (Option held), a header's button sets every track as it sets this one, as Pro Tools' all-tracks
 ## modifier, and a clip's gain goes back to 0 dB; with `add` (Shift), a clip is added to the clips chosen, or taken
 ## away. (The automated checks call these.)
-func press(at: Vector2, all := false, add := false) -> void:
+func press(at: Vector2, all := false, add := false, command := false) -> void:
 	_drag = {}
 	var found := zone_at(at)
 	match found.get("zone", ""):
 		"ruler":
 			_drag = {"what": "ruler", "from_x": at.x, "from": step_at(at.x)}
 		"header":
+			if found.inst.is_folder and at.x < 24.0:  # its arrow
+				found.inst.open = not found.inst.open
+				return
+			if not _buttons(found.inst, row_top(found.row)).any(func(b): return b.rect.has_point(at)):  # its name: choosing tracks
+				app.choose_track(found.inst, "range" if add else ("toggle" if command else "only"))
+				return
 			for b in _buttons(found.inst, row_top(found.row)):
 				if b.rect.has_point(at):
 					if all:
@@ -611,9 +664,18 @@ func release(at: Vector2, copy := false) -> void:
 				if not timeline.playing and drag.what != "gain":
 					timeline.locate(timeline.snap(drag.at))
 			elif drag.what == "clip":
-				chosen = timeline.move_clips(drag.items, drag.delta, drag.rows, copy)
+				chosen = timeline.move_clips(drag.items, drag.delta, drag.rows, copy, "", tracks())
 			else:  # trimmed, faded or turned up or down as it went: now it is heard so
 				timeline._sync_items(drag.items if drag.what == "gain" else [{"inst": drag.inst}])
+
+
+## A track's menu (a right-click on its name): rename it, colour it, and its folder.
+func show_track_menu(track, at: Vector2) -> void:
+	_track_menu_for = track
+	_track_menu.clear()
+	TrackMenu.add_items(_track_menu, app, track, _colors)
+	_track_menu.position = Vector2i(get_screen_position() + at)
+	_track_menu.popup()
 
 
 ## A clip's takes, to choose one from (a right-click on it): the one shown ticked.

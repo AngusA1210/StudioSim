@@ -43,6 +43,9 @@ var grid := 4             # steps a clip snaps to (0: free)
 var _started_at := 0.0    # where playing began: stopping goes back there
 var _taking := false      # recording has stopped; what it took is on its way
 var _looping := false     # the recording going is a loop recording
+var punch_in := 0.0       # where the recording going records from (steps)
+var punch_out := -1.0     # and to (-1: until it is stopped)
+var _stop_at := -1.0      # where it stops of itself: the punch out and the post-roll after it
 var _peaks := {}          # a file's peaks, for drawing its clips
 var _undo := []           # before each edit, what it was and every track's clips: [what, {inst: clips}], the latest last
 var _redo := []
@@ -136,9 +139,10 @@ func toggle_play() -> void:
 		start_playing()
 
 
+## From the playhead, or with a pre-roll, that much before it (stopping still goes back to the playhead).
 func start_playing() -> void:
 	_started_at = playhead
-	audio.play_from(playhead)
+	audio.play_from(maxf(playhead - app.settings.preroll_bars * STEPS_PER_BAR, 0.0))
 	playing = true
 	app.sequence_running = true
 	changed.emit()
@@ -220,16 +224,26 @@ func start_recording() -> String:
 		if not inst.playable:
 			files.append([inst.source_id, folder.path_join(_take_name(folder, inst.display_name))])
 	var from := playhead if not playing else audio.get_timeline_position()
-	# Loop Record (from a stop): round the loop from its start, a take each time round.
+	# Loop Record (from a stop): round the loop from its start, a take each time round. Or punching in and out (from a
+	# stop) over the range on the ruler, as over a selection in Pro Tools, the post-roll played after it.
 	_looping = app.settings.loop_record and not playing and loop_end - loop_start >= 1.0
+	var to := -1.0
 	if _looping:
 		if not loop_on:
 			set_loop(true)
 		from = loop_start
 		playhead = loop_start
+	elif app.settings.punch and not playing and loop_end > loop_start:
+		from = loop_start
+		to = loop_end
+		playhead = loop_start
 	var count_in: float = app.settings.count_in_bars * STEPS_PER_BAR if not playing else 0.0  # (not while playing: it records straight away)
-	if not audio.start_recording(files, from, count_in, _looping):
+	var preroll: float = app.settings.preroll_bars * STEPS_PER_BAR if not playing else 0.0
+	if not audio.start_recording(files, from, count_in, _looping, preroll, to):
 		return audio.get_error()
+	punch_in = from
+	punch_out = to
+	_stop_at = to + app.settings.postroll_bars * STEPS_PER_BAR if to >= 0.0 else -1.0
 	if not playing:
 		_started_at = playhead
 	playing = true
@@ -254,7 +268,23 @@ func _take_name(folder: String, track: String) -> String:
 	return "%s_%02d.wav" % [base, number]
 
 
+## What a recording is doing: "count-in", "pre-roll", "recording", "post-roll", or "" when it isn't.
+func phase() -> String:
+	if not recording:
+		return ""
+	if counting_in() > 0:
+		return "count-in"
+	var at: float = audio.get_timeline_position()
+	if at < punch_in - 0.01:
+		return "pre-roll"
+	if punch_out >= 0.0 and at >= punch_out:
+		return "post-roll"
+	return "recording"
+
+
 func _process(_delta: float) -> void:
+	if recording and _stop_at >= 0.0 and phase() == "post-roll" and audio.get_timeline_position() >= _stop_at:
+		stop()  # the punch out, and the post-roll after it: done
 	if _taking:
 		var took: Dictionary = audio.take_recording()
 		if not took.is_empty():
@@ -535,7 +565,7 @@ func clip_steps(clip: Dictionary) -> Vector2:
 
 ## Whether a clip can go on a track: audio on a Speaker or an amp, MIDI on an instrument.
 static func fits(clip: Dictionary, inst) -> bool:
-	return (clip.kind == "audio") == (not inst.playable)
+	return not inst.is_folder and (clip.kind == "audio") == (not inst.playable)
 
 
 ## Moves a clip (or with `copy`, a second of it) to start at `step` on track `to`, covering what it lands on.
@@ -700,7 +730,7 @@ static func index_of(inst, clip: Dictionary) -> int:
 ## Moves clips together (or with `copy`, seconds of them): `delta` steps along (not before bar 1), and `rows` tracks
 ## down, if every one of them fits the track it would land on (otherwise each stays on its own). Each covers what it
 ## lands on. Returns them where they are now.
-func move_clips(items: Array, delta: float, rows := 0, copy := false, what := "") -> Array:
+func move_clips(items: Array, delta: float, rows := 0, copy := false, what := "", order := []) -> Array:
 	if items.is_empty():
 		return []
 	remember(what if what != "" else ("Copy clips" if copy else "Move clips"))
@@ -708,7 +738,7 @@ func move_clips(items: Array, delta: float, rows := 0, copy := false, what := ""
 	for it in items:
 		earliest = minf(earliest, clip_steps(it.clip).x)
 	delta = maxf(delta, -earliest)
-	var tracks: Array = app.instruments
+	var tracks: Array = order if not order.is_empty() else app.instruments  # (the rows as the edit window has them)
 	var fit := rows != 0
 	for it in items:
 		var row: int = tracks.find(it.inst) + rows

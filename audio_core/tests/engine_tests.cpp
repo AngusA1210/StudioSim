@@ -2184,13 +2184,14 @@ int main(int argc, char** argv) {
         double energy = 0.0;
         for (float v : read.samples) energy += double(v) * v;
         const double take_rms = read.samples.empty() ? 0.0 : std::sqrt(energy / double(read.samples.size()));
-        check(started && readable && std::fabs(read.seconds() - 1.25) < 0.02 && std::fabs(take_rms - 0.25 / std::sqrt(2.0)) < 0.01 &&
-                  std::fabs(result.start_step - 16.0) < 0.3 && result.audio[0].dropped == 0,
+        const double kStartsAfter = 0.02;  // the timeline starts a moment after it is asked to, and the recording with it
+        check(started && readable && std::fabs(read.seconds() - (1.25 - kStartsAfter)) < 0.01 && std::fabs(take_rms - 0.25 / std::sqrt(2.0)) < 0.01 &&
+                  std::fabs(result.start_step - 16.0) < 1e-9 && result.audio[0].dropped == 0,
               "an armed Speaker records its input, as it comes in, to a WAV file, from where the timeline was",
               readable ? fmt("%.2f s, ", read.seconds()) + fmt("starting at step %.2f", result.start_step) : record_error + read_error);
         const bool one_note = result.notes.size() == 1 && result.notes[0].source == take.keys && result.notes[0].note.note == 64;
         check(one_note && std::fabs(result.notes[0].note.length * result.step_seconds - 0.5) < 0.01 &&
-                  std::fabs(result.notes[0].note.step - (result.start_step + 0.5 / result.step_seconds)) < 0.1,
+                  std::fabs(result.notes[0].note.step - (result.start_step + (0.5 - kStartsAfter) / result.step_seconds)) < 0.1,
               "an armed instrument records the notes played on it, where and for as long as they were played",
               one_note ? fmt("step %.2f, ", result.notes[0].note.step) + fmt("%.2f steps long", result.notes[0].note.length) : "no note");
 
@@ -2300,14 +2301,89 @@ int main(int argc, char** argv) {
         AudioData looped_read;
         const bool looped_readable = looped_taken && !looped.audio.empty() && readWav(looped.audio[0].path, &looped_read, &read_error);
         const bool one_looped_note = looped_taken && looped.notes.size() == 1;
-        check(looping && looped_readable && std::fabs(looped_read.seconds() - looped_for) < 0.02 && loop_low > 15.5 && loop_high < 32.01 &&
-                  one_looped_note && std::fabs(looped.notes[0].note.step - (looped.start_step + note_at / looped.step_seconds)) < 0.1 &&
+        check(looping && looped_readable && std::fabs(looped_read.seconds() - (looped_for - kStartsAfter)) < 0.01 && loop_low > 15.5 && loop_high < 32.01 &&
+                  one_looped_note && std::fabs(looped.notes[0].note.step - (looped.start_step + (note_at - kStartsAfter) / looped.step_seconds)) < 0.1 &&
                   std::fabs(looped.notes[0].note.length * looped.step_seconds - note_for) < 0.01 &&
-                  std::fabs((looped.end_step - looped.start_step) * looped.step_seconds - looped_for) < 0.02,
+                  std::fabs((looped.end_step - looped.start_step) * looped.step_seconds - (looped_for - kStartsAfter)) < 0.01,
               "loop recording goes round the loop as it records, the file running on, and a note in the second pass placed after the first",
               looped_readable && one_looped_note ? fmt("%.2f s recorded, ", looped_read.seconds()) + fmt("the note at step %.1f", looped.notes[0].note.step) : record_error);
         take.engine.setLoopRange(false, 0.0, 0.0);
+
+        // A pre-roll and punching in and out: the music from a bar before, the recording only from step 16 to 24, the
+        // armed Speaker heard through its input only meanwhile (Auto Input), and the music playing on after.
+        take.engine.setTrack(take.speaker, {}, {}, &track_error);
+        take.engine.setSequencerRunning(false);
+        renderSeconds(take.engine, 0.1);
+        const std::string punched_file = (folder / "Speaker_04.wav").string();
+        const bool punching = take.engine.startRecording({{take.speaker, punched_file}}, 16.0, &record_error, 0.0, false, 8.0, 24.0);
+        const Render preroll = renderSeconds(take.engine, 0.9, other_tone);  // steps 8 to 15: before the punch in
+        renderSeconds(take.engine, 0.2, other_tone);
+        const Render punched = renderSeconds(take.engine, 0.6, other_tone);  // in it
+        renderSeconds(take.engine, 0.4, other_tone);
+        const Render postroll = renderSeconds(take.engine, 0.5, other_tone);  // after the punch out
+        const double played_to = take.engine.timelinePosition();
+        take.engine.stopRecording();
+        renderSeconds(take.engine, 0.01);
+        RecordingResult punched_result;
+        AudioData punched_read;
+        const bool punched_readable = take.engine.takeRecording(&punched_result) && !punched_result.audio.empty() &&
+                                      readWav(punched_result.audio[0].path, &punched_read, &read_error);
+        check(punching && punched_readable && preroll.rms_l < 1e-4 && punched.rms_l > 0.005 && postroll.rms_l < 1e-4 &&
+                  std::fabs(punched_read.seconds() - 1.0) < 0.01 && punched_result.start_step == 16.0 && std::fabs(punched_result.end_step - 24.0) < 1e-6 &&
+                  played_to > 25.0,
+              "with a pre-roll the music starts a bar early, and it records only from the punch in to the punch out, heard meanwhile, playing on after",
+              punched_readable ? fmt("%.2f s recorded, ", punched_read.seconds()) + fmt("played on to step %.1f", played_to) : record_error);
         std::filesystem::remove_all(folder);
+    }
+
+    {
+        std::printf("\nRouting folders\n");
+        // Two rooms alike, the drums in one routed through a bus: at unity it sounds the same; the bus's fader and mute
+        // act on it, its meter reads it, and an insert on it plays in its two channels.
+        Room plain, routed;
+        plain.quietRoom(plain.drums);
+        routed.quietRoom(routed.drums);
+        plain.engine.setLimiter(false);  // (it would hold the louder of the two back more)
+        routed.engine.setLimiter(false);
+        const int bus = routed.engine.addSource(InstrumentKind::Bus, {0.0f, 0.0f, 0.0f}, 1.0f, 0.0f);
+        routed.engine.setSourceOutput(routed.drums, bus);
+        renderSeconds(plain.engine, 0.1);
+        renderSeconds(routed.engine, 0.1);
+        plain.engine.noteOn(plain.drums, 38, 0.9f);
+        routed.engine.noteOn(routed.drums, 38, 0.9f);
+        const Render straight = renderSeconds(plain.engine, 0.1), through = renderSeconds(routed.engine, 0.1);
+        double apart = 0.0;
+        for (size_t i = 0; i < straight.l.size() && i < through.l.size(); ++i)
+            apart = std::max(apart, double(std::max(std::fabs(straight.l[i] - through.l[i]), std::fabs(straight.r[i] - through.r[i]))));
+        const float bus_level = routed.engine.sourcePeak(bus);  // (held since it was last read)
+        routed.engine.setSourceGain(bus, 0.5f);  // the bus at half, for the next hit
+        renderSeconds(plain.engine, 1.0);
+        renderSeconds(routed.engine, 1.0);
+        plain.engine.noteOn(plain.drums, 38, 0.9f);
+        routed.engine.noteOn(routed.drums, 38, 0.9f);
+        const Render straight2 = renderSeconds(plain.engine, 0.1), halved = renderSeconds(routed.engine, 0.1);
+        routed.engine.setSourceMuted(bus, true);
+        renderSeconds(routed.engine, 1.0);
+        routed.engine.noteOn(routed.drums, 38, 0.9f);
+        const Render muted_bus = renderSeconds(routed.engine, 0.1);
+        check(straight.peak > 0.01 && apart < 1e-5 && bus_level > 0.01f && std::fabs(halved.rms_l / straight2.rms_l - 0.5) < 0.03 && muted_bus.peak < 1e-4,
+              "a track routed to a bus is heard through it as it was, and the bus's fader and mute act on it, its meter reading it",
+              fmt("%.1g apart, ", apart) + fmt("%.2f with the bus at half, ", halved.rms_l / straight2.rms_l) + fmt("metered %.0f dBFS, ", db(bus_level)) + fmt("muted %.0f dBFS", db(muted_bus.peak)));
+        routed.engine.setSourceMuted(bus, false);
+        routed.engine.setSourceGain(bus, 1.0f);
+        const std::string au_delay = "AU:61756678:64656c79:6170706c";
+        std::string bus_error;
+        const bool bus_insert = routed.engine.setInsert(bus, 0, au_delay, &bus_error);
+        renderSeconds(plain.engine, 1.5);
+        renderSeconds(routed.engine, 1.5);
+        plain.engine.noteOn(plain.drums, 38, 0.9f);
+        routed.engine.noteOn(routed.drums, 38, 0.9f);
+        renderSeconds(plain.engine, 0.9);
+        renderSeconds(routed.engine, 0.9);
+        const Render dry_after = renderSeconds(plain.engine, 0.3), echo = renderSeconds(routed.engine, 0.3);  // a second after the hit
+        const std::vector<PedalStatus> bus_inserts = routed.engine.inserts(bus);
+        check(bus_insert && bus_inserts[0].plugin.name == "AUDelay" && echo.finite && echo.rms_l > 4.0 * dry_after.rms_l + 1e-4,
+              "an insert on a bus plays what reaches it: AUDelay, its echo a second after the snare", bus_insert ? fmt("echo %.0f dBFS", db(echo.rms_l)) : bus_error);
     }
 
     {

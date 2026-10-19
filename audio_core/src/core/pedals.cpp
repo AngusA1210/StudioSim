@@ -599,6 +599,36 @@ void Pedal::process(float* io, int n, const PedalTiming& timing) {
     }
 }
 
+void Pedal::processStereo(float* left, float* right, int n, const PedalTiming& timing) {
+    started_ = true;
+    if (changed_) {
+        update();
+        changed_ = false;
+    }
+    const float target = on_ ? 1.0f : 0.0f, step = 1.0f / (kSwitchSeconds * sr_);
+    if (share_ == 0.0f && target == 0.0f) return;  // bypassed: the signal passes untouched
+    if (share_ == 0.0f) clear();
+    if (share_ == 1.0f && target == 1.0f) {
+        runStereo(left, right, n, timing);
+        return;
+    }
+    float dry_l[kChunk], dry_r[kChunk];  // switching: crossfade between the untouched signal and the effect
+    for (int done = 0; done < n;) {
+        const int m = std::min(n - done, kChunk);
+        std::copy(left + done, left + done + m, dry_l);
+        std::copy(right + done, right + done + m, dry_r);
+        PedalTiming part = timing;
+        if (part.next_bar >= 0) part.next_bar = std::max<int64_t>(part.next_bar - done, 0);
+        runStereo(left + done, right + done, m, part);
+        for (int i = 0; i < m; ++i) {
+            share_ = target > share_ ? std::min(share_ + step, 1.0f) : std::max(share_ - step, 0.0f);
+            left[done + i] = dry_l[i] + (left[done + i] - dry_l[i]) * share_;
+            right[done + i] = dry_r[i] + (right[done + i] - dry_r[i]) * share_;
+        }
+        done += m;
+    }
+}
+
 // ── The tuner ──────────────────────────────────────────────────────────────────────────────────────────────
 
 TunerPedal::TunerPedal() : Pedal(PedalKind::Tuner) {}
@@ -735,13 +765,19 @@ PluginPedal::~PluginPedal() = default;
 void PluginPedal::prepare(float sample_rate) {
     Pedal::prepare(sample_rate);
     error_.clear();
-    ready_ = plugin_ && plugin_->prepare(sample_rate, 4096, &error_);
+    ready_ = plugin_ && plugin_->prepare(sample_rate, 4096, &error_, stereo_);
 }
 
 void PluginPedal::run(float* io, int n, const PedalTiming& timing) {
     if (!ready_) return;
     if (timing.beat_samples > 0.0) plugin_->setTempo(60.0 * sr_ / timing.beat_samples);
     plugin_->process(io, n);
+}
+
+void PluginPedal::runStereo(float* left, float* right, int n, const PedalTiming& timing) {
+    if (!ready_) return;
+    if (timing.beat_samples > 0.0) plugin_->setTempo(60.0 * sr_ / timing.beat_samples);
+    plugin_->processStereo(left, right, n);
 }
 
 }  // namespace sr

@@ -16,7 +16,10 @@ const LOOP_LOOKS := {
 
 var kind := ""
 var display_name := ""
-var color := Color.WHITE
+var color := Color.WHITE        # its track's colour: its name in the room, its light, its strip and its clips
+var model_color := Color.WHITE  # its paint, as it was made (a track's colour changed doesn't repaint the drums)
+var named := false              # its name was given it (a plug-in instrument then keeps it, rather than taking its plug-in's)
+var is_folder := false
 var source_height := 1.0  # metres above the floor the sound comes from
 var top := 1.0            # how tall the model stands
 var footprint := Vector2.ONE
@@ -75,6 +78,7 @@ func setup(spec: Dictionary, audio: SoundRoomAudio) -> void:
 	kind = spec.kind
 	display_name = spec.name
 	color = spec.color
+	model_color = spec.color
 	source_height = spec.height
 	top = spec.top
 	footprint = spec.footprint
@@ -142,7 +146,7 @@ func _build_model() -> void:
 	if _model != null:
 		_model.remove_child(_pedal_row)
 		_model.queue_free()
-	var built: Dictionary = Models.build(kind, color, amp_cabinet)
+	var built: Dictionary = Models.build(kind, model_color, amp_cabinet)
 	_model = built.node
 	_model.position.y = -source_height  # the model is drawn from the floor up
 	add_child(_model)
@@ -290,6 +294,14 @@ func set_input_channel(channel: int) -> void:
 func set_loop(on: bool) -> void:
 	loop_on = on
 	_audio.set_source_loop(source_id, on)
+	_refresh_label()
+
+
+## Its track's colour: its name over it in the room and its light, and wherever its track is shown.
+func set_color(new_color: Color) -> void:
+	color = new_color
+	_light.light_color = color
+	_label.modulate = color.lightened(0.35)
 	_refresh_label()
 
 

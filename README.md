@@ -59,6 +59,7 @@ to the title, which then offers to go back into the room.
 | C | metronome click on/off |
 | Esc | the menu (see below), including the room's size and walls; the music keeps playing while it's open |
 | ⌘S | save the room |
+| ⌘G | the mix or edit window: put the chosen tracks in a new routing folder |
 | B | binaural on/off (compare with plain stereo) |
 
 Facing an instrument, a card at the right of the screen lists what each key does to it.
@@ -325,9 +326,17 @@ In a Record room:
   playback waiting meanwhile. **Loop Record** (⌥L, as in Pro Tools; the Record button shows ⟳) records round the loop
   instead, from its start: each time round is a **take**, stacked in one clip over the loop with the last whole pass
   shown, so you can play a part over and over and choose the best. A clip with takes says how many; right-click it to
-  choose another, which shows in its place (the rest are kept, to choose again). With a **count-in** (the edit window's menu beside Follow: one bar or two, remembered),
-  recording from a stop first has the click count the bars, the music waiting at the playhead, as Pro Tools' Count
-  Off; the screen counts down the beats. An armed Speaker or amp records its hardware input as it comes in, before its pedals,
+  choose another, which shows in its place (the rest are kept, to choose again).
+  The edit window's **Options** menu (beside Follow; all remembered) has the rest, as Pro Tools' transport does:
+  - a **count-in**, one bar or two: recording from a stop, the click counts the bars first, the music waiting at the
+    playhead (Pro Tools' Count Off); the screen counts down the beats;
+  - a **pre-roll**, one bar or two: playing or recording from a stop, the music starts that much before the playhead,
+    and a recording starts when it gets there (stopping still goes back to the playhead);
+  - **punching in and out** over the range on the ruler (drawn red then), as over a selection in Pro Tools: recording
+    from a stop starts at its start (after any pre-roll) and stops at its end, the music playing on; with a
+    **post-roll** of a bar or two it plays that much more, then stops of itself. An armed track is heard through its
+    input only while it records, its clips in the pre-roll and post-roll (Pro Tools' Auto Input);
+  - Loop Record. An armed Speaker or amp records its hardware input as it comes in, before its pedals,
   amp and inserts, to a WAV file (32-bit float) in the room's **Audio Files** folder, named after the track
   (`Speaker_01.wav`, `Speaker_02.wav`...). Played back, a take goes through the pedals, amp and inserts again, as a
   DAW plays a track back through its inserts (so an amp can be re-dialled after the playing). An armed instrument
@@ -357,6 +366,27 @@ instrument. They are kept in `SoundRoom/Instrument Presets`.
 **Copy settings** and **Paste settings** sit in the same Presets menus, as in Pro Tools: a plug-in's settings paste
 onto the same plug-in anywhere (on an insert or a pedal), an instrument's onto another of its family.
 
+## Tracks and folders
+
+Each instrument is a track, in the mix window and (in a Record room) the edit window, in the same order.
+
+- **Names and colours**: rename a track by right-clicking its name (in either window) or double-clicking it in the
+  edit window; its name over it in the room changes too, and a plug-in instrument keeps a name given it rather than
+  taking its plug-in's. **Colour** in the same menu offers a palette, as Pro Tools does: the track's name in the room,
+  its light, its strip and its clips take it (the instrument's paint stays as it was made).
+- **Choosing tracks**: click a track's name in the edit window to choose it, Shift-click for every track from the
+  last one chosen to it, Cmd-click for one more or one fewer; in the mix window Shift-click and Cmd-click the names
+  (a plain click opens the instrument's window). Chosen tracks are lit.
+- **Routing folders**, as in Pro Tools: **⌘G** (or **New folder** in a track's menu) puts the chosen tracks in a new
+  folder. Its tracks play into its bus (an aux input) rather than straight to the master, and from there through its
+  inserts and its fader to the master, so one fader brings a whole drum kit up or down, and a compressor or EQ on it
+  works on them together. Muting a folder silences its tracks; soloing it solos them, and soloing one of its tracks
+  lets the folder be heard. The room's reverb of its tracks comes from the tracks themselves, as their own sends
+  would, so its fader is their direct sound. In the edit window the folder's row comes over its tracks', which are
+  set in under it; its arrow shows or hides them. A track's menu moves it **into** another folder or **out of** its
+  own, and so does its output in the mix window; a folder's menu takes it away, its tracks going straight to the
+  master again. Folders, names and colours are all kept with the room (and in templates).
+
 ## The mix window
 
 Tab opens the mix window, docked along the bottom of the screen so the room stays in view. It is laid out like a
@@ -366,7 +396,10 @@ mixing desk: a channel strip for every instrument, side by side, and the master 
   Speaker's panel); the mix window comes back when it closes. Right-click the name to **duplicate** the instrument
   (as Pro Tools duplicates a track: the copy stands beside it, its strip comes next, and it has the same fader,
   pattern, volume, head, cabinet, knobs, pedals and inserts, plug-in settings included; its input starts off, and a
-  loop pedal comes without its loop) or to remove it from the room.
+  loop pedal comes without its loop), to rename it or give it a colour, to put it in a folder or take it out, or to
+  remove it from the room.
+- **Output**, under each strip's input: where it plays, as a Pro Tools track's output: **→ Master**, or into a
+  routing folder.
 - **Inserts** at the top of each strip, A to E, as in Pro Tools: plug-ins played in order on the instrument's sound
   before its fader (on an amp, after its pedals and the amp). Click an empty one to choose a plug-in, a full one to
   open or close its window, Cmd-click (or Ctrl-click) to bypass it, which turns it blue, and right-click to replace or
@@ -386,6 +419,8 @@ mixing desk: a channel strip for every instrument, side by side, and the master 
 - **Peak readouts**: as in Pro Tools, the number beside each fader's level holds the highest peak (in dBFS) until
   you click it, and turns red once anything reaches full scale. Clicking a meter clears it too; Alt-click clears
   every one, the master's included.
+- **Folders**: a routing folder's strip comes before its tracks': its inserts (plug-ins in stereo, on what its tracks
+  play into it), mute and solo, and its fader and meter. See Tracks and folders.
 - **Reverb**: the room's reverb return, a fader with a stereo meter of its own just left of the master, as an aux
   return sits beside the master on a desk. 0 dB is the room's own reverb; down to the bottom there is none, up to
   +12 dB it is wetter than the room. Its level is kept with the room.
@@ -481,6 +516,7 @@ game/                      Godot project: the room, player, instruments, HUD, me
   scripts/library.gd       what a room holds, templates, instrument and plug-in presets, and copied settings
   scripts/timeline.gd      a room's mode; a Record room's transport, recording and clips
   scripts/edit_window.gd   the edit window (its tracks and clips drawn by timeline_view.gd, a clip's notes by midi_editor.gd)
+  scripts/folder.gd        a routing folder: its bus, fader, inserts and tracks (track_menu.gd: a track's menu)
   scripts/preset_menu.gd   the Presets menu of a plug-in or an instrument
 audio_core/
   src/core/                the audio engine, plain C++ with no Godot dependency
@@ -531,14 +567,15 @@ Speakers, guitar and bass amps with boards of effect pedals (a loop pedal and a 
 screen, a mix window laid out like a DAW's with plug-in inserts on every channel, a room whose size and walls
 can be changed, with sound bending round the walls and a reverb that follows the size (on a fader of its own), rooms saved as sessions (with
 templates, auto-save and backups), presets and copy and paste for plug-ins and instruments, and Record rooms: a
-timeline, an edit window, recording audio and MIDI to clips (with a count-in, and loop recording into takes), and editing them (trims, fades
-and crossfades, clip gain, splits, nudges, several at once, a MIDI editor for the notes, undo).
+timeline, an edit window, recording audio and MIDI to clips (with a count-in, a pre-roll and post-roll, punching in and out, and loop recording
+into takes), editing them (trims, fades and crossfades, clip gain, splits, nudges, several at once, a MIDI editor
+for the notes, undo), and tracks with names and colours, in routing folders with faders and inserts of their own.
 
 To do, roughly in this order:
 
-1. **More of the edit window**: automation (the faders' and the sustain pedal's), pre-roll and post-roll, comping
-   from takes (a part of one, a part of another), and audio read from disk as it plays (for long rooms; takes are held
-   in memory now).
+1. **More of the edit window**: automation (the faders' and the sustain pedal's), comping from takes (a part of one,
+   a part of another), sends to aux tracks of their own (beside the routing folders), folders within folders, and
+   audio read from disk as it plays (for long rooms; takes are held in memory now).
    Perhaps later a free version with Jam rooms only, Record rooms coming with the full one.
 2. **Microphones**: a new kind of track, placed anywhere in the room with precision, that records what the room
    sounds like from where it stands (the instruments as they reach it, from their direction, with the walls and the

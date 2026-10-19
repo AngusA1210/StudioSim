@@ -7,6 +7,9 @@ extends CanvasLayer
 ## ones away, Cmd-D puts a second of them just after, Cmd-E splits them at the playhead, comma and full stop (or - and +
 ## on the number pad) nudge them, Ctrl-Shift-↑ ↓ turn their clip gain up or down a dB, and U loops round them. Cmd-Z
 ## undoes an edit and Cmd-X (or Cmd-Shift-Z) does it again (the Cmd shortcuts can be changed on the Controls page).
+## Click a track's name to choose it (Shift and Cmd-click for more; Cmd-G puts those chosen in a new routing folder),
+## double-click it to rename it, right-click it for its menu (its name, colour and folder). Recording's options (a
+## count-in, a pre-roll, a post-roll, punching in and out over the ruler's range, Loop Record) are in the Options menu.
 ## Double-click a MIDI clip for its notes, in the MIDI editor (midi_editor.gd) in the tracks' place; Esc goes back. Tab
 ## (or Cmd-=) goes over to the mix window. It docks along the bottom of the screen, the room in view above it, and you
 ## can walk about while it is open.
@@ -30,7 +33,7 @@ var _play: Button
 var _record: Button
 var _loop: Button
 var _follow: Button
-var _count_in: OptionButton
+var _options: MenuButton  # recording's options: count-in, pre-roll, post-roll, punching in and out, Loop Record
 var _undo: Button
 var _redo: Button
 var _counter: LineEdit  # bar | beat, which can be typed into
@@ -188,6 +191,58 @@ func clock_text(step: float) -> String:
 	return "%d:%05.2f" % [int(seconds / 60.0), fmod(seconds, 60.0)]
 
 
+## The options menu as the settings have them: a count-in (as Pro Tools' Count Off, the music waiting), a pre-roll (the
+## music from that much before), a post-roll (after a punch out), punching in and out over the range on the ruler,
+## and Loop Record.
+func _show_options() -> void:
+	var menu := _options.get_popup()
+	menu.clear()
+	var settings = app.settings
+	for group in [["Count-in", 0, settings.count_in_bars], ["Pre-roll", 10, settings.preroll_bars], ["Post-roll", 20, settings.postroll_bars]]:
+		menu.add_separator(group[0])
+		for bars in 3:
+			menu.add_radio_check_item("None" if bars == 0 else "%d bar%s" % [bars, "" if bars == 1 else "s"], group[1] + bars)
+			menu.set_item_checked(menu.item_count - 1, group[2] == bars)
+	menu.add_separator()
+	menu.add_check_item("Punch in and out over the range on the ruler", 30)
+	menu.set_item_checked(menu.item_count - 1, settings.punch)
+	menu.add_check_item("Loop Record  (Option-L)", 31)
+	menu.set_item_checked(menu.item_count - 1, settings.loop_record)
+
+
+func _on_option(id: int) -> void:
+	var settings = app.settings
+	if id < 10:
+		settings.count_in_bars = id
+	elif id < 20:
+		settings.preroll_bars = id - 10
+	elif id < 30:
+		settings.postroll_bars = id - 20
+	elif id == 30:
+		settings.punch = not settings.punch
+	elif id == 31:
+		app.toggle_loop_record()
+		return
+	settings.save_to_disk()
+
+
+## What the options are, in words.
+func options_text() -> String:
+	var settings = app.settings
+	var parts := []
+	if settings.count_in_bars > 0:
+		parts.append("count-in %d bar%s" % [settings.count_in_bars, "" if settings.count_in_bars == 1 else "s"])
+	if settings.preroll_bars > 0:
+		parts.append("pre-roll %d" % settings.preroll_bars)
+	if settings.postroll_bars > 0:
+		parts.append("post-roll %d" % settings.postroll_bars)
+	if settings.punch:
+		parts.append("punching in and out over the ruler's range")
+	if settings.loop_record:
+		parts.append("Loop Record")
+	return ", ".join(parts) if not parts.is_empty() else "straight from the playhead (count-in, pre-roll, post-roll, punching and Loop Record here)"
+
+
 ## Cmd-E: the chosen clips split in two at the playhead (their second halves chosen then); with none chosen, every clip
 ## the playhead is in.
 func separate_selected() -> void:
@@ -241,10 +296,10 @@ func _process(_delta: float) -> void:
 	_record.add_theme_color_override("font_color", RECORD_RED if timeline.recording else Color(0.9, 0.6, 0.58))
 	var counting: int = timeline.counting_in()
 	var loop_mark := "⟳" if app.settings.loop_record else ""
-	_record.text = "●%s  Count  %d" % [loop_mark, counting] if counting > 0 else ("●%s  Recording" % loop_mark if timeline.recording else "●%s  Record" % loop_mark)
+	_record.text = "●%s  %s" % [loop_mark, {"count-in": "Count  %d" % counting, "pre-roll": "Pre-roll", "post-roll": "Post-roll",
+		"recording": "Recording"}.get(timeline.phase(), "Record")]
 	if editing_notes() and notes.inst != null:
 		_notes_title.text = "%s  ·  %s" % [notes.inst.display_name, str(notes.clip.get("name", ""))]
-	_count_in.select(app.settings.count_in_bars)
 	_undo.disabled = timeline.undo_what() == "" or timeline.recording
 	_redo.disabled = timeline.redo_what() == "" or timeline.recording
 	_loop.set_pressed_no_signal(timeline.loop_on)
@@ -292,15 +347,15 @@ func _build() -> void:
 		return "Insertion follows playback (%s): stopping leaves the playhead where the music stopped, rather than going back to where it started" % \
 			app.bindings.label("follow"))
 	_follow.toggle_mode = true
-	_count_in = OptionButton.new()
-	for item in ["No count-in", "Count-in: 1", "Count-in: 2"]:
-		_count_in.add_item(item)
-	_count_in.focus_mode = Control.FOCUS_NONE
-	_count_in.item_selected.connect(func(i: int) -> void:
-		app.settings.count_in_bars = i
-		app.settings.save_to_disk())
-	Hints.give(_count_in, "Bars of the click before recording from a stop, the music waiting, as Pro Tools' Count Off")
-	header.add_child(_count_in)
+	_options = MenuButton.new()
+	_options.text = "Options ▾"
+	_options.flat = false
+	_options.focus_mode = Control.FOCUS_NONE
+	var menu := _options.get_popup()
+	menu.about_to_popup.connect(_show_options)
+	menu.id_pressed.connect(_on_option)
+	Hints.give(_options, func() -> String: return "Recording: %s" % options_text())
+	header.add_child(_options)
 	_counter = LineEdit.new()
 	_counter.add_theme_font_size_override("font_size", 20)
 	_counter.custom_minimum_size.x = 104

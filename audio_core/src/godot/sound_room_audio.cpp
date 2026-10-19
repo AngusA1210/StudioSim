@@ -134,6 +134,7 @@ int SoundRoomAudio::add_source(const String& kind, const Vector3& position, floa
     else if (kind == "guitar_stack") k = sr::InstrumentKind::GuitarStack;
     else if (kind == "bass_combo") k = sr::InstrumentKind::BassCombo;
     else if (kind == "bass_stack") k = sr::InstrumentKind::BassStack;
+    else if (kind == "bus") k = sr::InstrumentKind::Bus;
     else {
         UtilityFunctions::push_error("SoundRoomAudio: unknown instrument kind ", kind);
         return -1;
@@ -165,6 +166,7 @@ bool SoundRoomAudio::is_room_settled() { return engine_ && engine_->roomSettled(
 float SoundRoomAudio::get_room_decay() const { return engine_ ? engine_->roomDecaySeconds() : 0.0f; }
 
 void SoundRoomAudio::set_source_muted(int id, bool muted) { if (engine_) engine_->setSourceMuted(id, muted); }
+void SoundRoomAudio::set_source_output(int id, int bus) { if (engine_) engine_->setSourceOutput(id, bus); }
 void SoundRoomAudio::set_source_input_channel(int id, int channel) { if (engine_) engine_->setSourceInputChannel(id, channel); }
 void SoundRoomAudio::set_source_input(int id, bool on) { if (engine_) engine_->setSourceInput(id, on); }
 
@@ -526,7 +528,8 @@ double SoundRoomAudio::get_audio_seconds(const String& path) { return engine_ ? 
 
 void SoundRoomAudio::set_record_arm(int id, bool armed) { if (engine_) engine_->setRecordArm(id, armed); }
 
-bool SoundRoomAudio::start_recording(const Array& files, double from_step, double count_in_steps, bool loop) {
+bool SoundRoomAudio::start_recording(const Array& files, double from_step, double count_in_steps, bool loop, double preroll_steps,
+                                     double punch_out_step) {
     if (!engine_) return false;
     std::vector<std::pair<int, std::string>> f;
     for (int64_t i = 0; i < files.size(); ++i) {
@@ -534,7 +537,7 @@ bool SoundRoomAudio::start_recording(const Array& files, double from_step, doubl
         if (pair.size() >= 2) f.emplace_back(int(pair[0]), str(String(pair[1])));
     }
     std::string err;
-    if (engine_->startRecording(f, from_step, &err, count_in_steps, loop)) return true;
+    if (engine_->startRecording(f, from_step, &err, count_in_steps, loop, preroll_steps, punch_out_step)) return true;
     error_ = str(err);
     return false;
 }
@@ -662,6 +665,7 @@ void SoundRoomAudio::_bind_methods() {
     ClassDB::bind_method(D_METHOD("is_room_settled"), &SoundRoomAudio::is_room_settled);
     ClassDB::bind_method(D_METHOD("get_room_decay"), &SoundRoomAudio::get_room_decay);
     ClassDB::bind_method(D_METHOD("set_source_muted", "id", "muted"), &SoundRoomAudio::set_source_muted);
+    ClassDB::bind_method(D_METHOD("set_source_output", "id", "bus"), &SoundRoomAudio::set_source_output);
     ClassDB::bind_method(D_METHOD("set_source_input_channel", "id", "channel"), &SoundRoomAudio::set_source_input_channel);
     ClassDB::bind_method(D_METHOD("set_source_input", "id", "on"), &SoundRoomAudio::set_source_input);
     ClassDB::bind_method(D_METHOD("set_amp_control", "id", "control", "value"), &SoundRoomAudio::set_amp_control);
@@ -736,8 +740,8 @@ void SoundRoomAudio::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_audio_peaks", "path", "per_second"), &SoundRoomAudio::get_audio_peaks);
     ClassDB::bind_method(D_METHOD("get_audio_seconds", "path"), &SoundRoomAudio::get_audio_seconds);
     ClassDB::bind_method(D_METHOD("set_record_arm", "id", "armed"), &SoundRoomAudio::set_record_arm);
-    ClassDB::bind_method(D_METHOD("start_recording", "files", "from_step", "count_in_steps", "loop"), &SoundRoomAudio::start_recording, DEFVAL(0.0),
-                         DEFVAL(false));
+    ClassDB::bind_method(D_METHOD("start_recording", "files", "from_step", "count_in_steps", "loop", "preroll_steps", "punch_out_step"),
+                         &SoundRoomAudio::start_recording, DEFVAL(0.0), DEFVAL(false), DEFVAL(0.0), DEFVAL(-1.0));
     ClassDB::bind_method(D_METHOD("get_count_in"), &SoundRoomAudio::get_count_in);
     ClassDB::bind_method(D_METHOD("stop_recording"), &SoundRoomAudio::stop_recording);
     ClassDB::bind_method(D_METHOD("is_recording"), &SoundRoomAudio::is_recording);

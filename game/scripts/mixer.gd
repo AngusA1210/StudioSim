@@ -8,8 +8,11 @@ extends CanvasLayer
 ## blue. Drag one to another slot, on its own strip or another, to move it there (it swaps with what was there);
 ## hold Option while dropping to copy it instead, settings and all. They play on the instrument's sound in order,
 ## before its fader.
-## Click a strip's name to open the instrument's own window (an amp's panel and pedals, a pattern, a Speaker's panel),
-## right-click it to duplicate the instrument or remove it from the room. As in Pro Tools, the peak readout holds the
+## Click a strip's name to open the instrument's own window (an amp's panel and pedals, a pattern, a Speaker's panel);
+## Shift-click or Cmd-click it to choose tracks (Cmd-G puts those chosen in a new folder); right-click it to rename it,
+## colour it, put it in a folder or take it out, duplicate it or remove it from the room. Under its input, each strip's
+## output: the master, or a routing folder. A folder's strip (before its tracks') has its inserts, its mute and solo,
+## and its fader, through which its tracks reach the master. As in Pro Tools, the peak readout holds the
 ## highest peak until it is clicked (Alt-click clears them all), and clicking a meter does the same. The channel meters
 ## read before the fader; right-click any fader to have them read after it instead.
 ## Rather than instructions written across it, the line at the foot of the window describes whatever the mouse is over.
@@ -20,6 +23,7 @@ const Fader := preload("res://scripts/fader.gd")
 const LevelMeter := preload("res://scripts/level_meter.gd")
 const Hints := preload("res://scripts/hints.gd")
 const PresetMenu := preload("res://scripts/preset_menu.gd")
+const TrackMenu := preload("res://scripts/track_menu.gd")
 
 const STRIP_WIDTH := 96.0
 const STRIP_BG := Color(0.16, 0.17, 0.19, 0.98)
@@ -35,7 +39,8 @@ var audio: SoundRoomAudio
 var _root: Control
 var _panel: PanelContainer
 var _strip_row: HBoxContainer
-var _strips: Array = []  # {inst, fader, meter, value, peak, input, mute, solo, source, inserts: [{button, style}], plate}
+var _strips: Array = []  # {inst (an instrument or a folder), fader, meter, value, peak, input, mute, solo, source, output, inserts: [{button, style}], plate, frame}
+var _colors: PopupMenu   # the Colour submenu of a track's menu
 var _insert_menu: PopupMenu  # what a right-click on a full insert offers
 var _menu_for := []  # [instrument, slot] that menu is open for
 var _insert_presets: PopupMenu  # its Presets submenu: the plug-in's presets, and copying and pasting its settings
@@ -85,6 +90,8 @@ func close() -> void:
 	_meter_menu.hide()
 	_plugin_menu.hide()
 	app.plugin_browser.hide()
+	for folder in app.folders:
+		app.hide_insert_editors(folder)
 	for inst in app.instruments:
 		app.hide_insert_editors(inst)
 		if inst.plays_plugin and inst.instrument_plugin.get("editor_open", false):
@@ -205,6 +212,10 @@ func _build() -> void:
 	_name_presets.setup(app)
 	_name_presets.reported.connect(_report)
 	_name_menu.add_child(_name_presets)
+	_colors = TrackMenu.colors_menu(app, func(color: Color) -> void:
+		if _name_menu_for != null and app.has_track(_name_menu_for):
+			app.set_track_color(_name_menu_for, color))
+	_name_menu.add_child(_colors)
 	_plugin_menu = PopupMenu.new()
 	_plugin_menu.id_pressed.connect(_on_plugin_menu_chosen)
 	_root.add_child(_plugin_menu)
@@ -307,6 +318,17 @@ func _build_strip(inst) -> Dictionary:
 		Hints.give(choice, "Which of your interface's inputs it plays")
 		source = choice
 	box.add_child(source)
+	var output := OptionButton.new()  # where it plays: the master, or a folder's bus (an aux input), as a Pro Tools track's output
+	output.add_theme_font_size_override("font_size", 12)
+	output.fit_to_longest_item = false
+	output.focus_mode = Control.FOCUS_NONE
+	output.custom_minimum_size = Vector2(STRIP_WIDTH - 16, 24)
+	output.add_item("→ Master")
+	for folder in app.folders:
+		output.add_item("→ %s" % folder.display_name)
+	output.item_selected.connect(func(i: int) -> void: app.put_in_folder(inst, app.folders[i - 1] if i > 0 else null))
+	Hints.give(output, "Its output: straight to the master, or into a folder, through the folder's inserts and fader")
+	box.add_child(output)
 	var buttons := HBoxContainer.new()
 	buttons.add_theme_constant_override("separation", 3)
 	buttons.alignment = BoxContainer.ALIGNMENT_CENTER
@@ -331,7 +353,45 @@ func _build_strip(inst) -> Dictionary:
 	box.add_child(plate)
 	_strip_row.add_child(strip)
 	return {"inst": inst, "fader": pair.fader, "meter": pair.meter, "value": readouts.value, "peak": readouts.peak, "input": input,
-		"mute": mute, "solo": solo, "source": source, "inserts": inserts, "plate": plate}
+		"mute": mute, "solo": solo, "source": source, "output": output, "inserts": inserts, "plate": plate, "frame": strip.get_theme_stylebox("panel")}
+
+
+## A routing folder's strip: its inserts (in stereo), how many tracks it has, mute and solo, and its fader, through
+## which they reach the master.
+func _build_folder_strip(folder) -> Dictionary:
+	var strip := _strip_panel(STRIP_WIDTH)
+	var box: VBoxContainer = strip.get_child(0)
+	var inserts := _build_inserts(box, folder)
+	_small(box, "FOLDER")
+	var count := Label.new()
+	count.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	count.custom_minimum_size.y = 24
+	count.add_theme_font_size_override("font_size", 12)
+	Hints.give(count, "The tracks in it play into it, and through its inserts and fader to the master")
+	box.add_child(count)
+	var gap := Control.new()  # (where a track has its output)
+	gap.custom_minimum_size.y = 24
+	box.add_child(gap)
+	var buttons := HBoxContainer.new()
+	buttons.add_theme_constant_override("separation", 3)
+	buttons.alignment = BoxContainer.ALIGNMENT_CENTER
+	box.add_child(buttons)
+	var mute := _toggle("M", MUTE_ORANGE)
+	Hints.give(mute, "Mute: its tracks are silent  ·  Option-click: every track")
+	mute.toggled.connect(_on_mute_toggled.bind(folder))
+	buttons.add_child(mute)
+	var solo := _toggle("S", SOLO_YELLOW)
+	Hints.give(solo, "Solo: its tracks are soloed  ·  Option-click: every track")
+	solo.toggled.connect(_on_solo_toggled.bind(folder))
+	buttons.add_child(solo)
+	var pair := _fader_and_meter(box, 1, folder)
+	pair.fader.value_changed.connect(func(db: float) -> void: app.set_folder_level(folder, db))
+	var readouts := _readouts(box, folder)
+	var plate := _name_plate(folder.display_name, folder.color, folder)
+	box.add_child(plate)
+	_strip_row.add_child(strip)
+	return {"inst": folder, "fader": pair.fader, "meter": pair.meter, "value": readouts.value, "peak": readouts.peak, "input": null,
+		"mute": mute, "solo": solo, "source": count, "output": null, "inserts": inserts, "plate": plate, "frame": strip.get_theme_stylebox("panel")}
 
 
 const INSERT_HEIGHT := 19.0
@@ -475,8 +535,12 @@ func _name_plate(text: String, color: Color, inst) -> Button:
 	if inst == null:
 		plate.disabled = true
 		plate.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	elif inst.is_folder:
+		Hints.give(plate, "Click to choose it (Shift or Cmd-click for more).  Right-click to rename it, colour it or take it away")
+		plate.gui_input.connect(_on_name_input.bind(inst, plate))
 	else:
-		Hints.give(plate, "Click to open the %s.  Right-click to duplicate or remove it" % _editor_name(inst))
+		Hints.give(plate, "Click to open the %s, Shift or Cmd-click to choose it (%s: the chosen in a folder).  Right-click: rename, colour, folder, duplicate, remove" % [
+			_editor_name(inst), app.bindings.label("group")])
 		plate.gui_input.connect(_on_name_input.bind(inst, plate))
 	return plate
 
@@ -524,15 +588,17 @@ func _toggle(text: String, lit: Color) -> Button:
 func _refresh() -> void:
 	var settings = app.settings
 	var signature := ""
-	for inst in app.instruments:
-		signature += "%d|" % inst.get_instance_id()
-	if signature != _signature:  # instruments came or went: one strip each again
+	for track in app.track_order():  # (a folder's name and every track's colour are drawn into strips: change them, build them again)
+		var folder = track if track.is_folder else app.folder_of(track)
+		signature += "%d:%s:%s:%s|" % [track.get_instance_id(), track.color.to_html(), folder.display_name if folder != null else "",
+			"%d" % folder.get_instance_id() if folder != null else ""]
+	if signature != _signature:  # tracks came or went, or moved: one strip each again
 		_signature = signature
 		for child in _strip_row.get_children():
 			child.queue_free()
 		_strips.clear()
-		for inst in app.instruments:
-			_strips.append(_build_strip(inst))
+		for track in app.track_order():
+			_strips.append(_build_folder_strip(track) if track.is_folder else _build_strip(track))
 		_input_channels = -1
 	var channels: int = app.input_channel_count()
 	var relist := channels != _input_channels
@@ -542,10 +608,17 @@ func _refresh() -> void:
 		if not strip.fader._dragging:
 			strip.fader.set_value_no_signal(inst.level_db)
 		strip.value.text = _db_text(inst.level_db)
-		strip.input.set_pressed_no_signal(inst.input_on)
 		strip.mute.set_pressed_no_signal(inst.muted)
 		strip.solo.set_pressed_no_signal(inst.soloed)
 		strip.plate.text = inst.display_name  # a plug-in instrument takes its plug-in's name
+		strip.frame.border_color = Color(1, 1, 1, 0.85) if app.chosen_tracks.has(inst) else Color(0, 0, 0, 0.6)  # chosen
+		strip.meter.feed([inst.meter_peak], [inst.meter_rms])
+		_show_peak(strip.peak, inst.peak_hold)
+		_show_inserts(strip.inserts, inst.inserts)
+		if inst.is_folder:
+			strip.source.text = "%d track%s" % [inst.members.size(), "" if inst.members.size() == 1 else "s"]
+			continue
+		strip.input.set_pressed_no_signal(inst.input_on)
 		if inst.plays_plugin:
 			strip.source.text = inst.instrument_plugin.get("plugin_name", "")
 		if strip.source is OptionButton:
@@ -555,9 +628,7 @@ func _refresh() -> void:
 				for i in channels:
 					strip.source.add_item("In %d" % (i + 1))
 			strip.source.select(clampi(inst.input_channel + 1, 0, strip.source.item_count - 1))
-		strip.meter.feed([inst.meter_peak], [inst.meter_rms])
-		_show_peak(strip.peak, inst.peak_hold)
-		_show_inserts(strip.inserts, inst.inserts)
+		strip.output.select(app.folders.find(app.folder_of(inst)) + 1)
 
 	var m: Dictionary = app.meter
 	_master.meter.feed([m.get("peak_l", 0.0), m.get("peak_r", 0.0)], [m.get("rms_l", 0.0), m.get("rms_r", 0.0)])
@@ -700,7 +771,7 @@ func _insert_drag(_at: Vector2, inst, slot: int):
 
 
 func _insert_can_drop(_at: Vector2, data, inst, slot: int) -> bool:
-	return data is Dictionary and data.get("insert", false) and app.instruments.has(data.inst) and \
+	return data is Dictionary and data.get("insert", false) and app.has_track(data.inst) and \
 		not (data.inst == inst and data.slot == slot)
 
 
@@ -711,7 +782,7 @@ func _insert_drop(_at: Vector2, data, inst, slot: int) -> void:
 ## Dropping an insert on a slot: it moves there, swapping with what was there, or with `copy` (Option held) a second of
 ## it goes there instead, with the same settings.
 func drop_insert(data: Dictionary, inst, slot: int, copy: bool) -> void:
-	if not app.instruments.has(data.inst) or not app.instruments.has(inst):
+	if not app.has_track(data.inst) or not app.has_track(inst):
 		return
 	if copy:
 		var problem: String = app.copy_insert(data.inst, data.slot, inst, slot)
@@ -744,7 +815,7 @@ func _on_insert_input(event: InputEvent, inst, slot: int) -> void:
 
 
 func _on_insert_menu_chosen(id: int) -> void:
-	if _menu_for.is_empty() or not app.instruments.has(_menu_for[0]):
+	if _menu_for.is_empty() or not app.has_track(_menu_for[0]):
 		return
 	var inst = _menu_for[0]
 	var slot: int = _menu_for[1]
@@ -764,7 +835,7 @@ func _on_insert_menu_chosen(id: int) -> void:
 func _choose_insert(inst, slot: int, near: Control) -> void:
 	app.plugin_browser.open_for("Insert %s on the %s" % [char(65 + slot), inst.display_name], app.available_plugins(),
 		near.get_screen_position() + Vector2(near.size.x + 6, 0), func(plugin: Dictionary) -> void:
-			if not app.instruments.has(inst):
+			if not app.has_track(inst):
 				return
 			var problem: String = app.set_insert(inst, slot, plugin.id)
 			if problem != "":
@@ -810,17 +881,30 @@ func _on_name_input(event: InputEvent, inst, plate: Button) -> void:
 	if not (event is InputEventMouseButton) or not event.pressed:
 		return
 	if event.button_index == MOUSE_BUTTON_LEFT:
-		open_editor(inst)
+		if event.shift_pressed:  # choosing tracks, as Pro Tools does by their names
+			app.choose_track(inst, "range")
+		elif event.meta_pressed or event.ctrl_pressed:
+			app.choose_track(inst, "toggle")
+		elif inst.is_folder:
+			app.choose_track(inst)
+		else:
+			app.choose_track(inst)
+			open_editor(inst)
 	elif event.button_index == MOUSE_BUTTON_RIGHT:
 		_name_menu_for = inst
 		_name_menu.clear()
-		_name_menu.add_item("Open the %s" % _editor_name(inst), 0)
-		_name_menu.add_item("Duplicate", 2)
-		_name_presets.for_instrument(inst)
-		_name_menu.add_submenu_node_item("Presets", _name_presets, 3)
-		_name_menu.add_separator()
-		_name_menu.add_item("Remove the %s from the room…" % inst.display_name, 1)
-		_name_menu.position = Vector2i(plate.get_screen_position() - Vector2(0, 124))
+		if not inst.is_folder:
+			_name_menu.add_item("Open the %s" % _editor_name(inst), 0)
+			_name_menu.add_item("Duplicate", 2)
+			_name_presets.for_instrument(inst)
+			_name_menu.add_submenu_node_item("Presets", _name_presets, 3)
+			_name_menu.add_separator()
+		TrackMenu.add_items(_name_menu, app, inst, _colors)
+		if not inst.is_folder:
+			_name_menu.add_separator()
+			_name_menu.add_item("Remove the %s from the room…" % inst.display_name, 1)
+		_name_menu.reset_size()
+		_name_menu.position = Vector2i(plate.get_screen_position() - Vector2(0, _name_menu.get_contents_minimum_size().y))
 		_name_menu.popup()
 	plate.accept_event()
 
@@ -840,7 +924,7 @@ func open_editor(inst) -> void:
 
 func _on_name_menu_chosen(id: int) -> void:
 	var inst = _name_menu_for
-	if inst == null or not app.instruments.has(inst):
+	if inst == null or TrackMenu.chosen(app, inst, id) or not app.instruments.has(inst):
 		return
 	if id == 0:
 		open_editor(inst)

@@ -78,15 +78,7 @@ static func family_of(inst) -> String:
 ## An instrument's sound, without where it stands or what it plays: its inserts (plug-ins and their settings), an amp's
 ## head, cabinet, knobs and pedals, and a Speaker's volume.
 func instrument_settings(inst) -> Dictionary:
-	var out := {"kind": inst.kind, "family": family_of(inst), "inserts": []}
-	var inserts: Array = audio.get_inserts(inst.source_id)
-	for slot in inserts.size():
-		var insert: Dictionary = inserts[slot]
-		if insert.plugin_id == "":
-			out.inserts.append(null)
-		else:
-			out.inserts.append({"plugin_id": insert.plugin_id, "plugin_name": insert.plugin_name, "plugin_maker": insert.plugin_maker,
-				"on": insert.on, "state": Marshalls.raw_to_base64(audio.get_plugin_state(inst.source_id, "insert", slot))})
+	var out := {"kind": inst.kind, "family": family_of(inst), "inserts": inserts_data(inst)}
 	if family_of(inst) == "speaker":
 		out.volume_db = inst.volume_db
 	var played: Dictionary = audio.get_instrument_plugin(inst.source_id) if inst.plays_plugin else {}
@@ -147,18 +139,40 @@ func apply_instrument_settings(inst, settings: Dictionary, include := {}) -> Str
 					problems.append("%s on pedal %d: %s" % [pedal.get("plugin_name", "a plug-in"), at + 1, problem])
 	if family_of(inst) == "speaker" and settings.has("volume_db") and include.get("instrument_settings", true):
 		app.set_speaker_volume(inst, float(settings.volume_db))
-	var inserts: Array = settings.get("inserts", []) if with_plugins else []
+	var problem := apply_inserts(inst, settings.get("inserts", []) if with_plugins else [])
+	if problem != "":
+		problems.append(problem)
+	return "; ".join(problems)
+
+
+## A track's inserts (an instrument's or a folder's), as saved: each slot's plug-in with its settings, or null.
+func inserts_data(track) -> Array:
+	var out := []
+	var inserts: Array = audio.get_inserts(track.source_id)
+	for slot in inserts.size():
+		var insert: Dictionary = inserts[slot]
+		if insert.plugin_id == "":
+			out.append(null)
+		else:
+			out.append({"plugin_id": insert.plugin_id, "plugin_name": insert.plugin_name, "plugin_maker": insert.plugin_maker,
+				"on": insert.on, "state": Marshalls.raw_to_base64(audio.get_plugin_state(track.source_id, "insert", slot))})
+	return out
+
+
+## Puts a track's inserts back as saved. Returns what couldn't be loaded, or "".
+func apply_inserts(track, inserts: Array) -> String:
+	var problems := []
 	for slot in audio.get_max_inserts():
 		var insert = inserts[slot] if slot < inserts.size() else null
 		if not (insert is Dictionary):
-			app.clear_insert(inst, slot)
+			app.clear_insert(track, slot)
 			continue
-		var problem: String = app.set_insert(inst, slot, str(insert.get("plugin_id", "")), _bytes(insert.get("state", "")))
+		var problem: String = app.set_insert(track, slot, str(insert.get("plugin_id", "")), _bytes(insert.get("state", "")))
 		if problem != "":
-			app.clear_insert(inst, slot)
+			app.clear_insert(track, slot)
 			problems.append("%s on insert %s: %s" % [insert.get("plugin_name", "a plug-in"), char(65 + slot), problem])
 		else:
-			app.set_insert_on(inst, slot, bool(insert.get("on", true)))
+			app.set_insert_on(track, slot, bool(insert.get("on", true)))
 	return "; ".join(problems)
 
 
@@ -292,7 +306,9 @@ func room_data() -> Dictionary:
 	for inst in app.instruments:
 		var entry := {"kind": inst.kind, "position": [inst.global_position.x, inst.global_position.z], "yaw": inst.rotation.y,
 			"level_db": inst.level_db, "muted": inst.muted, "soloed": inst.soloed, "input_channel": inst.input_channel,
-			"settings": instrument_settings(inst), "clips": inst.clips.duplicate(true)}
+			"settings": instrument_settings(inst), "clips": inst.clips.duplicate(true), "color": _color_data(inst.color)}
+		if inst.named:
+			entry.name = inst.display_name
 		if inst.playable:
 			entry.loop_on = inst.loop_on
 			entry.steps = audio.get_pattern_steps(inst.source_id)
@@ -303,10 +319,23 @@ func room_data() -> Dictionary:
 		walls.append([wall.a.x, wall.a.y, wall.b.x, wall.b.y, wall.height])
 	var size: Vector3 = app.room.size
 	var stood: Vector3 = app.player.global_position
+	var folders := []
+	for folder in app.folders:
+		folders.append({"name": folder.display_name, "color": _color_data(folder.color), "level_db": folder.level_db, "muted": folder.muted,
+			"soloed": folder.soloed, "open": folder.open, "members": folder.members.map(func(inst): return app.instruments.find(inst)),
+			"inserts": inserts_data(folder)})
 	return {"soundroom": "room", "version": VERSION, "mode": app.timeline.mode, "timeline": app.timeline.to_data(),
 		"tempo": app.tempo, "swing": app.swing, "master_db": app.master_volume_db, "reverb_db": app.reverb_db,
 		"room": {"size": [size.x, size.y, size.z], "walls": walls},
-		"player": {"position": [stood.x, stood.z], "yaw": app.player.yaw}, "instruments": instruments}
+		"player": {"position": [stood.x, stood.z], "yaw": app.player.yaw}, "instruments": instruments, "folders": folders}
+
+
+static func _color_data(color: Color) -> Array:
+	return [snappedf(color.r, 0.001), snappedf(color.g, 0.001), snappedf(color.b, 0.001)]
+
+
+static func _color_from(data, otherwise: Color) -> Color:
+	return Color(float(data[0]), float(data[1]), float(data[2])) if data is Array and data.size() >= 3 else otherwise
 
 
 ## The room SoundRoom starts with, as data: its size and its one wall, the instruments playing the default groove, all
@@ -389,14 +418,19 @@ func apply_room_data(data: Dictionary, carry := {}, size = null, mode := "") -> 
 	app.set_reverb_db(float(data.get("reverb_db", 0.0)) if keep.call("mix") else 0.0)
 	var problems := []
 	var include := {"instrument_settings": keep.call("instrument_settings"), "plugins": keep.call("plugins")}
+	var made := []  # each instrument entry's instrument (null where it couldn't be made), for the folders
 	for entry in data.get("instruments", []) if keep.call("instruments") else []:
 		var kind := str(entry.get("kind", ""))
 		var at: Array = entry.get("position", [0.0, 0.0])
 		var inst = app.add_instrument(kind, Vector3(float(at[0]), 0.0, float(at[1]))) if app.Catalog.KINDS.has(kind) else null
+		made.append(inst)
 		if inst == null:
 			problems.append("a %s (%s)" % [kind, "the room is full" if app.Catalog.KINDS.has(kind) else "not a kind SoundRoom knows"])
 			continue
 		inst.rotation.y = float(entry.get("yaw", 0.0))
+		inst.set_color(_color_from(entry.get("color"), inst.color))
+		if entry.has("name"):
+			app.rename_track(inst, str(entry.name))
 		if not inst.playable:
 			inst.set_input_channel(int(entry.get("input_channel", -1)))
 		if keep.call("mix"):
@@ -414,6 +448,24 @@ func apply_room_data(data: Dictionary, carry := {}, size = null, mode := "") -> 
 		if problem != "":
 			problems.append(problem)
 		inst.clips = entry.get("clips", []).duplicate(true) if keep.call("patterns") else []
+	for entry in data.get("folders", []) if keep.call("instruments") else []:  # the routing folders, their tracks in them
+		var members := []
+		for index in entry.get("members", []):
+			if int(index) >= 0 and int(index) < made.size() and made[int(index)] != null:
+				members.append(made[int(index)])
+		var folder = app.add_folder(members, str(entry.get("name", "")))
+		if folder == null:
+			problems.append("a folder (the room is full)")
+			continue
+		folder.color = _color_from(entry.get("color"), folder.color)
+		folder.open = bool(entry.get("open", true))
+		if keep.call("mix"):
+			app.set_folder_level(folder, float(entry.get("level_db", 0.0)))
+			folder.muted = bool(entry.get("muted", false))
+			folder.soloed = bool(entry.get("soloed", false))
+		var problem := apply_inserts(folder, entry.get("inserts", []) if keep.call("plugins") else [])
+		if problem != "":
+			problems.append("%s: %s" % [folder.display_name, problem])
 	app.settle_new_room()
 	var player: Dictionary = data.get("player", {})
 	var stood: Array = player.get("position", [])

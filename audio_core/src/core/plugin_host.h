@@ -5,6 +5,7 @@
 //
 // A plug-in runs in the same process as the game, as it would in a DAW: one that crashes takes SoundRoom with it.
 
+#include <algorithm>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -35,11 +36,18 @@ public:
 
     virtual ~PluginInstance() = default;
     virtual const PluginDescription& description() const = 0;
-    // Makes it ready for this sample rate, `max_frames` at a time at most (game thread, while it isn't processing).
-    virtual bool prepare(double sample_rate, int max_frames, std::string* error) = 0;
+    // Makes it ready for this sample rate, `max_frames` at a time at most (game thread, while it isn't processing):
+    // in one channel if it will (for a track's insert or a pedal), or with `stereo` in two if it will (a bus's insert).
+    virtual bool prepare(double sample_rate, int max_frames, std::string* error, bool stereo = false) = 0;
     // One channel, in place (audio thread). A plug-in that only works in stereo hears it in both ears, and what it
     // plays back is their average.
     virtual void process(float* io, int n) = 0;
+    // Two channels, in place (audio thread). One prepared in one channel hears the two together, and plays it in both.
+    virtual void processStereo(float* left, float* right, int n) {
+        for (int i = 0; i < n; ++i) left[i] = 0.5f * (left[i] + right[i]);
+        process(left, n);
+        std::copy(left, left + n, right);
+    }
     // An instrument (audio thread): a MIDI message to act on `offset` samples into the next render, and rendering,
     // added into `out` as one channel (the average of a stereo instrument's two).
     virtual bool isInstrument() const = 0;
