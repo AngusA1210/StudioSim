@@ -77,6 +77,7 @@ var library  # rooms' and templates' contents, presets, and settings copied to b
 var session  # the room that is open: its file, saving, backups
 var rooms_page  # making a new room, or opening one
 var timeline  # the room's mode, and a Record room's transport, recording and clips
+var automation  # the tracks' automation, as the music plays (automation.gd)
 var edit_window  # a Record room's tracks and clips along the timeline
 var name_prompt  # asks for a name, to save a template or a preset under
 var _plugins = null  # what get_plugins() said, the first time anything asked
@@ -151,6 +152,10 @@ func _ready() -> void:
 	timeline.name = "Timeline"
 	add_child(timeline)
 	timeline.setup(self)
+	automation = preload("res://scripts/automation.gd").new()
+	automation.name = "Automation"
+	add_child(automation)
+	automation.setup(self)
 	load_default_room()  # behind the title screen, until a room is made or opened
 	if options.has("room"):
 		var dims: PackedStringArray = options.room.split(",")
@@ -725,8 +730,11 @@ func set_on_all(what: String, on: bool) -> void:
 
 
 func set_muted(inst, on: bool) -> void:
+	var changed: bool = inst.muted != on
 	inst.muted = on
 	_apply_channels()
+	if changed and automation != null:
+		automation.mute_pressed(inst)  # (written, in Touch, Latch or Write while it plays)
 
 
 func set_soloed(inst, on: bool) -> void:

@@ -2337,6 +2337,92 @@ int main(int argc, char** argv) {
     }
 
     {
+        std::printf("\nAutomation\n");
+        // Volume automation on the pad: 0 dB to step 8, down to silence by step 16; read, it takes the fader's place.
+        Room room;
+        room.quietRoom(room.pad);
+        room.engine.setLimiter(false);
+        room.engine.setTempo(120.0);
+        std::string auto_error;
+        TrackAutomation fade;
+        fade.volume = {{0.0, 0.0f}, {8.0, 0.0f}, {16.0, -80.0f}};
+        const std::vector<TimelineNote> held_chord = {{0.0, 32.0f, 57, 0.8f}};
+        room.engine.setTrack(room.pad, held_chord, {}, &auto_error, fade);
+        room.engine.playFrom(0.0);
+        renderSeconds(room.engine, 0.3);
+        const Render full = renderSeconds(room.engine, 0.5);  // steps 2 to 6
+        renderSeconds(room.engine, 1.3);
+        const Render faded = renderSeconds(room.engine, 0.4);  // past step 16
+        room.engine.setAutomationRead(room.pad, false, true, true);  // its fader again
+        renderSeconds(room.engine, 0.1);
+        const Render fader_again = renderSeconds(room.engine, 0.3);
+        check(full.rms_l > 0.002 && faded.rms_l < 1e-5 && fader_again.rms_l > 0.5 * full.rms_l,
+              "volume automation, read, plays in place of the fader (here a fade to silence over a bar); not read, the fader is heard again",
+              fmt("%.0f dBFS, faded to ", db(full.rms_l)) + fmt("%.0f dBFS", db(faded.rms_l)));
+
+        room.engine.setAutomationRead(room.pad, true, true, true);
+        TrackAutomation muting;
+        muting.mute = {{8.0, 1.0f}};
+        room.engine.setTrack(room.pad, held_chord, {}, &auto_error, muting);
+        room.engine.playFrom(0.0);
+        renderSeconds(room.engine, 0.3);
+        const Render unmuted = renderSeconds(room.engine, 0.5);
+        renderSeconds(room.engine, 0.3);
+        const Render muted_by = renderSeconds(room.engine, 0.4);  // past step 8
+        check(unmuted.rms_l > 0.002 && muted_by.rms_l < 1e-5, "mute automation mutes it from its point on", fmt("%.0f dBFS after", db(muted_by.rms_l)));
+        room.engine.setSequencerRunning(false);
+
+        // The sustain pedal automated on the keys: a short note rings on while it is down.
+        Room keys_room;
+        keys_room.quietRoom(keys_room.keys);
+        keys_room.engine.setLimiter(false);
+        keys_room.engine.setTempo(120.0);
+        const std::vector<TimelineNote> short_note = {{0.5, 1.0f, 60, 0.8f}};
+        keys_room.engine.setTrack(keys_room.keys, short_note, {}, &auto_error);
+        keys_room.engine.playFrom(0.0);
+        renderSeconds(keys_room.engine, 0.7);
+        const Render let_go = renderSeconds(keys_room.engine, 0.3);
+        keys_room.engine.setSequencerRunning(false);
+        renderSeconds(keys_room.engine, 2.0);
+        TrackAutomation pedal;
+        pedal.sustain = {{0.0, 1.0f}};
+        keys_room.engine.setTrack(keys_room.keys, short_note, {}, &auto_error, pedal);
+        keys_room.engine.playFrom(0.0);
+        renderSeconds(keys_room.engine, 0.7);
+        const Render sustained = renderSeconds(keys_room.engine, 0.3);
+        keys_room.engine.setSequencerRunning(false);  // and stopping lets the pedal up
+        renderSeconds(keys_room.engine, 1.5);
+        const Render stopped_after = renderSeconds(keys_room.engine, 0.2);
+        check(sustained.rms_l > 3.0 * let_go.rms_l + 1e-5 && stopped_after.rms_l < 0.3 * sustained.rms_l,
+              "the sustain pedal automated holds a note on, and stopping lets it up",
+              fmt("%.0f dBFS held, ", db(sustained.rms_l)) + fmt("%.0f dBFS let go", db(let_go.rms_l)));
+
+        // The pedal played while an instrument records: taken, where it went down and up.
+        keys_room.engine.setTrack(keys_room.keys, {}, {}, &auto_error);
+        keys_room.engine.setRecordArm(keys_room.keys, true);
+        const bool pedal_recording = keys_room.engine.startRecording({}, 0.0, &auto_error);
+        renderSeconds(keys_room.engine, 0.3);
+        MidiEvent down;
+        down.type = MidiEvent::Sustain;
+        down.note = 1;
+        keys_room.engine.receiveMidi(down);
+        renderSeconds(keys_room.engine, 0.5);
+        MidiEvent up = down;
+        up.note = 0;
+        keys_room.engine.receiveMidi(up);
+        renderSeconds(keys_room.engine, 0.2);
+        keys_room.engine.stopRecording();
+        renderSeconds(keys_room.engine, 0.01);
+        RecordingResult pedal_take;
+        const bool pedal_taken = keys_room.engine.takeRecording(&pedal_take);
+        const bool two = pedal_taken && pedal_take.sustain.size() == 2;
+        check(pedal_recording && two && pedal_take.sustain[0].on && !pedal_take.sustain[1].on &&
+                  std::fabs(pedal_take.sustain[1].step - pedal_take.sustain[0].step - 0.5 / pedal_take.step_seconds) < 0.2,
+              "the sustain pedal is recorded with the notes: where it went down and came up",
+              two ? fmt("down at step %.1f, ", pedal_take.sustain[0].step) + fmt("up at %.1f", pedal_take.sustain[1].step) : auto_error);
+    }
+
+    {
         std::printf("\nRouting folders\n");
         // Two rooms alike, the drums in one routed through a bus: at unity it sounds the same; the bus's fader and mute
         // act on it, its meter reads it, and an insert on it plays in its two channels.

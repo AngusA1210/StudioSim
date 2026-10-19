@@ -122,6 +122,18 @@ struct ClipSpec {
     double fade_in = 0.0, fade_out = 0.0;
     float gain = 1.0f;
 };
+// A track's automation, as Pro Tools and Logic draw it under the track: breakpoints in steps (they follow the tempo).
+// Volume is in dB (-80 and below silent), glided between its points and held level before the first and after the
+// last, in place of the fader while it is read; mute and the sustain pedal (an instrument's) are on (1) or off (0)
+// from each point to the next, and off before the first.
+struct AutoPoint {
+    double step = 0.0;
+    float value = 0.0f;
+};
+struct TrackAutomation {
+    std::vector<AutoPoint> volume, mute, sustain;  // each in order of its steps
+};
+
 // What a recording took: each audio track's file (begun `start_step` into the timeline), and the notes played on
 // each MIDI track, as steps on the timeline. Positions count on from the start without going back round a loop (a loop
 // recording's later passes come after its first), so `end_step` is `start_step` and the time it lasted.
@@ -139,6 +151,12 @@ struct RecordingResult {
         TimelineNote note;
     };
     std::vector<Note> notes;
+    struct Pedal {  // the sustain pedal, pressed (on) and let go, on each armed instrument
+        int source = -1;
+        double step = 0.0;
+        bool on = false;
+    };
+    std::vector<Pedal> sustain;
 };
 
 // What an amp's loop pedal is doing, for the game to show.
@@ -334,7 +352,11 @@ public:
     // A track's clips: notes to play (an instrument) and audio to play into it (a Speaker or an amp, through its pedals,
     // amp and inserts as its input would be). Files are read (once each) on this thread. False, with the reason, if
     // one couldn't be read; the rest are used.
-    bool setTrack(int id, const std::vector<TimelineNote>& notes, const std::vector<ClipSpec>& clips, std::string* error);
+    bool setTrack(int id, const std::vector<TimelineNote>& notes, const std::vector<ClipSpec>& clips, std::string* error,
+                  const TrackAutomation& automation = {});
+    // Whether a track's automation is read as it plays (each of volume, mute and the sustain pedal): off while it is
+    // being written (a fader held in Touch, say), so that the fader is heard.
+    void setAutomationRead(int id, bool volume, bool mute, bool sustain);
     // An audio file's loudest sample in each `1 / per_second` of a second, for drawing its clips (read once and kept).
     std::vector<float> audioPeaks(const std::string& path, double per_second);
     double audioSeconds(const std::string& path);  // 0 if it can't be read
@@ -369,6 +391,7 @@ public:
     // MIDI controllers play every instrument whose input is on (see setSourceInput).
     bool startMidi(std::string* error);
     void pollMidi();  // picks up controllers plugged in since the last call
+    void receiveMidi(const MidiEvent& e);  // as if a controller had sent it (the automated checks)
     std::vector<MidiDeviceInfo> midiDevices() const { return midi_.devices(); }
     void setMidiDeviceEnabled(const std::string& name, bool enabled) { midi_.setEnabled(name, enabled); }
     uint32_t midiEventCount() const { return midi_events_.load(std::memory_order_relaxed); }
@@ -400,7 +423,7 @@ private:
             PatternNoteSet, PatternNoteRemove, PatternClear, PatternSteps, SourceLoop, SourceVolume,
             SequencerRunning, Tempo, Swing, Click, ClickVolume, Reverb2, SourceGain, Falloff, LimiterOn,
             AmpKnob, AmpHeadSet, AmpCabinetSet, LooperMemory, LooperAct, PedalBoardSet, PedalOn, PedalControl, SynthPlugin,
-            TimelinePlay, TimelineLoop, TrackSet, RecordArm, RecordStart, RecordStop, SourceOutput,
+            TimelinePlay, TimelineLoop, TrackSet, RecordArm, RecordStart, RecordStop, SourceOutput, AutomationRead,
         } type = AddSource;
         int id = 0;
         float v[9] = {};
@@ -440,6 +463,8 @@ private:
 
     // StepSink: plays every source's pattern notes for this step, and the click.
     void step(int64_t index, double at, double step_samples) override;
+    struct Automating;               // a source's fader and mute, as its automation has them while it plays (engine.cpp)
+    void chaseSustain(double step);  // the sustain pedals as their automation has them where the music starts
 
     int sr_, block_;
     SteamAudio steam_;

@@ -178,8 +178,12 @@ struct AudioEngine::Source {
             std::shared_ptr<const AudioData> audio;
         };
         std::vector<Clip> clips;
+        TrackAutomation automation;
     };
     std::unique_ptr<Track> track;
+    bool read_volume = true, read_mute = true, read_sustain = true;  // its automation read (the audio thread's)
+    float auto_mute = 1.0f;     // its mute automation's share of it heard, glided
+    bool auto_sustain = false;  // the sustain pedal down by automation
     Track* track_rt = nullptr;
     std::vector<std::pair<std::unique_ptr<Track>, uint32_t>> retired_tracks;
     bool armed = false;            // armed for recording (the audio thread's copy)
@@ -495,6 +499,8 @@ bool AudioEngine::startMidi(std::string* error) {
 
 void AudioEngine::pollMidi() { midi_.rescan(); }
 
+void AudioEngine::receiveMidi(const MidiEvent& e) { midi_queue_.push(e); }
+
 void AudioEngine::setAmpControl(int id, AmpControl control, float value) {
     Source* s = owned(id);
     if (!s || !isAmp(s->kind)) return;
@@ -601,7 +607,8 @@ std::shared_ptr<const AudioData> AudioEngine::audioFile(const std::string& path,
     return data;
 }
 
-bool AudioEngine::setTrack(int id, const std::vector<TimelineNote>& notes, const std::vector<ClipSpec>& clips, std::string* error) {
+bool AudioEngine::setTrack(int id, const std::vector<TimelineNote>& notes, const std::vector<ClipSpec>& clips, std::string* error,
+                           const TrackAutomation& automation) {
     reapPedals();
     Source* s = owned(id);
     if (!s) {
@@ -610,6 +617,9 @@ bool AudioEngine::setTrack(int id, const std::vector<TimelineNote>& notes, const
     }
     auto track = std::make_unique<Source::Track>();
     track->notes = notes;
+    track->automation = automation;
+    for (auto* lane : {&track->automation.volume, &track->automation.mute, &track->automation.sustain})
+        std::stable_sort(lane->begin(), lane->end(), [](const AutoPoint& a, const AutoPoint& b) { return a.step < b.step; });
     std::sort(track->notes.begin(), track->notes.end(), [](const TimelineNote& a, const TimelineNote& b) { return a.step < b.step; });
     bool all = true;
     for (const ClipSpec& spec : clips) {
@@ -647,6 +657,12 @@ std::vector<float> AudioEngine::audioPeaks(const std::string& path, double per_s
 double AudioEngine::audioSeconds(const std::string& path) {
     auto audio = audioFile(path, nullptr);
     return audio ? audio->seconds() : 0.0;
+}
+
+void AudioEngine::setAutomationRead(int id, bool volume, bool mute, bool sustain) {
+    Command c; c.type = Command::AutomationRead; c.id = id;
+    c.v[0] = volume ? 1.0f : 0.0f; c.v[1] = mute ? 1.0f : 0.0f; c.v[2] = sustain ? 1.0f : 0.0f;
+    push(c);
 }
 
 void AudioEngine::setRecordArm(int id, bool armed) {
@@ -697,6 +713,10 @@ bool AudioEngine::takeRecording(RecordingResult* out) {
     std::vector<std::pair<int, size_t>> open;  // (source * 128 + note) → its place in result.notes
     Captured e;
     while (captured_.pop(e)) {
+        if (e.note < 0) {  // the sustain pedal
+            result.sustain.push_back({e.source, e.step, e.on});
+            continue;
+        }
         const int key = e.source * 128 + e.note;
         auto held = std::find_if(open.begin(), open.end(), [&](const auto& o) { return o.first == key; });
         if (held != open.end()) {  // a note let go (or struck again while held)
@@ -1506,6 +1526,7 @@ void AudioEngine::drainCommands() {
                 for (Source* each : sources_)
                     if (each) each->instrument->stopSequenced();
                 sequencer_.start(clock_, double(c.v[0]));
+                chaseSustain(double(c.v[0]));
                 break;
             case Command::TimelineLoop:
                 sequencer_.setLoop(c.v[0] > 0.5f, double(c.v[1]), double(c.v[2]));
@@ -1518,6 +1539,17 @@ void AudioEngine::drainCommands() {
                 break;
             case Command::SourceOutput:
                 if (s) s->output = int(c.v[0]);
+                break;
+            case Command::AutomationRead:
+                if (s) {
+                    s->read_volume = c.v[0] > 0.5f;
+                    s->read_mute = c.v[1] > 0.5f;
+                    s->read_sustain = c.v[2] > 0.5f;
+                    if (!s->read_sustain && s->auto_sustain) {
+                        s->auto_sustain = false;
+                        s->instrument->sustain(false);
+                    }
+                }
                 break;
             case Command::RecordArm:
                 if (s) {
@@ -1542,6 +1574,7 @@ void AudioEngine::drainCommands() {
                     // asked for, and to the punch out.
                     const double play_from = std::max(punch_in - double(c.v[3]), 0.0);
                     sequencer_.start(clock_ + int64_t(std::llround(beats * beat_samples)), play_from);
+                    chaseSustain(play_from);
                     if (beats > 0) {
                         count_in_end_ = int64_t(std::llround(sequencer_.timeOfStep(play_from)));
                         count_in_beats_ = beats;
@@ -1634,8 +1667,14 @@ void AudioEngine::drainCommands() {
                 } else {
                     sequencer_.stop(clock_);
                     step_.store(-1, std::memory_order_relaxed);
-                    for (Source* each : sources_)
-                        if (each) each->instrument->stopSequenced();
+                    for (Source* each : sources_) {
+                        if (!each) continue;
+                        each->instrument->stopSequenced();
+                        if (each->auto_sustain) {  // the pedal its automation held down, let up
+                            each->auto_sustain = false;
+                            each->instrument->sustain(false);
+                        }
+                    }
                 }
                 break;
             case Command::Tempo:
@@ -1723,7 +1762,10 @@ void AudioEngine::drainMidi() {
                     s->instrument->noteOff(e.note);
                     if (recording_ && s->armed && clock_ >= punch_clock_) captured_.push({s->id, e.note, 0.0f, false, recordedSteps()});
                     break;
-                case MidiEvent::Sustain: s->instrument->sustain(e.note != 0); break;
+                case MidiEvent::Sustain:
+                    s->instrument->sustain(e.note != 0);
+                    if (take) captured_.push({s->id, -1, 0.0f, e.note != 0, recordedSteps()});  // (note -1: the pedal)
+                    break;
                 case MidiEvent::Control: s->instrument->controlChange(e.note, e.value); break;
                 case MidiEvent::PitchBend: s->instrument->pitchBend(e.bend); break;
             }
@@ -1742,6 +1784,14 @@ void AudioEngine::step(int64_t index, double at, double step_samples) {
     const double straight = at - (index % 2 ? step_samples * sequencer_.swing() : 0.0);  // the step unswung
     for (Source* s : sources_) {
         if (!s) continue;
+        if (s->track_rt && s->read_sustain && !s->track_rt->automation.sustain.empty() && !isLiveInput(s->kind)) {  // its pedal, as automated
+            const auto& pedal = s->track_rt->automation.sustain;
+            auto p = std::lower_bound(pedal.begin(), pedal.end(), double(index), [](const AutoPoint& a, double v) { return a.step < v; });
+            for (; p != pedal.end() && p->step < double(index + 1); ++p) {
+                s->auto_sustain = p->value > 0.5f;
+                s->instrument->sustain(s->auto_sustain);
+            }
+        }
         if (s->track_rt && !s->track_rt->notes.empty() && !isLiveInput(s->kind)) {  // its recorded notes, to the sample
             const auto& notes = s->track_rt->notes;
             auto n = std::lower_bound(notes.begin(), notes.end(), double(index), [](const TimelineNote& a, double v) { return a.step < v; });
@@ -1886,6 +1936,70 @@ void AudioEngine::renderTimeline() {
     }
 }
 
+// ── Automation (audio thread) ──────────────────────────────────────────────────────────────────────────────
+
+namespace {
+
+// Volume's value where the music is: glided between its points, level before the first and after the last.
+float rampAt(const std::vector<AutoPoint>& points, double step) {
+    if (step <= points.front().step) return points.front().value;
+    if (step >= points.back().step) return points.back().value;
+    auto after = std::upper_bound(points.begin(), points.end(), step, [](double v, const AutoPoint& p) { return v < p.step; });
+    const AutoPoint& b = *after;
+    const AutoPoint& a = *(after - 1);
+    return b.step - a.step <= 1e-9 ? b.value : a.value + (b.value - a.value) * float((step - a.step) / (b.step - a.step));
+}
+
+// Mute's or the pedal's: the last point's at or before it, off before the first.
+float switchAt(const std::vector<AutoPoint>& points, double step) {
+    auto after = std::upper_bound(points.begin(), points.end(), step, [](double v, const AutoPoint& p) { return v < p.step; });
+    return after == points.begin() ? 0.0f : (after - 1)->value;
+}
+
+float gainOf(float db) { return db <= -79.0f ? 0.0f : std::pow(10.0f, db / 20.0f); }
+
+}  // namespace
+
+// A source's fader and its mute, a sample at a time: as set, or while the music plays and its automation is read, as
+// that has them. Every 32 samples it looks where the music is and glides there from where it was, so that a jump (a
+// point, the loop going round) doesn't click; mute glides as a mute button does.
+struct AudioEngine::Automating {
+    static constexpr int kEvery = 32;
+    Automating(AudioEngine& engine, Source& source) : e(engine), s(source) {
+        const bool playing = e.sequencer_.running();
+        lanes = playing && s.track_rt ? &s.track_rt->automation : nullptr;
+        volume = lanes && s.read_volume && !lanes->volume.empty();
+        mute = lanes && s.read_mute && !lanes->mute.empty();
+    }
+    void next(int i, float coef) {
+        if (i % kEvery == 0 && (volume || mute)) {
+            const int chunk = std::min(kEvery, e.block_ - i);
+            const double at = e.sequencer_.position(e.clock_ + i + chunk);
+            if (volume) ramp = (gainOf(rampAt(lanes->volume, at)) - s.gain) / float(chunk);
+            if (mute) mute_to = switchAt(lanes->mute, at) > 0.5f ? 0.0f : 1.0f;
+        }
+        if (volume) s.gain += ramp;
+        else s.gain += (s.gain_target - s.gain) * coef;
+        s.auto_mute += (mute_to - s.auto_mute) * coef;
+    }
+    AudioEngine& e;
+    Source& s;
+    const TrackAutomation* lanes = nullptr;
+    bool volume = false, mute = false;
+    float ramp = 0.0f, mute_to = 1.0f;
+};
+
+void AudioEngine::chaseSustain(double step) {
+    for (Source* s : sources_) {
+        if (!s || !s->track_rt || !s->read_sustain || s->track_rt->automation.sustain.empty() || isLiveInput(s->kind)) continue;
+        const bool down = switchAt(s->track_rt->automation.sustain, step - 1e-6) > 0.5f;
+        if (down != s->auto_sustain) {
+            s->auto_sustain = down;
+            s->instrument->sustain(down);
+        }
+    }
+}
+
 void AudioEngine::renderBlock() {
     const auto t0 = std::chrono::steady_clock::now();
     drainCommands();
@@ -1954,14 +2068,15 @@ void AudioEngine::renderBlock() {
 
         double energy = 0.0, pre_energy = 0.0;
         float peak = 0.0f, pre_peak = 0.0f;
+        Automating automating(*this, *s);
         for (int i = 0; i < block_; ++i) {
             s->volume += (s->volume_target - s->volume) * mute_coef;
             mono[i] *= s->volume;
             pre_energy += double(mono[i]) * mono[i];  // what reaches the fader
             pre_peak = std::max(pre_peak, std::fabs(mono[i]));
             s->mute_gain += (s->mute_target - s->mute_gain) * mute_coef;
-            s->gain += (s->gain_target - s->gain) * mute_coef;
-            mono[i] *= s->gain * s->mute_gain;
+            automating.next(i, mute_coef);  // the fader, or its automation in its place
+            mono[i] *= s->gain * s->mute_gain * s->auto_mute;
             energy += double(mono[i]) * mono[i];
             peak = std::max(peak, std::fabs(mono[i]));
             send_[size_t(i)] += mono[i] * s->send;  // the room hears the source even when a wall blocks your view of it
@@ -2010,12 +2125,13 @@ void AudioEngine::renderBlock() {
         }
         double energy = 0.0, pre_energy = 0.0;
         float peak = 0.0f, pre_peak = 0.0f;
+        Automating automating(*this, *s);
         for (int i = 0; i < block_; ++i) {
             pre_energy += 0.5 * (double(l[i]) * l[i] + double(r[i]) * r[i]);
             pre_peak = std::max(pre_peak, std::max(std::fabs(l[i]), std::fabs(r[i])));
             s->mute_gain += (s->mute_target - s->mute_gain) * mute_coef;
-            s->gain += (s->gain_target - s->gain) * mute_coef;
-            const float g = s->gain * s->mute_gain;
+            automating.next(i, mute_coef);
+            const float g = s->gain * s->mute_gain * s->auto_mute;
             l[i] *= g;
             r[i] *= g;
             energy += 0.5 * (double(l[i]) * l[i] + double(r[i]) * r[i]);

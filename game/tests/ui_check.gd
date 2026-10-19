@@ -2132,6 +2132,153 @@ func _run() -> void:
 	main.edit_window.close()
 	main.put_in_folder(folder_bass, the_folder)
 	main.rename_track(the_folder, "Rhythm")
+
+	print("Automation")
+	var auto = main.automation
+	main.edit_window.open()
+	await frames(2)
+	await tap(KEY_A)
+	var keys_row2: int = view.tracks().find(keys_inst)
+	view.zoom = 6.0
+	view.scroll_x = 0.0
+	view.scroll_y = keys_row2 * view.row_height()  # the keys' row at the top, its lane under it
+	var lane_top: float = view.lane_top(keys_row2)
+	check(view.show_automation and edit._automation.button_pressed and is_equal_approx(view.row_height(), view.ROW + view.LANE) and
+		view.zone_at(Vector2(view.x_of(8.0), lane_top + 20)).get("zone", "") == "lane", "A shows an automation lane under each track, as in Logic")
+	var at_zero := Vector2(view.x_of(0.0), view._lane_y(0.0, "volume", lane_top))
+	var at_minus := Vector2(view.x_of(16.0), view._lane_y(-20.0, "volume", lane_top))
+	for spot in [at_zero, at_minus]:
+		view.press(spot)
+		view.release(spot)
+	var keys_volume: Array = auto.points(keys_inst, "volume")
+	check(keys_volume.size() == 2 and is_equal_approx(float(keys_volume[0][0]), 0.0) and is_equal_approx(float(keys_volume[1][0]), 16.0) and
+		absf(float(keys_volume[0][1])) < 0.6 and absf(float(keys_volume[1][1]) + 20.0) < 0.6, "clicking the lane adds points: the keys' volume from 0 dB down to -20 by bar 2",
+		str(keys_volume))
+	timeline.locate(8.0)
+	main.mixer.open()
+	await frames(3)
+	var shown_fader: float = main.mixer._strip_for(keys_inst).fader.value
+	main.mixer.close()
+	main.edit_window.open()
+	await frames(2)
+	check(absf(auto.shown_level(keys_inst) - (float(keys_volume[0][1]) + float(keys_volume[1][1])) / 2.0) < 0.1 and absf(shown_fader - auto.shown_level(keys_inst)) < 0.1,
+		"its fader shows the automation where the playhead is, halfway down at bar 1 beat 3", "%.1f dB" % shown_fader)
+	var point_spot := Vector2(view.x_of(16.0), view._lane_y(float(keys_volume[1][1]), "volume", lane_top))
+	view.drag_to(point_spot, point_spot + Vector2(view.zoom * 4.0, -10))
+	check(keys_volume.size() == 2 and is_equal_approx(float(keys_volume[1][0]), 20.0) and float(keys_volume[1][1]) > -20.0,
+		"a point drags along (to the grid) and up", str(keys_volume[1]))
+	view.press(point_spot + Vector2(view.zoom * 4.0, -10), true)  # Option-click
+	check(keys_volume.size() == 1, "Option-click takes a point away")
+	timeline.undo()
+	keys_volume = auto.points(keys_inst, "volume")
+	check(keys_volume.size() == 2, "and that can be undone, as any edit can")
+	view.press(Vector2(view.x_of(float(keys_volume[0][0])), view._lane_y(float(keys_volume[0][1]), "volume", lane_top)))
+	await tap(KEY_DELETE)
+	check(auto.points(keys_inst, "volume").size() == 1 and keys_inst.clips.size() == 2, "Delete takes the chosen points away (and leaves the clips be)")
+	timeline.undo()
+	var mode_button: Vector2 = view._lane_buttons(keys_inst, lane_top)[1].rect.get_center()
+	view.press(mode_button)
+	var mode_items: int = view._lane_menu.item_count
+	view._lane_menu.id_pressed.emit(2)
+	view._lane_menu.hide()
+	var param_button: Vector2 = view._lane_buttons(keys_inst, lane_top)[0].rect.get_center()
+	view.press(param_button)
+	var params_offered: int = view._lane_menu.item_count
+	view._lane_menu.hide()
+	check(mode_items == 5 and keys_inst.auto_mode == "touch" and params_offered == 3 and auto.params_for(the_folder).size() == 2,
+		"its buttons choose the track's mode (Off, Read, Touch, Latch, Write) and what the lane shows (an instrument's sustain pedal too)")
+	keys_inst.auto_mode = "read"
+
+	var drums_auto = main.find_instrument("drums")
+	drums_auto.automation.volume = [[0.0, 0.0], [4.0, -80.0]]
+	timeline.sync(drums_auto)
+	timeline.locate(0.0)
+	main.settings.pre_fader_meters = false  # (the meters after the fader, where automation acts)
+	timeline.start_playing()
+	await seconds(1.0)
+	drums_auto.peak_hold = 0.0
+	await seconds(0.6)
+	var faded_drums: float = drums_auto.peak_hold
+	timeline.stop()
+	drums_auto.auto_mode = "off"
+	timeline.start_playing()
+	await seconds(1.0)
+	drums_auto.peak_hold = 0.0
+	await seconds(0.6)
+	var unfaded_drums: float = drums_auto.peak_hold
+	timeline.stop()
+	main.settings.pre_fader_meters = true
+	check(faded_drums < 1e-5 and unfaded_drums > 1e-4, "played, its automation takes the fader's place (the drums faded out by beat 2); in Off, it is ignored",
+		"%.0f dBFS, %.0f with it off" % [linear_to_db(maxf(faded_drums, 1e-9)), linear_to_db(maxf(unfaded_drums, 1e-9))])
+	drums_auto.automation.volume = []
+	drums_auto.auto_mode = "touch"
+	timeline.sync(drums_auto)
+	timeline.locate(0.0)
+	timeline.start_playing()
+	await seconds(0.4)
+	auto.touch(drums_auto, true)  # its fader taken hold of, and down
+	main.set_instrument_level(drums_auto, -12.0)
+	await seconds(0.6)
+	auto.touch(drums_auto, false)
+	main.set_instrument_level(drums_auto, 0.0)
+	await seconds(0.3)
+	timeline.stop()
+	await frames(3)
+	var touched: Array = auto.points(drums_auto, "volume")
+	var wrote_minus_12: bool = touched.any(func(p): return absf(float(p[1]) + 12.0) < 0.01)
+	check(wrote_minus_12 and touched.size() >= 2 and touched.size() < 12 and absf(float(touched.back()[1])) < 0.01,
+		"in Touch, the fader held as it plays is written (thinned to a few points), and let go, it goes back", str(touched))
+	drums_auto.auto_mode = "latch"
+	drums_auto.automation.volume = []
+	timeline.sync(drums_auto)
+	timeline.locate(0.0)
+	timeline.start_playing()
+	await seconds(0.3)
+	auto.touch(drums_auto, true)
+	main.set_instrument_level(drums_auto, -6.0)
+	await seconds(0.2)
+	auto.touch(drums_auto, false)
+	await seconds(0.4)
+	var latch_writing: bool = auto.is_writing(drums_auto)
+	timeline.stop()
+	await frames(3)
+	check(latch_writing and auto.points(drums_auto, "volume").any(func(p): return absf(float(p[1]) + 6.0) < 0.01) and not auto.is_writing(drums_auto),
+		"in Latch it goes on writing after the fader is let go, until the music stops")
+	drums_auto.auto_mode = "write"
+	main.set_instrument_level(drums_auto, 0.0)
+	timeline.locate(0.0)
+	timeline.start_playing()
+	await seconds(0.3)
+	var write_writing: bool = auto.is_writing(drums_auto)
+	timeline.stop()
+	await frames(3)
+	check(write_writing and drums_auto.auto_mode == "touch", "in Write it writes all the while it plays, and afterwards the track is in Touch")
+	drums_auto.auto_mode = "touch"
+	timeline.locate(0.0)
+	timeline.start_playing()
+	await seconds(0.3)
+	main.set_muted(drums_auto, true)
+	await seconds(0.4)
+	main.set_muted(drums_auto, false)
+	await seconds(0.2)
+	timeline.stop()
+	await frames(3)
+	var mute_lane: Array = auto.points(drums_auto, "mute")
+	check(not drums_auto.muted and mute_lane.size() >= 2 and float(mute_lane[0][1]) == 1.0 and mute_lane.any(func(p): return float(p[1]) == 0.0),
+		"a mute pressed as it plays in Touch is written, the button left as it was", str(mute_lane))
+	for undo in 4:
+		timeline.undo()
+	check(auto.points(drums_auto, "volume").is_empty() and auto.points(drums_auto, "mute").is_empty(), "what was written undoes")
+	drums_auto.automation = {}
+	drums_auto.auto_mode = "read"
+	timeline.sync(drums_auto)
+	timeline._take_pedal(keys_inst, [[2.0, 1.0], [6.0, 0.0]], 0.0, 16.0)
+	check(auto.points(keys_inst, "sustain") == [[0.0, 0.0], [2.0, 1.0], [6.0, 0.0]], "the sustain pedal played as an instrument records goes in its lane",
+		str(auto.points(keys_inst, "sustain")))
+	await tap(KEY_A)
+	check(not view.show_automation, "and A hides the lanes again")
+	main.edit_window.close()
+	timeline.locate(0.0)
 	session.save()
 	var record_file: String = session.path
 	var saved_loop := Vector2(timeline.loop_start, timeline.loop_end)
@@ -2151,6 +2298,9 @@ func _run() -> void:
 	check(reopened_keys.display_name == "Rhodes" and reopened_keys.named and reopened_keys.color == main.TRACK_COLORS[8][1] and reopened_folder != null and
 		reopened_folder.display_name == "Rhythm" and reopened_folder.members.map(func(i): return i.kind) == ["drums", "bass"] and
 		str(reopened_folder.inserts[0].plugin_name) == "AUDelay", "and its tracks' names and colours, and its folder with its tracks and inserts")
+	var reopened_keys_volume: Array = main.automation.points(reopened_keys, "volume")
+	check(reopened_keys_volume.size() == 2 and main.automation.points(reopened_keys, "sustain").size() == 3, "its automation is kept with the room",
+		str(reopened_keys_volume))
 	main.remove_folder(reopened_folder)
 	check(main.folders.is_empty() and main.folder_of(main.find_instrument("drums")) == null, "a folder taken away leaves its tracks going to the master")
 	main.mixer.open()

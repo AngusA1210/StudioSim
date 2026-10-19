@@ -41,6 +41,7 @@ var _panel: PanelContainer
 var _strip_row: HBoxContainer
 var _strips: Array = []  # {inst (an instrument or a folder), fader, meter, value, peak, input, mute, solo, source, output, inserts: [{button, style}], plate, frame}
 var _colors: PopupMenu   # the Colour submenu of a track's menu
+var _modes: PopupMenu    # and its Automation submenu
 var _insert_menu: PopupMenu  # what a right-click on a full insert offers
 var _menu_for := []  # [instrument, slot] that menu is open for
 var _insert_presets: PopupMenu  # its Presets submenu: the plug-in's presets, and copying and pasting its settings
@@ -216,6 +217,10 @@ func _build() -> void:
 		if _name_menu_for != null and app.has_track(_name_menu_for):
 			app.set_track_color(_name_menu_for, color))
 	_name_menu.add_child(_colors)
+	_modes = TrackMenu.modes_menu(app, func(mode: String) -> void:
+		if _name_menu_for != null and app.has_track(_name_menu_for):
+			app.automation.set_mode(_name_menu_for, mode))
+	_name_menu.add_child(_modes)
 	_plugin_menu = PopupMenu.new()
 	_plugin_menu.id_pressed.connect(_on_plugin_menu_chosen)
 	_root.add_child(_plugin_menu)
@@ -605,10 +610,15 @@ func _refresh() -> void:
 	_input_channels = channels
 	for strip in _strips:
 		var inst = strip.inst
-		if not strip.fader._dragging:
-			strip.fader.set_value_no_signal(inst.level_db)
-		strip.value.text = _db_text(inst.level_db)
-		strip.mute.set_pressed_no_signal(inst.muted)
+		var held: bool = strip.fader._dragging
+		if held != strip.get("held", false):  # its fader taken hold of, or let go: Touch and Latch write while it is held
+			strip.held = held
+			app.automation.touch(inst, held)
+		var level: float = inst.level_db if held else app.automation.shown_level(inst)  # (as its automation has it, while that is read)
+		if not held:
+			strip.fader.set_value_no_signal(level)
+		strip.value.text = _db_text(level)
+		strip.mute.set_pressed_no_signal(app.automation.shown_mute(inst))
 		strip.solo.set_pressed_no_signal(inst.soloed)
 		strip.plate.text = inst.display_name  # a plug-in instrument takes its plug-in's name
 		strip.frame.border_color = Color(1, 1, 1, 0.85) if app.chosen_tracks.has(inst) else Color(0, 0, 0, 0.6)  # chosen
@@ -899,7 +909,7 @@ func _on_name_input(event: InputEvent, inst, plate: Button) -> void:
 			_name_presets.for_instrument(inst)
 			_name_menu.add_submenu_node_item("Presets", _name_presets, 3)
 			_name_menu.add_separator()
-		TrackMenu.add_items(_name_menu, app, inst, _colors)
+		TrackMenu.add_items(_name_menu, app, inst, _colors, _modes)
 		if not inst.is_folder:
 			_name_menu.add_separator()
 			_name_menu.add_item("Remove the %s from the room…" % inst.display_name, 1)

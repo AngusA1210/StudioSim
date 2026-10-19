@@ -102,6 +102,8 @@ func restart(play := true) -> void:
 		inst.armed = false
 		audio.set_record_arm(inst.source_id, false)
 		sync(inst)
+	for folder in app.folders:
+		sync(folder)
 	app.follow_live_inputs()
 	if is_record():
 		audio.set_loop_range(loop_on, loop_start, loop_end)
@@ -297,7 +299,7 @@ func _process(_delta: float) -> void:
 func _add_takes(took: Dictionary) -> void:
 	var looped := _looping
 	_looping = false
-	if took.notes.is_empty() and took.audio.all(func(take): return float(take.seconds) <= 0.0):
+	if took.notes.is_empty() and took.get("sustain", []).is_empty() and took.audio.all(func(take): return float(take.seconds) <= 0.0):
 		app.session.notice.emit("Nothing was recorded")  # (stopped during the count-in, say)
 		return
 	remember("Loop record" if looped else "Record")
@@ -365,10 +367,51 @@ func _add_takes(took: Dictionary) -> void:
 				notes.append({"step": maxf(played - clip_start, 0.0), "length": float(n.length), "note": int(n.note), "velocity": float(n.velocity)})
 			_cover(inst, "midi", clip_start, end_step)
 			inst.clips.append({"kind": "midi", "name": base, "start": clip_start, "length": maxf(end_step - clip_start, 1.0), "notes": notes})
+	# The sustain pedal, as it was played: into each instrument's automation lane over what was recorded (a loop
+	# recording's, as in the pass shown), in place of what was there.
+	var pedal_of := {}
+	for p in took.get("sustain", []):
+		pedal_of.get_or_add(int(p.source), []).append(p)
+	var shown := passes.size() - 1
+	for k in range(passes.size() - 1, -1, -1):
+		if passes[k].y - passes[k].x >= loop_end - loop_start - 0.01:
+			shown = k
+			break
+	for source in pedal_of:
+		var inst = by_id.get(source)
+		if inst == null or not inst.playable:
+			continue
+		var events := []
+		for p in pedal_of[source]:
+			var at := float(p.step) - heard_late / sps
+			if looped:
+				if shown < 0 or at < passes[shown].x or at >= passes[shown].y:
+					continue
+				at = loop_start + at - passes[shown].x
+			events.append([maxf(at, 0.0), 1.0 if p.on else 0.0])
+		_take_pedal(inst, events, loop_start if looped else maxf(start_step, 0.0), loop_end if looped else end_step)
 	for inst in app.instruments:
 		sync(inst)
 	app.session.notice.emit("Recorded %d takes" % passes.size() if looped and passes.size() > 1 else "Recorded")
 	changed.emit()
+
+
+## The pedal as played from `from` to `to`, in an instrument's sustain lane in place of what was there: up where it
+## starts (down, if the first it did was come up), up again at the end, and then as the lane had it.
+func _take_pedal(inst, events: Array, from: float, to: float) -> void:
+	var old: Array = inst.automation.get("sustain", [])
+	var lane := old.filter(func(p): return float(p[0]) < from)
+	lane.append([from, 1.0 if not events.is_empty() and float(events[0][1]) == 0.0 else 0.0])
+	for e in events:
+		if float(e[1]) != float(lane.back()[1]):
+			lane.append(e)
+	if float(lane.back()[1]) > 0.5:
+		lane.append([to, 0.0])
+	var after: float = app.automation.value_at(old, "sustain", to)
+	if after != float(lane.back()[1]):
+		lane.append([to + 0.01, after])
+	lane.append_array(old.filter(func(p): return float(p[0]) > to + 0.01))
+	inst.automation.sustain = lane
 
 
 ## A loop recording's passes, each [start, end) in steps counted on from the loop's start (the first pass starting
@@ -465,6 +508,9 @@ func _trimmed(clip: Dictionary) -> Dictionary:
 
 ## Sends a track's clips to the audio core (in a Jam room, none: its timeline isn't played).
 func sync(inst) -> void:
+	if inst.is_folder:  # a folder: its automation only
+		audio.set_track(inst.source_id, [], [], automation_data(inst))
+		return
 	var notes := []
 	if is_record():
 		for clip in inst.clips:
@@ -473,7 +519,21 @@ func sync(inst) -> void:
 					if float(n.step) >= 0.0 and float(n.step) < float(clip.length):  # (the rest are trimmed off)
 						notes.append({"step": float(clip.start) + float(n.step), "length": minf(float(n.length), float(clip.length) - float(n.step)),
 							"note": int(n.note), "velocity": float(n.velocity)})
-	audio.set_track(inst.source_id, notes, engine_clips(inst) if is_record() else [])
+	audio.set_track(inst.source_id, notes, engine_clips(inst) if is_record() else [], automation_data(inst))
+
+
+## A track's automation as the audio core plays it (none in a Jam room): its volume in the audio core's own terms, the
+## fader's 0 dB being the level the instrument was made at.
+func automation_data(track) -> Dictionary:
+	if not is_record():
+		return {}
+	var trim: float = 0.0 if track.is_folder else linear_to_db(track.normal_gain())
+	var lanes: Dictionary = track.automation
+	var out := {"volume": lanes.get("volume", []).map(func(p): return [float(p[0]), float(p[1]) + trim if float(p[1]) > -79.0 else -80.0]),
+		"mute": lanes.get("mute", []).duplicate()}
+	if not track.is_folder and track.playable:
+		out.sustain = lanes.get("sustain", []).duplicate()
+	return out
 
 
 ## A track's audio clips as the audio core plays them. Where two meet and the first has a crossfade, each reaches into the
@@ -835,15 +895,20 @@ func redo_what() -> String:
 func _snapshot() -> Dictionary:
 	var shot := {}
 	for inst in app.instruments:
-		shot[inst] = inst.clips.duplicate(true)
+		shot[inst] = {"clips": inst.clips.duplicate(true), "automation": inst.automation.duplicate(true)}
+	for folder in app.folders:
+		shot[folder] = {"automation": folder.automation.duplicate(true)}
 	return shot
 
 
 func _restore(shot: Dictionary) -> void:
-	for inst in shot:
-		if is_instance_valid(inst) and app.instruments.has(inst):
-			inst.clips = shot[inst].duplicate(true)
-			sync(inst)
+	for track in shot:
+		if (track is Object and not is_instance_valid(track)) or not app.has_track(track):
+			continue
+		if shot[track].has("clips"):
+			track.clips = shot[track].clips.duplicate(true)
+		track.automation = shot[track].automation.duplicate(true)
+		sync(track)
 	changed.emit()
 
 

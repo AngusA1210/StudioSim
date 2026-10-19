@@ -498,7 +498,7 @@ void SoundRoomAudio::play_from(double step) { if (engine_) engine_->playFrom(ste
 void SoundRoomAudio::set_loop_range(bool on, double start_step, double end_step) { if (engine_) engine_->setLoopRange(on, start_step, end_step); }
 double SoundRoomAudio::get_timeline_position() const { return engine_ ? engine_->timelinePosition() : 0.0; }
 
-bool SoundRoomAudio::set_track(int id, const Array& notes, const Array& clips) {
+bool SoundRoomAudio::set_track(int id, const Array& notes, const Array& clips, const Dictionary& automation) {
     if (!engine_) return false;
     std::vector<sr::TimelineNote> n;
     for (int64_t i = 0; i < notes.size(); ++i) {
@@ -511,8 +511,17 @@ bool SoundRoomAudio::set_track(int id, const Array& notes, const Array& clips) {
         c.push_back({str(String(d.get("path", ""))), double(d.get("start", 0.0)), double(d.get("offset", 0.0)), double(d.get("length", 0.0)),
                      double(d.get("fade_in", 0.0)), double(d.get("fade_out", 0.0)), float(d.get("gain", 1.0))});
     }
+    sr::TrackAutomation lanes;  // {volume, mute, sustain}: each [[step, value], ...]
+    const std::pair<const char*, std::vector<sr::AutoPoint>*> named[3] = {{"volume", &lanes.volume}, {"mute", &lanes.mute}, {"sustain", &lanes.sustain}};
+    for (const auto& [name, lane] : named) {
+        const Array points = automation.get(name, Array());
+        for (int64_t i = 0; i < points.size(); ++i) {
+            const Array p = points[i];
+            if (p.size() >= 2) lane->push_back({double(p[0]), float(p[1])});
+        }
+    }
     std::string err;
-    if (engine_->setTrack(id, n, c, &err)) return true;
+    if (engine_->setTrack(id, n, c, &err, lanes)) return true;
     error_ = str(err);
     return false;
 }
@@ -574,7 +583,20 @@ Dictionary SoundRoomAudio::take_recording() {
         notes.push_back(e);
     }
     d["notes"] = notes;
+    Array pedal;
+    for (const auto& p : r.sustain) {
+        Dictionary e;
+        e["source"] = p.source;
+        e["step"] = p.step;
+        e["on"] = p.on;
+        pedal.push_back(e);
+    }
+    d["sustain"] = pedal;
     return d;
+}
+
+void SoundRoomAudio::set_automation_read(int id, bool volume, bool mute, bool sustain) {
+    if (engine_) engine_->setAutomationRead(id, volume, mute, sustain);
 }
 void SoundRoomAudio::set_tempo(float bpm) { if (engine_) engine_->setTempo(bpm); }
 void SoundRoomAudio::set_swing(float amount) { if (engine_) engine_->setSwing(amount); }
@@ -736,7 +758,8 @@ void SoundRoomAudio::_bind_methods() {
     ClassDB::bind_method(D_METHOD("play_from", "step"), &SoundRoomAudio::play_from);
     ClassDB::bind_method(D_METHOD("set_loop_range", "on", "start_step", "end_step"), &SoundRoomAudio::set_loop_range);
     ClassDB::bind_method(D_METHOD("get_timeline_position"), &SoundRoomAudio::get_timeline_position);
-    ClassDB::bind_method(D_METHOD("set_track", "id", "notes", "clips"), &SoundRoomAudio::set_track);
+    ClassDB::bind_method(D_METHOD("set_track", "id", "notes", "clips", "automation"), &SoundRoomAudio::set_track, DEFVAL(Dictionary()));
+    ClassDB::bind_method(D_METHOD("set_automation_read", "id", "volume", "mute", "sustain"), &SoundRoomAudio::set_automation_read);
     ClassDB::bind_method(D_METHOD("get_audio_peaks", "path", "per_second"), &SoundRoomAudio::get_audio_peaks);
     ClassDB::bind_method(D_METHOD("get_audio_seconds", "path"), &SoundRoomAudio::get_audio_seconds);
     ClassDB::bind_method(D_METHOD("set_record_arm", "id", "armed"), &SoundRoomAudio::set_record_arm);

@@ -691,6 +691,12 @@ void Keys::stopSequenced() {
 }
 
 void Keys::render(float* out, int n) {
+    if (pedal_)  // a note played from the timeline coming to its end while the pedal is down rings on, as a key let go would
+        for (auto& v : voices_)
+            if (v.active && !v.live && !v.released && v.release_at >= 0 && v.t + n >= v.release_at) {
+                v.release_at = -1;
+                v.pedal_held = true;
+            }
     for (auto& v : voices_)
         if (v.active) for (int i = 0; i < n && v.active; ++i) out[i] += v.next();
 }

@@ -21,10 +21,23 @@ static func colors_menu(app, on_color: Callable) -> PopupMenu:
 	return menu
 
 
-## Adds the track's items to `menu` (with `colors` as its Colour submenu, a child of it).
-static func add_items(menu: PopupMenu, app, track, colors: PopupMenu) -> void:
+## The automation modes, as a submenu: choosing one calls `on_mode` with it. Ticked as the track has it when shown.
+static func modes_menu(app, on_mode: Callable) -> PopupMenu:
+	var menu := PopupMenu.new()
+	for i in app.automation.MODES.size():
+		menu.add_radio_check_item(app.automation.MODE_NAMES[app.automation.MODES[i]], i)
+	menu.id_pressed.connect(func(id: int) -> void: on_mode.call(app.automation.MODES[id]))
+	return menu
+
+
+## Adds the track's items to `menu` (with `colors` as its Colour submenu, and `modes` its Automation one, children of it).
+static func add_items(menu: PopupMenu, app, track, colors: PopupMenu, modes: PopupMenu = null) -> void:
 	menu.add_item("Rename…", RENAME)
 	menu.add_submenu_node_item("Colour", colors)
+	if modes != null:
+		for i in modes.item_count:
+			modes.set_item_checked(i, app.automation.MODES[i] == track.auto_mode)
+		menu.add_submenu_node_item("Automation: %s" % app.automation.MODE_NAMES[track.auto_mode], modes)
 	menu.add_separator()
 	if track.is_folder:
 		menu.add_item("Remove the folder (its tracks go straight to the master)", REMOVE_FOLDER)

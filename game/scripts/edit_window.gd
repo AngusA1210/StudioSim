@@ -10,6 +10,7 @@ extends CanvasLayer
 ## Click a track's name to choose it (Shift and Cmd-click for more; Cmd-G puts those chosen in a new routing folder),
 ## double-click it to rename it, right-click it for its menu (its name, colour and folder). Recording's options (a
 ## count-in, a pre-roll, a post-roll, punching in and out over the ruler's range, Loop Record) are in the Options menu.
+## A (or the Auto button) shows the automation lanes under the tracks, as in Logic (see timeline_view.gd).
 ## Double-click a MIDI clip for its notes, in the MIDI editor (midi_editor.gd) in the tracks' place; Esc goes back. Tab
 ## (or Cmd-=) goes over to the mix window. It docks along the bottom of the screen, the room in view above it, and you
 ## can walk about while it is open.
@@ -33,6 +34,7 @@ var _play: Button
 var _record: Button
 var _loop: Button
 var _follow: Button
+var _automation: Button
 var _options: MenuButton  # recording's options: count-in, pre-roll, post-roll, punching in and out, Loop Record
 var _undo: Button
 var _redo: Button
@@ -101,9 +103,13 @@ func _input(event: InputEvent) -> void:
 		for it in items:
 			timeline.set_clip_gain([it], float(it.clip.get("gain_db", 0.0)) + (1.0 if key == KEY_UP else -1.0), false)
 		timeline._sync_items(items)
+	elif key in [KEY_BACKSPACE, KEY_DELETE] and not editing_notes() and view.delete_chosen_points():
+		pass  # (the automation points chosen, before any clips)
 	elif key in [KEY_BACKSPACE, KEY_DELETE] and not items.is_empty():
 		timeline.remove_clips(items)
 		view.chosen = []
+	elif key == KEY_A and not command and not editing_notes():  # the automation lanes, as A shows them in Logic
+		show_automation(not view.show_automation)
 	elif key == KEY_A and command and not editing_notes():
 		view.choose_all()
 	elif command and app.bindings.command_for(key) == "duplicate_clip" and not items.is_empty():
@@ -126,6 +132,13 @@ func _input(event: InputEvent) -> void:
 	else:
 		return
 	get_viewport().set_input_as_handled()
+
+
+## The automation lanes, under the tracks, or not.
+func show_automation(on: bool) -> void:
+	view.show_automation = on
+	view.chosen_points = []
+	view.scroll_y = clampf(view.scroll_y, 0.0, view._most_scroll())
 
 
 ## A MIDI clip's notes, in the MIDI editor (double-click the clip); Esc goes back to the tracks.
@@ -291,7 +304,7 @@ func _process(_delta: float) -> void:
 	if not _counter.has_focus():
 		_counter.text = "%d | %d" % [int(at / 16.0) + 1, int(fmod(at, 16.0) / 4.0) + 1]
 	_clock.text = clock_text(at)
-	_close.text = "Close  (%s)" % app.bindings.label("edit_window")
+	_close.text = "Close"
 	_play.text = "■  Stop" if timeline.playing else "▶  Play"
 	_record.add_theme_color_override("font_color", RECORD_RED if timeline.recording else Color(0.9, 0.6, 0.58))
 	var counting: int = timeline.counting_in()
@@ -304,6 +317,7 @@ func _process(_delta: float) -> void:
 	_redo.disabled = timeline.redo_what() == "" or timeline.recording
 	_loop.set_pressed_no_signal(timeline.loop_on)
 	_follow.set_pressed_no_signal(app.settings.insertion_follows)
+	_automation.set_pressed_no_signal(view.show_automation)
 	if Time.get_ticks_msec() >= _status_until:
 		var armed: Array = app.instruments.filter(func(i): return i.armed)
 		_status.text = "Armed: " + ", ".join(armed.map(func(i): return i.display_name)) if not armed.is_empty() else ""
@@ -371,6 +385,9 @@ func _build() -> void:
 	_clock.custom_minimum_size.x = 70
 	Hints.give(_clock, "Where the music is, in minutes and seconds")
 	header.add_child(_clock)
+	_automation = _button(header, "Auto", func() -> void: show_automation(not view.show_automation),
+		"Automation (A): a lane under each track for its volume, mute or sustain pedal, its points to draw and drag, and its mode")
+	_automation.toggle_mode = true
 	var grid_label := Label.new()
 	grid_label.text = "Grid"
 	grid_label.add_theme_color_override("font_color", DIM)
@@ -380,7 +397,7 @@ func _build() -> void:
 		_grid.add_item(entry[0])
 	_grid.select(2)
 	_grid.item_selected.connect(func(i: int) -> void: timeline.grid = timeline.GRIDS[i][1])
-	Hints.give(_grid, "What clips and the playhead snap to")
+	Hints.give(_grid, "The grid: what clips, the playhead and automation points snap to")
 	header.add_child(_grid)
 	_button(header, "−", func() -> void: view.set_zoom(view.zoom / 1.5), "Zoom out (Cmd and the scroll wheel, or a pinch)")
 	_button(header, "+", func() -> void: view.set_zoom(view.zoom * 1.5), "Zoom in")
@@ -394,10 +411,10 @@ func _build() -> void:
 	_status.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_status.clip_text = true
 	header.add_child(_status)
-	_button(header, "Mix  (Tab)", func() -> void:
+	_button(header, "Mix", func() -> void:
 		close()
-		app.mixer.open(), "")
-	_close = _button(header, "Close", close, "")
+		app.mixer.open(), "The mix window (Tab, or Cmd-=)")
+	_close = _button(header, "Close", close, func() -> String: return "Close the edit window (%s)" % app.bindings.label("edit_window"))
 
 	_notes_bar = HBoxContainer.new()
 	_notes_bar.add_theme_constant_override("separation", 10)

@@ -181,7 +181,8 @@ public:
     double get_timeline_position() const;
     // A track's clips: notes [{step, length (steps), note, velocity}] and audio [{path, start, offset, length} (seconds)].
     // False with the reason in get_error() if a file couldn't be read (the rest are used).
-    bool set_track(int id, const Array& notes, const Array& clips);
+    bool set_track(int id, const Array& notes, const Array& clips, const Dictionary& automation = Dictionary());  // (automation: {volume, mute, sustain}: [[step, value]])
+    void set_automation_read(int id, bool volume, bool mute, bool sustain);
     PackedFloat32Array get_audio_peaks(const String& path, double per_second);  // the loudest sample in each slice
     double get_audio_seconds(const String& path);  // 0 if it can't be read
     // Recording: arming a track; starting (`files` [[source id, WAV path]] for the armed Speakers and amps; the

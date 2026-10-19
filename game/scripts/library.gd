@@ -306,7 +306,8 @@ func room_data() -> Dictionary:
 	for inst in app.instruments:
 		var entry := {"kind": inst.kind, "position": [inst.global_position.x, inst.global_position.z], "yaw": inst.rotation.y,
 			"level_db": inst.level_db, "muted": inst.muted, "soloed": inst.soloed, "input_channel": inst.input_channel,
-			"settings": instrument_settings(inst), "clips": inst.clips.duplicate(true), "color": _color_data(inst.color)}
+			"settings": instrument_settings(inst), "clips": inst.clips.duplicate(true), "color": _color_data(inst.color),
+			"automation": inst.automation.duplicate(true), "auto_mode": inst.auto_mode}
 		if inst.named:
 			entry.name = inst.display_name
 		if inst.playable:
@@ -323,7 +324,7 @@ func room_data() -> Dictionary:
 	for folder in app.folders:
 		folders.append({"name": folder.display_name, "color": _color_data(folder.color), "level_db": folder.level_db, "muted": folder.muted,
 			"soloed": folder.soloed, "open": folder.open, "members": folder.members.map(func(inst): return app.instruments.find(inst)),
-			"inserts": inserts_data(folder)})
+			"inserts": inserts_data(folder), "automation": folder.automation.duplicate(true), "auto_mode": folder.auto_mode})
 	return {"soundroom": "room", "version": VERSION, "mode": app.timeline.mode, "timeline": app.timeline.to_data(),
 		"tempo": app.tempo, "swing": app.swing, "master_db": app.master_volume_db, "reverb_db": app.reverb_db,
 		"room": {"size": [size.x, size.y, size.z], "walls": walls},
@@ -448,6 +449,9 @@ func apply_room_data(data: Dictionary, carry := {}, size = null, mode := "") -> 
 		if problem != "":
 			problems.append(problem)
 		inst.clips = entry.get("clips", []).duplicate(true) if keep.call("patterns") else []
+		if keep.call("mix"):  # its automation, as the mix's
+			inst.automation = entry.get("automation", {}).duplicate(true)
+			inst.auto_mode = str(entry.get("auto_mode", "read"))
 	for entry in data.get("folders", []) if keep.call("instruments") else []:  # the routing folders, their tracks in them
 		var members := []
 		for index in entry.get("members", []):
@@ -459,6 +463,9 @@ func apply_room_data(data: Dictionary, carry := {}, size = null, mode := "") -> 
 			continue
 		folder.color = _color_from(entry.get("color"), folder.color)
 		folder.open = bool(entry.get("open", true))
+		if keep.call("mix"):
+			folder.automation = entry.get("automation", {}).duplicate(true)
+			folder.auto_mode = str(entry.get("auto_mode", "read"))
 		if keep.call("mix"):
 			app.set_folder_level(folder, float(entry.get("level_db", 0.0)))
 			folder.muted = bool(entry.get("muted", false))
