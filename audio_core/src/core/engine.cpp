@@ -172,6 +172,7 @@ struct AudioEngine::Source {
         std::vector<TimelineNote> notes;  // in order of their steps
         struct Clip {
             double start = 0.0, offset = 0.0, length = 0.0, fade_in = 0.0, fade_out = 0.0;
+            float gain = 1.0f;
             std::shared_ptr<const AudioData> audio;
         };
         std::vector<Clip> clips;
@@ -614,7 +615,7 @@ bool AudioEngine::setTrack(int id, const std::vector<TimelineNote>& notes, const
             continue;
         }
         const double fade_in = std::clamp(spec.fade_in, 0.0, spec.length), fade_out = std::clamp(spec.fade_out, 0.0, spec.length - fade_in);
-        track->clips.push_back({spec.start, spec.offset, spec.length, fade_in, fade_out, audio});
+        track->clips.push_back({spec.start, spec.offset, spec.length, fade_in, fade_out, std::max(spec.gain, 0.0f), audio});
     }
     Command c; c.type = Command::TrackSet; c.id = id; c.data = track.get(); c.epoch = s->board_sent + 1;
     if (!commands_.push(c)) {
@@ -647,7 +648,7 @@ void AudioEngine::setRecordArm(int id, bool armed) {
 }
 
 bool AudioEngine::startRecording(const std::vector<std::pair<int, std::string>>& files, double from_step, std::string* error,
-                                 double count_in_steps) {
+                                 double count_in_steps, bool loop) {
     if (recording_wanted_ || recorder_) {
         if (error) *error = "it is recording already";
         return false;
@@ -658,6 +659,7 @@ bool AudioEngine::startRecording(const std::vector<std::pair<int, std::string>>&
     while (captured_.pop(stale)) {}
     Command c; c.type = Command::RecordStart; c.data = recorder.get(); c.v[0] = float(std::max(from_step, 0.0));
     c.v[1] = float(std::max(count_in_steps, 0.0));
+    c.v[2] = loop ? 1.0f : 0.0f;
     if (!commands_.push(c)) {
         if (error) *error = "the audio engine is busy: try again";
         return false;
@@ -1471,12 +1473,12 @@ void AudioEngine::drainCommands() {
             case Command::NoteOn:
                 if (s) s->instrument->noteOn(int(c.v[0]), c.v[1]);
                 if (s && recording_ && s->armed && !isLiveInput(s->kind) && clock_ >= count_in_end_)
-                    captured_.push({s->id, int(c.v[0]), c.v[1], true, sequencer_.position(clock_)});
+                    captured_.push({s->id, int(c.v[0]), c.v[1], true, recordedSteps()});
                 break;
             case Command::NoteOff:
                 if (s) s->instrument->noteOff(int(c.v[0]));
                 if (s && recording_ && s->armed && !isLiveInput(s->kind) && clock_ >= count_in_end_)
-                    captured_.push({s->id, int(c.v[0]), 0.0f, false, sequencer_.position(clock_)});
+                    captured_.push({s->id, int(c.v[0]), 0.0f, false, recordedSteps()});
                 break;
             case Command::TimelinePlay:
                 for (Source* each : sources_)
@@ -1498,8 +1500,10 @@ void AudioEngine::drainCommands() {
                     if (!s->armed && !s->input_on) s->instrument->allNotesOff();  // (an armed instrument takes notes too)
                 }
                 break;
-            case Command::RecordStart:
+            case Command::RecordStart: {
                 count_in_end_ = 0;
+                punch_clock_ = clock_;
+                double from = sequencer_.position(clock_);
                 if (!sequencer_.running()) {
                     for (Source* each : sources_)
                         if (each) each->instrument->stopSequenced();
@@ -1511,16 +1515,21 @@ void AudioEngine::drainCommands() {
                         count_in_end_ = int64_t(std::llround(sequencer_.timeOfStep(double(c.v[0]))));
                         count_in_beats_ = beats;
                         count_in_beat_samples_ = beat_samples;
+                        punch_clock_ = count_in_end_;
                     }
+                    // Where the timeline is at the first sample recorded (a little before the step it starts on, as it
+                    // starts a moment after it is asked to: before bar 1, even).
+                    from = double(c.v[0]) - (sequencer_.timeOfStep(double(c.v[0])) - double(punch_clock_)) / sequencer_.stepSamples();
                 }
-                sequencer_.suspendLoop(true);
+                sequencer_.suspendLoop(c.v[2] < 0.5f);  // round the loop only when loop recording
                 recorder_rt_ = static_cast<Recorder*>(c.data);
                 recording_ = true;
-                record_start_.store(count_in_end_ > 0 ? double(c.v[0]) : sequencer_.position(clock_));
+                record_start_.store(from);
                 record_step_seconds_.store(sequencer_.stepSamples() / sr_);
                 break;
+            }
             case Command::RecordStop:
-                if (recording_) record_end_.store(std::max(sequencer_.position(clock_), record_start_.load()));
+                if (recording_) record_end_.store(std::max(recordedSteps(), record_start_.load()));
                 recording_ = false;
                 count_in_end_ = 0;
                 recorder_rt_ = nullptr;
@@ -1671,11 +1680,11 @@ void AudioEngine::drainMidi() {
             switch (e.type) {
                 case MidiEvent::NoteOn:
                     s->instrument->noteOn(e.note, e.velocity);
-                    if (take) captured_.push({s->id, e.note, e.velocity, true, sequencer_.position(clock_)});
+                    if (take) captured_.push({s->id, e.note, e.velocity, true, recordedSteps()});
                     break;
                 case MidiEvent::NoteOff:
                     s->instrument->noteOff(e.note);
-                    if (take) captured_.push({s->id, e.note, 0.0f, false, sequencer_.position(clock_)});
+                    if (take) captured_.push({s->id, e.note, 0.0f, false, recordedSteps()});
                     break;
                 case MidiEvent::Sustain: s->instrument->sustain(e.note != 0); break;
                 case MidiEvent::Control: s->instrument->controlChange(e.note, e.value); break;
@@ -1826,7 +1835,7 @@ void AudioEngine::renderTimeline() {
                 const size_t k = size_t(at);
                 if (k + 1 >= x.size()) continue;
                 const float frac = float(at - double(k));
-                float gain = 1.0f;  // equal power: a quarter of a sine up, or down
+                float gain = clip.gain;  // and the fades, equal power: a quarter of a sine up, or down
                 if (t < clip.fade_in) gain = float(std::sin(0.5 * kPi * t / clip.fade_in));
                 if (clip.length - t < clip.fade_out) gain *= float(std::sin(0.5 * kPi * (clip.length - t) / clip.fade_out));
                 out[i] += (x[k] + (x[k + 1] - x[k]) * frac) * gain;

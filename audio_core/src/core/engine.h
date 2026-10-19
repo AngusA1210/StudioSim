@@ -114,14 +114,17 @@ struct TimelineNote {
 };
 // An audio clip: part of a WAV file (from `offset` seconds into it, `length` long), placed `start` seconds from the
 // start of bar 1. Many clips can share one file, as Pro Tools' clips refer to their parent file. It fades in over its
-// first `fade_in` seconds and out over its last `fade_out` (equal-power curves).
+// first `fade_in` seconds and out over its last `fade_out` (equal-power curves), and is played at `gain` (Pro Tools'
+// clip gain).
 struct ClipSpec {
     std::string path;
     double start = 0.0, offset = 0.0, length = 0.0;
     double fade_in = 0.0, fade_out = 0.0;
+    float gain = 1.0f;
 };
 // What a recording took: each audio track's file (begun `start_step` into the timeline), and the notes played on
-// each MIDI track, as steps on the timeline.
+// each MIDI track, as steps on the timeline. Positions count on from the start without going back round a loop (a loop
+// recording's later passes come after its first), so `end_step` is `start_step` and the time it lasted.
 struct RecordingResult {
     double start_step = 0.0, end_step = 0.0, step_seconds = 0.0;  // where it began and ended, and how long a step lasted
     struct Audio {
@@ -337,9 +340,10 @@ public:
     // From the next block: the armed tracks record (audio to `files`, one per armed audio track: [source, path]),
     // the timeline playing on from where it is, or from `from_step` if it is stopped. Loop playback waits meanwhile.
     // With `count_in_steps` (and the timeline stopped), the click counts that long first, the timeline waiting, and
-    // the recording starts when it ends.
+    // the recording starts when it ends. With `loop`, loop playback goes on round while it records (Pro Tools' Loop
+    // Record): the takes follow one another in the files, for the game to cut into a take for each pass.
     bool startRecording(const std::vector<std::pair<int, std::string>>& files, double from_step, std::string* error,
-                        double count_in_steps = 0.0);
+                        double count_in_steps = 0.0, bool loop = false);
     // How many beats of a count-in are still to come (0: none, or it has ended).
     int countInLeft() const { return count_in_left_.load(std::memory_order_relaxed); }
     void stopRecording();  // from the next block; takeRecording then has it
@@ -506,6 +510,9 @@ private:
     std::atomic<uint32_t> record_ack_{0};
     std::atomic<double> record_start_{0.0}, record_end_{0.0}, record_step_seconds_{0.0};
     int64_t count_in_end_ = 0;          // the sample a count-in ends on, and the recording starts (0: no count-in)
+    int64_t punch_clock_ = 0;           // the sample the recording starts on (its files' first)
+    // Steps since the recording started, counted on past a loop's end, from `start_step` (see RecordingResult).
+    double recordedSteps() const { return record_start_.load() + double(clock_ - punch_clock_) / sequencer_.stepSamples(); }
     int count_in_beats_ = 0;
     double count_in_beat_samples_ = 0.0;
     std::atomic<int> count_in_left_{0};

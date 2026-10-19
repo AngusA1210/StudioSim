@@ -48,6 +48,19 @@ func tap(code: int) -> void:
 	await frames(2)
 
 
+## A key pressed and let go with Ctrl and Shift held.
+func control_shift_tap(code: int) -> void:
+	for pressed in [true, false]:
+		var e := InputEventKey.new()
+		e.physical_keycode = code
+		e.keycode = code
+		e.ctrl_pressed = true
+		e.shift_pressed = true
+		e.pressed = pressed
+		view.push_input(e)
+		await frames(2)
+
+
 ## A key pressed and let go with Cmd held (and Shift, with `shift`).
 func command_tap(code: int, shift := false) -> void:
 	for pressed in [true, false]:
@@ -1753,17 +1766,17 @@ func _run() -> void:
 	var end_x: float = view.x_of(take_steps.y - 4.0)
 	view.drag_to(Vector2(view.x_of(take_steps.y) - 2.0, lane_y), Vector2(end_x, lane_y))
 	check(speaker_inst.clips.size() == 1 and absf(timeline.clip_steps(speaker_inst.clips[0]).y - timeline.snap(view.step_at(end_x))) < 0.01 and
-		is_equal_approx(float(speaker_inst.clips[0].start), float(take.start)) and float(speaker_inst.clips[0].offset) == 0.0,
+		is_equal_approx(float(speaker_inst.clips[0].start), float(take.start)) and is_equal_approx(float(speaker_inst.clips[0].offset), float(take.offset)),
 		"dragging a clip's end trims it, to the grid", "ends at step %.2f" % timeline.clip_steps(speaker_inst.clips[0]).y)
 	view.drag_to(Vector2(view.x_of(timeline.clip_steps(speaker_inst.clips[0]).y) - 2.0, lane_y), Vector2(view.x_of(take_steps.y + 40.0), lane_y))
-	check(absf(float(speaker_inst.clips[0].length) - file_length) < 0.001, "drawn out again, an audio clip reaches the end of its file and no further",
-		"%.3f s of %.3f" % [float(speaker_inst.clips[0].length), file_length])
+	check(absf(float(speaker_inst.clips[0].offset) + float(speaker_inst.clips[0].length) - file_length) < 0.001,
+		"drawn out again, an audio clip reaches the end of its file and no further", "%.3f s of %.3f" % [float(speaker_inst.clips[0].length), file_length])
 	var start_x: float = view.x_of(take_steps.x + 4.0)
 	view.drag_to(Vector2(view.x_of(take_steps.x) + 2.0, lane_y), Vector2(start_x, lane_y))
 	var new_start: float = timeline.snap(view.step_at(start_x)) * timeline.step_seconds()
 	var trimmed: Dictionary = speaker_inst.clips[0]
-	check(absf(float(trimmed.start) - new_start) < 0.001 and absf(float(trimmed.offset) - (new_start - float(take.start))) < 0.001 and
-		absf(float(trimmed.start) + float(trimmed.length) - (float(take.start) + file_length)) < 0.001,
+	check(absf(float(trimmed.start) - new_start) < 0.001 and absf(float(trimmed.offset) - (float(take.offset) + new_start - float(take.start))) < 0.001 and
+		absf(float(trimmed.start) + float(trimmed.length) - (float(take.start) + file_length - float(take.offset))) < 0.001,
 		"its start trims the same way: the clip shows its file from later on, its end staying put", "starts %.3f s, %.3f s into its file" % [float(trimmed.start), float(trimmed.offset)])
 	var span_now: Vector2 = timeline.clip_steps(trimmed)
 	view.drag_to(Vector2(view.x_of(span_now.x) + 1.0, strip_y), Vector2(view.x_of(span_now.x + 1.0), strip_y))
@@ -1826,6 +1839,55 @@ func _run() -> void:
 	timeline.undo()
 	timeline.undo()
 	check(speaker_inst.clips == before_edits, "(the crossfade and the split undone)")
+
+	var gain_at: Vector2 = view._gain_rect(view.x_of(take_steps.x), view.row_top(speaker_row)).get_center()
+	check(view.zone_at(gain_at).get("zone", "") == "gain" and view.cursor_at(gain_at) == Control.CURSOR_VSIZE and
+		view.hint_at(gain_at).begins_with("Clip gain"), "an audio clip has a clip gain fader at its foot, as Pro Tools has", view.hint_at(gain_at))
+	view.drag_to(gain_at, gain_at - Vector2(0, 24))  # a quarter of a dB a pixel
+	var lifted := float(speaker_inst.clips[0].get("gain_db", 0.0))
+	var sent_gain := float(timeline.engine_clips(speaker_inst)[0].gain)
+	view.press(gain_at, true)  # Option-click
+	view.release(gain_at)
+	var reset_gain := float(speaker_inst.clips[0].get("gain_db", 0.0))
+	view.selected = {"inst": speaker_inst, "index": 0}
+	await control_shift_tap(KEY_UP)
+	check(is_equal_approx(lifted, 6.0) and absf(sent_gain - db_to_linear(6.0)) < 0.001 and reset_gain == 0.0 and
+		is_equal_approx(float(speaker_inst.clips[0].gain_db), 1.0), "dragged up it turns the clip up, Option-click puts it back to 0 dB, and Ctrl-Shift-↑ nudges it a dB",
+		"%.1f dB, then %.1f, then %.1f" % [lifted, reset_gain, float(speaker_inst.clips[0].gain_db)])
+	for undo in 3:
+		timeline.undo()
+	check(speaker_inst.clips == before_edits, "(undone)")
+
+	timeline.separate(speaker_inst, 0, (take_steps.x + take_steps.y) / 2.0)
+	var halves: Array = speaker_inst.clips.duplicate()
+	var middle_y: float = view.row_top(speaker_row) + 26
+	var a_mid := Vector2(view.x_of((timeline.clip_steps(halves[0]).x + timeline.clip_steps(halves[0]).y) / 2.0), middle_y)
+	var b_mid := Vector2(view.x_of((timeline.clip_steps(halves[1]).x + timeline.clip_steps(halves[1]).y) / 2.0), middle_y)
+	view.press(a_mid)
+	view.release(a_mid)
+	view.press(b_mid, false, true)  # Shift-click
+	view.release(b_mid)
+	var a_was := float(halves[0].start)
+	var b_was := float(halves[1].start)
+	var two_chosen: bool = view.chosen_items().size() == 2
+	view.drag_to(a_mid, a_mid + Vector2(4.0 * view.zoom, 0))
+	var together: Array = view.chosen_items()
+	check(two_chosen and together.size() == 2 and absf(float(together[0].clip.start) - (a_was + 4.0 * timeline.step_seconds())) < 1e-6 and
+		absf(float(together[1].clip.start) - (b_was + 4.0 * timeline.step_seconds())) < 1e-6,
+		"Shift-click chooses a second clip, and dragging one moves both together")
+	await tap(KEY_DELETE)
+	check(speaker_inst.clips.is_empty() and view.chosen_items().is_empty(), "Delete takes away every clip chosen")
+	for undo in 3:
+		timeline.undo()
+	await command_tap(KEY_A)
+	var every_clip := 0
+	for each in main.instruments:
+		every_clip += each.clips.size()
+	await tap(KEY_U)
+	var everything: Vector2 = timeline.span_of(view.chosen_items())
+	check(speaker_inst.clips == before_edits and view.chosen_items().size() == every_clip and is_equal_approx(timeline.loop_start, everything.x) and
+		is_equal_approx(timeline.loop_end, everything.y), "Cmd-A chooses every clip, and U loops round them all", "%d clips" % every_clip)
+	view.chosen = []
 	var midi: Dictionary = keys_inst.clips[0]
 	var midi_end: float = float(midi.start) + float(midi.length)
 	var note_step: float = float(midi.notes[0].step)
@@ -1886,6 +1948,92 @@ func _run() -> void:
 	main.edit_window.close()
 	main.settings.count_in_bars = 0
 	timeline.locate(0.0)
+
+	print("Loop recording")
+	var loop_before := Vector2(timeline.loop_start, timeline.loop_end)
+	timeline.set_loop(true, 16.0, 24.0)  # half a bar
+	main.settings.loop_record = true
+	var pass_seconds: float = 8.0 * timeline.step_seconds()
+	check(timeline.start_recording() == "" and is_equal_approx(timeline.playhead, 16.0), "Loop Record starts from the loop's start")
+	await seconds(pass_seconds * 1.2)
+	main.audio.note_on(keys_inst.source_id, 67, 0.8)  # in the second pass
+	await seconds(0.15)
+	main.audio.note_off(keys_inst.source_id, 67)
+	await frames(2)
+	var loop_rec_text: String = main.hud._beat.text
+	var wrapped_back: bool = timeline.position() < 24.0
+	await seconds(pass_seconds * 2.3 - pass_seconds * 1.2 - 0.15)
+	timeline.stop()
+	for wait in 20:
+		await frames(3)
+		if not timeline._taking:
+			break
+	var stacked: Dictionary = main.speaker.clips.back() if not main.speaker.clips.is_empty() else {}
+	var keys_stack: Dictionary = keys_inst.clips.back()
+	check(loop_rec_text.contains("LOOP REC") and wrapped_back and stacked.get("takes", []).size() == 1 and int(stacked.get("take", 0)) == 2 and
+		is_equal_approx(float(stacked.start), 16.0 * timeline.step_seconds()) and absf(float(stacked.length) - pass_seconds) < 0.01,
+		"it goes round the loop as it records, and each whole pass is a take, stacked: the last one shown", loop_rec_text)
+	check(int(keys_stack.get("take", 0)) == 2 and keys_stack.get("takes", []).size() == 1 and keys_stack.notes.size() == 1 and
+		keys_stack.takes[0].notes.is_empty(), "the keys' takes too, the note played in the second pass in the second take")
+	var stacked_at: int = main.speaker.clips.size() - 1
+	view.show_takes(main.speaker, stacked_at, Vector2(300, 100))
+	var take_items: int = view._takes_menu.item_count
+	var second_checked: bool = view._takes_menu.is_item_checked(1)
+	view._takes_menu.hide()
+	timeline.choose_take(main.speaker, stacked_at, 0)
+	check(take_items == 2 and second_checked and int(main.speaker.clips.back().take) == 1 and int(main.speaker.clips.back().takes[0].take) == 2,
+		"right-click a clip for its takes, and choosing another shows it in the clip's place")
+	timeline.undo()
+	timeline.undo()
+	main.settings.loop_record = false
+	timeline.set_loop(true, loop_before.x, loop_before.y)
+	check(main.speaker.clips.size() == 1 and keys_inst.clips.size() == 2, "(the loop recording undone)")
+
+	print("The MIDI editor")
+	timeline.grid = 1
+	main.edit_window.open()
+	await frames(2)
+	var clip_for_notes: Dictionary = keys_inst.clips[0]
+	var editor_notes_before: int = clip_for_notes.notes.size()
+	var double_click := InputEventMouseButton.new()
+	double_click.button_index = MOUSE_BUTTON_LEFT
+	double_click.pressed = true
+	double_click.double_click = true
+	double_click.position = Vector2(view.x_of((timeline.clip_steps(clip_for_notes).x + timeline.clip_steps(clip_for_notes).y) / 2.0),
+		view.row_top(view.tracks().find(keys_inst)) + 30)
+	view._on_button(double_click)
+	await frames(4)
+	var ed = edit.notes
+	check(edit.editing_notes() and ed.inst == keys_inst and edit._notes_bar.visible and not view.visible and ed.zoom > 6.0,
+		"double-click a MIDI clip and its notes open in the MIDI editor, the clip across it")
+	var note_place := Vector2(ed.x_of(2.0) + 2.0, ed.y_of(72) + 5.0)
+	var place_zone: String = ed.zone_at(note_place).get("zone", "")
+	ed.press(note_place)
+	ed.drag(Vector2(ed.x_of(6.0), ed.y_of(72) + 5.0))
+	ed.release(Vector2(ed.x_of(6.0), ed.y_of(72) + 5.0))
+	var added_note: Dictionary = ed.clip.notes.back()
+	check(place_zone == "grid" and ed.clip.notes.size() == editor_notes_before + 1 and int(added_note.note) == 72 and is_equal_approx(float(added_note.step), 2.0) and
+		is_equal_approx(float(added_note.length), 4.0), "click an empty place to add a note there (drag as you add it to make it longer)", str(added_note))
+	ed.press(Vector2(ed.x_of(3.0), ed.y_of(72) + 5.0))
+	ed.drag(Vector2(ed.x_of(4.0), ed.y_of(74) + 5.0))
+	ed.release(Vector2(ed.x_of(4.0), ed.y_of(74) + 5.0))
+	check(int(added_note.note) == 74 and is_equal_approx(float(added_note.step), 3.0), "drag a note along and up to move it", str(added_note))
+	var note_stalk := Vector2(ed.x_of(3.0), ed.lane_top() + 20.0)
+	var stalk_zone: String = ed.zone_at(note_stalk).get("zone", "")
+	ed.press(note_stalk)
+	ed.drag(note_stalk + Vector2(0, 25))
+	ed.release(note_stalk + Vector2(0, 25))
+	check(stalk_zone == "velocity" and absf(float(added_note.velocity) - 0.3) < 0.01, "and its stalk along the foot down for a softer note", "%.2f" % float(added_note.velocity))
+	var heard_in_track: bool = timeline.engine_clips(keys_inst).is_empty()  # (MIDI: sent as notes)
+	await tap(KEY_DELETE)
+	check(ed.clip.notes.size() == editor_notes_before and heard_in_track, "Delete takes the chosen note away")
+	await tap(KEY_ESCAPE)
+	check(edit.is_open() and not edit.editing_notes() and view.visible, "Esc goes back to the tracks")
+	for undo in 4:
+		timeline.undo()
+	check(keys_inst.clips[0].notes.size() == editor_notes_before, "(and the edits undo)")
+	timeline.grid = 4
+	main.edit_window.close()
 	timeline.set_loop(true)
 	session.save()
 	var record_file: String = session.path

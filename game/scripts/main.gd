@@ -284,7 +284,7 @@ func _input(event: InputEvent) -> void:
 ## done again).
 func undo_edit(redo := false) -> void:
 	var what: String = timeline.redo() if redo else timeline.undo()
-	edit_window.view.selected = {}
+	edit_window.view.chosen = []
 	session.notice.emit(("Redo " if redo else "Undo ") + what if what != "" else ("Nothing to redo" if redo else "Nothing to undo"))
 
 
@@ -778,6 +778,14 @@ func toggle_transport() -> void:
 		timeline.toggle_play()
 	else:
 		set_sequence_running(not sequence_running)
+
+
+## Option-L, in a Record room: Loop Record, as Pro Tools has it: recording from a stop goes round the loop from its
+## start, a take each time round.
+func toggle_loop_record() -> void:
+	settings.loop_record = not settings.loop_record
+	settings.save_to_disk()
+	session.notice.emit("Loop Record: recording goes round the loop, a take each time" if settings.loop_record else "Loop Record off")
 
 
 ## N, in a Record room: whether stopping leaves the playhead where the music stopped, or takes it back to where it

@@ -188,11 +188,12 @@ func _process(_delta: float) -> void:
 	if timeline.is_record():  # a Record room: where the music is on the timeline, and whether it is recording
 		var at: float = timeline.position()
 		var counting: int = timeline.counting_in()
-		var state: String = ("●  COUNT-IN %d" % counting if counting > 0 else "●  REC") if timeline.recording else ("▶" if timeline.playing else "■")
+		var state: String = ("●  COUNT-IN %d" % counting if counting > 0 else ("●  LOOP REC" if timeline._looping else "●  REC")) if timeline.recording else \
+			("▶" if timeline.playing else "■")
 		var seconds: float = maxf(at, 0.0) * timeline.step_seconds()
 		_beat.text = "%s   %d | %d   %d:%04.1f   ·   %s%d BPM%s" % [state, int(at / 16.0) + 1, int(fmod(at, 16.0) / 4.0) + 1,
 			int(seconds / 60.0), fmod(seconds, 60.0),
-			"⟳ %d–%d   ·   " % [int(timeline.loop_start / 16.0) + 1, int(ceilf(timeline.loop_end / 16.0))] if timeline.loop_on else "",
+			"⟳ %s   ·   " % loop_text(timeline.loop_start, timeline.loop_end) if timeline.loop_on else "",
 			roundi(app.tempo), "  ·  click" if app.settings.click else ""]
 		_beat.add_theme_color_override("font_color", Color(1.0, 0.4, 0.38) if timeline.recording else DIM)
 	else:
@@ -474,6 +475,13 @@ func _label_piano(inst) -> void:
 
 
 ## A small label that lights up in its colour while what it names is on.
+## A loop range for the screen: whole bars as "1–4", anything else bar | beat, as "2 | 1–2 | 3".
+static func loop_text(start: float, end: float) -> String:
+	if is_zero_approx(fmod(start, 16.0)) and is_zero_approx(fmod(end, 16.0)):
+		return "%d–%d" % [int(start / 16.0) + 1, int(end / 16.0)]
+	return "%d | %d–%d | %d" % [int(start / 16.0) + 1, int(fmod(start, 16.0) / 4.0) + 1, int(end / 16.0) + 1, int(fmod(end, 16.0) / 4.0) + 1]
+
+
 ## The line of keys at the foot of the screen in the room: the menu, the mix window (and in a Record room the edit
 ## window), the instrument menu and the keyboard.
 func keys_prompt() -> String:

@@ -188,7 +188,8 @@ public:
     // has stopped, what was taken: {start_step, end_step, step_seconds, audio: [{source, path, seconds, dropped}],
     // notes: [{source, step, length, note, velocity}]}, or {} until then.
     void set_record_arm(int id, bool armed);
-    bool start_recording(const Array& files, double from_step, double count_in_steps = 0.0);  // (a count-in first, the timeline stopped)
+    // (a count-in first, the timeline stopped; with `loop`, round the loop, a take a pass)
+    bool start_recording(const Array& files, double from_step, double count_in_steps = 0.0, bool loop = false);
     int get_count_in() const;  // beats of a count-in still to come
     void stop_recording();
     bool is_recording() const;

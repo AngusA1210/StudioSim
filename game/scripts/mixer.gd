@@ -109,6 +109,8 @@ func _input(event: InputEvent) -> void:
 		app.timeline.locate(0.0)
 	elif action == "follow" and app.timeline.is_record():
 		app.toggle_follow()
+	elif event.physical_keycode == KEY_L and event.alt_pressed and app.timeline.is_record():  # Loop Record
+		app.toggle_loop_record()
 	elif event.physical_keycode == KEY_L and app.timeline.is_record():  # loop playback on or off
 		app.timeline.set_loop(not app.timeline.loop_on)
 	else:

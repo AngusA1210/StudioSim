@@ -297,13 +297,17 @@ In a Record room:
   and plays its clips back too.
 - **Editing clips**, with the mouse as with Pro Tools' Smart Tool:
   - Click a clip to choose it (stopped, the playhead goes where you clicked too), and drag it along its track or to
-    another that takes its kind; hold Option as you drop it for a copy.
+    another that takes its kind; hold Option as you drop it for a copy. **Shift-click** chooses more (or one fewer),
+    **⌘A** every clip: dragging one moves them all together, and the keys below work on all of them.
   - Drag either **end** to trim it. An audio clip only ever shows more or less of its file, never past either end of
     it; a MIDI clip keeps the notes trimmed off, and drawn out again they are back.
   - Drag an audio clip's **top corners** to fade it in or out (equal-power curves, drawn over the waveform); the cursor
     turns to a little fade, a ramp in a box, there.
   - Where two audio clips meet, drag the top of the seam to **crossfade** them: each plays on into the other's time
     with the audio its file has beyond the cut (Pro Tools' handles), centred on the cut where both files have it.
+  - **Clip gain**, as Pro Tools has it: drag the little fader at an audio clip's foot up or down (Shift for fine
+    moves; Option-click for 0 dB), or press **⌃⇧↑ ↓** to nudge the chosen clips a dB. It is shown beside the fader,
+    and the waveform is drawn as loud as it plays, from -48 dB (silent below) to +24 dB.
   - **⌘E** splits the chosen clip at the playhead (with none chosen, every clip under it), as Pro Tools' Separate: the
     halves meet exactly, the first keeping the fade in and the second the fade out, named `Speaker_01-01` and so on.
   - **,** and **.** (or - and + on the number pad) nudge it a grid line earlier or later (10 ms with the grid off).
@@ -311,8 +315,17 @@ In a Record room:
     (Logic's key for the same).
   - **⌘Z** undoes an edit (a recording, a move, a trim, a fade, a split...), up to 32 of them, and **⌘X** (or ⌘⇧Z)
     redoes it.
+- **The MIDI editor**: double-click a MIDI clip for its notes, in the tracks' place (Esc, or ← Tracks, goes back), as
+  Pro Tools' MIDI editor shows them: a row for each pitch with the piano down the left (click a key to hear it), the
+  clip's bars along the top and each note's velocity as a stalk along the foot. Click an empty place to add a note a
+  grid line long (drag as you add it to make it longer); click a note to choose it (Shift-click for more) and drag it
+  along or up and down (Option as you drop: a copy); drag its right end to lengthen or shorten it; drag a stalk up or
+  down for its velocity. Delete, ⌘A, ⌘D and comma and full stop work on the chosen notes, and every edit undoes.
 - **Recording** (⌘Space, or Record): the armed tracks record from the playhead (or from where it is playing), loop
-  playback waiting meanwhile. With a **count-in** (the edit window's menu beside Follow: one bar or two, remembered),
+  playback waiting meanwhile. **Loop Record** (⌥L, as in Pro Tools; the Record button shows ⟳) records round the loop
+  instead, from its start: each time round is a **take**, stacked in one clip over the loop with the last whole pass
+  shown, so you can play a part over and over and choose the best. A clip with takes says how many; right-click it to
+  choose another, which shows in its place (the rest are kept, to choose again). With a **count-in** (the edit window's menu beside Follow: one bar or two, remembered),
   recording from a stop first has the click count the bars, the music waiting at the playhead, as Pro Tools' Count
   Off; the screen counts down the beats. An armed Speaker or amp records its hardware input as it comes in, before its pedals,
   amp and inserts, to a WAV file (32-bit float) in the room's **Audio Files** folder, named after the track
@@ -467,7 +480,7 @@ game/                      Godot project: the room, player, instruments, HUD, me
   scripts/rooms_page.gd    making a new room (from a template) and opening one
   scripts/library.gd       what a room holds, templates, instrument and plug-in presets, and copied settings
   scripts/timeline.gd      a room's mode; a Record room's transport, recording and clips
-  scripts/edit_window.gd   the edit window (its tracks and clips drawn by timeline_view.gd)
+  scripts/edit_window.gd   the edit window (its tracks and clips drawn by timeline_view.gd, a clip's notes by midi_editor.gd)
   scripts/preset_menu.gd   the Presets menu of a plug-in or an instrument
 audio_core/
   src/core/                the audio engine, plain C++ with no Godot dependency
@@ -518,14 +531,14 @@ Speakers, guitar and bass amps with boards of effect pedals (a loop pedal and a 
 screen, a mix window laid out like a DAW's with plug-in inserts on every channel, a room whose size and walls
 can be changed, with sound bending round the walls and a reverb that follows the size (on a fader of its own), rooms saved as sessions (with
 templates, auto-save and backups), presets and copy and paste for plug-ins and instruments, and Record rooms: a
-timeline, an edit window, recording audio and MIDI to clips (with a count-in), and editing them (trims, fades and crossfades, splits, nudges,
-undo).
+timeline, an edit window, recording audio and MIDI to clips (with a count-in, and loop recording into takes), and editing them (trims, fades
+and crossfades, clip gain, splits, nudges, several at once, a MIDI editor for the notes, undo).
 
 To do, roughly in this order:
 
-1. **More of the edit window**: clip gain, automation (with the sustain pedal), loop recording (takes stacked to
-   choose from), pre-roll and post-roll, editing a MIDI clip's notes, choosing several clips at once, and audio read
-   from disk as it plays (for long rooms; takes are held in memory now).
+1. **More of the edit window**: automation (the faders' and the sustain pedal's), pre-roll and post-roll, comping
+   from takes (a part of one, a part of another), and audio read from disk as it plays (for long rooms; takes are held
+   in memory now).
    Perhaps later a free version with Jam rooms only, Record rooms coming with the full one.
 2. **Microphones**: a new kind of track, placed anywhere in the room with precision, that records what the room
    sounds like from where it stands (the instruments as they reach it, from their direction, with the walls and the

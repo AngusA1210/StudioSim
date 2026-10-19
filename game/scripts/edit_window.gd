@@ -1,14 +1,18 @@
 extends CanvasLayer
 ## The edit window (R, in a Record room), as a DAW's: every track along the timeline (timeline_view.gd), and the
-## transport above them: play and stop (Space), record (Cmd-Space), loop playback (L), whether insertion follows playback
-## (N), a count-in, where the music is (bar | beat, and minutes and seconds: click the bar | beat and type one, or a
-## time, to go there), the grid clips snap to, zoom, and undo and redo. Enter goes back to the start. Delete takes the
-## chosen clip away, Cmd-D puts a second of it just after it, Cmd-E splits it at the playhead, comma and full stop (or -
-## and + on the number pad) nudge it, and U loops it; Cmd-Z undoes an edit and Cmd-X (or Cmd-Shift-Z) does it again (the
-## Cmd shortcuts can be changed on the Controls page). Tab (or Cmd-=) goes over to the mix window. It docks along the
-## bottom of the screen, the room in view above it, and you can walk about while it is open.
+## transport above them: play and stop (Space), record (Cmd-Space; Option-L for Loop Record, a take each time round the
+## loop), loop playback (L), whether insertion follows playback (N), a count-in, where the music is (bar | beat, and
+## minutes and seconds: click the bar | beat and type one, or a time, to go there), the grid clips snap to, zoom, and
+## undo and redo. Enter goes back to the start. Shift-click chooses more clips, Cmd-A all of them; Delete takes the chosen
+## ones away, Cmd-D puts a second of them just after, Cmd-E splits them at the playhead, comma and full stop (or - and +
+## on the number pad) nudge them, Ctrl-Shift-↑ ↓ turn their clip gain up or down a dB, and U loops round them. Cmd-Z
+## undoes an edit and Cmd-X (or Cmd-Shift-Z) does it again (the Cmd shortcuts can be changed on the Controls page).
+## Double-click a MIDI clip for its notes, in the MIDI editor (midi_editor.gd) in the tracks' place; Esc goes back. Tab
+## (or Cmd-=) goes over to the mix window. It docks along the bottom of the screen, the room in view above it, and you
+## can walk about while it is open.
 
 const TimelineView := preload("res://scripts/timeline_view.gd")
+const MidiEditor := preload("res://scripts/midi_editor.gd")
 const Hints := preload("res://scripts/hints.gd")
 const DIM := Color(0.62, 0.65, 0.74)
 const RECORD_RED := Color(1.0, 0.3, 0.28)
@@ -16,6 +20,9 @@ const RECORD_RED := Color(1.0, 0.3, 0.28)
 var app
 var timeline
 var view: Control
+var notes: Control  # a MIDI clip's notes (midi_editor.gd), in the tracks' place while they are edited
+var _notes_bar: HBoxContainer
+var _notes_title: Label
 
 var _root: Control
 var _panel: PanelContainer
@@ -72,40 +79,74 @@ func _input(event: InputEvent) -> void:
 			_counter.release_focus()
 			get_viewport().set_input_as_handled()
 		return
+	if editing_notes() and notes.handle_key(event):  # the notes' own keys first
+		get_viewport().set_input_as_handled()
+		return
 	var key: int = event.physical_keycode
 	var command: bool = event.meta_pressed or event.ctrl_pressed
 	var action: String = app.bindings.action_for(key)
-	if key == KEY_ESCAPE or action == "edit_window":
+	var items: Array = view.chosen_items() if not editing_notes() else []
+	if key == KEY_ESCAPE and editing_notes():
+		show_tracks()
+	elif key == KEY_ESCAPE or action == "edit_window":
 		close()
 	elif action == "mixer" and not command:
 		close()
 		app.mixer.open()
-	elif key in [KEY_BACKSPACE, KEY_DELETE] and not view.selected.is_empty():
-		timeline.remove_clip(view.selected.inst, view.selected.index)
-		view.selected = {}
-	elif command and app.bindings.command_for(key) == "duplicate_clip" and not view.selected.is_empty():
+	elif key in [KEY_UP, KEY_DOWN] and event.ctrl_pressed and event.shift_pressed and not items.is_empty():  # clip gain, a dB
+		timeline.remember("Clip gain")
+		for it in items:
+			timeline.set_clip_gain([it], float(it.clip.get("gain_db", 0.0)) + (1.0 if key == KEY_UP else -1.0), false)
+		timeline._sync_items(items)
+	elif key in [KEY_BACKSPACE, KEY_DELETE] and not items.is_empty():
+		timeline.remove_clips(items)
+		view.chosen = []
+	elif key == KEY_A and command and not editing_notes():
+		view.choose_all()
+	elif command and app.bindings.command_for(key) == "duplicate_clip" and not items.is_empty():
 		duplicate_selected()
 	elif action == "to_start" and not command:  # back to the start, as Return is in Pro Tools
 		timeline.locate(0.0)
 	elif action == "follow" and not command:
 		app.toggle_follow()
+	elif key == KEY_L and event.alt_pressed and not command:  # Loop Record, as Option-L is in Pro Tools
+		app.toggle_loop_record()
 	elif key == KEY_L and not command:  # loop playback on or off
 		timeline.set_loop(not timeline.loop_on)
-	elif key == KEY_U and not command and not view.selected.is_empty():  # (Logic's key for the same)
+	elif key == KEY_U and not command and not items.is_empty():  # (Logic's key for the same)
 		loop_selected()
-	elif command and app.bindings.command_for(key) == "separate":
+	elif command and app.bindings.command_for(key) == "separate" and not editing_notes():
 		separate_selected()
-	elif key in [KEY_COMMA, KEY_PERIOD, KEY_KP_SUBTRACT, KEY_KP_ADD] and not command and not view.selected.is_empty():
-		var later := key in [KEY_PERIOD, KEY_KP_ADD]
-		view.selected = {"inst": view.selected.inst, "index": timeline.nudge(view.selected.inst, view.selected.index, 1 if later else -1)}
+	elif key in [KEY_COMMA, KEY_PERIOD, KEY_KP_SUBTRACT, KEY_KP_ADD] and not command and not items.is_empty():
+		var amount: float = float(timeline.grid) if timeline.grid > 0 else timeline.NUDGE_SECONDS / timeline.step_seconds()
+		view.chosen = timeline.move_clips(items, amount if key in [KEY_PERIOD, KEY_KP_ADD] else -amount, 0, false, "Nudge")
 	else:
 		return
 	get_viewport().set_input_as_handled()
 
 
-## U: loop playback round the chosen clip, from its start to its end exactly (and on).
+## A MIDI clip's notes, in the MIDI editor (double-click the clip); Esc goes back to the tracks.
+func edit_notes(inst, index: int) -> void:
+	notes.edit(inst, index)
+	view.visible = false
+	notes.visible = true
+	_notes_bar.visible = true
+
+
+func show_tracks() -> void:
+	notes.visible = false
+	notes.inst = null
+	view.visible = true
+	_notes_bar.visible = false
+
+
+func editing_notes() -> bool:
+	return notes.visible
+
+
+## U: loop playback round the chosen clips, from the first's start to the last's end exactly (and on).
 func loop_selected() -> void:
-	var span: Vector2 = timeline.clip_steps(view.selected.inst.clips[view.selected.index])
+	var span: Vector2 = timeline.span_of(view.chosen_items())
 	timeline.set_loop(true, span.x, span.y)
 
 
@@ -147,16 +188,21 @@ func clock_text(step: float) -> String:
 	return "%d:%05.2f" % [int(seconds / 60.0), fmod(seconds, 60.0)]
 
 
-## Cmd-E: the chosen clip split in two at the playhead (the second half chosen then); with none chosen, every clip the
-## playhead is in.
+## Cmd-E: the chosen clips split in two at the playhead (their second halves chosen then); with none chosen, every clip
+## the playhead is in.
 func separate_selected() -> void:
 	var at: float = timeline.position()
-	if not view.selected.is_empty():
-		var second: int = timeline.separate(view.selected.inst, view.selected.index, at)
-		if second >= 0:
-			view.selected = {"inst": view.selected.inst, "index": second}
+	var items: Array = view.chosen_items()
+	if not items.is_empty():
+		var halves := []
+		for it in items:
+			var second: int = timeline.separate(it.inst, timeline.index_of(it.inst, it.clip), at)
+			if second >= 0:
+				halves.append({"inst": it.inst, "clip": it.inst.clips[second]})
+		if halves.is_empty():
+			app.session.notice.emit("The playhead isn't in the chosen clip%s" % ("s" if items.size() > 1 else ""))
 		else:
-			app.session.notice.emit("The playhead isn't in the chosen clip")
+			view.chosen = halves
 		return
 	var split := 0
 	for inst in app.instruments:
@@ -169,12 +215,11 @@ func separate_selected() -> void:
 		app.session.notice.emit("There's no clip under the playhead to split")
 
 
-## Cmd-D: a second of the chosen clip, just after it.
+## Cmd-D: a second of the chosen clips, just after them.
 func duplicate_selected() -> void:
-	var inst = view.selected.inst
-	var span: Vector2 = timeline.clip_steps(inst.clips[view.selected.index])
-	timeline.place_clip(inst, view.selected.index, inst, span.y, true)
-	view.selected = {"inst": inst, "index": inst.clips.size() - 1}
+	var items: Array = view.chosen_items()
+	var span: Vector2 = timeline.span_of(items)
+	view.chosen = timeline.move_clips(items, span.y - span.x, 0, true, "Duplicate")
 
 
 func _process(_delta: float) -> void:
@@ -195,7 +240,10 @@ func _process(_delta: float) -> void:
 	_play.text = "■  Stop" if timeline.playing else "▶  Play"
 	_record.add_theme_color_override("font_color", RECORD_RED if timeline.recording else Color(0.9, 0.6, 0.58))
 	var counting: int = timeline.counting_in()
-	_record.text = "●  Count  %d" % counting if counting > 0 else ("●  Recording" if timeline.recording else "●  Record")
+	var loop_mark := "⟳" if app.settings.loop_record else ""
+	_record.text = "●%s  Count  %d" % [loop_mark, counting] if counting > 0 else ("●%s  Recording" % loop_mark if timeline.recording else "●%s  Record" % loop_mark)
+	if editing_notes() and notes.inst != null:
+		_notes_title.text = "%s  ·  %s" % [notes.inst.display_name, str(notes.clip.get("name", ""))]
 	_count_in.select(app.settings.count_in_bars)
 	_undo.disabled = timeline.undo_what() == "" or timeline.recording
 	_redo.disabled = timeline.redo_what() == "" or timeline.recording
@@ -235,7 +283,8 @@ func _build() -> void:
 	_play = _button(header, "▶  Play", func() -> void: app.toggle_transport(), "Play from the playhead, or stop and go back to where it started (Space)")
 	_play.custom_minimum_size.x = 96
 	_record = _button(header, "●  Record", func() -> void: app.toggle_record(), func() -> String:
-		return "Record the armed tracks from the playhead, or stop (%s)" % app.bindings.label("record"))
+		return ("Loop Record (Option-L to switch off): round the loop from its start, a take each time round, or stop (%s)" if app.settings.loop_record else
+			"Record the armed tracks from the playhead, or stop (%s)  ·  Option-L for Loop Record") % app.bindings.label("record"))
 	_record.custom_minimum_size.x = 120
 	_loop = _button(header, "⟳  Loop", func() -> void: timeline.set_loop(not timeline.loop_on), "Loop playback round the range marked on the ruler (drag along the ruler to mark another, or press L to loop the chosen clip)")
 	_loop.toggle_mode = true
@@ -295,11 +344,25 @@ func _build() -> void:
 		app.mixer.open(), "")
 	_close = _button(header, "Close", close, "")
 
+	_notes_bar = HBoxContainer.new()
+	_notes_bar.add_theme_constant_override("separation", 10)
+	_notes_bar.visible = false
+	box.add_child(_notes_bar)
+	_button(_notes_bar, "←  Tracks  (Esc)", show_tracks, "Back to the tracks")
+	_notes_title = Label.new()
+	_notes_title.add_theme_color_override("font_color", DIM)
+	_notes_bar.add_child(_notes_title)
 	view = TimelineView.new()
 	view.setup(app)
 	view.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	view.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	box.add_child(view)
+	notes = MidiEditor.new()
+	notes.setup(app)
+	notes.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	notes.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	notes.visible = false
+	box.add_child(notes)
 	_hint = Hints.line()
 	box.add_child(_hint)
 

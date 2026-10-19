@@ -2221,6 +2221,13 @@ int main(int argc, char** argv) {
         check(full.rms_l > 0.005 && fading_in.rms_l < 0.45 * full.rms_l && fading_out.rms_l < 0.45 * full.rms_l,
               "a clip's fades bring it in from silence and take it out again",
               fmt("%.1f dB in, ", db(fading_in.rms_l) - db(full.rms_l)) + fmt("%.1f dB out against the middle", db(fading_out.rms_l) - db(full.rms_l)));
+        ClipSpec quieter{result.audio[0].path, start_seconds, 0.0, result.audio[0].seconds, 0.0, 0.0, 0.5f};  // clip gain, -6 dB
+        take.engine.setTrack(take.speaker, {}, {quieter}, &track_error);
+        take.engine.playFrom(result.start_step);
+        renderSeconds(take.engine, 0.55);
+        const Render at_half = renderSeconds(take.engine, 0.15);
+        check(std::fabs(db(at_half.rms_l) - db(full.rms_l) + 6.02) < 0.5, "a clip's gain plays it that much quieter or louder",
+              fmt("%.1f dB", db(at_half.rms_l) - db(full.rms_l)));
 
         // What a track is heard playing, as Pro Tools has it. With its input monitored (I), its input, never its clips;
         // armed, its input while stopped or recording (Auto Input), and while playing its clips, not its input.
@@ -2262,6 +2269,44 @@ int main(int argc, char** argv) {
                   std::fabs(counted_result.start_step - 8.0) < 1e-6 && std::fabs(counted_read.seconds() - 0.48) < 0.03 && take.engine.countInLeft() == 0,
               "with a count-in, the click counts a bar first, then the take starts where the playhead was",
               counted_readable ? fmt("%.0f beats left a second in, ", double(beats_left)) + fmt("%.2f s recorded", counted_read.seconds()) : record_error);
+
+        // Loop recording: loop playback goes on round while it records, the takes following one another in the file, and
+        // the notes' places counting on past the loop's end, so that each can be put with its pass.
+        take.engine.setSequencerRunning(false);
+        take.engine.setLoopRange(true, 16.0, 32.0);  // two seconds at 120 BPM
+        renderSeconds(take.engine, 0.1);
+        const std::string looped_file = (folder / "Speaker_03.wav").string();
+        const bool looping = take.engine.startRecording({{take.speaker, looped_file}}, 16.0, &record_error, 0.0, true);
+        double loop_low = 1e9, loop_high = -1e9, loop_rendered = 0.0;
+        auto watch = [&](double seconds) {
+            for (const double until = loop_rendered + seconds; loop_rendered < until - 1e-6;) {
+                loop_rendered += double(renderSeconds(take.engine, 0.05, other_tone).l.size()) / 48000.0;
+                loop_low = std::min(loop_low, take.engine.timelinePosition());
+                loop_high = std::max(loop_high, take.engine.timelinePosition());
+            }
+        };
+        watch(2.5);  // half a second into the second pass
+        const double note_at = loop_rendered;
+        take.engine.noteOn(take.keys, 67, 0.8f);
+        watch(0.2);
+        const double note_for = loop_rendered - note_at;
+        take.engine.noteOff(take.keys, 67);
+        watch(2.3);
+        const double looped_for = loop_rendered;
+        take.engine.stopRecording();
+        renderSeconds(take.engine, 0.01);
+        RecordingResult looped;
+        const bool looped_taken = take.engine.takeRecording(&looped);
+        AudioData looped_read;
+        const bool looped_readable = looped_taken && !looped.audio.empty() && readWav(looped.audio[0].path, &looped_read, &read_error);
+        const bool one_looped_note = looped_taken && looped.notes.size() == 1;
+        check(looping && looped_readable && std::fabs(looped_read.seconds() - looped_for) < 0.02 && loop_low > 15.5 && loop_high < 32.01 &&
+                  one_looped_note && std::fabs(looped.notes[0].note.step - (looped.start_step + note_at / looped.step_seconds)) < 0.1 &&
+                  std::fabs(looped.notes[0].note.length * looped.step_seconds - note_for) < 0.01 &&
+                  std::fabs((looped.end_step - looped.start_step) * looped.step_seconds - looped_for) < 0.02,
+              "loop recording goes round the loop as it records, the file running on, and a note in the second pass placed after the first",
+              looped_readable && one_looped_note ? fmt("%.2f s recorded, ", looped_read.seconds()) + fmt("the note at step %.1f", looped.notes[0].note.step) : record_error);
+        take.engine.setLoopRange(false, 0.0, 0.0);
         std::filesystem::remove_all(folder);
     }
 

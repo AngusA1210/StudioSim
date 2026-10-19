@@ -11,11 +11,14 @@ extends Node
 ## What is recorded becomes a clip on its track: an audio clip refers to part of its file (as Pro Tools' clips refer to
 ## their parent file), a MIDI clip holds its notes. A new take covers what was on its track where it was recorded.
 ## Each instrument keeps its clips in `clips`: audio {kind "audio", file (in the room's folder), name, start, offset,
-## length, fade_in, fade_out, xfade (seconds: a crossfade into the clip that starts where it ends)}, MIDI {kind "midi", name, start, length (steps), notes [{step, length, note,
+## length, fade_in, fade_out, xfade (seconds: a crossfade into the clip that starts where it ends), gain_db (its clip gain)},
+## MIDI {kind "midi", name, start, length (steps), notes [{step, length, note,
 ## velocity}]}. Positions in steps are sixteenths from the start of bar 1; audio is placed in seconds, so it stays where
 ## it was played if the tempo changes, while MIDI follows the tempo. Clips can be trimmed (an audio clip only ever shows
 ## less or more of its file; a MIDI clip keeps the notes trimmed off, and they come back if it is drawn out again),
-## split, nudged and faded, and every edit can be undone (Cmd-Z) and redone (Cmd-Shift-Z).
+## split, nudged, faded and given a gain, several at once, and every edit can be undone (Cmd-Z) and redone (Cmd-X). A
+## loop recording (Loop Record, Option-L) makes a take of each pass: the last one shown, the rest kept in the clip's
+## `takes` ({take: its number, and the rest of a clip}) to choose from.
 
 signal changed  # the clips or the transport changed: whatever draws them draws again
 
@@ -24,6 +27,8 @@ const AUDIO_FOLDER := "Audio Files"
 const GRIDS := [["Off", 0], ["Bar", 16], ["Beat", 4], ["1/8", 2], ["1/16", 1]]
 const UNDO_LEVELS := 32
 const NUDGE_SECONDS := 0.01  # how far a clip is nudged with the grid off
+const MIN_CLIP_GAIN_DB := -48.0  # and below: silent
+const MAX_CLIP_GAIN_DB := 24.0
 
 var app
 var audio: SoundRoomAudio
@@ -37,6 +42,7 @@ var recording := false
 var grid := 4             # steps a clip snaps to (0: free)
 var _started_at := 0.0    # where playing began: stopping goes back there
 var _taking := false      # recording has stopped; what it took is on its way
+var _looping := false     # the recording going is a loop recording
 var _peaks := {}          # a file's peaks, for drawing its clips
 var _undo := []           # before each edit, what it was and every track's clips: [what, {inst: clips}], the latest last
 var _redo := []
@@ -214,8 +220,15 @@ func start_recording() -> String:
 		if not inst.playable:
 			files.append([inst.source_id, folder.path_join(_take_name(folder, inst.display_name))])
 	var from := playhead if not playing else audio.get_timeline_position()
+	# Loop Record (from a stop): round the loop from its start, a take each time round.
+	_looping = app.settings.loop_record and not playing and loop_end - loop_start >= 1.0
+	if _looping:
+		if not loop_on:
+			set_loop(true)
+		from = loop_start
+		playhead = loop_start
 	var count_in: float = app.settings.count_in_bars * STEPS_PER_BAR if not playing else 0.0  # (not while playing: it records straight away)
-	if not audio.start_recording(files, from, count_in):
+	if not audio.start_recording(files, from, count_in, _looping):
 		return audio.get_error()
 	if not playing:
 		_started_at = playhead
@@ -249,32 +262,53 @@ func _process(_delta: float) -> void:
 			_add_takes(took)
 
 
-## What a recording took becomes clips: each covering what was on its track where it was recorded.
+## What a recording took becomes clips: each covering what was on its track where it was recorded. A loop recording's
+## passes become takes, stacked in one clip over the loop: the last whole pass shown, the others to choose from.
 func _add_takes(took: Dictionary) -> void:
+	var looped := _looping
+	_looping = false
 	if took.notes.is_empty() and took.audio.all(func(take): return float(take.seconds) <= 0.0):
 		app.session.notice.emit("Nothing was recorded")  # (stopped during the count-in, say)
 		return
-	remember("Record")
+	remember("Loop record" if looped else "Record")
 	var by_id := {}
 	for inst in app.instruments:
 		by_id[inst.source_id] = inst
-	var seconds_per_step: float = took.step_seconds
-	var start_step: float = took.start_step
+	var sps: float = took.step_seconds  # seconds a step
+	var start_step: float = took.start_step  # (a little before where it was asked to start: it starts a moment after)
 	var end_step: float = took.end_step
 	# What was played in time with what was heard reached the engine late, by the time the sound took to come out and,
 	# for audio, the time the input took to come in: each take goes back by as much, so it lands where it was played.
 	var stats: Dictionary = audio.get_stats()
 	var heard_late := float(stats.get("output_latency_ms", 0.0)) / 1000.0
 	var audio_late := heard_late + float(stats.get("input_latency_ms", 0.0)) / 1000.0
+	var passes := _passes(end_step) if looped else []
 	for take in took.audio:
 		var inst = by_id.get(int(take.source))
 		if inst == null or float(take.seconds) <= 0.0:
 			continue
-		var start := maxf(start_step * seconds_per_step - audio_late, 0.0)
 		var file: String = str(take.path).get_file()
-		_cover(inst, "audio", start, start + float(take.seconds))
-		inst.clips.append({"kind": "audio", "file": AUDIO_FOLDER.path_join(file), "name": file.get_basename(), "start": start, "offset": 0.0,
-			"length": float(take.seconds), "fade_in": 0.0, "fade_out": 0.0})
+		var clip := {"kind": "audio", "file": AUDIO_FOLDER.path_join(file), "name": file.get_basename(), "fade_in": 0.0, "fade_out": 0.0}
+		if looped:  # each pass: the loop's span of the file, from where it was played
+			var stack := []
+			for k in passes.size():
+				var pass_span: Vector2 = passes[k]
+				var each: Dictionary = clip.duplicate()
+				each.name = "%s take %d" % [file.get_basename(), k + 1]
+				each.take = k + 1
+				each.start = loop_start * sps
+				each.offset = (pass_span.x - start_step) * sps + audio_late
+				each.length = minf((pass_span.y - pass_span.x) * sps, float(take.seconds) - float(each.offset))
+				if each.length > 0.05:
+					stack.append(each)
+			_stack(inst, "audio", stack, loop_start * sps, loop_end * sps, end_step)
+		else:
+			var at := start_step * sps - audio_late  # where the file's first moment was played (before bar 1, even)
+			clip.start = maxf(at, 0.0)
+			clip.offset = clip.start - at
+			clip.length = float(take.seconds) - float(clip.offset)
+			_cover(inst, "audio", clip.start, clip.start + clip.length)
+			inst.clips.append(clip)
 	var notes_of := {}
 	for n in took.notes:
 		notes_of.get_or_add(int(n.source), []).append(n)
@@ -282,16 +316,83 @@ func _add_takes(took: Dictionary) -> void:
 		var inst = by_id.get(source)
 		if inst == null:
 			continue
-		var notes := []
-		for n in notes_of[source]:
-			var played := float(n.step) - heard_late / seconds_per_step if seconds_per_step > 0.0 else float(n.step)
-			notes.append({"step": maxf(played - start_step, 0.0), "length": float(n.length), "note": int(n.note), "velocity": float(n.velocity)})
-		_cover(inst, "midi", start_step, end_step)
-		inst.clips.append({"kind": "midi", "name": "%s %d" % [inst.display_name, inst.clips.size() + 1], "start": start_step,
-			"length": maxf(end_step - start_step, 1.0), "notes": notes})
+		var base := "%s %d" % [inst.display_name, inst.clips.size() + 1]
+		if looped:  # each note to the pass it was played in, placed in the loop
+			var stack := []
+			for k in passes.size():
+				stack.append({"kind": "midi", "name": "%s take %d" % [base, k + 1], "take": k + 1, "start": loop_start,
+					"length": passes[k].y - passes[k].x, "notes": []})
+			for n in notes_of[source]:
+				var played := float(n.step) - heard_late / sps
+				var k := clampi(int(floor((played - loop_start) / (loop_end - loop_start))), 0, stack.size() - 1)
+				stack[k].notes.append({"step": maxf(played - passes[k].x, 0.0), "length": float(n.length), "note": int(n.note), "velocity": float(n.velocity)})
+			_stack(inst, "midi", stack, loop_start, loop_end, end_step)
+		else:
+			var clip_start := maxf(start_step, 0.0)
+			var notes := []
+			for n in notes_of[source]:
+				var played := float(n.step) - heard_late / sps
+				notes.append({"step": maxf(played - clip_start, 0.0), "length": float(n.length), "note": int(n.note), "velocity": float(n.velocity)})
+			_cover(inst, "midi", clip_start, end_step)
+			inst.clips.append({"kind": "midi", "name": base, "start": clip_start, "length": maxf(end_step - clip_start, 1.0), "notes": notes})
 	for inst in app.instruments:
 		sync(inst)
-	app.session.notice.emit("Recorded")
+	app.session.notice.emit("Recorded %d takes" % passes.size() if looped and passes.size() > 1 else "Recorded")
+	changed.emit()
+
+
+## A loop recording's passes, each [start, end) in steps counted on from the loop's start (the first pass starting
+## there): every pass it went right round, and the last if it got a beat or more in.
+func _passes(end_step: float) -> Array:
+	var length := loop_end - loop_start
+	var out := []
+	var at := loop_start
+	while at < end_step - 0.01:
+		var to := minf(at + length, end_step)
+		if to - at >= 4.0 or to - at >= length - 0.01:
+			out.append(Vector2(at, to))
+		at += length
+	return out
+
+
+## A loop recording's takes on a track: over the loop, covering what was there, the last whole one shown and the rest in
+## its `takes`.
+func _stack(inst, kind: String, stack: Array, from: float, to: float, end_step: float) -> void:
+	if stack.is_empty():
+		return
+	var shown := stack.size() - 1
+	for k in range(stack.size() - 1, -1, -1):  # the last whole pass
+		if stack[k].length >= (loop_end - loop_start) * (step_seconds() if kind == "audio" else 1.0) - 0.01:
+			shown = k
+			break
+	var clip: Dictionary = stack[shown]
+	clip.takes = []
+	for k in stack.size():
+		if k != shown:
+			clip.takes.append(stack[k])
+	_cover(inst, kind, from, to)
+	inst.clips.append(clip)
+
+
+## Shows take `which` of a clip's takes (its index in `takes`) in the clip's place, the one shown going in with the rest.
+func choose_take(inst, index: int, which: int) -> void:
+	var clip: Dictionary = inst.clips[index]
+	var takes: Array = clip.get("takes", [])
+	if which < 0 or which >= takes.size():
+		return
+	remember("Choose take")
+	var chosen: Dictionary = takes[which].duplicate(true)
+	var others: Array = takes.duplicate(true)
+	others.remove_at(which)
+	var was: Dictionary = clip.duplicate(true)
+	was.erase("takes")
+	others.append(was)
+	others.sort_custom(func(a, b): return int(a.get("take", 0)) < int(b.get("take", 0)))
+	chosen.takes = others
+	inst.clips.remove_at(index)
+	_cover(inst, chosen.kind, float(chosen.start), float(chosen.start) + float(chosen.length))
+	inst.clips.append(chosen)
+	sync(inst)
 	changed.emit()
 
 
@@ -366,7 +467,7 @@ func engine_clips(inst) -> Array:
 		var out_of: float = 0.0 if from_c < 0 else crossfade_span(inst, from_c).x + crossfade_span(inst, from_c).y  # and in
 		out.append({"path": file_path(clip), "start": float(clip.start) - extra[0], "offset": float(clip.offset) - extra[0],
 			"length": float(clip.length) + extra[0] + extra[1], "fade_in": out_of if out_of > 0.0 else float(clip.get("fade_in", 0.0)),
-			"fade_out": into if into > 0.0 else float(clip.get("fade_out", 0.0))})
+			"fade_out": into if into > 0.0 else float(clip.get("fade_out", 0.0)), "gain": gain_of(clip)})
 	return out
 
 
@@ -569,6 +670,93 @@ func nudge(inst, index: int, direction: int) -> int:
 	var amount: float = float(grid) if grid > 0 else NUDGE_SECONDS / step_seconds()
 	place_clip(inst, index, inst, maxf(span.x + direction * amount, 0.0))
 	return inst.clips.size() - 1
+
+
+## A clip's gain (Pro Tools' clip gain) as a factor: its `gain_db`, from -48 dB (silence below) to +24 dB.
+static func gain_of(clip: Dictionary) -> float:
+	var db := float(clip.get("gain_db", 0.0))
+	return 0.0 if db <= MIN_CLIP_GAIN_DB else db_to_linear(db)
+
+
+## Sets the clips' gain, in dB.
+func set_clip_gain(items: Array, db: float, send := true) -> void:
+	for it in items:
+		if it.clip.kind == "audio":
+			it.clip.gain_db = clampf(snappedf(db, 0.01), MIN_CLIP_GAIN_DB, MAX_CLIP_GAIN_DB)
+	if send:
+		_sync_items(items)
+
+
+# ── Several clips at once ([{inst, clip}], the clip its Dictionary itself) ───────────────────────────────────────
+
+## Where a clip is on its track now (-1: gone).
+static func index_of(inst, clip: Dictionary) -> int:
+	for i in inst.clips.size():
+		if is_same(inst.clips[i], clip):
+			return i
+	return -1
+
+
+## Moves clips together (or with `copy`, seconds of them): `delta` steps along (not before bar 1), and `rows` tracks
+## down, if every one of them fits the track it would land on (otherwise each stays on its own). Each covers what it
+## lands on. Returns them where they are now.
+func move_clips(items: Array, delta: float, rows := 0, copy := false, what := "") -> Array:
+	if items.is_empty():
+		return []
+	remember(what if what != "" else ("Copy clips" if copy else "Move clips"))
+	var earliest := INF
+	for it in items:
+		earliest = minf(earliest, clip_steps(it.clip).x)
+	delta = maxf(delta, -earliest)
+	var tracks: Array = app.instruments
+	var fit := rows != 0
+	for it in items:
+		var row: int = tracks.find(it.inst) + rows
+		fit = fit and row >= 0 and row < tracks.size() and fits(it.clip, tracks[row])
+	if not copy:
+		for it in items:
+			var at := index_of(it.inst, it.clip)
+			if at >= 0:
+				it.inst.clips.remove_at(at)
+	var moved := []
+	for it in items:
+		var clip: Dictionary = it.clip.duplicate(true)
+		clip.start = float(clip.start) + delta * (step_seconds() if clip.kind == "audio" else 1.0)
+		var to = tracks[tracks.find(it.inst) + rows] if fit else it.inst
+		_cover(to, clip.kind, clip.start, clip.start + clip.length)
+		to.clips.append(clip)
+		moved.append({"inst": to, "clip": clip})
+	_sync_items(items + moved)
+	return moved
+
+
+func remove_clips(items: Array) -> void:
+	if items.is_empty():
+		return
+	remember("Delete clips" if items.size() > 1 else "Delete clip")
+	for it in items:
+		var at := index_of(it.inst, it.clip)
+		if at >= 0:
+			it.inst.clips.remove_at(at)
+	_sync_items(items)
+
+
+## Where clips start and end together, in steps.
+func span_of(items: Array) -> Vector2:
+	var span := Vector2(INF, -INF)
+	for it in items:
+		var each := clip_steps(it.clip)
+		span = Vector2(minf(span.x, each.x), maxf(span.y, each.y))
+	return span
+
+
+func _sync_items(items: Array) -> void:
+	var done := []
+	for it in items:
+		if not done.has(it.inst):
+			done.append(it.inst)
+			sync(it.inst)
+	changed.emit()
 
 
 func file_seconds(clip: Dictionary) -> float:

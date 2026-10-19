@@ -507,7 +507,7 @@ bool SoundRoomAudio::set_track(int id, const Array& notes, const Array& clips) {
     for (int64_t i = 0; i < clips.size(); ++i) {
         const Dictionary d = clips[i];
         c.push_back({str(String(d.get("path", ""))), double(d.get("start", 0.0)), double(d.get("offset", 0.0)), double(d.get("length", 0.0)),
-                     double(d.get("fade_in", 0.0)), double(d.get("fade_out", 0.0))});
+                     double(d.get("fade_in", 0.0)), double(d.get("fade_out", 0.0)), float(d.get("gain", 1.0))});
     }
     std::string err;
     if (engine_->setTrack(id, n, c, &err)) return true;
@@ -526,7 +526,7 @@ double SoundRoomAudio::get_audio_seconds(const String& path) { return engine_ ? 
 
 void SoundRoomAudio::set_record_arm(int id, bool armed) { if (engine_) engine_->setRecordArm(id, armed); }
 
-bool SoundRoomAudio::start_recording(const Array& files, double from_step, double count_in_steps) {
+bool SoundRoomAudio::start_recording(const Array& files, double from_step, double count_in_steps, bool loop) {
     if (!engine_) return false;
     std::vector<std::pair<int, std::string>> f;
     for (int64_t i = 0; i < files.size(); ++i) {
@@ -534,7 +534,7 @@ bool SoundRoomAudio::start_recording(const Array& files, double from_step, doubl
         if (pair.size() >= 2) f.emplace_back(int(pair[0]), str(String(pair[1])));
     }
     std::string err;
-    if (engine_->startRecording(f, from_step, &err, count_in_steps)) return true;
+    if (engine_->startRecording(f, from_step, &err, count_in_steps, loop)) return true;
     error_ = str(err);
     return false;
 }
@@ -736,7 +736,8 @@ void SoundRoomAudio::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_audio_peaks", "path", "per_second"), &SoundRoomAudio::get_audio_peaks);
     ClassDB::bind_method(D_METHOD("get_audio_seconds", "path"), &SoundRoomAudio::get_audio_seconds);
     ClassDB::bind_method(D_METHOD("set_record_arm", "id", "armed"), &SoundRoomAudio::set_record_arm);
-    ClassDB::bind_method(D_METHOD("start_recording", "files", "from_step", "count_in_steps"), &SoundRoomAudio::start_recording, DEFVAL(0.0));
+    ClassDB::bind_method(D_METHOD("start_recording", "files", "from_step", "count_in_steps", "loop"), &SoundRoomAudio::start_recording, DEFVAL(0.0),
+                         DEFVAL(false));
     ClassDB::bind_method(D_METHOD("get_count_in"), &SoundRoomAudio::get_count_in);
     ClassDB::bind_method(D_METHOD("stop_recording"), &SoundRoomAudio::stop_recording);
     ClassDB::bind_method(D_METHOD("is_recording"), &SoundRoomAudio::is_recording);
