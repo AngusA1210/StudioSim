@@ -404,6 +404,7 @@ void SoundRoomAudio::note_off(int id, int note) { if (engine_) engine_->noteOff(
 void SoundRoomAudio::all_notes_off(int id) { if (engine_) engine_->allNotesOff(id); }
 void SoundRoomAudio::set_binaural(bool on) { if (engine_) engine_->setBinaural(on); }
 void SoundRoomAudio::set_reverb(bool on) { if (engine_) engine_->setReverb(on); }
+void SoundRoomAudio::set_reverb_level(float gain) { if (engine_) engine_->setReverbLevel(gain); }
 void SoundRoomAudio::set_master_volume(float gain) { if (engine_) engine_->setMasterVolume(gain); }
 void SoundRoomAudio::set_distance_falloff(float db_per_doubling) { if (engine_) engine_->setDistanceFalloff(db_per_doubling); }
 void SoundRoomAudio::set_limiter(bool on) { if (engine_) engine_->setLimiter(on); }
@@ -418,6 +419,10 @@ Dictionary SoundRoomAudio::read_meter() {
     d["rms_r"] = m.rms_r;
     d["limiter_gain"] = m.limiter_gain;
     d["clipped"] = int64_t(m.clipped);
+    d["reverb_peak_l"] = m.reverb_peak_l;
+    d["reverb_peak_r"] = m.reverb_peak_r;
+    d["reverb_rms_l"] = m.reverb_rms_l;
+    d["reverb_rms_r"] = m.reverb_rms_r;
     return d;
 }
 void SoundRoomAudio::set_source_volume(int id, float gain) { if (engine_) engine_->setSourceVolume(id, gain); }
@@ -488,7 +493,7 @@ void SoundRoomAudio::set_source_loop(int id, bool on) { if (engine_) engine_->se
 void SoundRoomAudio::set_sequencer_running(bool on) { if (engine_) engine_->setSequencerRunning(on); }
 
 void SoundRoomAudio::play_from(double step) { if (engine_) engine_->playFrom(step); }
-void SoundRoomAudio::set_loop_range(bool on, int start_step, int end_step) { if (engine_) engine_->setLoopRange(on, start_step, end_step); }
+void SoundRoomAudio::set_loop_range(bool on, double start_step, double end_step) { if (engine_) engine_->setLoopRange(on, start_step, end_step); }
 double SoundRoomAudio::get_timeline_position() const { return engine_ ? engine_->timelinePosition() : 0.0; }
 
 bool SoundRoomAudio::set_track(int id, const Array& notes, const Array& clips) {
@@ -701,6 +706,7 @@ void SoundRoomAudio::_bind_methods() {
     ClassDB::bind_method(D_METHOD("all_notes_off", "id"), &SoundRoomAudio::all_notes_off);
     ClassDB::bind_method(D_METHOD("set_binaural", "on"), &SoundRoomAudio::set_binaural);
     ClassDB::bind_method(D_METHOD("set_reverb", "on"), &SoundRoomAudio::set_reverb);
+    ClassDB::bind_method(D_METHOD("set_reverb_level", "gain"), &SoundRoomAudio::set_reverb_level);
     ClassDB::bind_method(D_METHOD("set_master_volume", "gain"), &SoundRoomAudio::set_master_volume);
     ClassDB::bind_method(D_METHOD("set_source_gain", "id", "gain"), &SoundRoomAudio::set_source_gain);
     ClassDB::bind_method(D_METHOD("set_distance_falloff", "db_per_doubling"), &SoundRoomAudio::set_distance_falloff);

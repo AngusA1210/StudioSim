@@ -146,6 +146,7 @@ public:
     void all_notes_off(int id);
     void set_binaural(bool on);
     void set_reverb(bool on);
+    void set_reverb_level(float gain);  // the room reverb's return: 1 as the room has it, 0 none, up to 4
     void set_master_volume(float gain);  // the master fader: after the limiter, as on a DAW's master track
     // How many decibels quieter a source gets for each doubling of distance beyond 1.5 m (6 by default: inverse square).
     void set_distance_falloff(float db_per_doubling);
@@ -175,7 +176,7 @@ public:
     // The timeline (a Record room): playing from a step (sixteenths from the start of bar 1), loop playback over a
     // range of steps, and where it is (in steps, as last rendered).
     void play_from(double step);
-    void set_loop_range(bool on, int start_step, int end_step);
+    void set_loop_range(bool on, double start_step, double end_step);
     double get_timeline_position() const;
     // A track's clips: notes [{step, length (steps), note, velocity}] and audio [{path, start, offset, length} (seconds)].
     // False with the reason in get_error() if a file couldn't be read (the rest are used).

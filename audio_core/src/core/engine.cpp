@@ -581,7 +581,7 @@ void AudioEngine::playFrom(double step) {
     transport_.running = true;
 }
 
-void AudioEngine::setLoopRange(bool on, int start_step, int end_step) {
+void AudioEngine::setLoopRange(bool on, double start_step, double end_step) {
     Command c; c.type = Command::TimelineLoop; c.v[0] = on ? 1.0f : 0.0f; c.v[1] = float(start_step); c.v[2] = float(end_step); push(c);
 }
 
@@ -1273,8 +1273,9 @@ void AudioEngine::setBinaural(bool on) {
     binaural_wanted_ = on;
     Command c; c.type = Command::Binaural; c.v[0] = on ? 1.0f : 0.0f; push(c);
 }
-void AudioEngine::setReverb(bool on) {
-    Command c; c.type = Command::Reverb; c.v[0] = on ? 1.0f : 0.0f; push(c);
+void AudioEngine::setReverb(bool on) { setReverbLevel(on ? 1.0f : 0.0f); }
+void AudioEngine::setReverbLevel(float gain) {
+    Command c; c.type = Command::Reverb; c.v[0] = std::clamp(gain, 0.0f, 4.0f); push(c);
 }
 void AudioEngine::setMasterVolume(float gain) {
     Command c; c.type = Command::MasterVolume; c.v[0] = std::clamp(gain, 0.0f, 4.0f); push(c);
@@ -1365,6 +1366,10 @@ MeterReading AudioEngine::readMeter() {
     m.rms_r = meter_rms_r_.load(std::memory_order_relaxed);
     m.limiter_gain = meter_gain_.exchange(1.0f, std::memory_order_relaxed);
     m.clipped = meter_clipped_.exchange(0, std::memory_order_relaxed);
+    m.reverb_peak_l = reverb_peak_l_.exchange(0.0f, std::memory_order_relaxed);
+    m.reverb_peak_r = reverb_peak_r_.exchange(0.0f, std::memory_order_relaxed);
+    m.reverb_rms_l = reverb_rms_l_.load(std::memory_order_relaxed);
+    m.reverb_rms_r = reverb_rms_r_.load(std::memory_order_relaxed);
     return m;
 }
 
@@ -1473,10 +1478,10 @@ void AudioEngine::drainCommands() {
             case Command::TimelinePlay:
                 for (Source* each : sources_)
                     if (each) each->instrument->stopSequenced();
-                sequencer_.start(clock_, int64_t(std::llround(c.v[0])));
+                sequencer_.start(clock_, double(c.v[0]));
                 break;
             case Command::TimelineLoop:
-                sequencer_.setLoop(c.v[0] > 0.5f, int64_t(std::llround(c.v[1])), int64_t(std::llround(c.v[2])));
+                sequencer_.setLoop(c.v[0] > 0.5f, double(c.v[1]), double(c.v[2]));
                 break;
             case Command::TrackSet:
                 if (s) {
@@ -1491,7 +1496,7 @@ void AudioEngine::drainCommands() {
                 if (!sequencer_.running()) {
                     for (Source* each : sources_)
                         if (each) each->instrument->stopSequenced();
-                    sequencer_.start(clock_, int64_t(std::llround(c.v[0])));
+                    sequencer_.start(clock_, double(c.v[0]));
                 }
                 sequencer_.suspendLoop(true);
                 recorder_rt_ = static_cast<Recorder*>(c.data);
@@ -1514,7 +1519,7 @@ void AudioEngine::drainCommands() {
                 if (clock_ == 0) binaural_mix_ = binaural_ ? 1.0f : 0.0f;  // set before anything has played: nothing to fade from
                 break;
             case Command::Reverb:
-                reverb_target_ = c.v[0] > 0.5f ? 1.0f : 0.0f;
+                reverb_target_ = c.v[0];
                 break;
             case Command::MasterVolume:
                 master_target_ = c.v[0];
@@ -1917,9 +1922,16 @@ void AudioEngine::renderBlock() {
         }
     }
     const float slow = 1.0f - std::exp(-1.0f / (0.05f * float(sr_)));
+    float reverb_peak_l = 0.0f, reverb_peak_r = 0.0f;
+    double reverb_sq_l = 0.0, reverb_sq_r = 0.0;
     for (int i = 0; i < block_; ++i) {
         reverb_gain_ += (reverb_target_ - reverb_gain_) * slow;
         const float wet = reverb_level * reverb_gain_;
+        const float back_l = rev_l_[size_t(i)] * wet * kMasterGain, back_r = rev_r_[size_t(i)] * wet * kMasterGain;  // its return, metered
+        reverb_peak_l = std::max(reverb_peak_l, std::fabs(back_l));
+        reverb_peak_r = std::max(reverb_peak_r, std::fabs(back_r));
+        reverb_sq_l += double(back_l) * back_l;
+        reverb_sq_r += double(back_r) * back_r;
         // The click goes straight to both ears: it is for the player, not part of the room.
         mix_l_[size_t(i)] = (mix_l_[size_t(i)] + rev_l_[size_t(i)] * wet + click_[size_t(i)]) * kMasterGain;
         mix_r_[size_t(i)] = (mix_r_[size_t(i)] + rev_r_[size_t(i)] * wet + click_[size_t(i)]) * kMasterGain;
@@ -1950,6 +1962,15 @@ void AudioEngine::renderBlock() {
         peak_r = std::max(peak_r, std::fabs(mix_r_[size_t(i)]));
         square_l += double(mix_l_[size_t(i)]) * mix_l_[size_t(i)];
         square_r += double(mix_r_[size_t(i)]) * mix_r_[size_t(i)];
+    }
+    if (reverb_peak_l > reverb_peak_l_.load(std::memory_order_relaxed)) reverb_peak_l_.store(reverb_peak_l, std::memory_order_relaxed);
+    if (reverb_peak_r > reverb_peak_r_.load(std::memory_order_relaxed)) reverb_peak_r_.store(reverb_peak_r, std::memory_order_relaxed);
+    {
+        const float settle_reverb = std::exp(-float(block_) / (0.3f * float(sr_)));
+        reverb_ms_l_ = reverb_ms_l_ * settle_reverb + float(reverb_sq_l / block_) * (1.0f - settle_reverb);
+        reverb_ms_r_ = reverb_ms_r_ * settle_reverb + float(reverb_sq_r / block_) * (1.0f - settle_reverb);
+        reverb_rms_l_.store(std::sqrt(reverb_ms_l_), std::memory_order_relaxed);
+        reverb_rms_r_.store(std::sqrt(reverb_ms_r_), std::memory_order_relaxed);
     }
     if (peak_l > meter_peak_l_.load(std::memory_order_relaxed)) meter_peak_l_.store(peak_l, std::memory_order_relaxed);
     if (peak_r > meter_peak_r_.load(std::memory_order_relaxed)) meter_peak_r_.store(peak_r, std::memory_order_relaxed);

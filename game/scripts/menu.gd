@@ -115,7 +115,6 @@ var _midi_signature := ""
 
 # Settings
 var _binaural_toggle: CheckButton
-var _reverb_toggle: CheckButton
 var _falloff_slider: HSlider
 var _falloff_value: Label
 var _text_slider: HSlider
@@ -497,9 +496,6 @@ func _build_settings_page(page: VBoxContainer) -> void:
 	_binaural_toggle = CheckButton.new()
 	_binaural_toggle.toggled.connect(_on_binaural_toggled)
 	_field(page, "Binaural (HRTF)").add_child(_binaural_toggle)
-	_reverb_toggle = CheckButton.new()
-	_reverb_toggle.toggled.connect(_on_reverb_toggled)
-	_field(page, "Room reverb").add_child(_reverb_toggle)
 	_falloff_value = Label.new()
 	_falloff_slider = _slider(page, "Distance falloff", 0.0, 6.0, 0.5, _falloff_value)
 	_falloff_slider.value_changed.connect(_on_falloff_changed)
@@ -690,8 +686,6 @@ func _refresh_live() -> void:
 	# Settings
 	_binaural_toggle.set_pressed_no_signal(settings.binaural)
 	_binaural_toggle.text = "On" if settings.binaural else "Off (plain stereo)"
-	_reverb_toggle.set_pressed_no_signal(settings.reverb)
-	_reverb_toggle.text = "On" if settings.reverb else "Off"
 	_falloff_slider.set_value_no_signal(settings.distance_falloff_db)
 	_falloff_value.text = "%.1f dB per doubling" % settings.distance_falloff_db
 	if not _text_dragging:
@@ -931,11 +925,6 @@ func _on_binaural_toggled(on: bool) -> void:
 
 func _on_falloff_changed(db: float) -> void:
 	app.set_distance_falloff(db)
-
-
-func _on_reverb_toggled(on: bool) -> void:
-	app.set_reverb(on)
-	_refresh_live()
 
 
 func _on_text_drag_started() -> void:

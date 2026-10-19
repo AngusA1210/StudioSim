@@ -2122,6 +2122,20 @@ int main(int argc, char** argv) {
         }
         check(came_round && highest < 16.01 && lowest_after < 0.5, "the timeline plays from where it is put and loops round its range",
               fmt("as far as step %.2f, then back to ", highest) + fmt("%.2f", lowest_after));
+        // A loop between steps (a clip's length, say) goes round exactly where it is set, not on the nearest step.
+        room.engine.setLoopRange(true, 2.25, 6.75);
+        room.engine.playFrom(2.25);
+        double top = 0.0, bottom = 99.0;
+        bool round_again = false;
+        for (int b = 0; b < int(1.6 * 48000 / 128); ++b) {
+            renderSeconds(room.engine, 128.0 / 48000.0);
+            const double at = room.engine.timelinePosition();
+            if (top > 6.5 && at < 3.0) round_again = true;
+            top = std::max(top, at);
+            if (b > 10) bottom = std::min(bottom, at);  // past the short breath before it starts
+        }
+        check(round_again && top < 6.76 && top > 6.6 && bottom > 2.24 && bottom < 2.4, "a loop between steps goes round exactly where it is set",
+              fmt("from %.2f ", bottom) + fmt("to %.2f", top));
         room.engine.setLoopRange(false, 0, 0);
         room.engine.setSequencerRunning(false);
         renderSeconds(room.engine, 0.05);

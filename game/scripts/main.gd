@@ -88,6 +88,9 @@ var speaker  # the Speaker the room starts with: the one whose input choice is r
 # The room's clock. These belong to the room rather than the player's settings, so they start from the defaults.
 var tempo := DEFAULT_TEMPO
 var master_volume_db := 0.0  # the master fader
+var reverb_db := 0.0  # the room reverb's fader
+var reverb_meter := {}  # its return's level, read with the output meter
+var reverb_peak_hold := 0.0
 var swing := DEFAULT_SWING
 var sequence_running := true  # whether the sequencer is playing the patterns
 var options := {}
@@ -156,7 +159,6 @@ func _ready() -> void:
 			var n: PackedStringArray = text.split(",")
 			room.add_wall(Vector2(float(n[0]), float(n[1])), Vector2(float(n[2]), float(n[3])), float(n[4]) if n.size() > 4 else Room.DEFAULT_WALL_HEIGHT)
 	audio.set_binaural(settings.binaural)
-	audio.set_reverb(settings.reverb)
 	_apply_master_volume()
 	audio.set_distance_falloff(settings.distance_falloff_db)
 	audio.set_limiter(settings.limiter)
@@ -239,6 +241,8 @@ func _notification(what: int) -> void:
 func _input(event: InputEvent) -> void:
 	if not (event is InputEventKey and event.pressed and not event.echo) or name_prompt.is_open() or rooms_page.is_open():
 		return
+	if get_viewport().gui_get_focus_owner() is LineEdit:  # being typed in (the edit window's counter, say)
+		return
 	var command: bool = event.meta_pressed or event.ctrl_pressed
 	if event.physical_keycode == KEY_S and command and not session.is_asking():
 		session.save_or_ask()
@@ -284,6 +288,7 @@ func _process(delta: float) -> void:
 func _read_meter(delta: float) -> void:
 	meter = audio.read_meter()
 	master_peak_hold = maxf(master_peak_hold, maxf(meter.get("peak_l", 0.0), meter.get("peak_r", 0.0)))
+	reverb_peak_hold = maxf(reverb_peak_hold, maxf(meter.get("reverb_peak_l", 0.0), meter.get("reverb_peak_r", 0.0)))
 	# Each channel as it reaches the master: after its fader, before distance and the master's. Or before its fader,
 	# scaled so that the two agree with the fader at 0 dB.
 	var pre: bool = settings.pre_fader_meters
@@ -303,8 +308,10 @@ func _read_meter(delta: float) -> void:
 
 
 ## Clears a channel's peak readout (null: the master's), or every one of them.
-func clear_peak(inst) -> void:
-	if inst == null:
+func clear_peak(inst) -> void:  # (null: the master's; "reverb": the reverb's)
+	if inst is String:
+		reverb_peak_hold = 0.0
+	elif inst == null:
 		master_peak_hold = 0.0
 	else:
 		inst.peak_hold = 0.0
@@ -340,6 +347,7 @@ func set_pedalboard_open(on: bool) -> void:
 
 func clear_all_peaks() -> void:
 	master_peak_hold = 0.0
+	reverb_peak_hold = 0.0
 	for inst in instruments:
 		inst.peak_hold = 0.0
 
@@ -929,10 +937,11 @@ func set_binaural(on: bool) -> void:
 	settings.save_to_disk()
 
 
-func set_reverb(on: bool) -> void:
-	settings.reverb = on
-	audio.set_reverb(on)
-	settings.save_to_disk()
+## The room reverb's fader (in the mix window, beside the master), in decibels: 0 is as the room has it, -80 none.
+## It belongs to the room, as an effects return does to a session.
+func set_reverb_db(db: float) -> void:
+	reverb_db = clampf(db, -80.0, 12.0)
+	audio.set_reverb_level(0.0 if reverb_db <= -79.0 else db_to_linear(reverb_db))
 
 
 ## The master fader, in decibels. It belongs to the room (saved with it), as a session's master fader does.

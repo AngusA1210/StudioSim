@@ -52,12 +52,12 @@ to the title, which then offers to go back into the room.
 | Tab | the mix window (you can still walk about while it is open) |
 | Space | start or stop every instrument's pattern (a Record room: play from the playhead, or stop) |
 | ⌘Space | a Record room: record the armed tracks from the playhead; again (or Space) to stop |
-| T | a Record room: the edit window (⌘= swaps it with the mix window) |
+| R | a Record room: the edit window, from the room or the mix window (⌘= swaps the two) |
+| Enter (edit or mix window) | a Record room: the playhead back to the start |
 | C | metronome click on/off |
 | Esc | the menu (see below), including the room's size and walls; the music keeps playing while it's open |
 | ⌘S | save the room |
 | B | binaural on/off (compare with plain stereo) |
-| R | room reverb on/off |
 
 Facing an instrument, a card at the right of the screen lists what each key does to it.
 
@@ -259,7 +259,7 @@ hand out keeps them in `~/Music/SoundRoom` instead.
   kept (10 to begin with). A backup opens like any room.
 
 **Templates** appear only when making a room. Two are built in: the default room, and an empty room with no
-instruments and no wall. Save a room as a template from the menu's Room button. Templates hold everything a room does,
+instruments and no wall (made as a Record room, it starts stopped with nothing looping, at 90 BPM). Save a room as a template from the menu's Room button. Templates hold everything a room does,
 and are kept in `SoundRoom/Templates` as `.srtemplate` files.
 
 ## Jam rooms and Record rooms
@@ -273,13 +273,15 @@ either way later; nothing it holds is lost.
 In a Record room:
 
 - **The transport**: Space plays from the playhead and stops, the playhead going back to where it started (as Pro
-  Tools does). The screen's top right says where the music is (bar | beat), whether it is recording, and the loop.
-- **The edit window** (T, or the mix window's Edit window button): a row for each instrument, its name in its colour,
+  Tools does); Enter, in the edit or mix window, puts it back at the start. The screen's top right says where the
+  music is (bar | beat, and minutes and seconds), whether it is recording, and the loop.
+- **The edit window** (R from the room or the mix window, or the mix window's Edit window button): a row for each instrument, its name in its colour,
   and its clips along the bars. On each track's header, **R** arms it for recording (and puts its input on, to be
   heard and played), **I** its input, **M** mute and **S** solo. Above them the ruler: click it to put the playhead
-  there, drag along it to loop that range (Loop switches loop playback on and off). Clips snap to the grid (Bar,
-  Beat, 1/8, 1/16 or Off). Click one to choose it and drag it along its track or to another that takes its kind;
-  hold Option as you drop it for a copy; **⌘D** puts a second of it just after it; **Delete** takes it away. Scroll
+  there, drag along it to loop that range (Loop switches loop playback on and off). The counter at the top shows bar |
+  beat with the time beside it; click it and type a bar (`5`), a bar and beat (`5 | 3`) or a time (`1:24`), then
+  Enter, to go there. Clips and the ruler snap to the grid (Bar, Beat, 1/8, 1/16, or Off for anywhere). Click one to choose it and drag it along its track or to another that takes its kind;
+  hold Option as you drop it for a copy; **⌘D** puts a second of it just after it; **Delete** takes it away; **L** loops it, from its start to its end exactly. Scroll
   to move about (Shift for along), ⌘ and the wheel (or a pinch) to zoom. Tab, or ⌘=, goes over to the mix window.
 - **Recording** (⌘Space, or Record): the armed tracks record from the playhead (or from where it is playing), loop
   playback waiting meanwhile. An armed Speaker or amp records its hardware input as it comes in, before its pedals,
@@ -341,6 +343,9 @@ mixing desk: a channel strip for every instrument, side by side, and the master 
 - **Peak readouts**: as in Pro Tools, the number beside each fader's level holds the highest peak (in dBFS) until
   you click it, and turns red once anything reaches full scale. Clicking a meter clears it too; Alt-click clears
   every one, the master's included.
+- **Reverb**: the room's reverb return, a fader with a stereo meter of its own just left of the master, as an aux
+  return sits beside the master on a desk. 0 dB is the room's own reverb; down to the bottom there is none, up to
+  +12 dB it is wetter than the room. Its level is kept with the room.
 - **Master**: LIMIT, the master fader with a stereo meter, and the output's peak readout. The master is laid out as
   a DAW's master track: the limiter is an insert, so it comes before the fader and works just as hard wherever the
   fader is. With it on, the mix can't reach full scale on its way to the fader, and the window says by how many
@@ -359,7 +364,7 @@ Settings page of the menu.
 
 In the room, the master meter stands at the top right of the screen (it can be switched off in Settings). Under it
 is the recent peak, or "limit" or "CLIP" when either is happening. Beside the tempo, two lamps show whether
-binaural rendering (B) and the room reverb (R) are on.
+binaural rendering (B) and the room reverb (its fader in the mix window above the bottom) are on.
 
 ## The room
 
@@ -411,7 +416,7 @@ patterns go back to the defaults at each start until rooms can be saved.
 - **I/O**: which of the device's outputs carry the mix, the input device, and which hardware input each Speaker plays.
   Live input always starts switched off, so an open microphone never meets a pair of speakers by surprise.
 - **MIDI**: every MIDI device the system sees, with a tick box each and a light that flashes when it sends notes.
-- **Settings**: binaural, reverb, distance falloff, text size, field of view, mouse sensitivity, room lighting, full screen (which
+- **Settings**: binaural, distance falloff, text size, field of view, mouse sensitivity, room lighting, full screen (which
   SoundRoom then opens in every time), whether the master meter and the audio readout are shown on screen, and
   auto-save and backups for the room.
 
@@ -481,7 +486,7 @@ Done so far: the native audio pipeline, instruments that can be added, placed an
 keyboard or a MIDI controller, a pattern sequencer with tempo, swing and a metronome, live audio input through
 Speakers, guitar and bass amps with boards of effect pedals (a loop pedal and a plug-in pedal among them), a title
 screen, a mix window laid out like a DAW's with plug-in inserts on every channel, a room whose size and walls
-can be changed, with sound bending round the walls and a reverb that follows the size, rooms saved as sessions (with
+can be changed, with sound bending round the walls and a reverb that follows the size (on a fader of its own), rooms saved as sessions (with
 templates, auto-save and backups), presets and copy and paste for plug-ins and instruments, and Record rooms: a
 timeline, an edit window, and recording audio and MIDI to clips.
 
@@ -492,7 +497,7 @@ To do, roughly in this order:
    MIDI, editing a MIDI clip's notes, nudging, and audio read from disk as it plays (for long rooms; takes are held
    in memory now). Perhaps later a free version with Jam rooms only, Record rooms coming with the full one.
 2. **More plug-ins**: inserts on the master, and perhaps VST3 and Windows.
-3. **The room's sound**: a reverb amount you can set, then wall materials, each absorbing and diffusing sound in its
+3. **The room's sound**: wall materials, each absorbing and diffusing sound in its
    own way, which shape how the room's reverb rings.
 4. **You in the room**: an avatar whose height you can set (the ears and eyes go with it; the view is a little tall
    for some now), which multiplayer will show to the others; and a free camera, detached from the avatar, that flies

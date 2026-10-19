@@ -269,10 +269,10 @@ func _on_drag(at: Vector2) -> void:
 	match _drag.get("what", ""):
 		"ruler":
 			if absf(at.x - _drag.from_x) > 4.0:
-				var unit: int = maxi(timeline.grid, 1) if timeline.grid > 0 else 16
-				var a: float = timeline.snap(minf(_drag.from, step_at(at.x)), unit)
+				var unit: int = timeline.grid  # with the grid off, anywhere
+				var a: float = maxf(timeline.snap(minf(_drag.from, step_at(at.x)), unit), 0.0)
 				var b: float = timeline.snap(maxf(_drag.from, step_at(at.x)), unit)
-				_drag.loop = Vector2(a, maxf(b, a + unit))
+				_drag.loop = Vector2(a, maxf(b, a + maxf(unit, 0.25)))
 		"clip":
 			_drag.moved = true
 			_drag.to_step = maxf(timeline.snap(step_at(at.x) - _drag.grab), 0.0)
@@ -286,7 +286,7 @@ func release(at: Vector2, copy := false) -> void:
 	match drag.get("what", ""):
 		"ruler":
 			if drag.has("loop"):
-				timeline.set_loop(true, int(drag.loop.x), int(drag.loop.y))
+				timeline.set_loop(true, drag.loop.x, drag.loop.y)
 			else:
 				timeline.locate(timeline.snap(step_at(at.x)))
 		"clip":

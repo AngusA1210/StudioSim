@@ -46,11 +46,11 @@ public:
     void retime(double sr, int64_t now);
     void setTempo(double bpm);
     void setSwing(double swing);
-    void start(int64_t now, int64_t from_step = 0);  // from this step (sixteenths from the start of bar 1)
+    void start(int64_t now, double from_step = 0.0);  // from here (in sixteenths from the start of bar 1; between steps too)
     void stop(int64_t now);  // where the music had got to is kept, for position()
     bool running() const { return running_; }
     // Loop playback: on reaching step `end`, the music goes back to `start`. Suspended (while recording), it runs on.
-    void setLoop(bool on, int64_t start, int64_t end);
+    void setLoop(bool on, double start, double end);  // anywhere, not only on steps
     void suspendLoop(bool suspended) { loop_suspended_ = suspended; }
     // Where the music is at sample `at` (near the block being rendered), in steps from the start of bar 1, counting a
     // jump back to the loop's start; while stopped, where it stopped.
@@ -70,7 +70,8 @@ private:
     int64_t next_step_ = 0;
     bool running_ = true;
     bool loop_on_ = false, loop_suspended_ = false;
-    int64_t loop_start_ = 0, loop_end_ = 0;
+    double loop_start_ = 0.0, loop_end_ = 0.0;
+    bool before_loop_end_ = true;  // it started (or last came round) before the loop's end, so it goes round there
     double wrapped_at_ = -1.0;  // when it last jumped back to the loop's start
     double stopped_at_ = 0.0;   // where it stopped
 };

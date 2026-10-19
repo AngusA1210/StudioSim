@@ -269,12 +269,16 @@ func _run() -> void:
 	check(main.hud._binaural_chip.text == "BINAURAL" and main.hud._reverb_chip.text == "REVERB" and main.hud._modes_panel.visible,
 		"the screen shows that binaural and the room reverb are on")
 	await tap(KEY_B)
-	await tap(KEY_R)
-	check(main.hud._binaural_chip.text == "BINAURAL OFF" and main.hud._reverb_chip.text == "REVERB OFF" and not main.settings.binaural,
-		"and B and R switch them off, which it shows", "%s, %s" % [main.hud._binaural_chip.text, main.hud._reverb_chip.text])
+	main.set_reverb_db(-80.0)  # the reverb's fader all the way down
+	await tap(KEY_R)  # which no longer switches it (in a Jam room it does nothing)
+	await frames(2)
+	check(main.hud._binaural_chip.text == "BINAURAL OFF" and main.hud._reverb_chip.text == "REVERB OFF" and not main.settings.binaural and
+		not main.edit_window.is_open(), "B switches binaural off, and the reverb's fader all the way down puts the reverb out, which it shows",
+		"%s, %s" % [main.hud._binaural_chip.text, main.hud._reverb_chip.text])
 	await tap(KEY_B)
-	await tap(KEY_R)
-	check(main.settings.binaural and main.settings.reverb and main.hud._binaural_chip.text == "BINAURAL", "and on again")
+	main.set_reverb_db(0.0)
+	await frames(2)
+	check(main.settings.binaural and main.hud._reverb_chip.text == "REVERB" and main.hud._binaural_chip.text == "BINAURAL", "and on again")
 	check(not title.is_open() and not title.visible and player.camera.current and main.hud._root.visible, "Enter goes into the room, in the player's view",
 		"title open %s, title showing %s, player camera %s, hud %s" % [title.is_open(), title.visible, player.camera.current, main.hud._root.visible])
 
@@ -1581,11 +1585,11 @@ func _run() -> void:
 	check(timeline.position() > 0.5 and main.hud._beat.text.contains("⟳ 1–4"), "the screen shows where the music is, and the loop", main.hud._beat.text)
 	var keys_inst = main.find_instrument("keys")
 	var speaker_inst = main.speaker
-	await tap(KEY_T)
+	await tap(KEY_R)
 	await frames(3)
 	var edit = main.edit_window
 	var view = edit.view
-	check(edit.is_open() and view.tracks().size() == 6 and not main.hud._root.visible, "T opens the edit window: a track for each instrument")
+	check(edit.is_open() and view.tracks().size() == 6 and not main.hud._root.visible, "R opens the edit window: a track for each instrument")
 	await tap(KEY_SPACE)
 	await frames(2)
 	check(not timeline.playing and is_equal_approx(timeline.playhead, 0.0), "Space stops, and the playhead goes back to where it started")
@@ -1638,14 +1642,44 @@ func _run() -> void:
 	check(keys_inst.clips.size() == 3, "Cmd-D puts a second of the chosen clip just after it")
 	await tap(KEY_BACKSPACE)
 	check(keys_inst.clips.size() == 2 and view.selected.is_empty(), "Delete takes the chosen clip away")
+	view.selected = {"inst": speaker_inst, "index": 0}
+	await tap(KEY_L)
+	var take_span: Vector2 = timeline.clip_steps(speaker_inst.clips[0])
+	check(timeline.loop_on and is_equal_approx(timeline.loop_start, take_span.x) and is_equal_approx(timeline.loop_end, take_span.y),
+		"L loops the chosen clip, from its start to its end exactly", "%.3f to %.3f" % [timeline.loop_start, timeline.loop_end])
+	view.selected = {}
+	timeline.grid = 0
+	view.drag_to(Vector2(view.x_of(5.3), 12), Vector2(view.x_of(9.7), 12))
+	check(absf(timeline.loop_start - 5.3) < 0.2 and absf(timeline.loop_end - 9.7) < 0.2, "with the grid off, a loop dragged on the ruler isn't snapped to bars",
+		"%.2f to %.2f" % [timeline.loop_start, timeline.loop_end])
+	timeline.grid = 4
+	timeline.locate(40.0)
+	await tap(KEY_ENTER)
+	check(is_equal_approx(timeline.playhead, 0.0), "Enter puts the playhead back at the start")
+	edit._counter.grab_focus()
+	edit._counter.text = "5 | 3"
+	edit._counter.text_submitted.emit("5 | 3")
+	await frames(2)
+	var at_bar_five: float = timeline.playhead
+	edit._counter.text_submitted.emit("0:02")
+	await frames(2)
+	check(is_equal_approx(at_bar_five, 72.0) and absf(timeline.playhead * timeline.step_seconds() - 2.0) < 0.01 and not edit._counter.has_focus() and
+		edit._clock.text.begins_with("0:02"), "typing a bar | beat (or a time) in the counter puts the playhead there, and the time shows beside it",
+		"%.1f, then %s" % [at_bar_five, edit._clock.text])
+	timeline.locate(0.0)
+	await tap(KEY_TAB)
+	check(main.mixer.is_open() and not edit.is_open() and main.mixer._to_edit.text == "Edit window  (R)", "Tab goes over to the mix window")
+	await tap(KEY_R)
+	check(edit.is_open() and not main.mixer.is_open(), "and R from the mix window back to the edit window")
 	var speaker_row: int = view.tracks().find(speaker_inst)
 	view.drag_to(Vector2(view.x_of(timeline.clip_steps(audio_clip).x + 1.0), view.row_top(speaker_row) + 30),
 		Vector2(view.x_of(timeline.clip_steps(audio_clip).x + 1.0), view.row_top(keys_row) + 30))
 	check(speaker_inst.clips.size() == 1 and keys_inst.clips.size() == 2, "an audio clip can't be dropped on an instrument's track")
-	await tap(KEY_T)
-	check(not edit.is_open(), "T closes it again")
+	await tap(KEY_R)
+	check(not edit.is_open(), "R closes it again")
 	session.save()
 	var record_file: String = session.path
+	var saved_loop := Vector2(timeline.loop_start, timeline.loop_end)
 	main.show_title()
 	await frames(3)
 	await click(title.buttons.open.get_global_rect().get_center())
@@ -1655,14 +1689,44 @@ func _run() -> void:
 	await click(rooms._open.get_global_rect().get_center())
 	await seconds(1.0)
 	var reopened_keys = main.find_instrument("keys")
-	check(timeline.is_record() and reopened_keys.clips.size() == 2 and main.speaker.clips.size() == 1 and timeline.loop_start == 16,
-		"saved and opened again, the room is a Record room with its clips and loop")
+	check(timeline.is_record() and reopened_keys.clips.size() == 2 and main.speaker.clips.size() == 1 and is_equal_approx(timeline.loop_start, saved_loop.x) and
+		is_equal_approx(timeline.loop_end, saved_loop.y), "saved and opened again, the room is a Record room with its clips and loop",
+		"%.2f to %.2f" % [timeline.loop_start, timeline.loop_end])
+	main.mixer.open()
+	await seconds(0.6)
+	var reverb_heard: float = main.mixer._reverb.meter.held_db()
+	main.mixer._reverb.fader.value_changed.emit(-80.0)
+	await seconds(1.0)
+	main.mixer._reverb.meter.clear_hold()
+	await seconds(0.4)
+	check(reverb_heard > -60.0 and main.mixer._reverb.meter.held_db() < -59.0 and main.mixer._reverb.value.text == "-inf" and main.reverb_db <= -79.0,
+		"the room reverb has a fader of its own beside the master, its return metered, and all the way down there is none",
+		"%.0f dB, then %.0f dB" % [reverb_heard, main.mixer._reverb.meter.held_db()])
+	main.mixer._reverb.fader.value_changed.emit(-6.0)
+	main.mixer.close()
+	check(is_equal_approx(float(library.room_data().reverb_db), -6.0), "and it is kept with the room")
 	timeline.set_mode("jam")
 	await frames(2)
-	await tap(KEY_T)
+	await tap(KEY_R)
 	var refused: String = timeline.toggle_record()
 	check(not edit.is_open() and refused.begins_with("recording is for Record rooms"), "a Jam room has no edit window, and doesn't record", refused)
 	timeline.set_mode("record")
+	main.show_title()
+	await frames(3)
+	await click(title.buttons.new.get_global_rect().get_center())
+	await frames(2)
+	rooms._name.text = "Empty recording room"
+	rooms._check_name()
+	rooms._record.button_pressed = true
+	rooms._template_list.select(1)
+	rooms._on_template_chosen()
+	await click(rooms._create.get_global_rect().get_center())
+	if session.is_asking():
+		session._confirm.custom_action.emit(&"discard")
+	await seconds(0.8)
+	check(session.room_name == "Empty recording room" and timeline.is_record() and not timeline.playing and not timeline.loop_on and
+		is_equal_approx(main.tempo, 90.0) and main.instruments.is_empty(), "the empty room in Record mode starts stopped, nothing looping, at 90 BPM",
+		"%.0f BPM" % main.tempo)
 
 	print("ALL PASSED" if failures == 0 else "%d FAILED" % failures)
 	quit(failures)

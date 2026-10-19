@@ -52,6 +52,8 @@ var _to_edit: Button  # over to the edit window, in a Record room
 var _signature := ""
 var _input_channels := -1
 var _master := {}
+var _reverb := {}  # the room reverb's strip
+const REVERB := "reverb"  # what its fader and meter are for (null is the master)
 var _status: Label
 var _problem_until := 0  # a plug-in that wouldn't load is reported in the status line for a few seconds
 
@@ -93,10 +95,21 @@ func close() -> void:
 func _input(event: InputEvent) -> void:
 	if app.plugin_browser.visible or app.name_prompt.is_open():  # the keys are for typing
 		return
-	if is_open() and event is InputEventKey and event.pressed and not event.echo and \
-			(event.physical_keycode == KEY_ESCAPE or app.bindings.action_for(event.physical_keycode) == "mixer"):
+	if not (is_open() and event is InputEventKey and event.pressed and not event.echo) or event.meta_pressed or event.ctrl_pressed:
+		return
+	if get_viewport().gui_get_focus_owner() is LineEdit:
+		return
+	var action: String = app.bindings.action_for(event.physical_keycode)
+	if event.physical_keycode == KEY_ESCAPE or action == "mixer":
 		close()
-		get_viewport().set_input_as_handled()
+	elif action == "edit_window" and app.timeline.is_record():  # over to the edit window
+		close()
+		app.edit_window.open()
+	elif event.physical_keycode in [KEY_ENTER, KEY_KP_ENTER] and app.timeline.is_record():  # back to the start
+		app.timeline.locate(0.0)
+	else:
+		return
+	get_viewport().set_input_as_handled()
 
 
 func _process(_delta: float) -> void:
@@ -108,6 +121,7 @@ func _process(_delta: float) -> void:
 	_panel.size = Vector2(vp.x - 24, height)
 	_refresh()
 	_to_edit.visible = app.timeline.is_record()
+	_to_edit.text = "Edit window  (%s)" % app.bindings.label("edit_window")
 	_hint.text = Hints.under_mouse(_panel)
 
 
@@ -144,7 +158,7 @@ func _build() -> void:
 	_status.clip_text = true
 	header.add_child(_status)
 	_to_edit = Button.new()
-	_to_edit.text = "Edit window  (T)"
+	_to_edit.text = "Edit window  (R)"
 	_to_edit.focus_mode = Control.FOCUS_NONE
 	_to_edit.pressed.connect(func() -> void:
 		close()
@@ -168,6 +182,7 @@ func _build() -> void:
 	_strip_row.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	scroll.add_child(_strip_row)
 	desk.add_child(VSeparator.new())
+	desk.add_child(_build_reverb())
 	desk.add_child(_build_master())
 
 	_insert_menu = PopupMenu.new()
@@ -203,6 +218,26 @@ func _build() -> void:
 
 	_hint = Hints.line()
 	box.add_child(_hint)
+
+
+## The room reverb's return, as a DAW's effects return: its fader (0 dB is the reverb the room's size calls for, the
+## bottom none at all) with its meter, beside the master's.
+func _build_reverb() -> PanelContainer:
+	var strip := _strip_panel(STRIP_WIDTH + 14)
+	var box: VBoxContainer = strip.get_child(0)
+	var level_with_inserts := Control.new()  # so its fader lines up with the others
+	level_with_inserts.custom_minimum_size.y = _inserts_height()
+	box.add_child(level_with_inserts)
+	_small(box, "RETURN")
+	var gap := Control.new()
+	gap.custom_minimum_size.y = 54
+	box.add_child(gap)
+	var pair := _fader_and_meter(box, 2, REVERB)
+	pair.fader.value_changed.connect(func(db: float) -> void: app.set_reverb_db(db))
+	var readouts := _readouts(box, REVERB)
+	box.add_child(_name_plate("Reverb", Color(0.4, 0.86, 0.78), null))
+	_reverb = {"fader": pair.fader, "meter": pair.meter, "value": readouts.value, "peak": readouts.peak}
+	return strip
 
 
 func _build_master() -> PanelContainer:
@@ -361,8 +396,9 @@ func _fader_and_meter(box: VBoxContainer, channels: int, inst) -> Dictionary:
 	var fader := Fader.new()
 	fader.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	fader.gui_input.connect(_on_fader_area_input.bind(fader))
-	Hints.give(fader, "%s: drag (Shift for fine moves), double-click or Alt-click for 0 dB.  Right-click: pre- or post-fader meters" % (
-		"Master fader, after the limiter" if inst == null else "Fader"))
+	var fader_name := "Master fader, after the limiter" if inst == null else ("Room reverb: how much of the room's reverb is heard" \
+		if inst is String else "Fader")
+	Hints.give(fader, "%s: drag (Shift for fine moves), double-click or Alt-click for 0 dB.  Right-click: pre- or post-fader meters" % fader_name)
 	row.add_child(fader)
 	var meter := LevelMeter.new()
 	meter.vertical = true
@@ -371,6 +407,8 @@ func _fader_and_meter(box: VBoxContainer, channels: int, inst) -> Dictionary:
 	meter.gui_input.connect(_on_fader_area_input.bind(meter))
 	if inst == null:
 		Hints.give(meter, "Output meter: what goes to your speakers.  Click to clear its peak (Alt-click: every peak)")
+	elif inst is String:
+		Hints.give(meter, "The room reverb's return, after its fader.  Click to clear its peak (Alt-click: every peak)")
 	else:
 		Hints.give(meter, func() -> String: return "Meter, %s the fader.  Click to clear its peak (Alt-click: every peak).  Right-click: pre or post" % (
 			"before" if app.settings.pre_fader_meters else "after"))
@@ -398,7 +436,7 @@ func _readouts(box: VBoxContainer, inst) -> Dictionary:
 	peak.custom_minimum_size = Vector2(0, 20)
 	peak.add_theme_font_size_override("font_size", 12)
 	Hints.give(peak, func() -> String: return "The highest peak%s since this was clicked.  Click to clear it (Alt-click: every peak)" % (
-		"" if inst == null else (" before the fader" if app.settings.pre_fader_meters else " after the fader")))
+		"" if inst == null or inst is String else (" before the fader" if app.settings.pre_fader_meters else " after the fader")))
 	for state in ["normal", "hover", "pressed", "hover_pressed"]:
 		var style := StyleBoxFlat.new()
 		style.bg_color = Color(0.03, 0.035, 0.04) if not state.begins_with("hover") else Color(0.08, 0.085, 0.1)
@@ -520,6 +558,11 @@ func _refresh() -> void:
 		_master.fader.set_value_no_signal(app.master_volume_db)
 	_master.value.text = _db_text(app.master_volume_db)
 	_show_peak(_master.peak, app.master_peak_hold)
+	_reverb.meter.feed([m.get("reverb_peak_l", 0.0), m.get("reverb_peak_r", 0.0)], [m.get("reverb_rms_l", 0.0), m.get("reverb_rms_r", 0.0)])
+	if not _reverb.fader._dragging:
+		_reverb.fader.set_value_no_signal(app.reverb_db)
+	_reverb.value.text = _db_text(app.reverb_db)
+	_show_peak(_reverb.peak, app.reverb_peak_hold)
 	_master.limiter.set_pressed_no_signal(settings.limiter)
 	if Time.get_ticks_msec() < _problem_until:
 		pass
@@ -840,10 +883,14 @@ func _on_peak_pressed(alt: bool, inst) -> void:
 	if alt:
 		app.clear_all_peaks()
 		_master.meter.clear_hold()
+		_reverb.meter.clear_hold()
 		for strip in _strips:
 			strip.meter.clear_hold()
 		return
 	app.clear_peak(inst)
+	if inst is String:
+		_reverb.meter.clear_hold()
+		return
 	if inst == null:
 		_master.meter.clear_hold()
 	for strip in _strips:

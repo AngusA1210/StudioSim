@@ -26,8 +26,8 @@ var audio: SoundRoomAudio
 var mode := "jam"         # "jam" or "record"
 var playhead := 0.0       # steps: where playing and recording start from
 var loop_on := true
-var loop_start := 0       # steps
-var loop_end := 64
+var loop_start := 0.0     # steps (between them too: a clip's length, say)
+var loop_end := 64.0
 var playing := false
 var recording := false
 var grid := 4             # steps a clip snaps to (0: free)
@@ -66,8 +66,8 @@ func load_from(data: Dictionary, new_mode := "") -> void:
 	var t: Dictionary = data.get("timeline", {})
 	playhead = float(t.get("playhead", 0.0))
 	loop_on = bool(t.get("loop_on", true))
-	loop_start = int(t.get("loop_start", 0))
-	loop_end = int(t.get("loop_end", 64))
+	loop_start = float(t.get("loop_start", 0.0))
+	loop_end = float(t.get("loop_end", 64.0))
 	_started_at = playhead
 	restart(bool(t.get("playing", true)))
 
@@ -141,9 +141,9 @@ func locate(step: float) -> void:
 	changed.emit()
 
 
-func set_loop(on: bool, start := -1, end := -1) -> void:
+func set_loop(on: bool, start := -1.0, end := -1.0) -> void:
 	loop_on = on
-	if start >= 0 and end > start:
+	if start >= 0.0 and end > start:
 		loop_start = start
 		loop_end = end
 	audio.set_loop_range(loop_on, loop_start, loop_end)

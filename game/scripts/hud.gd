@@ -103,7 +103,7 @@ func setup(the_app) -> void:
 	_beat.add_theme_font_size_override("font_size", 14)
 	_beat_panel.add_child(_beat)
 
-	# Whether binaural rendering and the room reverb are on (B and R), lit when they are.
+	# Whether binaural rendering (B) and the room reverb (its fader not all the way down) are on, lit when they are.
 	_modes_panel = _panel(_root)
 	var modes := HBoxContainer.new()
 	modes.add_theme_constant_override("separation", 6)
@@ -188,9 +188,11 @@ func _process(_delta: float) -> void:
 	if timeline.is_record():  # a Record room: where the music is on the timeline, and whether it is recording
 		var at: float = timeline.position()
 		var state: String = "●  REC" if timeline.recording else ("▶" if timeline.playing else "■")
-		_beat.text = "%s   %d | %d   ·   %s%d BPM%s" % [state, int(at / 16.0) + 1, int(fmod(at, 16.0) / 4.0) + 1,
-			"⟳ %d–%d   ·   " % [timeline.loop_start / 16 + 1, timeline.loop_end / 16] if timeline.loop_on else "", roundi(app.tempo),
-			"  ·  click" if app.settings.click else ""]
+		var seconds: float = maxf(at, 0.0) * timeline.step_seconds()
+		_beat.text = "%s   %d | %d   %d:%04.1f   ·   %s%d BPM%s" % [state, int(at / 16.0) + 1, int(fmod(at, 16.0) / 4.0) + 1,
+			int(seconds / 60.0), fmod(seconds, 60.0),
+			"⟳ %d–%d   ·   " % [int(timeline.loop_start / 16.0) + 1, int(ceilf(timeline.loop_end / 16.0))] if timeline.loop_on else "",
+			roundi(app.tempo), "  ·  click" if app.settings.click else ""]
 		_beat.add_theme_color_override("font_color", Color(1.0, 0.4, 0.38) if timeline.recording else DIM)
 	else:
 		_beat.add_theme_color_override("font_color", DIM)
@@ -198,7 +200,7 @@ func _process(_delta: float) -> void:
 	_beat_panel.position = Vector2(vp.x - _beat_panel.size.x - 14, 14)
 
 	_light_chip(_binaural_chip, "BINAURAL", app.settings.binaural, BINAURAL_BLUE)
-	_light_chip(_reverb_chip, "REVERB", app.settings.reverb, REVERB_TEAL)
+	_light_chip(_reverb_chip, "REVERB", app.reverb_db > -79.0, REVERB_TEAL)
 	_modes_panel.reset_size()
 	_modes_panel.position = Vector2(_beat_panel.position.x - _modes_panel.size.x - 8, 14)
 

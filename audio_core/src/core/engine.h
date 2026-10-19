@@ -88,6 +88,7 @@ struct MeterReading {
     float rms_l = 0, rms_r = 0;    // the average level over the last third of a second or so
     float limiter_gain = 1;        // the lowest gain the limiter applied (1 = it did nothing)
     uint32_t clipped = 0;          // samples that went over full scale and were cut off
+    float reverb_peak_l = 0, reverb_peak_r = 0, reverb_rms_l = 0, reverb_rms_r = 0;  // the room reverb's return alone
 };
 
 // One of the effect pedals in front of an amp, for the game to show.
@@ -285,7 +286,8 @@ public:
     // Binaural (HRTF) rendering, or plain stereo panning to compare it with. Binaural comes out a quarter of a block
     // later (EngineStats::binaural_ms), and the reverb and the click with it. Switching crossfades between the two.
     void setBinaural(bool on);
-    void setReverb(bool on);
+    void setReverb(bool on);              // as setReverbLevel(1) or (0)
+    void setReverbLevel(float gain);      // the room reverb's return: 1 is as the room has it, 0 none; up to 4
     // The master fader, after the limiter as on a DAW's master track: the limiter's inserts come before the fader, so
     // how hard it works doesn't depend on where the fader sits. 1 = normal; above 1 the output can clip again.
     void setMasterVolume(float gain);
@@ -316,7 +318,7 @@ public:
     // Playing from a step (sixteenths from the start of bar 1: the patterns follow, each from its own start every time
     // round), stopping (setSequencerRunning(false)), and loop playback over a range of steps.
     void playFrom(double step);
-    void setLoopRange(bool on, int start_step, int end_step);
+    void setLoopRange(bool on, double start_step, double end_step);  // anywhere, not only on steps
     double timelinePosition() const { return position_.load(std::memory_order_relaxed); }  // in steps, as last rendered
     // A track's clips: notes to play (an instrument) and audio to play into it (a Speaker or an amp, through its pedals,
     // amp and inserts as its input would be). Files are read (once each) on this thread. False, with the reason, if
@@ -485,6 +487,8 @@ private:
     std::atomic<int> out_left_{0}, out_right_{1};
     std::atomic<int64_t> step_{-1};
     std::atomic<float> meter_peak_l_{0.0f}, meter_peak_r_{0.0f}, meter_rms_l_{0.0f}, meter_rms_r_{0.0f}, meter_gain_{1.0f};
+    std::atomic<float> reverb_peak_l_{0.0f}, reverb_peak_r_{0.0f}, reverb_rms_l_{0.0f}, reverb_rms_r_{0.0f};
+    float reverb_ms_l_ = 0.0f, reverb_ms_r_ = 0.0f;
     std::atomic<uint32_t> meter_clipped_{0};
     std::atomic<bool> reverb_changing_{false};  // set by the game thread with a new reverb, cleared when it has faded in
     // The timeline and recording

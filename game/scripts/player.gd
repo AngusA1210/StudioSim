@@ -277,8 +277,6 @@ func _handle_key(event: InputEventKey) -> void:
 			app.set_click(not app.settings.click)
 		"binaural":
 			app.set_binaural(not app.settings.binaural)
-		"reverb":
-			app.set_reverb(not app.settings.reverb)
 		"input":
 			if at != null:
 				app.set_input(at, not at.input_on)

@@ -304,7 +304,7 @@ func room_data() -> Dictionary:
 	var size: Vector3 = app.room.size
 	var stood: Vector3 = app.player.global_position
 	return {"soundroom": "room", "version": VERSION, "mode": app.timeline.mode, "timeline": app.timeline.to_data(),
-		"tempo": app.tempo, "swing": app.swing, "master_db": app.master_volume_db,
+		"tempo": app.tempo, "swing": app.swing, "master_db": app.master_volume_db, "reverb_db": app.reverb_db,
 		"room": {"size": [size.x, size.y, size.z], "walls": walls},
 		"player": {"position": [stood.x, stood.z], "yaw": app.player.yaw}, "instruments": instruments}
 
@@ -324,9 +324,11 @@ func default_room_data(empty := false) -> Dictionary:
 		for wall in app.Room.default_walls():
 			walls.append([wall.a.x, wall.a.y, wall.b.x, wall.b.y, wall.height])
 	var size: Vector3 = app.Room.DEFAULT_SIZE
-	return {"soundroom": "template", "version": VERSION, "tempo": app.DEFAULT_TEMPO, "swing": app.DEFAULT_SWING,
+	# The empty room starts at a plain 90 BPM, and in a Record room stopped, with nothing looping: there is nothing to
+	# hear yet. The default room plays its groove round its four bars.
+	return {"soundroom": "template", "version": VERSION, "tempo": 90.0 if empty else app.DEFAULT_TEMPO, "swing": app.DEFAULT_SWING,
 		"room": {"size": [size.x, size.y, size.z], "walls": walls}, "player": {"position": [spawn.x, spawn.z], "yaw": 0.0},
-		"instruments": instruments}
+		"instruments": instruments, "timeline": {"playing": not empty, "loop_on": not empty}}
 
 
 ## What a template holds (one of the built-in ones, or a file), or {} if it can't be read.
@@ -384,6 +386,7 @@ func apply_room_data(data: Dictionary, carry := {}, size = null, mode := "") -> 
 	app.set_tempo(float(data.get("tempo", app.DEFAULT_TEMPO)) if with_tempo else app.DEFAULT_TEMPO)
 	app.set_swing(float(data.get("swing", app.DEFAULT_SWING)) if with_tempo else app.DEFAULT_SWING)
 	app.set_master_volume_db(float(data.get("master_db", 0.0)) if keep.call("mix") else 0.0)  # unity unless it says otherwise
+	app.set_reverb_db(float(data.get("reverb_db", 0.0)) if keep.call("mix") else 0.0)
 	var problems := []
 	var include := {"instrument_settings": keep.call("instrument_settings"), "plugins": keep.call("plugins")}
 	for entry in data.get("instruments", []) if keep.call("instruments") else []:

@@ -89,11 +89,13 @@ void Sequencer::setTempo(double bpm) {
 
 void Sequencer::setSwing(double swing) { swing_ = std::clamp(swing, 0.0, 0.6); }
 
-void Sequencer::start(int64_t now, int64_t from_step) {
+void Sequencer::start(int64_t now, double from_step) {
     running_ = true;
-    next_step_ = std::max<int64_t>(from_step, 0);
-    next_step_time_ = double(now) + 0.02 * sr_;
+    from_step = std::max(from_step, 0.0);
+    next_step_ = int64_t(std::ceil(from_step - 1e-9));  // the first step at or after it, a little later
+    next_step_time_ = double(now) + 0.02 * sr_ + (double(next_step_) - from_step) * step_samples_;
     wrapped_at_ = -1.0;
+    before_loop_end_ = from_step < loop_end_;
 }
 
 void Sequencer::stop(int64_t now) {
@@ -101,16 +103,17 @@ void Sequencer::stop(int64_t now) {
     running_ = false;
 }
 
-void Sequencer::setLoop(bool on, int64_t start, int64_t end) {
-    loop_on_ = on && end > start;
-    loop_start_ = start;
+void Sequencer::setLoop(bool on, double start, double end) {
+    loop_on_ = on && end - start >= 0.25;
+    loop_start_ = std::max(start, 0.0);
     loop_end_ = end;
+    before_loop_end_ = !running_ || double(next_step_) <= loop_end_;
 }
 
 double Sequencer::position(int64_t at) const {
     if (!running_ || step_samples_ <= 0.0) return stopped_at_;
     double steps = double(next_step_) - (next_step_time_ - double(at)) / step_samples_;
-    if (wrapped_at_ >= 0.0 && double(at) < wrapped_at_ && loop_on_) steps += double(loop_end_ - loop_start_);  // just before the jump
+    if (wrapped_at_ >= 0.0 && double(at) < wrapped_at_ && loop_on_) steps += loop_end_ - loop_start_;  // just before the jump
     return std::max(steps, 0.0);
 }
 
@@ -126,14 +129,21 @@ int64_t Sequencer::nextBarAt(int64_t from) const {
 
 void Sequencer::process(int64_t block_end, StepSink& sink) {
     if (!running_) return;
-    while (next_step_time_ < double(block_end)) {
+    while (true) {
+        // The loop's end comes before the next step is due (or on it): back to the loop's start, which may fall
+        // between steps, the next step then being the first after it.
+        if (loop_on_ && !loop_suspended_ && before_loop_end_ && double(next_step_) >= loop_end_ - 1e-9) {
+            const double at = next_step_time_ - (double(next_step_) - loop_end_) * step_samples_;
+            if (at >= double(block_end)) break;
+            next_step_ = int64_t(std::ceil(loop_start_ - 1e-9));
+            next_step_time_ = at + (double(next_step_) - loop_start_) * step_samples_;
+            wrapped_at_ = at;
+            continue;
+        }
+        if (next_step_time_ >= double(block_end)) break;
         sink.step(next_step_, next_step_time_ + (next_step_ % 2 ? step_samples_ * swing_ : 0.0), step_samples_);
         ++next_step_;
         next_step_time_ += step_samples_;
-        if (loop_on_ && !loop_suspended_ && next_step_ == loop_end_) {  // back to the loop's start
-            next_step_ = loop_start_;
-            wrapped_at_ = next_step_time_;
-        }
     }
 }
 
