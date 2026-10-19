@@ -237,39 +237,55 @@ func _notification(what: int) -> void:
 		session.request_quit()
 
 
-## Cmd-S (Ctrl-S) saves the room, from anywhere but a box being typed in.
+## The Cmd shortcuts (Ctrl off a Mac; bindings.gd lists them): saving the room, from anywhere but a box being typed
+## in; and in the room or its windows, recording, undo and redo, and the mix and edit windows in turn. Space starts and
+## stops the music in the mix and edit windows too.
 func _input(event: InputEvent) -> void:
 	if not (event is InputEventKey and event.pressed and not event.echo) or name_prompt.is_open() or rooms_page.is_open():
 		return
 	if get_viewport().gui_get_focus_owner() is LineEdit:  # being typed in (the edit window's counter, say)
 		return
 	var command: bool = event.meta_pressed or event.ctrl_pressed
-	if event.physical_keycode == KEY_S and command and not session.is_asking():
+	var shortcut: String = bindings.command_for(event.physical_keycode) if command else ""
+	if shortcut == "save" and not session.is_asking():
 		session.save_or_ask()
 		get_viewport().set_input_as_handled()
 		return
 	if (title != null and title.is_open()) or menu.is_open() or session.is_asking():
 		return
-	if event.physical_keycode == KEY_SPACE and command:
-		toggle_record()
-	elif event.physical_keycode == KEY_Z and command and timeline.is_record() and not timeline.recording:  # the edits, undone or done again
-		var what: String = timeline.redo() if event.shift_pressed else timeline.undo()
-		edit_window.view.selected = {}
-		session.notice.emit(("Redo " if event.shift_pressed else "Undo ") + what if what != "" else
-			("Nothing to redo" if event.shift_pressed else "Nothing to undo"))
-	elif event.physical_keycode == KEY_EQUAL and command and timeline.is_record():  # the mix window and the edit window, in turn
-		if edit_window.is_open():
-			edit_window.close()
-			mixer.open()
-		else:
-			if mixer.is_open():
-				mixer.close()
-			edit_window.open()
-	elif (mixer.is_open() or edit_window.is_open()) and bindings.action_for(event.physical_keycode) == "transport" and not command:
-		toggle_transport()  # Space works in the mix and edit windows too
-	else:
-		return
+	if shortcut == "undo" and event.shift_pressed:  # Cmd-Shift-Z redoes too, as most programs have it
+		shortcut = "redo"
+	match shortcut:
+		"record":
+			toggle_record()
+		"swap_windows":  # the mix window and the edit window, in turn
+			if not timeline.is_record():
+				return
+			if edit_window.is_open():
+				edit_window.close()
+				mixer.open()
+			else:
+				if mixer.is_open():
+					mixer.close()
+				edit_window.open()
+		"undo", "redo":
+			if not timeline.is_record() or timeline.recording:
+				return
+			undo_edit(shortcut == "redo")
+		_:
+			if (mixer.is_open() or edit_window.is_open()) and bindings.action_for(event.physical_keycode) == "transport" and not command:
+				toggle_transport()  # Space works in the mix and edit windows too
+			else:
+				return
 	get_viewport().set_input_as_handled()
+
+
+## Cmd-Z, or the edit window's Undo button: the clips as they were before the last edit (with `redo`, the last edit undone,
+## done again).
+func undo_edit(redo := false) -> void:
+	var what: String = timeline.redo() if redo else timeline.undo()
+	edit_window.view.selected = {}
+	session.notice.emit(("Redo " if redo else "Undo ") + what if what != "" else ("Nothing to redo" if redo else "Nothing to undo"))
 
 
 func _process(delta: float) -> void:
@@ -443,7 +459,7 @@ func set_live_input(on: bool) -> void:
 	for inst in instruments:
 		if not inst.playable:
 			inst.set_input(on)
-	_follow_speaker_inputs()
+	follow_live_inputs()
 
 
 ## Switches an instrument's input on or off, as a track's input in a DAW. With it on, a MIDI instrument plays what
@@ -453,17 +469,17 @@ func set_input(inst, on: bool) -> void:
 	if player != null:
 		player.notice_input(inst)
 	if not inst.playable:
-		_follow_speaker_inputs()
+		follow_live_inputs()
 
 
-## The MIDI instruments whose input is on: what the keyboards play.
+## The MIDI instruments whose input is on, or that are armed to record: what the keyboards play.
 func armed_instruments() -> Array:
-	return instruments.filter(func(inst): return inst.playable and inst.input_on)
+	return instruments.filter(func(inst): return inst.playable and (inst.input_on or inst.armed))
 
 
-## Opens the audio input while any Speaker wants it, and closes it when none does.
-func _follow_speaker_inputs() -> void:
-	var wanted := instruments.any(func(inst): return not inst.playable and inst.input_on)
+## Opens the audio input while any Speaker or amp wants it (its input on, or armed to record), and closes it when none does.
+func follow_live_inputs() -> void:
+	var wanted := instruments.any(func(inst): return not inst.playable and (inst.input_on or inst.armed))
 	if wanted == live_input:
 		return
 	live_input = wanted
@@ -670,6 +686,23 @@ func hide_plugin_editors(inst) -> void:
 	for i in inst.pedals.size():
 		if inst.pedals[i].kind == "plugin" and inst.pedals[i].editor_open:
 			show_plugin_editor(inst, i, false)
+
+
+## Option-clicked, as Pro Tools' all-tracks modifier: every track's input ("input"), mute, solo or record arm ("arm")
+## set as the one clicked now is.
+func set_on_all(what: String, on: bool) -> void:
+	for inst in instruments:
+		match what:
+			"input":
+				if inst.input_on != on:
+					set_input(inst, on)
+			"mute":
+				inst.muted = on
+			"solo":
+				inst.soloed = on
+			"arm":
+				timeline.set_armed(inst, on)
+	_apply_channels()
 
 
 func set_muted(inst, on: bool) -> void:
@@ -932,7 +965,7 @@ func remove_instrument(inst) -> void:
 	inst.queue_free()
 	_apply_channels()  # it may have been the one soloed
 	if not inst.playable:
-		_follow_speaker_inputs()
+		follow_live_inputs()
 
 
 func find_instrument(kind: String):

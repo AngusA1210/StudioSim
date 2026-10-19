@@ -399,7 +399,8 @@ func _build_new_page() -> Control:
 	_jam = _mode_button(modes, "Jam", mode_group,
 		"The patterns loop round to the tempo, as a jam does: start and stop them with Space")
 	_record = _mode_button(modes, "Record", mode_group,
-		"A timeline to record on, with the edit window (T): tracks recorded with Cmd-Space to the room's Audio Files folder, the first four bars looping to begin with")
+		"A timeline to record on, with the edit window (%s): tracks recorded with %s to the room's Audio Files folder" % [app.bindings.label("edit_window"),
+			app.bindings.label("record")])
 	right.add_child(HSeparator.new())
 	_heading(right, "Size")
 	for axis in [["x", "Width", Room.MIN_SIZE.x, Room.MAX_SIZE.x, 0.5], ["z", "Length", Room.MIN_SIZE.z, Room.MAX_SIZE.z, 0.5],

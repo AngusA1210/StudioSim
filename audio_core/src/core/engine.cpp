@@ -646,7 +646,8 @@ void AudioEngine::setRecordArm(int id, bool armed) {
     Command c; c.type = Command::RecordArm; c.id = id; c.v[0] = armed ? 1.0f : 0.0f; push(c);
 }
 
-bool AudioEngine::startRecording(const std::vector<std::pair<int, std::string>>& files, double from_step, std::string* error) {
+bool AudioEngine::startRecording(const std::vector<std::pair<int, std::string>>& files, double from_step, std::string* error,
+                                 double count_in_steps) {
     if (recording_wanted_ || recorder_) {
         if (error) *error = "it is recording already";
         return false;
@@ -656,6 +657,7 @@ bool AudioEngine::startRecording(const std::vector<std::pair<int, std::string>>&
     Captured stale;
     while (captured_.pop(stale)) {}
     Command c; c.type = Command::RecordStart; c.data = recorder.get(); c.v[0] = float(std::max(from_step, 0.0));
+    c.v[1] = float(std::max(count_in_steps, 0.0));
     if (!commands_.push(c)) {
         if (error) *error = "the audio engine is busy: try again";
         return false;
@@ -1468,12 +1470,12 @@ void AudioEngine::drainCommands() {
                 break;
             case Command::NoteOn:
                 if (s) s->instrument->noteOn(int(c.v[0]), c.v[1]);
-                if (s && recording_ && s->armed && !isLiveInput(s->kind))
+                if (s && recording_ && s->armed && !isLiveInput(s->kind) && clock_ >= count_in_end_)
                     captured_.push({s->id, int(c.v[0]), c.v[1], true, sequencer_.position(clock_)});
                 break;
             case Command::NoteOff:
                 if (s) s->instrument->noteOff(int(c.v[0]));
-                if (s && recording_ && s->armed && !isLiveInput(s->kind))
+                if (s && recording_ && s->armed && !isLiveInput(s->kind) && clock_ >= count_in_end_)
                     captured_.push({s->id, int(c.v[0]), 0.0f, false, sequencer_.position(clock_)});
                 break;
             case Command::TimelinePlay:
@@ -1491,23 +1493,36 @@ void AudioEngine::drainCommands() {
                 }
                 break;
             case Command::RecordArm:
-                if (s) s->armed = c.v[0] > 0.5f;
+                if (s) {
+                    s->armed = c.v[0] > 0.5f;
+                    if (!s->armed && !s->input_on) s->instrument->allNotesOff();  // (an armed instrument takes notes too)
+                }
                 break;
             case Command::RecordStart:
+                count_in_end_ = 0;
                 if (!sequencer_.running()) {
                     for (Source* each : sources_)
                         if (each) each->instrument->stopSequenced();
-                    sequencer_.start(clock_, double(c.v[0]));
+                    // A count-in: the timeline starts once the click has counted it (whole beats, at least one).
+                    const int beats = c.v[1] > 0.0f ? std::max(1, int(std::lround(c.v[1] / 4.0f))) : 0;
+                    const double beat_samples = 4.0 * sequencer_.stepSamples();
+                    sequencer_.start(clock_ + int64_t(std::llround(beats * beat_samples)), double(c.v[0]));
+                    if (beats > 0) {
+                        count_in_end_ = int64_t(std::llround(sequencer_.timeOfStep(double(c.v[0]))));
+                        count_in_beats_ = beats;
+                        count_in_beat_samples_ = beat_samples;
+                    }
                 }
                 sequencer_.suspendLoop(true);
                 recorder_rt_ = static_cast<Recorder*>(c.data);
                 recording_ = true;
-                record_start_.store(sequencer_.position(clock_));
+                record_start_.store(count_in_end_ > 0 ? double(c.v[0]) : sequencer_.position(clock_));
                 record_step_seconds_.store(sequencer_.stepSamples() / sr_);
                 break;
             case Command::RecordStop:
-                if (recording_) record_end_.store(sequencer_.position(clock_));
+                if (recording_) record_end_.store(std::max(sequencer_.position(clock_), record_start_.load()));
                 recording_ = false;
+                count_in_end_ = 0;
                 recorder_rt_ = nullptr;
                 sequencer_.suspendLoop(false);
                 record_ack_.store(c.epoch, std::memory_order_release);
@@ -1650,16 +1665,17 @@ void AudioEngine::drainCommands() {
 void AudioEngine::drainMidi() {
     MidiEvent e;
     while (midi_queue_.pop(e)) {
-        for (Source* s : sources_) {  // every instrument with its input on
-            if (!s || !s->input_on || isLiveInput(s->kind)) continue;
+        for (Source* s : sources_) {  // every instrument with its input on, or armed for recording (as Pro Tools' MIDI thru)
+            if (!s || !(s->input_on || s->armed) || isLiveInput(s->kind)) continue;
+            const bool take = recording_ && s->armed && clock_ >= count_in_end_;
             switch (e.type) {
                 case MidiEvent::NoteOn:
                     s->instrument->noteOn(e.note, e.velocity);
-                    if (recording_ && s->armed) captured_.push({s->id, e.note, e.velocity, true, sequencer_.position(clock_)});
+                    if (take) captured_.push({s->id, e.note, e.velocity, true, sequencer_.position(clock_)});
                     break;
                 case MidiEvent::NoteOff:
                     s->instrument->noteOff(e.note);
-                    if (recording_ && s->armed) captured_.push({s->id, e.note, 0.0f, false, sequencer_.position(clock_)});
+                    if (take) captured_.push({s->id, e.note, 0.0f, false, sequencer_.position(clock_)});
                     break;
                 case MidiEvent::Sustain: s->instrument->sustain(e.note != 0); break;
                 case MidiEvent::Control: s->instrument->controlChange(e.note, e.value); break;
@@ -1764,27 +1780,46 @@ void AudioEngine::render(const float* input, int input_channels, float* out, int
 }
 
 // Where each sample of this block falls on the timeline; each track's recorded audio for the block, ready to be played
-// into it; and, while recording, what each armed Speaker and amp takes in, handed to the recorder.
+// into it; and, while recording, what each armed Speaker and amp takes in, handed to the recorder (after a count-in,
+// whose click is played here too).
 void AudioEngine::renderTimeline() {
     const bool playing = sequencer_.running();
     const double step_seconds = sequencer_.stepSamples() / sr_;
     position_.store(sequencer_.position(clock_), std::memory_order_relaxed);
     for (int i = 0; i < block_; ++i) block_seconds_[size_t(i)] = playing ? sequencer_.position(clock_ + i) * step_seconds : -1.0;
+    // A count-in's click: every beat before it ends, the first of each bar higher, whether the click is on or not.
+    const int counting = count_in_end_ > clock_ ? int(std::min<int64_t>(count_in_end_ - clock_, block_)) : 0;  // its samples here
+    count_in_left_.store(count_in_end_ > clock_ ? int(std::ceil(double(count_in_end_ - clock_) / count_in_beat_samples_ - 1e-6)) : 0,
+                         std::memory_order_relaxed);
+    if (counting > 0) {
+        for (int beat = 0; beat < count_in_beats_; ++beat) {
+            const int64_t at = count_in_end_ - int64_t(std::llround(double(count_in_beats_ - beat) * count_in_beat_samples_));
+            if (at < clock_ || at >= clock_ + block_) continue;
+            voice::ToneHit* free_click = &clicks_[0];
+            for (auto& c : clicks_)
+                if (!c.active) free_click = &c;
+            const float pitch = beat % 4 == 0 ? 2000.0f : 1000.0f;
+            free_click->start(float(sr_), int(at - clock_), false, pitch, pitch, 0.01f, kClickLevel * click_volume_, 0.05f);
+        }
+    }
     for (Source* s : sources_) {
         if (!s || !isLiveInput(s->kind)) continue;
         std::fill(s->playback.begin(), s->playback.end(), 0.0f);
-        if (recording_ && s->armed && recorder_rt_) {  // its input as it comes in, before the pedals, amp and inserts
+        // What is heard from it, as Pro Tools has it: its input while input monitoring (I) is on, or while it is armed
+        // and either stopped or recording (Auto Input); what it recorded before, otherwise.
+        const bool hear_input = s->input_on || (s->armed && (recording_ || !playing));
+        s->instrument->setInputEnabled(hear_input);
+        if (recording_ && s->armed && recorder_rt_ && counting < block_) {  // its input as it comes in, before the pedals, amp and inserts
             std::fill(take_.begin(), take_.end(), 0.0f);
             s->instrument->readInput(take_.data(), block_);
-            recorder_rt_->write(recorder_rt_->slotOf(s->id), take_.data(), block_);
+            recorder_rt_->write(recorder_rt_->slotOf(s->id), take_.data() + counting, block_ - counting);
         }
-        // What it recorded before plays back, unless it is recording over it just now.
-        if (!playing || !s->track_rt || s->track_rt->clips.empty() || (recording_ && s->armed)) continue;
+        if (!playing || hear_input || !s->track_rt || s->track_rt->clips.empty()) continue;
         float* out = s->playback.data();
         for (const auto& clip : s->track_rt->clips) {
             const std::vector<float>& x = clip.audio->samples;
             const double rate = clip.audio->rate;
-            for (int i = 0; i < block_; ++i) {
+            for (int i = counting; i < block_; ++i) {
                 const double t = block_seconds_[size_t(i)] - clip.start;
                 if (t < 0.0 || t >= clip.length) continue;
                 const double at = (t + clip.offset) * rate;

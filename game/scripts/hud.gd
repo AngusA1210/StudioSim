@@ -187,7 +187,8 @@ func _process(_delta: float) -> void:
 	var timeline = app.timeline
 	if timeline.is_record():  # a Record room: where the music is on the timeline, and whether it is recording
 		var at: float = timeline.position()
-		var state: String = "●  REC" if timeline.recording else ("▶" if timeline.playing else "■")
+		var counting: int = timeline.counting_in()
+		var state: String = ("●  COUNT-IN %d" % counting if counting > 0 else "●  REC") if timeline.recording else ("▶" if timeline.playing else "■")
 		var seconds: float = maxf(at, 0.0) * timeline.step_seconds()
 		_beat.text = "%s   %d | %d   %d:%04.1f   ·   %s%d BPM%s" % [state, int(at / 16.0) + 1, int(fmod(at, 16.0) / 4.0) + 1,
 			int(seconds / 60.0), fmod(seconds, 60.0),
@@ -226,8 +227,7 @@ func _process(_delta: float) -> void:
 	# One line of guidance: how to start, or where the menu is.
 	var keys = app.bindings
 	var playing: bool = player.playing != null or player.typing or player.plugin_open != null
-	_prompt.text = "Click to look around  ·  Esc  menu and settings" if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED else \
-		"Esc  menu  ·  %s  mix window  ·  %s  add an instrument  ·  %s  keyboard" % [keys.label("mixer"), keys.label("add"), keys.label("keyboard")]
+	_prompt.text = "Click to look around  ·  Esc  menu and settings" if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED else keys_prompt()
 	_prompt_panel.visible = not playing
 	_prompt_panel.reset_size()
 	if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
@@ -474,6 +474,14 @@ func _label_piano(inst) -> void:
 
 
 ## A small label that lights up in its colour while what it names is on.
+## The line of keys at the foot of the screen in the room: the menu, the mix window (and in a Record room the edit
+## window), the instrument menu and the keyboard.
+func keys_prompt() -> String:
+	var keys = app.bindings
+	return "Esc  menu  ·  %s  mix window%s  ·  %s  add an instrument  ·  %s  keyboard" % [keys.label("mixer"),
+		"  ·  %s  edit window" % keys.label("edit_window") if app.timeline.is_record() else "", keys.label("add"), keys.label("keyboard")]
+
+
 func _chip(parent: Control) -> Label:
 	var chip := Label.new()
 	chip.add_theme_font_size_override("font_size", 12)

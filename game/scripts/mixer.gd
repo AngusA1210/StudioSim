@@ -109,6 +109,8 @@ func _input(event: InputEvent) -> void:
 		app.timeline.locate(0.0)
 	elif action == "follow" and app.timeline.is_record():
 		app.toggle_follow()
+	elif event.physical_keycode == KEY_L and app.timeline.is_record():  # loop playback on or off
+		app.timeline.set_loop(not app.timeline.loop_on)
 	else:
 		return
 	get_viewport().set_input_as_handled()
@@ -308,15 +310,16 @@ func _build_strip(inst) -> Dictionary:
 	buttons.alignment = BoxContainer.ALIGNMENT_CENTER
 	box.add_child(buttons)
 	var input := _toggle("I", INPUT_GREEN)
-	Hints.give(input, "Input: the MIDI keyboard plays it" if inst.playable else "Input: it plays the hardware input chosen above")
+	Hints.give(input, ("Input: the MIDI keyboard plays it" if inst.playable else "Input monitoring: it plays the hardware input chosen above") +
+		"  ·  Option-click: every track")
 	input.toggled.connect(_on_input_toggled.bind(inst))
 	buttons.add_child(input)
 	var mute := _toggle("M", MUTE_ORANGE)
-	Hints.give(mute, "Mute")
+	Hints.give(mute, "Mute  ·  Option-click: every track")
 	mute.toggled.connect(_on_mute_toggled.bind(inst))
 	buttons.add_child(mute)
 	var solo := _toggle("S", SOLO_YELLOW)
-	Hints.give(solo, "Solo: while anything is soloed, everything else is silent")
+	Hints.give(solo, "Solo: while anything is soloed, everything else is silent  ·  Option-click: every track")
 	solo.toggled.connect(_on_solo_toggled.bind(inst))
 	buttons.add_child(solo)
 	var pair := _fader_and_meter(box, 1, inst)
@@ -625,16 +628,26 @@ func _on_master_changed(db: float) -> void:
 	app.set_master_volume_db(db)
 
 
+## (Option held: every track, as Pro Tools' all-tracks modifier.)
 func _on_input_toggled(on: bool, inst) -> void:
-	app.set_input(inst, on)
+	if Input.is_key_pressed(KEY_ALT):
+		app.set_on_all("input", on)
+	else:
+		app.set_input(inst, on)
 
 
 func _on_mute_toggled(on: bool, inst) -> void:
-	app.set_muted(inst, on)
+	if Input.is_key_pressed(KEY_ALT):
+		app.set_on_all("mute", on)
+	else:
+		app.set_muted(inst, on)
 
 
 func _on_solo_toggled(on: bool, inst) -> void:
-	app.set_soloed(inst, on)
+	if Input.is_key_pressed(KEY_ALT):
+		app.set_on_all("solo", on)
+	else:
+		app.set_soloed(inst, on)
 
 
 func _on_source_selected(index: int, inst) -> void:

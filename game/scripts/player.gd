@@ -312,6 +312,8 @@ func _handle_key(event: InputEventKey) -> void:
 		"loop_switch", "loop_stop", "loop_undo", "loop_clear":  # an amp's loop pedal, if it has one
 			if not notes and target != null and target.is_amp and target.looper.get("state", "none") != "none":
 				_loop_pedal(target, keys.action_for(key))
+			elif keys.action_for(key) == "loop_switch" and not notes and app.timeline.is_record():  # else a Record room's loop playback
+				app.timeline.set_loop(not app.timeline.loop_on)
 		_:
 			if not notes and key >= KEY_1 and key <= KEY_8 and target != null and target.is_amp:  # stamping on its pedals
 				app.stomp(target, key - KEY_1)

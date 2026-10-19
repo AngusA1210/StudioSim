@@ -32,11 +32,23 @@ const ACTIONS := [
 	["follow", "Insertion follows playback on / off (a Record room)", KEY_N],
 	["click", "Metronome click", KEY_C],
 	["binaural", "Binaural on / off", KEY_B],
-	["loop_switch", "Loop pedal: record, play, overdub", KEY_L],
+	["loop_switch", "Loop pedal: record, play, overdub (elsewhere, a Record room's loop on / off)", KEY_L],
 	["loop_stop", "Loop pedal: stop / play", KEY_O],
 	["loop_undo", "Loop pedal: undo / redo", KEY_U],
 	["loop_clear", "Loop pedal: clear (twice)", KEY_J],
 ]
+# Shortcuts held with Cmd (Ctrl off a Mac), [action, what it does, its key to begin with]: keys of their own (Cmd-Z
+# isn't Z), which change on the Controls page too. Cmd-Shift-Z redoes as well, whatever redo is given.
+const COMMANDS := [
+	["save", "Save the room", KEY_S],
+	["record", "Record (a Record room)", KEY_SPACE],
+	["undo", "Undo an edit to the clips", KEY_Z],
+	["redo", "Redo it", KEY_X],
+	["separate", "Split the chosen clip at the playhead", KEY_E],
+	["duplicate_clip", "A second of the chosen clip, just after it", KEY_D],
+	["swap_windows", "The mix window and the edit window, in turn", KEY_EQUAL],
+]
+const MODIFIERS := [KEY_META, KEY_CTRL, KEY_SHIFT, KEY_ALT]
 # Keys that always mean the same, whatever is bound.
 const FIXED := {KEY_ESCAPE: "Esc: back out", KEY_UP: "walk", KEY_DOWN: "walk", KEY_LEFT: "turn", KEY_RIGHT: "turn",
 	KEY_1: "pedal 1", KEY_2: "pedal 2", KEY_3: "pedal 3", KEY_4: "pedal 4", KEY_5: "pedal 5", KEY_6: "pedal 6", KEY_7: "pedal 7",
@@ -49,24 +61,44 @@ const NOTES := {
 	KEY_H: 9, KEY_U: 10, KEY_J: 11, KEY_K: 12, KEY_O: 13, KEY_L: 14, KEY_P: 15, KEY_SEMICOLON: 16,
 }
 
-var keys := {}  # action → physical keycode
+var keys := {}      # action → physical keycode
+var commands := {}  # a Cmd shortcut's action → its physical keycode
 
 
 func _init(saved := {}) -> void:
 	reset()
 	for action in saved:
-		if keys.has(action) and int(saved[action]) > 0:
+		if int(saved[action]) <= 0:
+			continue
+		if keys.has(action):
 			keys[action] = int(saved[action])
+		elif commands.has(action):
+			commands[action] = int(saved[action])
 
 
 func reset() -> void:
 	keys.clear()
+	commands.clear()
 	for entry in ACTIONS:
 		keys[entry[0]] = entry[2]
+	for entry in COMMANDS:
+		commands[entry[0]] = entry[2]
+
+
+static func is_command(action: String) -> bool:
+	return COMMANDS.any(func(entry): return entry[0] == action)
+
+
+## The Cmd shortcut a key makes, held with Cmd, or "".
+func command_for(keycode: int) -> String:
+	for action in commands:
+		if commands[action] == keycode:
+			return action
+	return ""
 
 
 func key(action: String) -> int:
-	return keys.get(action, KEY_NONE)
+	return keys.get(action, commands.get(action, KEY_NONE))
 
 
 ## The action a key does, or "".
@@ -83,7 +115,7 @@ func is_down(action: String) -> bool:
 
 
 func label(action: String) -> String:
-	return name_of(key(action))
+	return ("⌘" if commands.has(action) else "") + name_of(key(action))
 
 
 static func name_of(keycode: int) -> String:
@@ -94,12 +126,25 @@ static func name_of(keycode: int) -> String:
 			return "'"
 		KEY_BACKSPACE:
 			return "Backspace"
+		KEY_EQUAL:
+			return "="
 	return OS.get_keycode_string(keycode)
 
 
 ## Gives an action a new key. An action that had it already takes this one's old key, so no two share one.
 ## Returns that action, or "". Keys that never change can't be given.
 func bind(action: String, keycode: int) -> String:
+	if commands.has(action):  # a Cmd shortcut: it swaps with another one, not with a plain key
+		if keycode == KEY_ESCAPE or MODIFIERS.has(keycode):
+			return ""
+		var had := ""
+		for each in commands:
+			if each != action and commands[each] == keycode:
+				had = each
+		if had != "":
+			commands[had] = commands[action]
+		commands[action] = keycode
+		return had
 	if not keys.has(action) or FIXED.has(keycode):
 		return ""
 	var other := ""
@@ -118,4 +163,7 @@ func changed() -> Dictionary:
 	for entry in ACTIONS:
 		if keys[entry[0]] != entry[2]:
 			out[entry[0]] = keys[entry[0]]
+	for entry in COMMANDS:
+		if commands[entry[0]] != entry[2]:
+			out[entry[0]] = commands[entry[0]]
 	return out

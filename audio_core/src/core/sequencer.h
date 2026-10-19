@@ -57,6 +57,9 @@ public:
     double position(int64_t at) const;
     double swing() const { return swing_; }
     double stepSamples() const { return step_samples_; }
+    // When a step is (or was) due, on the engine clock, reckoned from the next one: right after start(), when the music
+    // reaches the step it started from.
+    double timeOfStep(double step) const { return next_step_time_ + (step - double(next_step_)) * step_samples_; }
 
     // Reports every step that starts before `block_end` (and has not been reported yet).
     void process(int64_t block_end, StepSink& sink);

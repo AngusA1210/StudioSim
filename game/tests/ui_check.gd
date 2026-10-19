@@ -854,7 +854,7 @@ func _run() -> void:
 	await hover(drums_strip.inserts[0].button.get_global_rect().get_center())
 	var over_insert: String = mix._hint.text
 	await hover(mix._status.get_global_rect().end + Vector2(-4, 0))
-	check(over_mute == "Mute" and over_insert.begins_with("Insert A: click to choose") and mix._hint.text == "",
+	check(over_mute.begins_with("Mute") and over_insert.begins_with("Insert A: click to choose") and mix._hint.text == "",
 		"the line at the foot of the window says what the mouse is over (M: Mute), and nothing otherwise", "%s / %s" % [over_mute, over_insert])
 	check(drums_strip.inserts.size() == audio.get_max_inserts() and audio.get_max_inserts() == 5 and drums_strip.inserts[0].button.text == "" and
 		mix._strips.back().inserts.size() == 5, "every strip has five inserts, empty to begin with")
@@ -1109,6 +1109,26 @@ func _run() -> void:
 	await tap(KEY_C)
 	main.reset_bindings()
 	check(main.bindings.key("mixer") == KEY_TAB and main.bindings.key("click") == KEY_C, "and the keys can all be put back")
+	main.menu.open(main.menu.CONTROLS_TAB)
+	await frames(2)
+	main.menu._tabs.get_child(main.menu.CONTROLS_TAB).ensure_control_visible(main.menu._key_buttons.redo)
+	await frames(3)
+	check(main.menu._key_buttons.redo.text == "⌘X" and main.menu._key_buttons.undo.text == "⌘Z", "the Controls page lists the Cmd shortcuts too: redo is Cmd-X",
+		main.menu._key_buttons.redo.text)
+	await click(main.menu._key_buttons.redo.get_global_rect().get_center())
+	key(KEY_META)  # Cmd on its way to the key is passed over
+	await frames(2)
+	await tap(KEY_Y)
+	key(KEY_META, false)
+	check(main.bindings.command_for(KEY_Y) == "redo" and main.bindings.label("redo") == "⌘Y" and main.bindings.command_for(KEY_X) == "" and
+		main.bindings.key("redo") == KEY_Y, "and a shortcut takes its new key there (Cmd held or not)", main.menu._keys_note.text)
+	main.set_binding("undo", KEY_Y)
+	check(main.bindings.label("undo") == "⌘Y" and main.bindings.label("redo") == "⌘Z" and main.bindings.action_for(KEY_Y) != "undo",
+		"two shortcuts swap keys as the plain keys do, apart from them")
+	main.reset_bindings()
+	check(main.bindings.label("redo") == "⌘X" and main.bindings.label("undo") == "⌘Z", "and they are put back with the rest")
+	await tap(KEY_ESCAPE)
+	await frames(2)
 
 	menu.open(menu.SETTINGS_TAB)
 	await frames(3)
@@ -1604,7 +1624,11 @@ func _run() -> void:
 	await frames(3)
 	var edit = main.edit_window
 	var view = edit.view
+	check(main.hud.keys_prompt().contains("Tab  mix window  ·  R  edit window"), "the screen says R opens the edit window, beside Tab for the mix window",
+		main.hud.keys_prompt())
 	check(edit.is_open() and view.tracks().size() == 6 and not main.hud._root.visible, "R opens the edit window: a track for each instrument")
+	check(edit._panel.get_combined_minimum_size().x <= main.get_viewport().get_visible_rect().size.x - 24.0,
+		"its buttons all fit across the window", "%.0f px wide" % edit._panel.get_combined_minimum_size().x)
 	await tap(KEY_SPACE)
 	await frames(2)
 	check(not timeline.playing and is_equal_approx(timeline.playhead, 0.0), "Space stops, and the playhead goes back to where it started")
@@ -1617,7 +1641,17 @@ func _run() -> void:
 	var keys_row: int = view.tracks().find(keys_inst)
 	view.press(Vector2(84, view.row_top(keys_row) + 34))
 	timeline.set_armed(speaker_inst, true)
-	check(keys_inst.armed and keys_inst.input_on and speaker_inst.armed, "R on a track's header arms it, and puts its input on to be played")
+	check(keys_inst.armed and not keys_inst.input_on and speaker_inst.armed and not speaker_inst.input_on and main.armed_instruments().has(keys_inst) and
+		main.live_input, "R on a track's header arms it, its input button left as it was (as Pro Tools has it): the keys play an armed instrument, and the audio input opens for an armed Speaker")
+	var speaker_header: int = view.tracks().find(speaker_inst)
+	view.press(Vector2(108, view.row_top(speaker_header) + 34), true)  # its I, Option held
+	var all_inputs: bool = main.instruments.all(func(i): return i.input_on)
+	view.press(Vector2(108, view.row_top(speaker_header) + 34), true)
+	view.press(Vector2(84, view.row_top(speaker_header) + 34), true)  # its R, Option held: it was armed, so all go off
+	check(all_inputs and main.instruments.all(func(i): return not i.input_on) and main.instruments.all(func(i): return not i.armed),
+		"Option-click, as Pro Tools' all-tracks modifier: every track's input on, then off, and every track disarmed")
+	view.press(Vector2(84, view.row_top(keys_row) + 34))
+	timeline.set_armed(speaker_inst, true)
 	timeline.locate(0.0)
 	var record_key := InputEventKey.new()
 	record_key.physical_keycode = KEY_SPACE
@@ -1658,10 +1692,15 @@ func _run() -> void:
 	await tap(KEY_BACKSPACE)
 	check(keys_inst.clips.size() == 2 and view.selected.is_empty(), "Delete takes the chosen clip away")
 	view.selected = {"inst": speaker_inst, "index": 0}
-	await tap(KEY_L)
+	timeline.set_loop(false)
+	await tap(KEY_U)
 	var take_span: Vector2 = timeline.clip_steps(speaker_inst.clips[0])
 	check(timeline.loop_on and is_equal_approx(timeline.loop_start, take_span.x) and is_equal_approx(timeline.loop_end, take_span.y),
-		"L loops the chosen clip, from its start to its end exactly", "%.3f to %.3f" % [timeline.loop_start, timeline.loop_end])
+		"U loops the chosen clip, from its start to its end exactly", "%.3f to %.3f" % [timeline.loop_start, timeline.loop_end])
+	await tap(KEY_L)
+	var loop_off: bool = not timeline.loop_on
+	await tap(KEY_L)
+	check(loop_off and timeline.loop_on and is_equal_approx(timeline.loop_start, take_span.x), "L switches loop playback off and on again")
 	view.selected = {}
 	timeline.grid = 0
 	view.drag_to(Vector2(view.x_of(5.3), 12), Vector2(view.x_of(9.7), 12))
@@ -1701,9 +1740,14 @@ func _run() -> void:
 	var file_length: float = timeline.file_seconds(take)
 	var lane_y: float = view.row_top(speaker_row) + 34  # below its name strip
 	var strip_y: float = view.row_top(speaker_row) + 8   # in it
+	check(view.cursor_at(Vector2(view.x_of(take_steps.y) - 2.0, lane_y)) == Control.CURSOR_HSIZE and
+		view.cursor_at(Vector2(view.x_of(take_steps.x) + 1.0, strip_y)) == Control.CURSOR_BDIAGSIZE and
+		view.cursor_at(Vector2(view.x_of(take_steps.y) - 1.0, strip_y)) == Control.CURSOR_FDIAGSIZE and
+		view.cursor_at(Vector2(view.x_of((take_steps.x + take_steps.y) / 2.0), lane_y)) == Control.CURSOR_ARROW,
+		"the cursor shows what a press would do: the trim cursor at a clip's ends, a fade cursor (a ramp in a box) at its top corners")
 	check(view.hint_at(Vector2(view.x_of(take_steps.y) - 2.0, lane_y)).begins_with("Drag to trim the clip's end") and
 		view.zone_at(Vector2(view.x_of(take_steps.x) + 1.0, strip_y)).get("zone", "") == "fade_in" and
-		view.hint_at(Vector2(view.x_of((take_steps.x + take_steps.y) / 2.0), lane_y)).contains("Cmd-E splits"),
+		view.hint_at(Vector2(view.x_of((take_steps.x + take_steps.y) / 2.0), lane_y)).contains("⌘E splits"),
 		"a clip's ends trim it and its top corners fade it, as the hint line says with the mouse over them",
 		view.hint_at(Vector2(view.x_of(take_steps.y) - 2.0, lane_y)))
 	var end_x: float = view.x_of(take_steps.y - 4.0)
@@ -1751,10 +1795,37 @@ func _run() -> void:
 	for undo in 6:
 		await command_tap(KEY_Z)
 	check(speaker_inst.clips == before_edits and view.selected.is_empty(), "and the split, the fades and the trims, one by one, back to the take as it was")
-	await command_tap(KEY_Z, true)
-	check(absf(timeline.clip_steps(speaker_inst.clips[0]).y - timeline.snap(view.step_at(end_x))) < 0.01, "Cmd-Shift-Z does the first trim again")
+	await command_tap(KEY_X)
+	var first_trim: float = timeline.snap(view.step_at(end_x))
+	check(absf(timeline.clip_steps(speaker_inst.clips[0]).y - first_trim) < 0.01 and not edit._undo.disabled and not edit._redo.disabled,
+		"Cmd-X does the first trim again (the rest still to redo)", "undo %s, redo %s" % [edit._undo.disabled, edit._redo.disabled])
+	edit._undo.pressed.emit()
+	await frames(2)
+	var undone_by_button: bool = speaker_inst.clips == before_edits
+	edit._redo.pressed.emit()
+	await frames(2)
+	check(undone_by_button and absf(timeline.clip_steps(speaker_inst.clips[0]).y - first_trim) < 0.01, "the edit window's undo and redo buttons do the same")
 	await command_tap(KEY_Z)
-	check(speaker_inst.clips == before_edits, "(and undone)")
+	await command_tap(KEY_Z, true)
+	var shift_redid: bool = absf(timeline.clip_steps(speaker_inst.clips[0]).y - first_trim) < 0.01
+	await command_tap(KEY_Z)
+	check(shift_redid and speaker_inst.clips == before_edits, "Cmd-Shift-Z redoes too (and Cmd-Z undoes it again)")
+	timeline.separate(speaker_inst, 0, (take_steps.x + take_steps.y) / 2.0)
+	var seam_x: float = view.x_of(timeline.clip_steps(speaker_inst.clips[0]).y)
+	check(view.zone_at(Vector2(seam_x, strip_y)).get("zone", "") == "xfade" and view.hint_at(Vector2(seam_x, strip_y)).begins_with("Drag along to crossfade"),
+		"where two clips meet, the top of the seam crossfades them")
+	view.drag_to(Vector2(seam_x, strip_y), Vector2(seam_x + 0.5 * view.zoom, strip_y))  # half a step past the cut
+	var xspan: Vector2 = timeline.crossfade_span(speaker_inst, 0)
+	var sent: Array = timeline.engine_clips(speaker_inst)
+	var xlength: float = timeline.step_seconds()
+	check(absf(xspan.x + xspan.y - xlength) < 0.005 and absf(xspan.x - xspan.y) < 0.005 and sent.size() == 2 and
+		absf(float(sent[0].start) + float(sent[0].length) - (float(sent[1].start) + xspan.x + xspan.y)) < 1e-4 and
+		absf(float(sent[0].fade_out) - xlength) < 0.005 and absf(float(sent[1].fade_in) - xlength) < 0.005,
+		"dragged along, it crossfades them, centred on the cut: each plays on into the other's time from its file, one fading out as the other fades in",
+		"%.3f s before the cut, %.3f s after" % [xspan.x, xspan.y])
+	timeline.undo()
+	timeline.undo()
+	check(speaker_inst.clips == before_edits, "(the crossfade and the split undone)")
 	var midi: Dictionary = keys_inst.clips[0]
 	var midi_end: float = float(midi.start) + float(midi.length)
 	var note_step: float = float(midi.notes[0].step)
@@ -1793,6 +1864,28 @@ func _run() -> void:
 	await tap(KEY_R)
 	await frames(2)
 	check(not main.hud._follow_chip.visible, "and the screen no longer says it follows")
+	var loop_was: bool = timeline.loop_on
+	await tap(KEY_L)
+	var room_flipped: bool = timeline.loop_on != loop_was
+	await tap(KEY_L)
+	check(room_flipped and timeline.loop_on == loop_was, "L in the room (away from a loop pedal) switches loop playback too")
+
+	print("Count-in")
+	main.settings.count_in_bars = 1
+	timeline.locate(16.0)
+	check(timeline.start_recording() == "", "recording starts with a count-in")
+	await seconds(0.4)
+	main.edit_window.open()
+	await frames(3)
+	check(timeline.counting_in() > 0 and edit._record.text.begins_with("●  Count ") and is_equal_approx(timeline.position(), 16.0) and
+		main.speaker.clips.size() == 1, "the click counts a bar first, the edit window saying so, the music waiting at the playhead", edit._record.text)
+	timeline.stop()
+	await frames(6)
+	check(not timeline.recording and main.speaker.clips.size() == 1 and keys_inst.clips.size() == 2 and is_equal_approx(timeline.playhead, 16.0),
+		"stopped during the count-in, nothing is recorded")
+	main.edit_window.close()
+	main.settings.count_in_bars = 0
+	timeline.locate(0.0)
 	timeline.set_loop(true)
 	session.save()
 	var record_file: String = session.path
@@ -1820,6 +1913,21 @@ func _run() -> void:
 		"the room reverb has a fader of its own beside the master, its return metered, and all the way down there is none",
 		"%.0f dB, then %.0f dB" % [reverb_heard, main.mixer._reverb.meter.held_db()])
 	main.mixer._reverb.fader.value_changed.emit(-6.0)
+	var option := InputEventKey.new()
+	option.physical_keycode = KEY_ALT
+	option.keycode = KEY_ALT
+	option.pressed = true
+	Input.parse_input_event(option)
+	await frames(2)
+	main.mixer._strips[0].mute.toggled.emit(true)
+	var option_up: InputEventKey = option.duplicate()
+	option_up.pressed = false
+	Input.parse_input_event(option_up)
+	await frames(2)
+	var all_muted: bool = main.instruments.all(func(i): return i.muted)
+	main.mixer._strips[0].mute.toggled.emit(false)
+	check(all_muted and not main.instruments[0].muted and main.instruments[1].muted, "Option-click a mute in the mix window: every track mutes (a plain click, only its own)")
+	main.set_on_all("mute", false)
 	main.mixer.close()
 	check(is_equal_approx(float(library.room_data().reverb_db), -6.0), "and it is kept with the room")
 	timeline.set_mode("jam")

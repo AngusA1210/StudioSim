@@ -5,7 +5,7 @@ extends Control
 ## loop that range. Click a clip to choose it (stopped, the playhead goes where you clicked, to split it there) and
 ## drag it along its track, or to another track that takes its kind (hold Option as you drop it for a copy); clips snap
 ## to the grid unless it is off. Drag either end of a clip to trim it, as Pro Tools' trim tool does, and an audio
-## clip's top corners to fade it in or out. Click an empty lane to put the playhead there. The scroll wheel and
+## clip's top corners to fade it in or out (where two clips meet, the top of the seam crossfades them). Click an empty lane to put the playhead there. The scroll wheel and
 ## trackpad move about (Shift for along), Cmd and the wheel (or a pinch) zoom. The cursor and the hint line say what a
 ## press would do.
 
@@ -38,6 +38,7 @@ func setup(the_app) -> void:
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	focus_mode = Control.FOCUS_NONE
 	Hints.give(self, func() -> String: return hint_at(get_local_mouse_position()))
+	_make_fade_cursors()
 
 
 func _process(_delta: float) -> void:
@@ -46,14 +47,38 @@ func _process(_delta: float) -> void:
 	if not selected.is_empty() and (not app.instruments.has(selected.inst) or selected.index >= selected.inst.clips.size()):
 		selected = {}  # undone, or its track removed
 	if _drag.is_empty():
-		var zone: String = zone_at(get_local_mouse_position()).get("zone", "")
-		mouse_default_cursor_shape = CURSOR_HSIZE if zone in ["trim_start", "trim_end", "fade_in", "fade_out"] else CURSOR_ARROW
+		mouse_default_cursor_shape = cursor_at(get_local_mouse_position())
 	if timeline.playing:  # keep the playhead in view
 		var at: float = timeline.position()
 		var span := (size.x - HEADER) / zoom
 		if at < scroll_x or at > scroll_x + span * 0.9:
 			scroll_x = maxf(at - span * 0.1, 0.0)
 	queue_redraw()
+
+
+## The fade cursors, as Pro Tools draws them: a small square with a fade's curve across it, rising for a fade in and
+## falling for a fade out. They take the place of the diagonal resize cursors, which nothing else uses.
+static func _make_fade_cursors() -> void:
+	const SIZE := 22
+	var ink := Color(0.06, 0.06, 0.07)
+	for rising in [true, false]:
+		var image := Image.create(SIZE, SIZE, false, Image.FORMAT_RGBA8)
+		image.fill(Color(0, 0, 0, 0))
+		for x in range(2, SIZE - 2):
+			for y in range(2, SIZE - 2):
+				var edge := x == 2 or y == 2 or x == SIZE - 3 or y == SIZE - 3
+				image.set_pixel(x, y, ink if edge else Color(1, 1, 1, 0.95))
+		var inner := SIZE - 6  # the square's inside, 3 to SIZE - 4
+		var last_top := -1
+		for i in inner:
+			var t := float(i) / float(inner - 1)
+			var top := SIZE - 4 - int(round(sin(0.5 * PI * (t if rising else 1.0 - t)) * (inner - 1)))
+			for y in range(top, SIZE - 3):  # under the curve shaded, the curve itself dark
+				image.set_pixel(3 + i, y, Color(0.56, 0.64, 0.86))
+			for y in range(mini(top, last_top if last_top >= 0 else top), maxi(top, last_top if last_top >= 0 else top) + 1):
+				image.set_pixel(3 + i, y, ink)
+			last_top = top
+		Input.set_custom_mouse_cursor(image, Input.CURSOR_BDIAGSIZE if rising else Input.CURSOR_FDIAGSIZE, Vector2(SIZE / 2, SIZE / 2))
 
 
 func x_of(step: float) -> float:
@@ -98,6 +123,8 @@ func _draw() -> void:
 			step += 4.0
 		for c in inst.clips.size():
 			_draw_clip(inst, c, top, font)
+		for c in inst.clips.size():
+			_draw_crossfade(inst, c, top)
 		if timeline.recording and inst.armed:  # the take so far
 			var from := x_of(_record_from())
 			var to := x_of(timeline.position())
@@ -180,6 +207,39 @@ func _draw_clip(inst, index: int, top: float, font: Font) -> void:
 		_draw_fades(clip, x0, x1, inner, rect, ink)
 	draw_rect(rect, Color.WHITE if chosen else Color(0, 0, 0, 0.6), false, 1.0)
 	draw_string(font, rect.position + Vector2(5, 12), str(clip.get("name", "")), HORIZONTAL_ALIGNMENT_LEFT, maxf(rect.size.x - 8, 1.0), 11, ink)
+
+
+## A crossfade where clip `c` meets the next: the two curves crossing over the seam, in a box.
+func _draw_crossfade(inst, c: int, top: float) -> void:
+	var span: Vector2 = timeline.crossfade_span(inst, c)
+	if span.x + span.y <= 0.0:
+		return
+	var px_per_second: float = zoom / timeline.step_seconds()
+	var seam := x_of(timeline.clip_steps(inst.clips[c]).y)
+	var x0 := seam - span.x * px_per_second
+	var x1 := seam + span.y * px_per_second
+	if x1 < HEADER or x0 > size.x:
+		return
+	var box := Rect2(maxf(x0, HEADER), top + 2 + NAME_STRIP, minf(x1, size.x) - maxf(x0, HEADER), ROW - 7 - NAME_STRIP)
+	draw_rect(box, Color(0, 0, 0, 0.25))
+	var ink: Color = inst.color.lightened(0.5)
+	var width := x1 - x0
+	var last_out := Vector2.INF
+	var last_in := Vector2.INF
+	var d := 0.0
+	while d <= width:
+		var x := x0 + d
+		var t := d / maxf(width, 1.0)
+		var y_out: float = box.end.y - cos(0.5 * PI * t) * box.size.y
+		var y_in: float = box.end.y - sin(0.5 * PI * t) * box.size.y
+		if x >= box.position.x and x <= box.end.x:
+			if last_out != Vector2.INF:
+				draw_line(last_out, Vector2(x, y_out), ink, 1.2)
+				draw_line(last_in, Vector2(x, y_in), ink, 1.2)
+			last_out = Vector2(x, y_out)
+			last_in = Vector2(x, y_in)
+		d += 1.0
+	draw_rect(box, Color(ink, 0.7), false, 1.0)
 
 
 ## An audio clip's fades: the part they take down shaded, the curve drawn over the waveform, and a handle at each top
@@ -268,13 +328,14 @@ func _on_button(e: InputEventMouseButton) -> void:
 		return
 	accept_event()
 	if e.pressed:
-		press(e.position)
+		press(e.position, e.alt_pressed)
 	else:
 		release(e.position, e.alt_pressed)
 
 
-## What is at a point: {zone, inst, index, row}, the zone one of "ruler", "header", "fade_in", "fade_out" (an audio
-## clip's top corners), "trim_start", "trim_end" (a clip's ends), "clip", "lane", or nothing.
+## What is at a point: {zone, inst, index, row}, the zone one of "ruler", "header", "xfade" (the top of a seam where two
+## audio clips meet: `index` is the first), "fade_in", "fade_out" (an audio clip's top corners), "trim_start", "trim_end"
+## (a clip's ends), "clip", "lane", or nothing.
 func zone_at(at: Vector2) -> Dictionary:
 	if at.y < 0.0 or at.x < 0.0 or at.x > size.x or at.y > size.y:
 		return {}
@@ -287,6 +348,15 @@ func zone_at(at: Vector2) -> Dictionary:
 	if at.x < HEADER:
 		return {"zone": "header", "inst": inst, "row": row}
 	var top := row_top(row)
+	if at.y < top + 2.0 + NAME_STRIP:  # the top of a seam: a crossfade
+		for c in inst.clips.size():
+			if timeline._meets(inst, c) < 0:
+				continue
+			var span: Vector2 = timeline.crossfade_span(inst, c)
+			var px_per_second: float = zoom / timeline.step_seconds()
+			var seam := x_of(timeline.clip_steps(inst.clips[c]).y)
+			if at.x >= seam - span.x * px_per_second - EDGE and at.x <= seam + span.y * px_per_second + EDGE:
+				return {"zone": "xfade", "inst": inst, "index": c, "row": row}
 	for c in range(inst.clips.size() - 1, -1, -1):  # the one on top
 		var clip: Dictionary = inst.clips[c]
 		var span: Vector2 = timeline.clip_steps(clip)
@@ -312,18 +382,27 @@ func zone_at(at: Vector2) -> Dictionary:
 	return {"zone": "lane", "inst": inst, "row": row}
 
 
+## The cursor at a point: the trim cursor at a clip's ends, the fade cursor (made above) at an audio clip's top corners.
+func cursor_at(at: Vector2) -> CursorShape:
+	return {"trim_start": CURSOR_HSIZE, "trim_end": CURSOR_HSIZE, "fade_in": CURSOR_BDIAGSIZE, "fade_out": CURSOR_FDIAGSIZE, "xfade": CURSOR_BDIAGSIZE}.get(
+		zone_at(at).get("zone", ""), CURSOR_ARROW)
+
+
 ## What the hint line says, with the mouse at a point.
 func hint_at(at: Vector2) -> String:
 	var found := zone_at(at)
 	match found.get("zone", ""):
 		"ruler":
-			return "Click to put the playhead here; drag along to loop the range (L loops the chosen clip)"
+			return "Click to put the playhead here; drag along to loop the range  ·  L loop playback on or off, U loops the chosen clip"
 		"header":
 			for b in _buttons(found.inst, row_top(found.row)):
 				if b.rect.has_point(at):
-					return {"arm": "Arm the track for recording (its input goes on, to be heard)", "input": "Its input on or off",
-						"mute": "Mute", "solo": "Solo"}[b.what]
+					return {"arm": "Record-ready: it records when recording starts, and its input is heard while stopped or recording",
+						"input": "Input monitoring: its input is heard, rather than what it recorded" if not found.inst.playable else
+							"Input: the MIDI keyboard plays it", "mute": "Mute", "solo": "Solo"}[b.what] + "  ·  Option-click: every track"
 			return found.inst.display_name
+		"xfade":
+			return "Drag along to crossfade the two clips, each reaching into the other with the audio its file has beyond the cut"
 		"fade_in":
 			return "Drag along to fade the clip in"
 		"fade_out":
@@ -332,15 +411,17 @@ func hint_at(at: Vector2) -> String:
 			return "Drag to trim the clip%s" % ("'s start" if found.zone == "trim_start" else "'s end") + \
 				(": an audio clip only ever shows more or less of its file" if found.inst.clips[found.index].kind == "audio" else "")
 		"clip":
-			return "Drag to move it (Option as you drop: a copy)  ·  Cmd-E splits it at the playhead  ·  , and . nudge it  ·  L loops it  ·  Delete"
+			return "Drag to move it (Option as you drop: a copy)  ·  %s splits it at the playhead  ·  , and . nudge it  ·  U loops it  ·  Delete" % \
+				app.bindings.label("separate")
 		"lane":
 			return "Click to put the playhead here"
 	return ""
 
 
-## A press at a point: on the ruler, a header's button, a clip (its body, an end, a fade handle), or an empty lane.
+## A press at a point: on the ruler, a header's button, a clip (its body, an end, a fade handle), or an empty lane. With
+## `all` (Option held), a header's button sets every track as it sets this one, as Pro Tools' all-tracks modifier.
 ## (The automated checks call these.)
-func press(at: Vector2) -> void:
+func press(at: Vector2, all := false) -> void:
 	_drag = {}
 	var found := zone_at(at)
 	match found.get("zone", ""):
@@ -349,6 +430,9 @@ func press(at: Vector2) -> void:
 		"header":
 			for b in _buttons(found.inst, row_top(found.row)):
 				if b.rect.has_point(at):
+					if all:
+						app.set_on_all(b.what, not b.on)
+						return
 					match b.what:
 						"arm":
 							timeline.set_armed(found.inst, not found.inst.armed)
@@ -358,7 +442,7 @@ func press(at: Vector2) -> void:
 							app.set_muted(found.inst, not found.inst.muted)
 						"solo":
 							app.set_soloed(found.inst, not found.inst.soloed)
-		"clip", "trim_start", "trim_end", "fade_in", "fade_out":
+		"clip", "trim_start", "trim_end", "fade_in", "fade_out", "xfade":
 			var inst = found.inst
 			var c: int = found.index
 			var span: Vector2 = timeline.clip_steps(inst.clips[c])
@@ -388,6 +472,12 @@ func _on_drag(at: Vector2) -> void:
 				timeline.remember("Trim clip")
 				_drag.moved = true
 			timeline.trim_clip(_drag.inst, _drag.index, "start" if what == "trim_start" else "end", timeline.snap(step_at(at.x)), false)
+		"xfade":
+			if not _drag.get("moved", false):
+				timeline.remember("Crossfade")
+				_drag.moved = true
+			var seam: float = timeline.clip_steps(_drag.inst.clips[_drag.index]).y
+			timeline.set_crossfade(_drag.inst, _drag.index, 2.0 * absf(step_at(at.x) - seam) * timeline.step_seconds(), false)
 		"fade_in", "fade_out":
 			if not _drag.get("moved", false):
 				timeline.remember("Fade")
@@ -406,7 +496,7 @@ func release(at: Vector2, copy := false) -> void:
 				timeline.set_loop(true, drag.loop.x, drag.loop.y)
 			else:
 				timeline.locate(timeline.snap(step_at(at.x)))
-		"clip", "trim_start", "trim_end", "fade_in", "fade_out":
+		"clip", "trim_start", "trim_end", "fade_in", "fade_out", "xfade":
 			if not drag.get("moved", false):  # a click: chosen, and (stopped) the playhead where it was clicked
 				if not timeline.playing:
 					timeline.locate(timeline.snap(drag.at))

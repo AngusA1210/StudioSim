@@ -168,7 +168,8 @@ func _input(event: InputEvent) -> void:
 	if not is_open() or not (event is InputEventKey) or not event.pressed or event.echo or app.name_prompt.is_open():
 		return
 	if _waiting_for != "":  # the Controls page is waiting for a key
-		_take_key(event.physical_keycode)
+		if not (Bindings.is_command(_waiting_for) and Bindings.MODIFIERS.has(event.physical_keycode)):  # (Cmd on its way to the key)
+			_take_key(event.physical_keycode)
 		get_viewport().set_input_as_handled()
 	elif event.physical_keycode == KEY_ESCAPE:
 		close()
@@ -234,7 +235,7 @@ func _build() -> void:
 	_room_status.clip_text = true
 	header.add_child(_room_status)
 	_save = Button.new()
-	_save.text = "Save  (⌘S)"
+	_save.text = "Save  (%s)" % app.bindings.label("save")
 	_save.pressed.connect(func() -> void:
 		app.session.save_or_ask()
 		_show_status("Saved" if not app.session.has_unsaved_changes() else ""))
@@ -289,6 +290,17 @@ func _build_controls_page(page: VBoxContainer) -> void:
 		row.get_child(0).custom_minimum_size.x = 400  # the keys in one column
 		row.add_child(button)
 		_key_buttons[entry[0]] = button
+	_heading(page, "Shortcuts with ⌘")
+	_note(page, "Held with Cmd. Click one, then press its new key (Cmd or not). If another shortcut had that key, the two swap.")
+	for entry in Bindings.COMMANDS:
+		var button := Button.new()
+		button.custom_minimum_size.x = 150
+		button.focus_mode = Control.FOCUS_NONE
+		button.pressed.connect(_on_key_button_pressed.bind(entry[0]))
+		var row := _field(page, entry[1])
+		row.get_child(0).custom_minimum_size.x = 400
+		row.add_child(button)
+		_key_buttons[entry[0]] = button
 	var reset := Button.new()
 	reset.text = "Put every key back as it was"
 	reset.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
@@ -309,6 +321,7 @@ func _build_controls_page(page: VBoxContainer) -> void:
 
 
 func _show_keys() -> void:
+	_save.text = "Save  (%s)" % app.bindings.label("save")
 	for action in _key_buttons:
 		_key_buttons[action].text = "press a key…" if action == _waiting_for else app.bindings.label(action)
 
@@ -324,20 +337,20 @@ func _take_key(keycode: int) -> void:
 	_waiting_for = ""
 	if keycode == KEY_ESCAPE:
 		_keys_note.text = ""
-	elif Bindings.FIXED.has(keycode):
+	elif Bindings.FIXED.has(keycode) and not Bindings.is_command(action):
 		_keys_note.text = "%s is kept for %s." % [Bindings.name_of(keycode), Bindings.FIXED[keycode]]
 	else:
 		var swapped: String = app.set_binding(action, keycode)
 		_keys_note.text = "\"%s\" is now %s." % [_action_name(action), app.bindings.label(action)]
 		if swapped != "":
 			_keys_note.text += " \"%s\", which had it, is now %s." % [_action_name(swapped), app.bindings.label(swapped)]
-		if Bindings.NOTES.has(keycode):
+		if Bindings.NOTES.has(keycode) and not Bindings.is_command(action):
 			_keys_note.text += " It is a note key too: while you play, it plays a note instead."
 	_show_keys()
 
 
 func _action_name(action: String) -> String:
-	for entry in Bindings.ACTIONS:
+	for entry in Bindings.ACTIONS + Bindings.COMMANDS:
 		if entry[0] == action:
 			return entry[1]
 	return action

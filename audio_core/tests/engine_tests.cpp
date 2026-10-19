@@ -2221,6 +2221,47 @@ int main(int argc, char** argv) {
         check(full.rms_l > 0.005 && fading_in.rms_l < 0.45 * full.rms_l && fading_out.rms_l < 0.45 * full.rms_l,
               "a clip's fades bring it in from silence and take it out again",
               fmt("%.1f dB in, ", db(fading_in.rms_l) - db(full.rms_l)) + fmt("%.1f dB out against the middle", db(fading_out.rms_l) - db(full.rms_l)));
+
+        // What a track is heard playing, as Pro Tools has it. With its input monitored (I), its input, never its clips;
+        // armed, its input while stopped or recording (Auto Input), and while playing its clips, not its input.
+        auto other_tone = [&](int64_t) { return 0.25f * float(std::sin(6.2831853 * 220.0 * double(played++) / 48000.0)); };
+        take.engine.setTrack(take.speaker, {}, {{result.audio[0].path, start_seconds, 0.0, result.audio[0].seconds}}, &track_error);
+        take.engine.setSourceInput(take.speaker, true);
+        take.engine.playFrom(result.start_step);
+        renderSeconds(take.engine, 0.1);
+        const Render input_only = renderSeconds(take.engine, 0.4);  // its input silent, its clip under the playhead
+        take.engine.setSourceInput(take.speaker, false);
+        take.engine.setRecordArm(take.speaker, true);
+        take.engine.setSequencerRunning(false);
+        renderSeconds(take.engine, 0.1, other_tone);
+        const Render armed_stopped = renderSeconds(take.engine, 0.3, other_tone);
+        take.engine.playFrom(0.0);  // before its clip
+        renderSeconds(take.engine, 0.1, other_tone);
+        const Render armed_playing = renderSeconds(take.engine, 0.3, other_tone);
+        check(input_only.rms_l < 1e-4 && armed_stopped.rms_l > 0.005 && armed_playing.rms_l < 1e-4,
+              "a track's input monitored hears its input, not its clips; armed, its input when stopped, its clips when playing",
+              fmt("%.0f dBFS monitored, ", db(input_only.rms_l)) + fmt("armed %.0f dBFS stopped, ", db(armed_stopped.rms_l)) +
+                  fmt("%.0f dBFS playing", db(armed_playing.rms_l)));
+
+        // A count-in: a bar of the click with the timeline waiting, then the recording, from where it was asked to start.
+        take.engine.setSequencerRunning(false);
+        take.engine.setClick(false);
+        renderSeconds(take.engine, 0.1);
+        const std::string counted_file = (folder / "Speaker_02.wav").string();
+        const bool counting = take.engine.startRecording({{take.speaker, counted_file}}, 8.0, &record_error, 16.0);
+        const Render counted = renderSeconds(take.engine, 1.0);  // its input silent: only the click
+        const int beats_left = take.engine.countInLeft();
+        renderSeconds(take.engine, 1.5, other_tone);  // the count ends about a second in, and half a second is recorded
+        take.engine.stopRecording();
+        renderSeconds(take.engine, 0.01);
+        RecordingResult counted_result;
+        const bool counted_taken = take.engine.takeRecording(&counted_result);
+        AudioData counted_read;
+        const bool counted_readable = counted_taken && !counted_result.audio.empty() && readWav(counted_result.audio[0].path, &counted_read, &read_error);
+        check(counting && counted.peak > 0.01 && beats_left >= 2 && beats_left <= 3 && counted_readable &&
+                  std::fabs(counted_result.start_step - 8.0) < 1e-6 && std::fabs(counted_read.seconds() - 0.48) < 0.03 && take.engine.countInLeft() == 0,
+              "with a count-in, the click counts a bar first, then the take starts where the playhead was",
+              counted_readable ? fmt("%.0f beats left a second in, ", double(beats_left)) + fmt("%.2f s recorded", counted_read.seconds()) : record_error);
         std::filesystem::remove_all(folder);
     }
 

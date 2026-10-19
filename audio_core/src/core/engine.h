@@ -336,7 +336,12 @@ public:
     void setRecordArm(int id, bool armed);
     // From the next block: the armed tracks record (audio to `files`, one per armed audio track: [source, path]),
     // the timeline playing on from where it is, or from `from_step` if it is stopped. Loop playback waits meanwhile.
-    bool startRecording(const std::vector<std::pair<int, std::string>>& files, double from_step, std::string* error);
+    // With `count_in_steps` (and the timeline stopped), the click counts that long first, the timeline waiting, and
+    // the recording starts when it ends.
+    bool startRecording(const std::vector<std::pair<int, std::string>>& files, double from_step, std::string* error,
+                        double count_in_steps = 0.0);
+    // How many beats of a count-in are still to come (0: none, or it has ended).
+    int countInLeft() const { return count_in_left_.load(std::memory_order_relaxed); }
     void stopRecording();  // from the next block; takeRecording then has it
     bool recording() const { return recording_wanted_; }
     // Once the audio thread has stopped recording: what it took, the files closed. False until then.
@@ -500,6 +505,10 @@ private:
     bool recording_ = false;
     std::atomic<uint32_t> record_ack_{0};
     std::atomic<double> record_start_{0.0}, record_end_{0.0}, record_step_seconds_{0.0};
+    int64_t count_in_end_ = 0;          // the sample a count-in ends on, and the recording starts (0: no count-in)
+    int count_in_beats_ = 0;
+    double count_in_beat_samples_ = 0.0;
+    std::atomic<int> count_in_left_{0};
     struct Captured {
         int source = -1, note = 0;
         float velocity = 0.0f;

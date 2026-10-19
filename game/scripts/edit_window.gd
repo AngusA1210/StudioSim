@@ -1,11 +1,12 @@
 extends CanvasLayer
 ## The edit window (R, in a Record room), as a DAW's: every track along the timeline (timeline_view.gd), and the
-## transport above them: play and stop (Space), record (Cmd-Space), loop playback, where the music is (bar | beat, and
-## minutes and seconds: click the bar | beat and type one, or a time, to go there), whether insertion follows playback
-## (N), the grid clips snap to, and zoom. Enter goes back to the start. Delete takes the chosen clip away, Cmd-D puts a
-## second of it just after it, Cmd-E splits it at the playhead, comma and full stop (or - and + on the number pad)
-## nudge it, and L loops it; Cmd-Z undoes an edit and Cmd-Shift-Z does it again. Tab (or Cmd-=) goes over to the mix
-## window. It docks along the bottom of the screen, the room in view above it, and you can walk about while it is open.
+## transport above them: play and stop (Space), record (Cmd-Space), loop playback (L), whether insertion follows playback
+## (N), a count-in, where the music is (bar | beat, and minutes and seconds: click the bar | beat and type one, or a
+## time, to go there), the grid clips snap to, zoom, and undo and redo. Enter goes back to the start. Delete takes the
+## chosen clip away, Cmd-D puts a second of it just after it, Cmd-E splits it at the playhead, comma and full stop (or -
+## and + on the number pad) nudge it, and U loops it; Cmd-Z undoes an edit and Cmd-X (or Cmd-Shift-Z) does it again (the
+## Cmd shortcuts can be changed on the Controls page). Tab (or Cmd-=) goes over to the mix window. It docks along the
+## bottom of the screen, the room in view above it, and you can walk about while it is open.
 
 const TimelineView := preload("res://scripts/timeline_view.gd")
 const Hints := preload("res://scripts/hints.gd")
@@ -22,6 +23,9 @@ var _play: Button
 var _record: Button
 var _loop: Button
 var _follow: Button
+var _count_in: OptionButton
+var _undo: Button
+var _redo: Button
 var _counter: LineEdit  # bar | beat, which can be typed into
 var _clock: Label       # minutes and seconds
 var _close: Button
@@ -79,15 +83,17 @@ func _input(event: InputEvent) -> void:
 	elif key in [KEY_BACKSPACE, KEY_DELETE] and not view.selected.is_empty():
 		timeline.remove_clip(view.selected.inst, view.selected.index)
 		view.selected = {}
-	elif key == KEY_D and command and not view.selected.is_empty():
+	elif command and app.bindings.command_for(key) == "duplicate_clip" and not view.selected.is_empty():
 		duplicate_selected()
 	elif action == "to_start" and not command:  # back to the start, as Return is in Pro Tools
 		timeline.locate(0.0)
 	elif action == "follow" and not command:
 		app.toggle_follow()
-	elif key == KEY_L and not command and not view.selected.is_empty():
+	elif key == KEY_L and not command:  # loop playback on or off
+		timeline.set_loop(not timeline.loop_on)
+	elif key == KEY_U and not command and not view.selected.is_empty():  # (Logic's key for the same)
 		loop_selected()
-	elif key == KEY_E and command:
+	elif command and app.bindings.command_for(key) == "separate":
 		separate_selected()
 	elif key in [KEY_COMMA, KEY_PERIOD, KEY_KP_SUBTRACT, KEY_KP_ADD] and not command and not view.selected.is_empty():
 		var later := key in [KEY_PERIOD, KEY_KP_ADD]
@@ -97,7 +103,7 @@ func _input(event: InputEvent) -> void:
 	get_viewport().set_input_as_handled()
 
 
-## L: loop playback round the chosen clip, from its start to its end exactly.
+## U: loop playback round the chosen clip, from its start to its end exactly (and on).
 func loop_selected() -> void:
 	var span: Vector2 = timeline.clip_steps(view.selected.inst.clips[view.selected.index])
 	timeline.set_loop(true, span.x, span.y)
@@ -188,7 +194,11 @@ func _process(_delta: float) -> void:
 	_close.text = "Close  (%s)" % app.bindings.label("edit_window")
 	_play.text = "■  Stop" if timeline.playing else "▶  Play"
 	_record.add_theme_color_override("font_color", RECORD_RED if timeline.recording else Color(0.9, 0.6, 0.58))
-	_record.text = "●  Recording" if timeline.recording else "●  Record"
+	var counting: int = timeline.counting_in()
+	_record.text = "●  Count  %d" % counting if counting > 0 else ("●  Recording" if timeline.recording else "●  Record")
+	_count_in.select(app.settings.count_in_bars)
+	_undo.disabled = timeline.undo_what() == "" or timeline.recording
+	_redo.disabled = timeline.redo_what() == "" or timeline.recording
 	_loop.set_pressed_no_signal(timeline.loop_on)
 	_follow.set_pressed_no_signal(app.settings.insertion_follows)
 	if Time.get_ticks_msec() >= _status_until:
@@ -224,7 +234,8 @@ func _build() -> void:
 	header.add_child(title)
 	_play = _button(header, "▶  Play", func() -> void: app.toggle_transport(), "Play from the playhead, or stop and go back to where it started (Space)")
 	_play.custom_minimum_size.x = 96
-	_record = _button(header, "●  Record", func() -> void: app.toggle_record(), "Record the armed tracks from the playhead, or stop (Cmd-Space)")
+	_record = _button(header, "●  Record", func() -> void: app.toggle_record(), func() -> String:
+		return "Record the armed tracks from the playhead, or stop (%s)" % app.bindings.label("record"))
 	_record.custom_minimum_size.x = 120
 	_loop = _button(header, "⟳  Loop", func() -> void: timeline.set_loop(not timeline.loop_on), "Loop playback round the range marked on the ruler (drag along the ruler to mark another, or press L to loop the chosen clip)")
 	_loop.toggle_mode = true
@@ -232,6 +243,15 @@ func _build() -> void:
 		return "Insertion follows playback (%s): stopping leaves the playhead where the music stopped, rather than going back to where it started" % \
 			app.bindings.label("follow"))
 	_follow.toggle_mode = true
+	_count_in = OptionButton.new()
+	for item in ["No count-in", "Count-in: 1", "Count-in: 2"]:
+		_count_in.add_item(item)
+	_count_in.focus_mode = Control.FOCUS_NONE
+	_count_in.item_selected.connect(func(i: int) -> void:
+		app.settings.count_in_bars = i
+		app.settings.save_to_disk())
+	Hints.give(_count_in, "Bars of the click before recording from a stop, the music waiting, as Pro Tools' Count Off")
+	header.add_child(_count_in)
 	_counter = LineEdit.new()
 	_counter.add_theme_font_size_override("font_size", 20)
 	_counter.custom_minimum_size.x = 104
@@ -260,13 +280,17 @@ func _build() -> void:
 	header.add_child(_grid)
 	_button(header, "−", func() -> void: view.set_zoom(view.zoom / 1.5), "Zoom out (Cmd and the scroll wheel, or a pinch)")
 	_button(header, "+", func() -> void: view.set_zoom(view.zoom * 1.5), "Zoom in")
+	_undo = _button(header, "↶", func() -> void: app.undo_edit(), func() -> String:
+		return "Undo %s (%s)" % [timeline.undo_what(), app.bindings.label("undo")] if timeline.undo_what() != "" else "Nothing to undo")
+	_redo = _button(header, "↷", func() -> void: app.undo_edit(true), func() -> String:
+		return "Redo %s (%s)" % [timeline.redo_what(), app.bindings.label("redo")] if timeline.redo_what() != "" else "Nothing to redo")
 	_status = Label.new()
 	_status.add_theme_color_override("font_color", DIM)
 	_status.add_theme_font_size_override("font_size", 13)
 	_status.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_status.clip_text = true
 	header.add_child(_status)
-	_button(header, "Mix window  (Tab)", func() -> void:
+	_button(header, "Mix  (Tab)", func() -> void:
 		close()
 		app.mixer.open(), "")
 	_close = _button(header, "Close", close, "")

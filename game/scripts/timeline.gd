@@ -11,7 +11,7 @@ extends Node
 ## What is recorded becomes a clip on its track: an audio clip refers to part of its file (as Pro Tools' clips refer to
 ## their parent file), a MIDI clip holds its notes. A new take covers what was on its track where it was recorded.
 ## Each instrument keeps its clips in `clips`: audio {kind "audio", file (in the room's folder), name, start, offset,
-## length, fade_in, fade_out (seconds)}, MIDI {kind "midi", name, start, length (steps), notes [{step, length, note,
+## length, fade_in, fade_out, xfade (seconds: a crossfade into the clip that starts where it ends)}, MIDI {kind "midi", name, start, length (steps), notes [{step, length, note,
 ## velocity}]}. Positions in steps are sixteenths from the start of bar 1; audio is placed in seconds, so it stays where
 ## it was played if the tempo changes, while MIDI follows the tempo. Clips can be trimmed (an audio clip only ever shows
 ## less or more of its file; a MIDI clip keeps the notes trimmed off, and they come back if it is drawn out again),
@@ -51,9 +51,16 @@ func is_record() -> bool:
 	return mode == "record"
 
 
-## Where the music is, in steps: where it is playing, or the playhead.
+## Where the music is, in steps: where it is playing, or the playhead (as it is while a count-in counts).
 func position() -> float:
-	return audio.get_timeline_position() if playing else playhead
+	if not playing or (recording and counting_in() > 0):
+		return playhead if not playing else _started_at
+	return audio.get_timeline_position()
+
+
+## How many beats of a count-in are still to come before recording starts (0: none).
+func counting_in() -> int:
+	return audio.get_count_in() if recording else 0
 
 
 func step_seconds() -> float:
@@ -86,6 +93,7 @@ func restart(play := true) -> void:
 		inst.armed = false
 		audio.set_record_arm(inst.source_id, false)
 		sync(inst)
+	app.follow_live_inputs()
 	if is_record():
 		audio.set_loop_range(loop_on, loop_start, loop_end)
 		audio.set_sequencer_running(false)
@@ -133,7 +141,7 @@ func start_playing() -> void:
 ## Stops, and the playhead goes back to where playing began; or, with insertion following playback (N), stays where
 ## the music stopped.
 func stop() -> void:
-	var stopped_at: float = audio.get_timeline_position() if playing else playhead
+	var stopped_at: float = position()
 	if recording:
 		_stop_recording()
 	audio.set_sequencer_running(false)
@@ -169,12 +177,16 @@ func snap(step: float, to := -1) -> float:
 
 # ── Recording ────────────────────────────────────────────────────────────────────────────────────────────────
 
-## Arming a track. An armed one's input goes on, so that it can be heard (and played) while it records.
+## Arming a track (record-ready), as Pro Tools has it: its input button stays as it was. An armed Speaker or amp is
+## heard through its input while stopped or recording and plays back what it recorded while playing (Auto Input); with
+## its input monitored (I), always its input. An armed instrument takes the notes played, as with its input on.
 func set_armed(inst, on: bool) -> void:
+	if inst.armed == on:
+		return
 	inst.armed = on
 	audio.set_record_arm(inst.source_id, on)
-	if on and not inst.input_on:
-		app.set_input(inst, true)
+	if not inst.playable:
+		app.follow_live_inputs()  # the audio input open while anything wants it
 	changed.emit()
 
 
@@ -202,7 +214,8 @@ func start_recording() -> String:
 		if not inst.playable:
 			files.append([inst.source_id, folder.path_join(_take_name(folder, inst.display_name))])
 	var from := playhead if not playing else audio.get_timeline_position()
-	if not audio.start_recording(files, from):
+	var count_in: float = app.settings.count_in_bars * STEPS_PER_BAR if not playing else 0.0  # (not while playing: it records straight away)
+	if not audio.start_recording(files, from, count_in):
 		return audio.get_error()
 	if not playing:
 		_started_at = playhead
@@ -238,6 +251,9 @@ func _process(_delta: float) -> void:
 
 ## What a recording took becomes clips: each covering what was on its track where it was recorded.
 func _add_takes(took: Dictionary) -> void:
+	if took.notes.is_empty() and took.audio.all(func(take): return float(take.seconds) <= 0.0):
+		app.session.notice.emit("Nothing was recorded")  # (stopped during the count-in, say)
+		return
 	remember("Record")
 	var by_id := {}
 	for inst in app.instruments:
@@ -291,6 +307,7 @@ func _cover(inst, kind: String, from: float, to: float) -> void:
 			var before: Dictionary = clip.duplicate(true)
 			before.length = from - clip.start
 			before.erase("fade_out")
+			before.erase("xfade")
 			kept.append(_trimmed(before))
 		if clip.start + clip.length > to:  # and after
 			var after: Dictionary = clip.duplicate(true)
@@ -318,7 +335,6 @@ func _trimmed(clip: Dictionary) -> Dictionary:
 ## Sends a track's clips to the audio core (in a Jam room, none: its timeline isn't played).
 func sync(inst) -> void:
 	var notes := []
-	var clips := []
 	if is_record():
 		for clip in inst.clips:
 			if clip.kind == "midi":
@@ -326,10 +342,83 @@ func sync(inst) -> void:
 					if float(n.step) >= 0.0 and float(n.step) < float(clip.length):  # (the rest are trimmed off)
 						notes.append({"step": float(clip.start) + float(n.step), "length": minf(float(n.length), float(clip.length) - float(n.step)),
 							"note": int(n.note), "velocity": float(n.velocity)})
-			elif clip.kind == "audio":
-				clips.append({"path": file_path(clip), "start": float(clip.start), "offset": float(clip.offset), "length": float(clip.length),
-					"fade_in": float(clip.get("fade_in", 0.0)), "fade_out": float(clip.get("fade_out", 0.0))})
-	audio.set_track(inst.source_id, notes, clips)
+	audio.set_track(inst.source_id, notes, engine_clips(inst) if is_record() else [])
+
+
+## A track's audio clips as the audio core plays them. Where two meet and the first has a crossfade, each reaches into the
+## other's time with the audio its file has beyond the cut (Pro Tools' handles), the first fading out as the second
+## fades in.
+func engine_clips(inst) -> Array:
+	var out := []
+	var reach := {}  # clip index → [before its start, after its end] (seconds) it plays for crossfades
+	for c in inst.clips.size():
+		var span := crossfade_span(inst, c)
+		if span.x + span.y > 0.0:
+			reach.get_or_add(c, [0.0, 0.0])[1] = span.y
+			reach.get_or_add(_meets(inst, c), [0.0, 0.0])[0] = span.x
+	for c in inst.clips.size():
+		var clip: Dictionary = inst.clips[c]
+		if clip.kind != "audio":
+			continue
+		var extra: Array = reach.get(c, [0.0, 0.0])
+		var into: float = crossfade_span(inst, c).x + crossfade_span(inst, c).y  # its crossfade out
+		var from_c: int = _met_by(inst, c)
+		var out_of: float = 0.0 if from_c < 0 else crossfade_span(inst, from_c).x + crossfade_span(inst, from_c).y  # and in
+		out.append({"path": file_path(clip), "start": float(clip.start) - extra[0], "offset": float(clip.offset) - extra[0],
+			"length": float(clip.length) + extra[0] + extra[1], "fade_in": out_of if out_of > 0.0 else float(clip.get("fade_in", 0.0)),
+			"fade_out": into if into > 0.0 else float(clip.get("fade_out", 0.0))})
+	return out
+
+
+## The audio clip on the track that starts where clip `c` ends (-1: none).
+func _meets(inst, c: int) -> int:
+	var clip: Dictionary = inst.clips[c]
+	if clip.kind != "audio":
+		return -1
+	var end: float = float(clip.start) + float(clip.length)
+	for other in inst.clips.size():
+		if other != c and inst.clips[other].kind == "audio" and absf(float(inst.clips[other].start) - end) < 1e-4:
+			return other
+	return -1
+
+
+## The audio clip that ends where clip `c` starts (-1: none).
+func _met_by(inst, c: int) -> int:
+	for other in inst.clips.size():
+		if other != c and _meets(inst, other) == c:
+			return other
+	return -1
+
+
+## The crossfade from clip `c` into the one that starts where it ends: how far it reaches before the cut and after it
+## (seconds). Centred on the cut where both files have the audio for it; leaning to one side where only one does.
+func crossfade_span(inst, c: int) -> Vector2:
+	var clip: Dictionary = inst.clips[c]
+	var want: float = float(clip.get("xfade", 0.0))
+	var next := _meets(inst, c) if want > 0.0 else -1
+	if next < 0:
+		return Vector2.ZERO
+	var after_clip: Dictionary = inst.clips[next]
+	var handle_after: float = maxf(file_seconds(clip) - float(clip.offset) - float(clip.length), 0.0)  # the first's file, past its end
+	var handle_before: float = maxf(float(after_clip.offset), 0.0)  # the second's, before its start
+	var most := minf(want, minf(float(clip.length), float(after_clip.length)))
+	var post := minf(most / 2.0, handle_after)
+	var pre := minf(most - post, handle_before)
+	post = minf(most - pre, handle_after)
+	return Vector2(pre, post) if pre + post > 0.001 else Vector2.ZERO
+
+
+## Sets the crossfade where clip `c` meets the next (seconds; 0 takes it away). Their own fades there give way to it.
+func set_crossfade(inst, c: int, seconds: float, send := true) -> void:
+	var next := _meets(inst, c)
+	if next < 0:
+		return
+	inst.clips[c].xfade = maxf(seconds, 0.0)
+	inst.clips[c].fade_out = 0.0
+	inst.clips[next].fade_in = 0.0
+	if send:
+		sync(inst)
+		changed.emit()
 
 
 func file_path(clip: Dictionary) -> String:
@@ -443,6 +532,7 @@ func separate(inst, index: int, step: float) -> int:
 	second.name = _part_name(inst, str(clip.get("name", "")))
 	if clip.kind == "audio":
 		first.fade_out = 0.0
+		first.erase("xfade")  # (a crossfade out of the clip goes with its end, to the second half)
 		second.fade_in = 0.0
 		second.offset = float(clip.offset) + cut
 		_fit_fades(first)
@@ -515,8 +605,13 @@ func redo() -> String:
 	return next[0]
 
 
-func can_undo() -> bool:
-	return not _undo.is_empty()
+## What Cmd-Z would undo, or "" (and what Cmd-Shift-Z would redo).
+func undo_what() -> String:
+	return _undo.back()[0] if not _undo.is_empty() else ""
+
+
+func redo_what() -> String:
+	return _redo.back()[0] if not _redo.is_empty() else ""
 
 
 func _snapshot() -> Dictionary:

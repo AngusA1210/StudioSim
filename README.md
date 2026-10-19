@@ -47,7 +47,7 @@ to the title, which then offers to go back into the room.
 | ' (beside Return) | open the pattern editor for the instrument you're next to or playing (at an amp: its knobs and pedals; at a Speaker: its volume and input) |
 | P | at a plug-in instrument, open its plug-in's window above the on-screen keyboard, the letter keys playing it; a click in the room, Esc or Q puts it away |
 | M | switch that instrument's loop off or on (for a Speaker or an amp: mute) |
-| L O U J | at an amp with a loop pedal: L the footswitch (record, close the loop, overdub), O stop or play, U undo or redo the last overdub, J twice to clear |
+| L O U J | at an amp with a loop pedal: L the footswitch (record, close the loop, overdub), O stop or play, U undo or redo the last overdub, J twice to clear. Elsewhere in a Record room, L switches loop playback on and off |
 | 1 to 8 | at an amp, stamp on its pedals: each switches that pedal on or off (the loop pedal: its footswitch) |
 | Tab | the mix window (you can still walk about while it is open) |
 | Space | start or stop every instrument's pattern (a Record room: play from the playhead, or stop) |
@@ -55,7 +55,7 @@ to the title, which then offers to go back into the room.
 | R | a Record room: the edit window, from the room or the mix window (⌘= swaps the two) |
 | Enter | a Record room: the playhead back to the start, from the room, the edit window or the mix window |
 | N | a Record room: insertion follows playback on/off (stopping leaves the playhead where the music stopped, rather than going back to where it started), as in Pro Tools |
-| ⌘Z, ⌘⇧Z | a Record room: undo the last edit to the clips (a recording, a move, a trim...), and redo it |
+| ⌘Z, ⌘X | a Record room: undo the last edit to the clips (a recording, a move, a trim...), and redo it (⌘⇧Z redoes too) |
 | C | metronome click on/off |
 | Esc | the menu (see below), including the room's size and walls; the music keeps playing while it's open |
 | ⌘S | save the room |
@@ -64,7 +64,8 @@ to the title, which then offers to go back into the room.
 Facing an instrument, a card at the right of the screen lists what each key does to it.
 
 Every key here can be changed on the **Controls** page of the menu: click an action's key, then press the new one
-(an action that had it takes the old key). Esc, the arrow keys, 1 to 8 and the note keys stay as they are. While you
+(an action that had it takes the old key). The ⌘ shortcuts (save, record, undo, redo, split, duplicate a clip, and the
+mix and edit windows in turn) are listed there too, and change the same way among themselves. Esc, the arrow keys, 1 to 8 and the note keys stay as they are. While you
 are at an instrument or have the keyboard open, the note keys are notes, and whatever else they are given waits until
 you get up or close it.
 
@@ -280,26 +281,40 @@ In a Record room:
   PLAYBACK while it does, and the choice is remembered. The screen's top right says where the music is (bar | beat,
   and minutes and seconds), whether it is recording, and the loop.
 - **The edit window** (R from the room or the mix window, or the mix window's Edit window button): a row for each instrument, its name in its colour,
-  and its clips along the bars. On each track's header, **R** arms it for recording (and puts its input on, to be
-  heard and played), **I** its input, **M** mute and **S** solo. Above them the ruler: click it to put the playhead
-  there, drag along it to loop that range (Loop switches loop playback on and off). The counter at the top shows bar |
+  and its clips along the bars. On each track's header, **R** makes it record-ready, **I** is its input, **M** mute and
+  **S** solo. Option-click any of them for every track at once, as Pro Tools' all-tracks modifier has it (in the mix
+  window too). Above them the ruler: click it to put the playhead there, drag along it to loop that range (**L**, or
+  Loop, switches loop playback on and off, in the mix window and the room too). The counter at the top shows bar |
   beat with the time beside it; click it and type a bar (`5`), a bar and beat (`5 | 3`) or a time (`1:24`), then
   Enter, to go there. Clips and the ruler snap to the grid (Bar, Beat, 1/8, 1/16, or Off for anywhere). Scroll to
-  move about (Shift for along), ⌘ and the wheel (or a pinch) to zoom. Tab, or ⌘=, goes over to the mix window. The
-  cursor and the line at the foot of the window say what a press would do where the mouse is.
+  move about (Shift for along), ⌘ and the wheel (or a pinch) to zoom; ↶ and ↷ beside the zoom undo and redo. Tab, or
+  ⌘=, goes over to the mix window. The cursor and the line at the foot of the window say what a press would do where
+  the mouse is.
+- **Monitoring**, as Pro Tools has it. A Speaker's or an amp's **I** (input monitoring) means its input is heard,
+  playing or not, rather than what it recorded. A record-ready Speaker or amp is heard through its input while
+  stopped or recording, and plays back what it recorded while playing (Pro Tools' Auto Input), its I left off; the
+  audio input opens for it either way. A record-ready instrument takes the notes played on it, as with its input on,
+  and plays its clips back too.
 - **Editing clips**, with the mouse as with Pro Tools' Smart Tool:
   - Click a clip to choose it (stopped, the playhead goes where you clicked too), and drag it along its track or to
     another that takes its kind; hold Option as you drop it for a copy.
   - Drag either **end** to trim it. An audio clip only ever shows more or less of its file, never past either end of
     it; a MIDI clip keeps the notes trimmed off, and drawn out again they are back.
-  - Drag an audio clip's **top corners** to fade it in or out (equal-power curves, drawn over the waveform).
+  - Drag an audio clip's **top corners** to fade it in or out (equal-power curves, drawn over the waveform); the cursor
+    turns to a little fade, a ramp in a box, there.
+  - Where two audio clips meet, drag the top of the seam to **crossfade** them: each plays on into the other's time
+    with the audio its file has beyond the cut (Pro Tools' handles), centred on the cut where both files have it.
   - **⌘E** splits the chosen clip at the playhead (with none chosen, every clip under it), as Pro Tools' Separate: the
     halves meet exactly, the first keeping the fade in and the second the fade out, named `Speaker_01-01` and so on.
   - **,** and **.** (or - and + on the number pad) nudge it a grid line earlier or later (10 ms with the grid off).
-  - **⌘D** puts a second of it just after it, **Delete** takes it away, **L** loops it from its start to its end exactly.
-  - **⌘Z** undoes an edit (a recording, a move, a trim, a fade, a split...), up to 32 of them, and **⌘⇧Z** redoes it.
+  - **⌘D** puts a second of it just after it, **Delete** takes it away, **U** loops it from its start to its end exactly
+    (Logic's key for the same).
+  - **⌘Z** undoes an edit (a recording, a move, a trim, a fade, a split...), up to 32 of them, and **⌘X** (or ⌘⇧Z)
+    redoes it.
 - **Recording** (⌘Space, or Record): the armed tracks record from the playhead (or from where it is playing), loop
-  playback waiting meanwhile. An armed Speaker or amp records its hardware input as it comes in, before its pedals,
+  playback waiting meanwhile. With a **count-in** (the edit window's menu beside Follow: one bar or two, remembered),
+  recording from a stop first has the click count the bars, the music waiting at the playhead, as Pro Tools' Count
+  Off; the screen counts down the beats. An armed Speaker or amp records its hardware input as it comes in, before its pedals,
   amp and inserts, to a WAV file (32-bit float) in the room's **Audio Files** folder, named after the track
   (`Speaker_01.wav`, `Speaker_02.wav`...). Played back, a take goes through the pedals, amp and inserts again, as a
   DAW plays a track back through its inserts (so an amp can be re-dialled after the playing). An armed instrument
@@ -503,13 +518,14 @@ Speakers, guitar and bass amps with boards of effect pedals (a loop pedal and a 
 screen, a mix window laid out like a DAW's with plug-in inserts on every channel, a room whose size and walls
 can be changed, with sound bending round the walls and a reverb that follows the size (on a fader of its own), rooms saved as sessions (with
 templates, auto-save and backups), presets and copy and paste for plug-ins and instruments, and Record rooms: a
-timeline, an edit window, recording audio and MIDI to clips, and editing them (trims, fades, splits, nudges, undo).
+timeline, an edit window, recording audio and MIDI to clips (with a count-in), and editing them (trims, fades and crossfades, splits, nudges,
+undo).
 
 To do, roughly in this order:
 
-1. **More of the edit window**: crossfades, clip gain, automation, loop recording (takes stacked to choose from),
-   pre-roll and post-roll and a count-in, the sustain pedal in recorded MIDI, editing a MIDI clip's notes, choosing
-   several clips at once, and audio read from disk as it plays (for long rooms; takes are held in memory now).
+1. **More of the edit window**: clip gain, automation (with the sustain pedal), loop recording (takes stacked to
+   choose from), pre-roll and post-roll, editing a MIDI clip's notes, choosing several clips at once, and audio read
+   from disk as it plays (for long rooms; takes are held in memory now).
    Perhaps later a free version with Jam rooms only, Record rooms coming with the full one.
 2. **Microphones**: a new kind of track, placed anywhere in the room with precision, that records what the room
    sounds like from where it stands (the instruments as they reach it, from their direction, with the walls and the
