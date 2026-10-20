@@ -25,7 +25,9 @@ const CABINETS := {
 ## Returns {node: Node3D, accent: StandardMaterial3D} and, for an amp, how tall it stands and the floor it covers
 ## {top: float, footprint: Vector2} and where its pedals stand {pedal_spot: Vector3}. An amp is drawn with `cabinet`:
 ## a combo has its controls across the top of it, a stack its head standing on it. A microphone is drawn with
-## `mic` {height (its capsule's, in metres), tilt (degrees it points down)}, and says how tall it stands.
+## `mic` {height (its capsule's, in metres), tilt (degrees it points down), model (microphones.h's), stand (whether
+## it has one: a stereo pair's right mic is on its left one's), pair (the left mic of a pair: where the stand under the
+## two is and where the other is, see instrument.pair_stand)}, and says how tall it stands.
 static func build(kind: String, color: Color, cabinet := "", mic := {}) -> Dictionary:
 	var node := Node3D.new()
 	var accent := StandardMaterial3D.new()
@@ -68,7 +70,8 @@ static func build(kind: String, color: Color, cabinet := "", mic := {}) -> Dicti
 		"live":
 			_speaker(node, accent)
 		"mic":
-			built.top = _microphone(node, accent, float(mic.get("height", 1.2)), float(mic.get("tilt", 0.0)))
+			built.top = _microphone(node, accent, float(mic.get("height", 1.2)), float(mic.get("tilt", 0.0)), str(mic.get("model", "flat")),
+				bool(mic.get("stand", true)), mic.get("pair", {}))
 	return built
 
 
@@ -279,26 +282,75 @@ static func _speaker(node: Node3D, accent: Material) -> void:
 	_tripod(node, Vector3(0, 0.62, 0), 0.42, chrome)
 
 
-## A measurement microphone on a boom stand: its capsule (where it hears from, lit in its colour as it hears) at
-## `height` over the floor, its slim body behind it pointing down by `tilt` degrees, the boom back to the stand's pole,
-## and a tripod. It points along +z. Returns how tall it stands.
-static func _microphone(node: Node3D, accent: Material, height: float, tilt: float) -> float:
-	var black := _finish("black")
-	var chrome := _finish("chrome")
-	var stand := _finish("panel")
+## A microphone on a boom stand: its capsule (where it hears from, lit in its colour as it hears) at `height` over the
+## floor, pointing along +z and down by `tilt` degrees; its body as its model has it (end-address, the body behind the
+## capsule: the measurement mic, the dynamics, the pencil; side-address, the body below it: the large condenser, the
+## ribbon); and the boom back to the stand's pole, and a tripod. A stereo pair's left mic draws the stand under the
+## two and the bar they are on instead; its right mic, no stand. Returns how tall it stands.
+static func _microphone(node: Node3D, accent: Material, height: float, tilt: float, model := "flat", stand := true, pair := {}) -> float:
 	var t := deg_to_rad(tilt)
 	var aim := Vector3(0.0, -sin(t), cos(t))  # the way it points
+	var up := Vector3(0.0, cos(t), sin(t))    # and up, as it is tilted
 	var capsule := Vector3(0.0, height, 0.0)
-	var tail := capsule - aim * 0.24
-	_rod(node, capsule - aim * 0.035, tail, 0.0095, chrome)  # its body
-	_rod(node, capsule, capsule - aim * 0.035, 0.0055, chrome)  # its tip, round the capsule
-	_sphere(node, 0.0065, accent, capsule)
-	_rod(node, tail + aim * 0.03, tail - aim * 0.01, 0.014, black)  # the clip holding it
+	var tail := _mic_body(node, accent, model, capsule, aim, up)
+	var top := maxf(capsule.y, tail.y) + 0.08
+	if not pair.is_empty():  # a stereo pair: a bar from this one's clip to the other's, on a stand between them
+		var other: Vector3 = pair.partner + Basis(Vector3.UP, float(pair.partner_turn)) * (tail - capsule)
+		_rod(node, tail, other, 0.006, _finish("panel"))
+		var middle := (tail + other) / 2.0
+		_sphere(node, 0.014, _finish("black"), middle)
+		_tripod(node, middle, 0.3, _finish("panel"))
+		return maxf(top, middle.y + 0.05)
+	if not stand:
+		return top
 	var pole_top := Vector3(0.0, maxf(tail.y + 0.03, 0.25), tail.z - 0.42)
-	_rod(node, tail, pole_top, 0.007, stand)  # the boom
-	_sphere(node, 0.016, black, pole_top)  # where the boom meets the pole
-	_tripod(node, pole_top, 0.3, stand)
-	return maxf(maxf(capsule.y, tail.y), pole_top.y) + 0.05
+	_rod(node, tail, pole_top, 0.007, _finish("panel"))  # the boom
+	_sphere(node, 0.016, _finish("black"), pole_top)  # where the boom meets the pole
+	_tripod(node, pole_top, 0.3, _finish("panel"))
+	return maxf(top, pole_top.y + 0.05)
+
+
+## A microphone's body, as its model has it, round its capsule. Returns where its clip is, which holds it.
+static func _mic_body(node: Node3D, accent: Material, model: String, capsule: Vector3, aim: Vector3, up: Vector3) -> Vector3:
+	var chrome := _finish("chrome")
+	var black := _finish("black")
+	var grille := _finish("grille")
+	var tail: Vector3
+	match model:
+		"dynamic":  # a short dark body behind a round-ended grille
+			_rod(node, capsule + aim * 0.012, capsule - aim * 0.05, 0.0165, chrome)
+			_sphere(node, 0.0165, chrome, capsule + aim * 0.012)
+			_rod(node, capsule - aim * 0.05, capsule - aim * 0.16, 0.015, black)
+			tail = capsule - aim * 0.16
+		"kick":  # a big egg: a wide grille in front, a fat body behind
+			_rod(node, capsule + aim * 0.01, capsule - aim * 0.06, 0.042, grille)
+			_sphere(node, 0.042, grille, capsule + aim * 0.01, Vector3(1.0, 1.0, 1.0))
+			_rod(node, capsule - aim * 0.06, capsule - aim * 0.16, 0.038, accent)
+			_rod(node, capsule - aim * 0.16, capsule - aim * 0.2, 0.02, black)
+			tail = capsule - aim * 0.2
+		"condenser":  # side-address: the head grille round the capsule, the body below it, held from underneath
+			_rod(node, capsule - up * 0.035, capsule + up * 0.035, 0.03, grille)
+			_sphere(node, 0.03, grille, capsule + up * 0.035)
+			_rod(node, capsule - up * 0.035, capsule - up * 0.18, 0.027, _finish("brass"))
+			_ring(node, 0.03, 0.036, black, capsule - up * 0.11, Vector3(atan2(-aim.y, aim.z), 0.0, 0.0))
+			tail = capsule - up * 0.2 - aim * 0.02
+		"pencil":  # a slim dark pencil, the capsule in its silver tip
+			_rod(node, capsule, capsule - aim * 0.025, 0.0115, chrome)
+			_rod(node, capsule - aim * 0.025, capsule - aim * 0.2, 0.0105, black)
+			tail = capsule - aim * 0.2
+		"ribbon":  # side-address: a flat grille box round the ribbon, in a yoke
+			var t := atan2(-aim.y, aim.z)
+			_box(node, Vector3(0.06, 0.12, 0.035), grille, capsule, Vector3(t, 0.0, 0.0))
+			_box(node, Vector3(0.066, 0.02, 0.04), accent, capsule - up * 0.065, Vector3(t, 0.0, 0.0))
+			_rod(node, capsule - up * 0.075, capsule - up * 0.14, 0.008, black)
+			tail = capsule - up * 0.14
+		_:  # the measurement mic: a long slim silver body, its capsule in its narrower tip
+			_rod(node, capsule - aim * 0.035, capsule - aim * 0.24, 0.0095, chrome)
+			_rod(node, capsule, capsule - aim * 0.035, 0.0055, chrome)
+			tail = capsule - aim * 0.24
+	_sphere(node, 0.0065, accent, capsule + aim * 0.002)  # its capsule, lit as it hears
+	_rod(node, tail + (capsule - tail).normalized() * 0.025, tail - (capsule - tail).normalized() * 0.008, 0.0125, black)  # the clip
+	return tail
 
 
 ## A guitar or bass amp's box: tolex all round, grille cloth on the front, metal corners, and for a combo the control

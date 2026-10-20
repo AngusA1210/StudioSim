@@ -1,13 +1,18 @@
 extends CanvasLayer
-## A microphone's panel (' at it, or its name in the mix window): where it stands, to the centimetre (across the room
-## and along it, from its middle, and its capsule's height), which way it points (its bearing, clockwise from north,
-## the way you first face, and how far down), or straight at an instrument; its gain, before it records, as a
-## preamp's; and its input monitoring, with a meter of what it hears. Beside them, how far each instrument is from it,
-## how late its sound arrives, and how loud it is there, for placing it with care (two mics at different distances
-## from one instrument hear it at different times, as real ones do).
+## A microphone's panel (' at it, or its name in the mix window): which model it is and which of its pickup patterns,
+## with its frequency response and its pattern drawn; where it stands, to the centimetre (across the room and along
+## it, from its middle, and its capsule's height), which way it points (its bearing, clockwise from north, the way you
+## first face, and how far down), or straight at an instrument; its gain, before it records, as a preamp's; where its
+## track sits in the stereo; and its input monitoring, with a meter of what it hears. Beside them, how far each
+## instrument is from it, how late its sound arrives, and how loud it is there, for placing it with care (two mics at
+## different distances from one instrument hear it at different times, as real ones do). A stereo pair's panel sets
+## up the pair (XY, ORTF, a spaced pair, Blumlein) and places and points the two as one.
 
 const Hints := preload("res://scripts/hints.gd")
 const LevelMeter := preload("res://scripts/level_meter.gd")
+const PanControl := preload("res://scripts/pan_control.gd")
+const MicGraph := preload("res://scripts/mic_graph.gd")
+const Catalog := preload("res://scripts/catalog.gd")
 const DIM := Color(0.62, 0.65, 0.74)
 const SPEED_OF_SOUND := 343.0  # metres a second, as the audio core has it
 const REF_DISTANCE := 1.5      # where an instrument is heard at the level it was made at
@@ -27,6 +32,16 @@ var _tilt: SpinBox
 var _aim_at: OptionButton
 var _aim_choices := []  # the instruments the Point at menu offers, in its order (after its first item)
 var _gain: SpinBox
+var _model: OptionButton
+var _pattern: OptionButton
+var _patterns_shown := []  # the pattern names its menu offers, in its order
+var _about: Label
+var _graph
+var _pan
+var _pair_row: HBoxContainer
+var _technique: OptionButton
+var _spacing: SpinBox
+var _spacing_label: Label
 var _input_switch: CheckButton
 var _meter
 var _distances: GridContainer
@@ -61,10 +76,15 @@ func open(mic, from_mixer := false) -> void:
 	_z.max_value = half.z
 	_height.max_value = app.room.size.y - 0.05
 	_aim_at.clear()
-	_aim_at.add_item("Point it at…")
+	_aim_at.add_item("Point it at…" if inst.pair_partner == null else "Point the pair at…")
 	_aim_choices = app.instruments.filter(func(other): return other != inst and not other.is_mic)
 	for other in _aim_choices:
 		_aim_at.add_item(other.display_name)
+	_model.clear()
+	for info in app.mic_models():
+		_model.add_item(str(info.name))
+	_graph.app = app
+	_patterns_shown = []
 	_refresh()
 
 
@@ -101,12 +121,39 @@ func _process(_delta: float) -> void:
 
 
 func _refresh() -> void:
-	_show(_x, inst.global_position.x)
-	_show(_z, inst.global_position.z)
+	var centre: Vector3 = app.rig_centre(inst)
+	_show(_x, centre.x)
+	_show(_z, centre.z)
 	_show(_height, inst.source_height)
 	_show(_bearing, app.mic_bearing(inst))
 	_show(_tilt, inst.mic_tilt)
 	_show(_gain, inst.mic_gain_db)
+	var models: Array = app.mic_models()
+	var which: int = models.map(func(m): return m.id).find(inst.mic_model)
+	_model.select(which)
+	var info: Dictionary = models[which] if which >= 0 else {}
+	var names: Array = info.get("patterns", []).map(func(p): return p.name)
+	if names != _patterns_shown:  # its model's patterns
+		_patterns_shown = names
+		_pattern.clear()
+		for name in names:
+			_pattern.add_item(Catalog.MIC_PATTERNS.get(name, name))
+	var pattern: String = app.mic_pattern_of(inst)
+	_pattern.select(names.find(pattern))
+	_pattern.disabled = names.size() < 2
+	_about.text = "%s  Sensitivity %+.0f dB against the measurement mic." % [info.get("about", ""), float(info.get("sensitivity_db", 0.0))]
+	var patterns: Array = info.get("patterns", [])
+	_graph.ink = inst.color.lightened(0.2)
+	_graph.show_mic(inst.mic_model, patterns[maxi(names.find(pattern), 0)] if not patterns.is_empty() else {})
+	if not _pan._dragging:
+		_pan.set_value_no_signal(inst.mic_pan)
+	_pair_row.visible = inst.pair_partner != null
+	if inst.pair_partner != null:
+		_technique.select(Catalog.MIC_PAIR_ORDER.find(inst.pair_technique))
+		var spaced: bool = inst.pair_technique == "ab"
+		_spacing.visible = spaced
+		_spacing_label.visible = spaced
+		_show(_spacing, inst.pair_spacing)
 	_input_switch.set_pressed_no_signal(inst.input_on)
 	_input_switch.text = "Hearing it" if inst.input_on else "Hear it"
 	var level: float = app.audio.get_source_level(inst.source_id, true)
@@ -210,17 +257,63 @@ func _build() -> void:
 	_title.add_theme_font_size_override("font_size", 22)
 	_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header.add_child(_title)
-	var model := Label.new()
-	model.text = "Flat (measurement), omni"
-	model.add_theme_color_override("font_color", DIM)
-	Hints.give(model, "A measurement microphone: flat from the lowest lows to the highest highs, and hearing all round alike. Dynamic, condenser and ribbon microphones are on the way")
-	header.add_child(model)
+	_model = OptionButton.new()
+	_model.item_selected.connect(func(index: int) -> void:
+		var models: Array = app.mic_models()
+		if index >= 0 and index < models.size():
+			app.set_mic_model(inst, str(models[index].id), app.mic_pattern_of(inst)))
+	Hints.give(_model, "Which microphone it is: each has its own pickup pattern, frequency response and sensitivity")
+	header.add_child(_model)
+	_pattern = OptionButton.new()
+	_pattern.item_selected.connect(func(index: int) -> void:
+		if index >= 0 and index < _patterns_shown.size():
+			app.set_mic_model(inst, inst.mic_model, _patterns_shown[index]))
+	Hints.give(_pattern, "Its pickup pattern, if it can be switched: omni hears all round alike, cardioid little from behind, figure-8 front and back (the back in reverse polarity) and nothing from the sides")
+	header.add_child(_pattern)
 	var gap := Control.new()
 	gap.custom_minimum_size.x = 14
 	header.add_child(gap)
 	_close_button = Button.new()
 	_close_button.pressed.connect(close)
 	header.add_child(_close_button)
+
+	_about = Label.new()
+	_about.add_theme_color_override("font_color", DIM)
+	_about.add_theme_font_size_override("font_size", 13)
+	_about.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	box.add_child(_about)
+	_graph = MicGraph.new()
+	Hints.give(_graph, "Its frequency response on axis, 20 Hz to 20 kHz (±15 dB), and its pickup pattern from above, its front up: the middle band bright, the lows and highs fainter; dashed, a lobe in reverse polarity. Close up, a directional mic gains bass too (the proximity effect)")
+	box.add_child(_graph)
+	_pair_row = HBoxContainer.new()
+	_pair_row.add_theme_constant_override("separation", 10)
+	box.add_child(_pair_row)
+	var pair_label := Label.new()
+	pair_label.text = "Stereo pair"
+	pair_label.add_theme_color_override("font_color", DIM)
+	_pair_row.add_child(pair_label)
+	_technique = OptionButton.new()
+	for technique in Catalog.MIC_PAIR_ORDER:
+		_technique.add_item(Catalog.MIC_PAIRS[technique].name)
+	_technique.item_selected.connect(func(index: int) -> void: app.set_pair_technique(inst, Catalog.MIC_PAIR_ORDER[index]))
+	Hints.give(_technique, func() -> String: return "How the pair is set up: %s" % (
+		Catalog.MIC_PAIRS.get(inst.pair_technique, {}).get("about", "") if inst != null else ""))
+	_pair_row.add_child(_technique)
+	_spacing_label = Label.new()
+	_spacing_label.text = "apart by"
+	_spacing_label.add_theme_color_override("font_color", DIM)
+	_pair_row.add_child(_spacing_label)
+	_spacing = SpinBox.new()
+	_spacing.min_value = 0.1
+	_spacing.max_value = 3.0
+	_spacing.step = 0.01
+	_spacing.suffix = " m"
+	_spacing.select_all_on_focus = true
+	_spacing.value_changed.connect(func(v: float) -> void:
+		if inst != null and app.instruments.has(inst):
+			app.set_pair_spacing(inst, v))
+	Hints.give(_spacing, "How far apart a spaced pair's mics are: further, a wider image (and a hole in the middle, past a metre or so)")
+	_pair_row.add_child(_spacing)
 
 	var columns := HBoxContainer.new()
 	columns.add_theme_constant_override("separation", 26)
@@ -234,9 +327,9 @@ func _build() -> void:
 	grid.add_theme_constant_override("v_separation", 6)
 	left.add_child(grid)
 	_x = _number(grid, "Across", -10.0, 10.0, 0.01, " m", "Where it stands across the room, from its middle: to the east (right on the floor plan) is more",
-		func(v: float) -> void: app.set_mic_spot(inst, v, inst.global_position.z))
+		func(v: float) -> void: app.set_mic_spot(inst, v, app.rig_centre(inst).z))
 	_z = _number(grid, "Along", -10.0, 10.0, 0.01, " m", "Where it stands along the room, from its middle: to the south (towards you as you first face) is more",
-		func(v: float) -> void: app.set_mic_spot(inst, inst.global_position.x, v))
+		func(v: float) -> void: app.set_mic_spot(inst, app.rig_centre(inst).x, v))
 	_height = _number(grid, "Height", 0.05, 3.0, 0.01, " m", "How high its capsule is, where it hears from (over a kick drum's hole, low; over the kit, high)",
 		func(v: float) -> void: app.set_mic_height(inst, v))
 	_bearing = _number(grid, "Points to", 0.0, 359.0, 1.0, "°", "Which way it points, clockwise from north (the way you first face): 90 is east. An omni mic hears all round alike, so this is for its stand, for now",
@@ -245,6 +338,17 @@ func _build() -> void:
 		func(v: float) -> void: app.set_mic_tilt(inst, v))
 	_gain = _number(grid, "Gain", -20.0, 40.0, 0.5, " dB", "Its gain, before it records, as a preamp's: up for a mic far off, down for one right up against something loud",
 		func(v: float) -> void: app.set_mic_gain(inst, v))
+	var pan_label := Label.new()
+	pan_label.text = "Pan"
+	pan_label.add_theme_color_override("font_color", DIM)
+	grid.add_child(pan_label)
+	_pan = PanControl.new()
+	_pan.custom_minimum_size = Vector2(130, 22)
+	_pan.value_changed.connect(func(v: float) -> void:
+		if inst != null and app.instruments.has(inst):
+			app.set_mic_pan(inst, v))
+	Hints.give(_pan, "Where its track sits in the stereo: drag (Shift: fine), double-click for the middle. A stereo pair's are hard left and right")
+	grid.add_child(_pan)
 	_aim_at = OptionButton.new()
 	_aim_at.item_selected.connect(func(index: int) -> void:
 		if index > 0 and index - 1 < _aim_choices.size() and app.instruments.has(_aim_choices[index - 1]):

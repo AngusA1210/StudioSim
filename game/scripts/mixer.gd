@@ -28,6 +28,8 @@ const LevelMeter := preload("res://scripts/level_meter.gd")
 const Hints := preload("res://scripts/hints.gd")
 const PresetMenu := preload("res://scripts/preset_menu.gd")
 const TrackMenu := preload("res://scripts/track_menu.gd")
+const PanControl := preload("res://scripts/pan_control.gd")
+const Catalog := preload("res://scripts/catalog.gd")
 
 const STRIP_WIDTH := 96.0
 const STRIP_BG := Color(0.16, 0.17, 0.19, 0.98)
@@ -314,7 +316,7 @@ func _build_strip(inst) -> Dictionary:
 	var box: VBoxContainer = strip.get_child(0)
 	var inserts := _build_inserts(box, inst)
 	var sends := _build_sends(box, inst)
-	_small(box, "INSTRUMENT" if inst.plays_plugin else ("MICROPHONE" if inst.is_mic else "INPUT"))
+	var small_label := _small(box, "INSTRUMENT" if inst.plays_plugin else ("MICROPHONE" if inst.is_mic else "INPUT"))
 	var source: Control
 	if inst.plays_plugin:  # the plug-in it plays, in place of where its input comes from
 		var plug := Button.new()
@@ -328,14 +330,14 @@ func _build_strip(inst) -> Dictionary:
 		Hints.give(plug, func() -> String: return "Its plug-in, %s: click for its window, right-click to replace it or for its presets" % (
 			inst.instrument_plugin.get("plugin_name", "")))
 		source = plug
-	elif inst.is_mic:  # what it hears: the room, from where it stands
-		var model := Label.new()
-		model.text = "Flat, omni"
-		model.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		model.custom_minimum_size.y = 24
-		model.add_theme_font_size_override("font_size", 12)
-		Hints.give(model, "A flat, omni microphone: it hears the room from where it stands. Its name opens its panel (where it stands, which way it points, its gain)")
-		source = model
+	elif inst.is_mic:  # where its track sits in the stereo (its model and pattern over it)
+		var pan := PanControl.new()
+		pan.custom_minimum_size = Vector2(STRIP_WIDTH - 16, 24)
+		pan.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		pan.value_changed.connect(func(v: float) -> void: app.set_mic_pan(inst, v))
+		Hints.give(pan, func() -> String: return "%s, %s: it hears the room from where it stands. Pan: drag (Shift: fine), double-click for the middle. Its name opens its panel" % [
+			app.mic_model_info(inst.mic_model).get("name", "Microphone"), Catalog.MIC_PATTERNS.get(app.mic_pattern_of(inst), "")])
+		source = pan
 	elif inst.playable:
 		var midi := Label.new()
 		midi.text = "MIDI"
@@ -382,7 +384,7 @@ func _build_strip(inst) -> Dictionary:
 	_strip_row.add_child(strip)
 	return {"inst": inst, "fader": pair.fader, "meter": pair.meter, "value": readouts.value, "peak": readouts.peak, "input": input,
 		"mute": mute, "solo": solo, "source": source, "output": output, "inserts": inserts, "sends": sends, "plate": plate,
-		"frame": strip.get_theme_stylebox("panel"), "panel": strip}
+		"frame": strip.get_theme_stylebox("panel"), "panel": strip, "small": small_label}
 
 
 ## Where a track plays, as a Pro Tools track's output: the master, or a folder's bus (an aux input). Only the folders
@@ -748,13 +750,16 @@ func _editor_name(inst) -> String:
 	return "pattern editor" if inst.playable else "Speaker's panel"
 
 
-func _small(box: VBoxContainer, text: String) -> void:
+func _small(box: VBoxContainer, text: String) -> Label:
 	var label := Label.new()
 	label.text = text
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	label.add_theme_font_size_override("font_size", 10)
 	label.add_theme_color_override("font_color", DIM)
+	label.clip_text = true
+	label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	box.add_child(label)
+	return label
 
 
 ## A small square button that lights up in `lit` when on.
@@ -829,6 +834,10 @@ func _refresh() -> void:
 			strip.source.text = "%d track%s" % [inst.members.size(), "" if inst.members.size() == 1 else "s"]
 			continue
 		strip.input.set_pressed_no_signal(inst.input_on)
+		if inst.is_mic:  # its model and pattern, and its pan
+			strip.small.text = "%s · %s" % [Catalog.MIC_MODELS_SHORT.get(inst.mic_model, "MIC"), Catalog.MIC_PATTERNS_SHORT.get(app.mic_pattern_of(inst), "")]
+			if not strip.source._dragging:
+				strip.source.set_value_no_signal(inst.mic_pan)
 		if inst.plays_plugin:
 			strip.source.text = inst.instrument_plugin.get("plugin_name", "")
 		if strip.source is OptionButton:

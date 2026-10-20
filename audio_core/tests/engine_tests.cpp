@@ -2488,6 +2488,124 @@ int main(int argc, char** argv) {
     }
 
     {
+        std::printf("\nMicrophone models: patterns, the proximity effect, responses\n");
+        // The models' responses on axis, as their filters make them.
+        const auto& models = micModels();
+        const MicModel& dynamic = models[size_t(micModelIndex("dynamic"))];
+        const MicModel& ribbon = models[size_t(micModelIndex("ribbon"))];
+        const MicModel& kick = models[size_t(micModelIndex("kick"))];
+        const MicModel& flat = models[size_t(micModelIndex("flat"))];
+        const float presence = micResponseDb(dynamic, 5500.0f) - micResponseDb(dynamic, 1000.0f);
+        const float dark = micResponseDb(ribbon, 16000.0f) - micResponseDb(ribbon, 1000.0f);
+        const float boxy = micResponseDb(kick, 380.0f) - micResponseDb(kick, 1000.0f);
+        check(models.size() == 6 && std::fabs(presence - 5.0f) < 1.5f && dark < -6.0f && boxy < -4.0f && std::fabs(micResponseDb(flat, 100.0f)) < 0.01f &&
+                  std::fabs(micResponseDb(flat, 15000.0f)) < 0.01f,
+              "the models' responses: the dynamic's presence lift, the ribbon's dark top, the kick mic's scooped box; the measurement mic flat",
+              fmt("%+.1f dB at 5.5 kHz, ", presence) + fmt("%+.1f at 16 kHz, ", dark) + fmt("%+.1f at 380 Hz", boxy));
+
+        // A microphone 1.5 m from the drums (they are taken out of the mix by a solo, but play on in the room).
+        Room room;
+        room.quietRoom(room.drums);
+        room.engine.setSourceSoloMuted(room.drums, true);
+        const Vec3 drums_at{0.5f, 0.9f, -3.6f};
+        const Vec3 at{drums_at.x + 1.5f, drums_at.y, drums_at.z};
+        const int mic = room.engine.addSource(InstrumentKind::Mic, at, 1.0f, 0.0f);
+        room.engine.setSourceInput(mic, true);
+        const Vec3 towards{-1.0f, 0.0f, 0.0f}, away{1.0f, 0.0f, 0.0f}, side{0.0f, 0.0f, 1.0f};
+        auto heard = [&](const char* model, MicPattern pattern, Vec3 aim, int note) {
+            room.engine.setMicModel(mic, model, pattern);
+            room.engine.setMicAim(mic, aim);
+            renderSeconds(room.engine, 0.5);  // (it turns over a moment)
+            room.engine.noteOn(room.drums, note, 0.9f);
+            Render r = renderSeconds(room.engine, 0.4);
+            renderSeconds(room.engine, 0.6);
+            return r;
+        };
+        const Render omni_front = heard("flat", MicPattern::Omni, towards, 36), omni_back = heard("flat", MicPattern::Omni, away, 36);
+        const Render card_front = heard("dynamic", MicPattern::Cardioid, towards, 36), card_back = heard("dynamic", MicPattern::Cardioid, away, 36);
+        check(std::fabs(db(omni_back.rms_l) - db(omni_front.rms_l)) < 0.5 && db(card_back.rms_l) < db(card_front.rms_l) - 12.0,
+              "a cardioid hears little from behind; an omni hears all round alike",
+              fmt("cardioid %.1f dB from behind, ", db(card_back.rms_l) - db(card_front.rms_l)) +
+                  fmt("omni %+.1f", db(omni_back.rms_l) - db(omni_front.rms_l)));
+        const Render eight_front = heard("ribbon", MicPattern::Figure8, towards, 36), eight_back = heard("ribbon", MicPattern::Figure8, away, 36);
+        const Render eight_side = heard("ribbon", MicPattern::Figure8, side, 36);
+        double across = 0.0, front_energy = 0.0, back_energy = 0.0;
+        for (size_t i = 0; i < std::min(eight_front.l.size(), eight_back.l.size()); ++i) {
+            across += double(eight_front.l[i]) * eight_back.l[i];
+            front_energy += double(eight_front.l[i]) * eight_front.l[i];
+            back_energy += double(eight_back.l[i]) * eight_back.l[i];
+        }
+        const double polarity = across / std::sqrt(std::max(front_energy * back_energy, 1e-30));
+        check(std::fabs(db(eight_back.rms_l) - db(eight_front.rms_l)) < 0.5 && polarity < -0.99 && db(eight_side.rms_l) < db(eight_front.rms_l) - 30.0,
+              "a figure-8 hears its back as well as its front, in reverse polarity, and nothing from the side",
+              fmt("back %+.1f dB, ", db(eight_back.rms_l) - db(eight_front.rms_l)) + fmt("correlation %.2f, ", polarity) +
+                  fmt("side %.0f dB", db(eight_side.rms_l) - db(eight_front.rms_l)));
+
+        // The proximity effect: a cardioid right up against the snare gains lows against its highs; an omni doesn't.
+        auto tilt_of = [&](const char* model, MicPattern pattern, float distance) {
+            room.engine.setSourcePosition(mic, {drums_at.x + distance, drums_at.y, drums_at.z});
+            const Render r = heard(model, pattern, towards, 38);
+            double low = 0.0, high = 0.0;
+            bandEnergy(r.l, float(room.engine.sampleRate()), low, high);
+            return 10.0 * std::log10(std::max(low, 1e-30) / std::max(high, 1e-30));
+        };
+        const double card_close = tilt_of("dynamic", MicPattern::Cardioid, 0.03f), card_far = tilt_of("dynamic", MicPattern::Cardioid, 1.5f);
+        const double omni_close = tilt_of("flat", MicPattern::Omni, 0.03f), omni_far = tilt_of("flat", MicPattern::Omni, 1.5f);
+        check(card_close - card_far > 8.0 && std::fabs(omni_close - omni_far) < 1.5,
+              "the proximity effect: close up, a cardioid's lows rise against its highs; an omni's don't",
+              fmt("cardioid lows %+.1f dB at 3 cm, ", card_close - card_far) + fmt("omni %+.1f", omni_close - omni_far));
+
+        // Sensitivity: a dynamic is quieter than the measurement mic for the same sound (a note in the middle, where
+        // their responses are both flat).
+        room.engine.setSourcePosition(mic, at);
+        room.soloOnly(room.keys);
+        room.engine.setSourceSoloMuted(room.keys, true);
+        const Vec3 keys_at{3.0f, 0.95f, 1.8f};
+        room.engine.setSourcePosition(mic, {keys_at.x + 1.5f, keys_at.y, keys_at.z});
+        auto played = [&](const char* model) {
+            room.engine.setMicModel(mic, model, MicPattern::Cardioid);
+            room.engine.setMicAim(mic, towards);
+            renderSeconds(room.engine, 0.5);
+            room.engine.noteOn(room.keys, 69, 0.8f);
+            const Render r = renderSeconds(room.engine, 0.4);
+            room.engine.noteOff(room.keys, 69);
+            renderSeconds(room.engine, 1.0);
+            return r;
+        };
+        const Render by_flat = played("flat"), by_dynamic = played("dynamic");
+        check(std::fabs(db(by_dynamic.rms_l) - db(by_flat.rms_l) + 8.0) < 1.5, "a dynamic needs more gain than a condenser or the measurement mic",
+              fmt("%+.1f dB against the measurement mic", db(by_dynamic.rms_l) - db(by_flat.rms_l)));
+
+        // Pan: its track hard left, nothing on the right.
+        room.engine.setSourcePan(mic, -1.0f);
+        const Render panned = played("flat");
+        check(panned.rms_l > 1e-4 && panned.rms_r < 1e-3 * panned.rms_l, "its track can be panned, hard left here", fmt("right %.0f dB", db(panned.rms_r) - db(panned.rms_l)));
+        room.engine.setSourcePan(mic, 0.0f);
+
+        // A diffuse field: a figure-8 hears a third of the reverb's energy that an omni does, from the same place.
+        Room reverbed;
+        reverbed.soloOnly(reverbed.drums);
+        reverbed.engine.setSequencerRunning(false);
+        const int omni_mic = reverbed.engine.addSource(InstrumentKind::Mic, {3.0f, 1.2f, 2.0f}, 1.0f, 0.0f);
+        const int eight_mic = reverbed.engine.addSource(InstrumentKind::Mic, {3.0f, 1.2f, 2.0f}, 1.0f, 0.0f);
+        reverbed.engine.setMicModel(eight_mic, "condenser", MicPattern::Figure8);
+        for (int m : {omni_mic, eight_mic}) reverbed.engine.setSourceInput(m, true);
+        renderSeconds(reverbed.engine, 0.3);
+        reverbed.engine.noteOn(reverbed.drums, 38, 1.0f);
+        renderSeconds(reverbed.engine, 0.5);  // (the direct sound gone by, the reverb ringing on)
+        for (int m : {omni_mic, eight_mic}) reverbed.engine.sourcePeak(m, true);
+        float omni_tail = 0.0f, eight_tail = 0.0f;
+        for (int b = 0; b < 40; ++b) {
+            renderSeconds(reverbed.engine, 0.01);
+            omni_tail = std::max(omni_tail, reverbed.engine.sourceLevel(omni_mic, true));
+            eight_tail = std::max(eight_tail, reverbed.engine.sourceLevel(eight_mic, true));
+        }
+        const double diffuse = db(eight_tail) - db(omni_tail) - 6.0;  // (less the condenser's extra sensitivity)
+        check(omni_tail > 1e-5f && std::fabs(diffuse + 4.8) < 1.5, "a figure-8 hears a third of the room's reverb (in energy) that an omni does",
+              fmt("%.1f dB (sensitivity aside)", diffuse));
+    }
+
+    {
         std::printf("\nAutomation\n");
         // Volume automation on the pad: 0 dB to step 8, down to silence by step 16; read, it takes the fader's place.
         Room room;

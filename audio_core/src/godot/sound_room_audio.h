@@ -65,6 +65,13 @@ public:
     float get_room_decay() const;    // the reverb time (RT60) that goes with the room's size, in seconds
     void set_source_muted(int id, bool muted);
     void set_source_solo_muted(int id, bool silenced);
+    // Microphones: the models there are ([{id, name, about, sensitivity_db, patterns: [{name, pressure: [3], gradient:
+    // [3]}]}]), a model's response on axis at some frequencies (dB), and a mic's model, pattern, aim and pan.
+    Array get_mic_models() const;
+    PackedFloat32Array get_mic_response(const String& model, const PackedFloat32Array& frequencies) const;
+    void set_mic_model(int id, const String& model, const String& pattern);
+    void set_mic_aim(int id, const Vector3& aim);
+    void set_source_pan(int id, float pan);
     void set_source_output(int id, int bus);  // a bus's id (a source added as "bus"), or -1 for the master
     void set_source_input_channel(int id, int channel);  // live sources: 0-based hardware input, or -1 for all
     // Whether a source takes input: an instrument plays what MIDI controllers send, a live source plays its

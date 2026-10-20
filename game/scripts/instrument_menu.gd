@@ -55,7 +55,8 @@ func close() -> void:
 ## Makes an instrument of this kind and puts it in the player's hands. Returns it, or null if the room is full.
 func create(kind: String):
 	var player = app.player
-	var inst = app.add_instrument(kind, player.global_position + Vector3(0.0, Catalog.KINDS[kind].height, 0.0))
+	var at: Vector3 = player.global_position + Vector3(0.0, Catalog.KINDS[kind].height, 0.0)
+	var inst = app.add_mic_pair(at) if Catalog.KINDS[kind].get("pair", false) else app.add_instrument(kind, at)
 	if inst == null:
 		return null
 	if inst.is_live():

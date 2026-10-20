@@ -83,8 +83,11 @@ func instrument_settings(inst) -> Dictionary:
 	var out := {"kind": inst.kind, "family": family_of(inst), "inserts": inserts_data(inst)}
 	if family_of(inst) == "speaker":
 		out.volume_db = inst.volume_db
-	if inst.is_mic:
+	if inst.is_mic:  # its model and pattern, its gain and where its track sits in the stereo
 		out.mic_gain_db = inst.mic_gain_db
+		out.mic_model = inst.mic_model
+		out.mic_pattern = inst.mic_pattern
+		out.mic_pan = inst.mic_pan
 	var played: Dictionary = audio.get_instrument_plugin(inst.source_id) if inst.plays_plugin else {}
 	if str(played.get("plugin_id", "")) != "":  # a plug-in instrument's plug-in, which is the instrument itself
 		out.instrument_plugin = {"plugin_id": played.plugin_id, "plugin_name": played.plugin_name, "plugin_maker": played.plugin_maker,
@@ -143,8 +146,13 @@ func apply_instrument_settings(inst, settings: Dictionary, include := {}) -> Str
 					problems.append("%s on pedal %d: %s" % [pedal.get("plugin_name", "a plug-in"), at + 1, problem])
 	if family_of(inst) == "speaker" and settings.has("volume_db") and include.get("instrument_settings", true):
 		app.set_speaker_volume(inst, float(settings.volume_db))
-	if inst.is_mic and settings.has("mic_gain_db") and include.get("instrument_settings", true):
-		app.set_mic_gain(inst, float(settings.mic_gain_db))
+	if inst.is_mic and include.get("instrument_settings", true):
+		if settings.has("mic_model"):
+			app.set_mic_model(inst, str(settings.mic_model), str(settings.get("mic_pattern", "")))
+		if settings.has("mic_gain_db"):
+			inst.set_mic_gain(float(settings.mic_gain_db))
+		if settings.has("mic_pan"):
+			inst.set_mic_pan(float(settings.mic_pan))
 	var problem := apply_inserts(inst, settings.get("inserts", []) if with_plugins else [])
 	if problem != "":
 		problems.append(problem)
@@ -317,9 +325,12 @@ func room_data() -> Dictionary:
 			"sends": _sends_data(inst)}
 		if inst.named:
 			entry.name = inst.display_name
-		if inst.is_mic:  # (where it stands: its capsule's height, and how far it points down)
+		if inst.is_mic:  # (where it stands: its capsule's height, and how far it points down; a stereo pair's other mic)
 			entry.height = inst.source_height
 			entry.tilt = inst.mic_tilt
+			if inst.pair_partner != null:
+				entry.pair = {"partner": app.instruments.find(inst.pair_partner), "side": inst.pair_side, "technique": inst.pair_technique,
+					"spacing": inst.pair_spacing}
 		if inst.playable:
 			entry.loop_on = inst.loop_on
 			entry.steps = audio.get_pattern_steps(inst.source_id)
@@ -495,6 +506,26 @@ func apply_room_data(data: Dictionary, carry := {}, size = null, mode := "") -> 
 			inst.automation = entry.get("automation", {}).duplicate(true)
 			inst.auto_mode = str(entry.get("auto_mode", "read"))
 			inst.lanes = entry.get("lanes", ["volume"]).duplicate()
+	var instrument_entries: Array = data.get("instruments", []) if keep.call("instruments") else []
+	for i in mini(instrument_entries.size(), made.size()):  # the stereo pairs, their mics together again
+		var pair = instrument_entries[i].get("pair")
+		var left = made[i]
+		if not (pair is Dictionary) or str(pair.get("side", "")) != "left" or left == null:
+			continue
+		var at := int(pair.get("partner", -1))
+		var right = made[at] if at >= 0 and at < made.size() else null
+		if right == null or not right.is_mic or not left.is_mic:
+			continue
+		left.pair_partner = right
+		right.pair_partner = left
+		left.pair_side = "left"
+		right.pair_side = "right"
+		for each in [left, right]:
+			each.pair_technique = str(pair.get("technique", "xy"))
+			each.pair_spacing = float(pair.get("spacing", 0.0))
+		left.rebuild()
+		right.rebuild()
+		app.place_pair(left)
 	var made_folders := []  # the routing folders (their tracks put in them once the aux tracks are made too)
 	for entry in data.get("folders", []) if keep.call("instruments") else []:
 		var folder = app.add_folder([], str(entry.get("name", "")))

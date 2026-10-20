@@ -18,6 +18,7 @@
 #include "disk_stream.h"
 #include "instruments.h"
 #include "looper.h"
+#include "microphones.h"
 #include "midi_input.h"
 #include "mix.h"
 #include "pedals.h"
@@ -253,8 +254,16 @@ public:
     // is its track's input: heard while its input monitoring is on, or armed and recording or stopped (Pro Tools'
     // Auto Input), its clips otherwise, through its inserts and fader to the master (or its folder), in the middle of
     // the stereo. It isn't heard in the room itself, so no microphone ever hears another.
+    // What kind of microphone it is (see microphones.h: its pickup pattern, frequency response and sensitivity),
+    // which of its patterns, which way it points (a unit vector in the room), and where its track sits in the stereo
+    // (-1 left, 0 the middle, 1 right). A new one is the flat omni measurement mic, pointing along +z, in the middle.
+    void setMicModel(int id, const std::string& model, MicPattern pattern);
+    void setMicAim(int id, Vec3 aim);
+    void setSourcePan(int id, float pan);  // (a microphone's track: the instruments are placed by where they stand)
     static constexpr float kSpeedOfSound = 343.0f;  // metres a second
     static constexpr float kMicNearest = 0.1f;      // metres: no closer than this, for the level
+    static constexpr float kProximityNearest = 0.02f;  // and for the proximity effect
+    static constexpr float kProximityMaxDb = 20.0f;    // the most bass it can add
     // Where a source's sound goes: the master (-1), or a bus (a source added as InstrumentKind::Bus), as a track's
     // output is assigned in Pro Tools. A bus is a routing folder's aux input: what its tracks play there (placed in the
     // room as ever, in stereo) goes through its inserts, in two channels, and its fader to the master; it plays nothing
@@ -473,7 +482,7 @@ private:
             SequencerRunning, Tempo, Swing, Click, ClickVolume, Reverb2, SourceGain, Falloff, LimiterOn,
             AmpKnob, AmpHeadSet, AmpCabinetSet, LooperMemory, LooperAct, PedalBoardSet, PedalOn, PedalControl, SynthPlugin,
             TimelinePlay, TimelineLoop, TrackSet, RecordArm, RecordStart, RecordStop, SourceOutput, AutomationRead, SendSet,
-            MasterAutomation, MasterRead, SourceSoloMuted, MicPath,
+            MasterAutomation, MasterRead, SourceSoloMuted, MicPath, MicModelSet, MicAim, SourcePan,
         } type = AddSource;
         int id = 0;
         float v[9] = {};
@@ -515,6 +524,7 @@ private:
     void hearRoom(Source& mic, float reverb_level, float glide);  // what a microphone hears this block, into its mono
     void playSource(size_t index, float binaural_from, float glide, float wall_glide, float mute_coef);
     void playClips(Source& source, int from);  // a track's audio clips this block, into its playback
+    void soundAs(Source& mic, int model_index, int pattern_index);  // a microphone's model, ready to play
     int delayFor(double at) const;
 
     // StepSink: plays every source's pattern notes for this step, and the click.

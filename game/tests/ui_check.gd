@@ -477,7 +477,7 @@ func _run() -> void:
 	await tap(KEY_BACKSPACE)
 	check(player.target == null and player.remove_pending == null, "Backspace does nothing when you aren't facing an instrument")
 	await tap(KEY_T)
-	check(im.is_open() and im._cards.size() == 14 and not im._cards[0].disabled, "N opens the instrument menu, with the amps among the live inputs, and a microphone",
+	check(im.is_open() and im._cards.size() == 20 and not im._cards[0].disabled, "N opens the instrument menu, with the amps among the live inputs, and the microphones",
 		im._footer.text)
 	await click(im._card_for.bass.get_global_rect().get_center())
 	var bass2 = player.carried
@@ -2033,9 +2033,9 @@ func _run() -> void:
 	main.mixer.open()
 	await frames(3)
 	var mic_strip: Dictionary = main.mixer._strip_for(mic)
-	var mic_card: String = mic_strip.source.text if not mic_strip.is_empty() else ""
+	var mic_card: String = mic_strip.small.text if not mic_strip.is_empty() else ""
 	main.mixer.close()
-	check(mic != null and mic.is_mic and not mic.playable and not mic.is_live() and is_equal_approx(mic.global_position.y, 1.2) and mic_card == "Flat, omni",
+	check(mic != null and mic.is_mic and not mic.playable and not mic.is_live() and is_equal_approx(mic.global_position.y, 1.2) and mic_card == "FLAT · OMNI",
 		"a microphone stands in the room on its stand, its capsule 1.2 m up: an audio track, its strip saying what it is", mic_card)
 	var mp = main.mic_panel
 	mp.open(mic)
@@ -2088,7 +2088,88 @@ func _run() -> void:
 	check(mic_entry.size() == 1 and is_equal_approx(float(mic_entry[0].height), 0.6) and is_equal_approx(float(mic_entry[0].tilt), mic.mic_tilt) and
 		is_equal_approx(float(mic_entry[0].settings.mic_gain_db), 6.0), "it is kept with the room: where it stands, how high, how it points, and its gain")
 	timeline.undo()
+
+	print("Microphone models, pans and stereo pairs")
+	mp.open(mic)
+	await frames(2)
+	var model_ids: Array = main.mic_models().map(func(m): return m.id)
+	mp._model.item_selected.emit(model_ids.find("dynamic"))
+	await frames(2)
+	var dynamic_patterns: int = mp._pattern.item_count
+	var dynamic_disabled: bool = mp._pattern.disabled
+	mp._model.item_selected.emit(model_ids.find("condenser"))
+	await frames(2)
+	var condenser_patterns: int = mp._pattern.item_count
+	mp._pattern.item_selected.emit(mp._patterns_shown.find("figure8"))
+	await frames(2)
+	check(model_ids.size() == 6 and dynamic_patterns == 1 and dynamic_disabled and condenser_patterns == 3 and mic.mic_model == "condenser" and
+		main.mic_pattern_of(mic) == "figure8" and mic.display_name.begins_with("Condenser Mic") and mp._graph.model == "condenser",
+		"its panel switches its model (a dynamic is cardioid only; a large condenser cardioid, omni or figure-8), its name following, its response and pattern drawn",
+		mic.display_name)
+	mp._pan.value_changed.emit(-0.5)
+	mp.close()
+	main.mixer.open()
+	await frames(3)
+	var panned_strip: Dictionary = main.mixer._strip_for(mic)
+	check(is_equal_approx(mic.mic_pan, -0.5) and is_equal_approx(panned_strip.source.value, -0.5) and panned_strip.small.text == "LDC · FIG-8" and
+		main.mixer.PanControl.readout(-0.5) == "<50", "its track's pan, in its panel and on its strip (as Pro Tools reads it, <50)", panned_strip.small.text)
+	main.mixer.close()
+	var settings_kept: Dictionary = main.library.instrument_settings(mic)
+	check(settings_kept.get("mic_model") == "condenser" and settings_kept.get("mic_pattern") == "figure8" and is_equal_approx(float(settings_kept.get("mic_pan", 0.0)), -0.5),
+		"its model, pattern and pan are kept with it")
 	main.remove_instrument(mic)
+	await frames(2)
+	var folders_before: int = main.folders.size()
+	var pair_left = main.add_mic_pair(Vector3(0.0, 1.9, 1.0))
+	var pair_right = pair_left.pair_partner if pair_left != null else null
+	await frames(3)
+	check(pair_left != null and pair_right != null and pair_left.pair_side == "left" and pair_right.pair_side == "right" and pair_left.pair_technique == "xy" and
+		main.folders.size() == folders_before + 1 and main.folder_of(pair_left) == main.folder_of(pair_right) and pair_left.mic_model == "pencil" and
+		main.mic_pattern_of(pair_right) == "cardioid" and is_equal_approx(pair_left.mic_pan, -1.0) and is_equal_approx(pair_right.mic_pan, 1.0) and
+		pair_left.global_position.distance_to(pair_right.global_position) < 0.001 and is_equal_approx(rad_to_deg(pair_left.rotation.y - pair_right.rotation.y), 90.0) and
+		pair_left.display_name.ends_with(" L") and pair_right.display_name.ends_with(" R"),
+		"a stereo pair: two pencil cardioids at one point, 90° apart (XY), panned left and right, two tracks in a folder of their own",
+		"%s / %s" % [pair_left.display_name if pair_left != null else "", pair_right.display_name if pair_right != null else ""])
+	mp.open(pair_right)
+	await frames(2)
+	var pair_row_shown: bool = mp._pair_row.visible
+	mp._technique.item_selected.emit(main.Catalog.MIC_PAIR_ORDER.find("ab"))
+	await frames(2)
+	var ab_apart: float = pair_left.global_position.distance_to(pair_right.global_position)
+	var ab_omni: bool = main.mic_pattern_of(pair_left) == "omni" and main.mic_pattern_of(pair_right) == "omni"
+	mp._spacing.value = 1.0
+	await frames(2)
+	var spaced: float = pair_left.global_position.distance_to(pair_right.global_position)
+	mp._x.value = 1.5
+	mp._z.value = -1.0
+	mp._bearing.value = 90.0
+	await frames(3)
+	var centre: Vector3 = main.rig_centre(pair_right)
+	var middle: Vector3 = (pair_left.global_position + pair_right.global_position) / 2.0
+	check(pair_row_shown and ab_omni and absf(ab_apart - 0.6) < 0.001 and absf(spaced - 1.0) < 0.001 and absf(centre.x - 1.5) < 0.001 and
+		absf(centre.z + 1.0) < 0.001 and absf(middle.x - 1.5) < 0.001 and absf(middle.z + 1.0) < 0.001 and absf(main.mic_bearing(pair_left) - 90.0) < 0.01 and
+		absf(pair_left.global_position.x - pair_right.global_position.x) < 0.001 and pair_left.global_position.z < pair_right.global_position.z,
+		"its panel sets it up as a spaced pair of omnis (as far apart as wanted) and places and points the two as one, its stand between them",
+		"%.2f m apart, at (%.2f, %.2f)" % [spaced, centre.x, centre.z])
+	mp._technique.item_selected.emit(main.Catalog.MIC_PAIR_ORDER.find("blumlein"))
+	await frames(2)
+	check(pair_left.mic_model == "ribbon" and main.mic_pattern_of(pair_right) == "figure8" and pair_left.global_position.distance_to(pair_right.global_position) < 0.001,
+		"Blumlein: two figure-8s (ribbons: the pencils have no figure-8) at one point")
+	mp.close()
+	player.target = pair_right
+	player._grab_or_drop()
+	var carried_left: bool = player.carried == pair_left
+	player._grab_or_drop()
+	var pair_entries: Array = main.library.room_data().instruments.filter(func(e): return e.has("pair"))
+	check(carried_left and pair_entries.size() == 2 and pair_entries.any(func(e): return e.pair.side == "left" and e.pair.technique == "blumlein"),
+		"picking up either mic of a pair picks up the pair, by its stand; the pair is kept with the room")
+	main.remove_instrument(pair_left)
+	await frames(2)
+	check(pair_right.pair_partner == null and pair_right.pair_side == "", "taking one of a pair away leaves the other on a stand of its own")
+	var pair_folder = main.folder_of(pair_right)
+	main.remove_instrument(pair_right)
+	if pair_folder != null:
+		main.remove_folder(pair_folder)
 	await frames(2)
 
 	print("The MIDI editor")
@@ -2631,6 +2712,7 @@ func _run() -> void:
 	check(main.folders.is_empty() and main.folder_of(main.find_instrument("drums")) == null,
 		"a folder taken away leaves its tracks going to the master")
 	main.mixer.open()
+	main.audio.note_on(main.find_instrument("drums").source_id, 38, 0.9)  # (something for the room to ring with)
 	await seconds(0.6)
 	var reverb_heard: float = main.mixer._reverb.meter.held_db()
 	main.mixer._reverb.fader.value_changed.emit(-80.0)

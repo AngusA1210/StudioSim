@@ -124,9 +124,18 @@ paler colour, to tell them apart. Everything in the room is saved with it (see R
 
 A **microphone** is a track of its own that records what the room sounds like from where it stands, rather than an
 instrument's own input (its DI, or its notes): the instruments as they reach it, each from where it stands, with the
-walls between them and the room's reverb, as a mic on a stand in a real room does. The first is a flat measurement
-microphone, hearing all frequencies alike and all round alike (omni); dynamic, condenser and ribbon microphones, with
-their pickup patterns and frequency responses, come later.
+walls between them and the room's reverb, as a mic on a stand in a real room does. The instrument menu has the kinds
+a studio has (models of each kind, not of any one maker's), each drawn as it looks, and any of them can be switched
+to another in its panel:
+
+| Mic | Pattern | Its sound | Sensitivity |
+| --- | --- | --- | --- |
+| **Dynamic** (instrument) | cardioid | lean far off, fuller close up; a presence lift around 5.5 kHz, little above 13 kHz | -8 dB |
+| **Kick** (a big dynamic) | supercardioid | deep lows, the boxy low mids (around 380 Hz) scooped out, the beater's click (4 kHz) lifted | -8 dB |
+| **Condenser** (large diaphragm, side-address) | cardioid, omni or figure-8 | detailed, a little low warmth, an open top around 9.5 kHz | +6 dB |
+| **Pencil** (small-diaphragm condenser) | cardioid or omni | accurate and even, off axis too; a little air above 10 kHz | +3 dB |
+| **Ribbon** (side-address) | figure-8 | smooth and dark on top, its back as loud as its front | -6 dB |
+| **Measurement** | omni | flat from the lowest lows to the highest highs | 0 dB |
 
 - **What it hears** follows the physics: each instrument's sound arrives as late as it takes to travel there at 343 m/s
   (two mics at different distances from a drum hear it at different times, as real ones do, with the same phase
@@ -137,19 +146,40 @@ their pickup patterns and frequency responses, come later.
   nothing of it; but a solo only takes the others out of the mix, so soloing a mic's track lets you hear just what it
   hears, every instrument still playing in the room. A microphone isn't heard in the room itself, so no mic hears
   another (nor itself).
+- **Its pattern** decides how much it hears from each way round, the way the sound arrives (straight, or from the edge
+  of a wall it bends round) against the way the mic points: an omni hears all round alike, a cardioid little from
+  behind, a supercardioid less from the sides, a figure-8 its front and its back alike (the back in reverse polarity)
+  and nothing from the sides. A pattern widens in the lows and narrows in the highs, as a real mic's does (a large
+  condenser's omni hears less from behind in the highs). A directional mic hears less of the room's reverb than an omni
+  does (a cardioid or a figure-8 a third of it, in energy), and has a **proximity effect**: close up, its lows rise,
+  6 dB an octave below a corner that climbs as it nears the source (a figure-8 most, an omni not at all), up to
+  +20 dB, so a dynamic that sounds lean at a metre sounds full at a few centimetres.
+- **Its sensitivity** is how loud it is for the same sound, against the measurement mic: a dynamic or a ribbon needs
+  more gain than a condenser, as real ones do.
 - **Placing it**: pick one from the menu, carry it (G) and put it down: it points at the instrument nearest it. Then
-  **'** at it (or its name in the mix window) opens its panel: where it stands, to the centimetre (across and along the
-  room, from its middle), its capsule's height (where it hears from), which way it points (its bearing, clockwise from
-  north, and how far down) or **Point it at** an instrument, and its **gain**, which comes before it records, as a
-  preamp's does. Beside them, how far each instrument is from it, how late its sound arrives, and how loud it is there.
+  **'** at it (or its name in the mix window) opens its panel: its model and pattern (with its frequency response and
+  its pattern drawn, the lows and highs fainter), where it stands, to the centimetre (across and along the room, from
+  its middle), its capsule's height (where it hears from), which way it points (its bearing, clockwise from north, and
+  how far down) or **Point it at** an instrument, its **gain**, which comes before it records, as a preamp's does,
+  and its **pan**. Beside them, how far each instrument is from it, how late its sound arrives, and how loud it is
+  there.
 - **Its track** is an audio track: arm it (R) and record, and it records what it hears (32-bit float, so a mic right up
   against a loud amp never clips the file); its input on (I) lets you hear it as it hears, and while it is armed it is
   heard while recording or stopped, its clips otherwise, as Pro Tools' Auto Input has a track. It plays through its
-  inserts, fader and sends to the master (or its folder), in the middle of the stereo, as a mono track does. Its
-  takes are placed where they were heard, with no input latency to take off, since nothing came in through the
-  interface; something played live along with it is heard by it as late as you play it, though, as in a real room
-  with headphones that are late.
-- It is kept with the room: where it stands, how high, how it points, and its gain.
+  inserts, fader and sends to the master (or its folder), where its pan puts it in the stereo (equal-power; its strip
+  has the pan in its input's place, and says its model and pattern over it, as "DYN · CARD"). Its takes are placed
+  where they were heard, with no input latency to take off, since nothing came in through the interface; something
+  played live along with it is heard by it as late as you play it, though, as in a real room with headphones that
+  are late.
+- **Stereo pairs**: two mics on one stand, two tracks ("Stereo Pair L" and "R"), panned hard left and right, in a
+  folder of their own, set up as one of the classic ways: **XY** (two cardioids at one point, 90° apart: mono-safe,
+  the image from their angles), **ORTF** (two cardioids 17 cm apart, 110° apart: angles and timing both, as ears
+  have it), a **spaced pair** (A/B: two omnis side by side, as far apart as you like, wide and roomy) or **Blumlein**
+  (two figure-8s at one point, 90° apart: the front and the room behind in true stereo). The pair takes the pattern
+  its setup wants (pencils for the cardioids and omnis, ribbons for Blumlein, unless their model has it). Its panel
+  places and points the two as one (where the stand is, between them), and picking up either picks up the pair.
+- It is kept with the room: where it stands, how high, how it points, its model, pattern, gain and pan, and a pair's
+  setup.
 
 ### Inputs
 
@@ -602,7 +632,8 @@ game/                      Godot project: the room, player, instruments, HUD, me
   scripts/instrument_models.gd   what each instrument looks like, built from simple shapes
   scripts/mixer.gd         the mix window: channel strips, faders (fader.gd) and meters (level_meter.gd)
   scripts/amp_panel.gd     an amp's knobs (knob.gd) and its pedalboard
-  scripts/mic_panel.gd     a microphone's place, aim and gain, and how far each instrument is from it
+  scripts/mic_panel.gd     a microphone's model, place, aim, gain and pan (mic_graph.gd draws its response and pattern; a
+                           track's pan is pan_control.gd), a stereo pair's setup, and how far each instrument is from it
   scripts/plugin_browser.gd  the plug-ins installed, by type or by maker, for an insert or a Plug-in pedal
   scripts/session.gd       the open room: its file, saving, auto-save and backups
   scripts/rooms_page.gd    making a new room (from a template) and opening one
@@ -616,6 +647,7 @@ game/                      Godot project: the room, player, instruments, HUD, me
 audio_core/
   src/core/                the audio engine, plain C++ with no Godot dependency
     engine.*               device, command queue, mixing, the shared clock; microphones hearing the room
+    microphones.*          the microphone models: their pickup patterns, responses and sensitivities
     instruments.*          synthesized drums, the garage kit, bass, pad, bells and keys (each playable live or by pattern), live input
     plugin_synth.*         a plug-in instrument: an instrument plug-in played by MIDI, live and by pattern, to the sample
     amp.*                  the guitar and bass amps: preamp drive (oversampled), tone stack, presence, cabinet
@@ -668,13 +700,13 @@ into takes, comped from them), editing them (trims, fades and crossfades, clip g
 for the notes, undo), tracks with names and colours, in routing folders (folders in folders too) with faders, inserts and sends of their own, and
 automation (volume, mute, the sustain pedal, an amp's knobs and its pedals', plug-ins' controls, sends and the master), drawn or
 written as it plays, aux tracks with sends, recordings read from disk as they play, and microphones that record the
-room from where they stand (a flat, omni one so far).
+room from where they stand (dynamics, condensers, ribbons and a measurement mic, with their patterns, proximity
+effect and responses, and stereo pairs).
 
 To do, roughly in this order:
 
-1. **More microphones**: pickup patterns (cardioid, figure-8 and the rest, so which way a mic points matters), and
-   models of real dynamics, condensers and ribbons with their frequency responses and proximity effect; then stereo
-   pairs.
+1. **More microphones**: mid-side pairs (decoded to left and right), a pair recorded as one stereo track, and a mic's
+   own noise.
 2. **More plug-ins**: inserts on the master, and perhaps VST3 and Windows.
 3. **The room's sound**: wall materials, each absorbing and diffusing sound in its
    own way, which shape how the room's reverb rings.

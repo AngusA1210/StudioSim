@@ -47,11 +47,49 @@ const KINDS := {
 	"bass_stack": {"name": "Bass Stack", "about": "A head on an 8x10 cabinet: punchy, with more drive. With room for pedals.",
 		"color": Color(0.82, 0.86, 0.95), "top": 1.62, "footprint": Vector2(0.62, 0.48), "height": 0.7, "gain": 1.0, "send": 0.4,
 		"live_input": true, "amp": true, "head": "bass_punch", "cabinet": "8x10"},
-	# A microphone on a boom stand: a track of its own, recording what the room sounds like where it stands.
-	"mic": {"name": "Microphone", "about": "A flat measurement mic on a stand: it hears the room from where it stands, and records that.",
+	# Microphones on boom stands: each a track of its own, recording what the room sounds like where it stands. Each
+	# starts as a model (audio_core/src/core/microphones.h has them), which its panel can change; a stereo pair is two,
+	# on one stand.
+	"mic": {"name": "Measurement Mic", "about": "Flat and omni: it hears the room just as it is, from where it stands.",
 		"color": Color(0.86, 0.88, 0.94), "top": 1.4, "footprint": Vector2(0.4, 0.4), "height": 1.2, "gain": 1.0, "send": 0.0, "mic": true,
-		"model": "Flat (measurement), omni"},
+		"model": "flat"},
+	"mic_dynamic": {"name": "Dynamic Mic", "about": "A cardioid dynamic for snare, toms and guitar amps: close up and full, with bite.",
+		"color": Color(0.62, 0.66, 0.74), "top": 1.0, "footprint": Vector2(0.4, 0.4), "height": 0.6, "gain": 1.0, "send": 0.0, "mic": true,
+		"model": "dynamic"},
+	"mic_kick": {"name": "Kick Mic", "about": "A big dynamic for kick drum and bass cabinets: deep lows, the box scooped, the click lifted.",
+		"color": Color(0.8, 0.42, 0.4), "top": 0.7, "footprint": Vector2(0.4, 0.4), "height": 0.35, "gain": 1.0, "send": 0.0, "mic": true,
+		"model": "kick"},
+	"mic_condenser": {"name": "Condenser Mic", "about": "A large-diaphragm condenser: detailed and open, cardioid, omni or figure-8.",
+		"color": Color(0.9, 0.78, 0.5), "top": 1.9, "footprint": Vector2(0.4, 0.4), "height": 1.6, "gain": 1.0, "send": 0.0, "mic": true,
+		"model": "condenser"},
+	"mic_pencil": {"name": "Pencil Mic", "about": "A small-diaphragm condenser for acoustic guitar and cymbals: accurate and even.",
+		"color": Color(0.74, 0.86, 0.92), "top": 1.6, "footprint": Vector2(0.4, 0.4), "height": 1.3, "gain": 1.0, "send": 0.0, "mic": true,
+		"model": "pencil"},
+	"mic_ribbon": {"name": "Ribbon Mic", "about": "A figure-8 ribbon: smooth and dark, front and back alike, big lows close up.",
+		"color": Color(0.78, 0.62, 0.86), "top": 1.4, "footprint": Vector2(0.4, 0.4), "height": 1.1, "gain": 1.0, "send": 0.0, "mic": true,
+		"model": "ribbon"},
+	"mic_pair": {"name": "Stereo Pair", "about": "Two mics on one stand for stereo: XY, ORTF, a spaced pair or Blumlein. Two tracks, left and right.",
+		"color": Color(0.6, 0.86, 0.78), "top": 2.2, "footprint": Vector2(0.4, 0.4), "height": 1.9, "gain": 1.0, "send": 0.0, "mic": true,
+		"model": "pencil", "pair": true},
 }
+
+# The ways a stereo pair of microphones can be set up: the angle between their axes (degrees), how far apart their
+# capsules are (metres), and the pattern they want. A spaced pair's spacing can be changed.
+const MIC_PAIRS := {
+	"xy": {"name": "XY", "about": "Two cardioids at the same point, 90° apart: the image from their angles alone, mono-safe.",
+		"angle": 90.0, "spacing": 0.0, "pattern": "cardioid"},
+	"ortf": {"name": "ORTF", "about": "Two cardioids 17 cm apart, 110° apart: their angles and their timing both make the image, as ears do.",
+		"angle": 110.0, "spacing": 0.17, "pattern": "cardioid"},
+	"ab": {"name": "Spaced pair (A/B)", "about": "Two omnis side by side, apart by as much as you like: wide and roomy, the image from timing.",
+		"angle": 0.0, "spacing": 0.6, "pattern": "omni"},
+	"blumlein": {"name": "Blumlein", "about": "Two figure-8s at the same point, 90° apart: the front and the room behind in true stereo.",
+		"angle": 90.0, "spacing": 0.0, "pattern": "figure8"},
+}
+const MIC_PAIR_ORDER := ["xy", "ortf", "ab", "blumlein"]
+# The pattern names as they read, and as short as a mix window strip has room for; and the models' short names.
+const MIC_PATTERNS := {"omni": "Omni", "cardioid": "Cardioid", "supercardioid": "Supercardioid", "figure8": "Figure-8"}
+const MIC_PATTERNS_SHORT := {"omni": "OMNI", "cardioid": "CARD", "supercardioid": "SUPER", "figure8": "FIG-8"}
+const MIC_MODELS_SHORT := {"flat": "FLAT", "dynamic": "DYN", "kick": "KICK", "condenser": "LDC", "pencil": "SDC", "ribbon": "RIBBON"}
 
 # An amp's knobs, in the order they sit on its panel.
 const AMP_CONTROLS := ["gain", "bass", "mid", "treble", "presence", "master"]
@@ -134,7 +172,7 @@ const GROUPS := [
 		"kinds": ["live", "guitar_combo", "guitar_stack", "bass_combo", "bass_stack"], "coming": ""},
 	{"title": "Microphones",
 		"about": "Placed anywhere in the room, a microphone hears it from where it stands (the instruments as they reach it, with the walls and the reverb) and records that. Arm it (R) to record it; its input on (I) lets you hear it.",
-		"kinds": ["mic"], "coming": "Dynamic, condenser and ribbon microphones, with their pickup patterns and frequency responses, are on the way."},
+		"kinds": ["mic_dynamic", "mic_kick", "mic_condenser", "mic_pencil", "mic_ribbon", "mic_pair", "mic"], "coming": ""},
 ]
 
 

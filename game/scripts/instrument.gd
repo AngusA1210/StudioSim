@@ -52,6 +52,15 @@ var plays_plugin := false  # a plug-in instrument: it plays one of the instrumen
 var is_mic := false    # a microphone: it hears the room from where it stands, and its track records that
 var mic_tilt := 0.0    # a microphone: how far it points down (degrees; the way it faces is its aim round)
 var mic_gain_db := 0.0 # a microphone's gain, before it is recorded, as a preamp's
+var mic_model := ""    # which model it is (microphones.h: "flat", "dynamic", "kick", "condenser", "pencil", "ribbon")
+var mic_pattern := ""  # and which of its pickup patterns ("omni", "cardioid", "supercardioid", "figure8")
+var mic_pan := 0.0     # where its track sits in the stereo: -1 left, 1 right
+# A stereo pair: the other mic of it, which side this one is (the left one carries the stand and is moved; the right
+# one follows it), how they are set up (catalog.gd's MIC_PAIRS) and how far apart a spaced pair is.
+var pair_partner = null
+var pair_side := ""
+var pair_technique := ""
+var pair_spacing := 0.0
 var instrument_plugin := {}  # what that plug-in is, from the audio core: {plugin_id, plugin_name, plugin_maker, editor_open}
 var amp_controls := {"gain": 5.0, "bass": 5.0, "mid": 5.0, "treble": 5.0, "presence": 5.0, "master": 5.0}
 var amp_head := ""      # an amp's head and cabinet (catalog.gd lists them), and whether each is in use
@@ -70,6 +79,8 @@ var glow := 0.0
 var _audio: SoundRoomAudio
 var _normal_gain := 1.0  # what 0 dB on its fader means to the audio core
 var _sent_position := Vector3.INF  # where the audio core last heard this instrument was
+var _sent_aim := Vector3.INF       # and, a microphone, which way it points
+var _labels_shown := true          # (the title screen hides the names)
 var _model: Node3D
 var _accent: StandardMaterial3D  # the parts in its own colour, which light up as it plays
 var _light: OmniLight3D
@@ -105,9 +116,13 @@ func setup(spec: Dictionary, audio: SoundRoomAudio) -> void:
 	position = Vector3(spec.position.x, source_height, spec.position.z)
 
 	_normal_gain = spec.gain
-	source_id = audio.add_source(kind, position, spec.gain, spec.send)
+	source_id = audio.add_source("mic" if is_mic else kind, position, spec.gain, spec.send)
 	if source_id < 0:
 		return  # the room is full; whoever asked for this instrument gives up on it
+	if is_mic:
+		mic_model = spec.get("model", "flat")
+		mic_pattern = ""
+		_audio.set_mic_model(source_id, mic_model, mic_pattern)
 
 	_pedal_row = Node3D.new()
 	_build_model()
@@ -158,7 +173,8 @@ func _build_model() -> void:
 	if _model != null:
 		_model.remove_child(_pedal_row)
 		_model.queue_free()
-	var built: Dictionary = Models.build(kind, model_color, amp_cabinet, {"height": source_height, "tilt": mic_tilt})
+	var built: Dictionary = Models.build("mic" if is_mic else kind, model_color, amp_cabinet, {"height": source_height, "tilt": mic_tilt,
+		"model": mic_model, "stand": pair_side != "right", "pair": pair_stand()})
 	_model = built.node
 	_model.position.y = -source_height  # the model is drawn from the floor up
 	add_child(_model)
@@ -261,11 +277,55 @@ func _show_looper() -> void:
 		_led.emission_energy_multiplier = 0.0 if state in ["empty", "none"] else (2.5 if state in ["recording", "overdubbing"] else 1.5)
 
 
-## Tells the audio core where this instrument is, if it has moved.
+## Tells the audio core where this instrument is, if it has moved (and a microphone, which way it points).
 func sync_position() -> void:
 	if not global_position.is_equal_approx(_sent_position):
 		_sent_position = global_position
 		_audio.set_source_position(source_id, global_position)
+	if is_mic:
+		var aim := mic_aim()
+		if not aim.is_equal_approx(_sent_aim):
+			_sent_aim = aim
+			_audio.set_mic_aim(source_id, aim)
+
+
+## The way a microphone points, in the room: the way it faces, tilted down by its tilt.
+func mic_aim() -> Vector3:
+	var t := deg_to_rad(mic_tilt)
+	return (global_transform.basis * Vector3(0.0, -sin(t), cos(t))).normalized()
+
+
+## A microphone's model and pattern ("" for the model's own); and where its track sits in the stereo.
+func set_mic_model(model: String, pattern := "") -> void:
+	mic_model = model
+	mic_pattern = pattern
+	_audio.set_mic_model(source_id, model, pattern)
+	_build_model()
+	_place_parts()
+
+
+func set_mic_pan(pan: float) -> void:
+	mic_pan = clampf(pan, -1.0, 1.0)
+	_audio.set_source_pan(source_id, mic_pan)
+
+
+## A stereo pair's left mic draws the stand under the two, and the bar they are on: where the stand is and where the
+## other mic is, as this one sees them (they turn together, so these stay put): {centre, partner, partner_turn}.
+func pair_stand() -> Dictionary:
+	if pair_side != "left" or pair_technique == "":
+		return {}
+	var spec: Dictionary = Catalog.MIC_PAIRS.get(pair_technique, {})
+	var half := deg_to_rad(float(spec.get("angle", 0.0)) / 2.0)
+	var spacing: float = pair_spacing
+	var back := Basis(Vector3.UP, -half)
+	return {"centre": back * Vector3(-spacing / 2.0, 0.0, 0.0), "partner": back * Vector3(-spacing, 0.0, 0.0), "partner_turn": -2.0 * half}
+
+
+## Draws it again (a stereo pair set up another way).
+func rebuild() -> void:
+	_build_model()
+	_place_parts()
+	_refresh_label()
 
 
 ## Turns it to face a point on the floor (its front is the side a player stands at).
@@ -354,7 +414,8 @@ func set_display_name(new_name: String) -> void:
 
 ## The name floating above it. The title screen hides these so they don't drift behind its words.
 func set_label_visible(on: bool) -> void:
-	_label.visible = on
+	_labels_shown = on
+	_label.visible = on and pair_side != "right"
 	_input_badge.visible = on and input_on
 	if not on:
 		_loop_label.visible = false
@@ -375,5 +436,9 @@ func _refresh_label() -> void:
 		notes.append("muted")
 	if playable and not loop_on:
 		notes.append("loop off")
-	_label.text = display_name + ("  (%s)" % ", ".join(notes) if not notes.is_empty() else "")
+	var shown := display_name
+	if pair_side == "left" and display_name.ends_with(" L"):  # a stereo pair goes by one name over its stand
+		shown = display_name.trim_suffix(" L")
+	_label.text = shown + ("  (%s)" % ", ".join(notes) if not notes.is_empty() else "")
+	_label.visible = _labels_shown and pair_side != "right"
 	_label.modulate.a = 0.55 if not notes.is_empty() else 1.0
