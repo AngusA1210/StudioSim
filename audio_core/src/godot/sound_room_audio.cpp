@@ -491,6 +491,8 @@ Dictionary SoundRoomAudio::get_stats() const {
     d["input_latency_ms"] = s.input_latency_ms;
     d["cpu_load"] = s.cpu_load;
     d["blocks"] = int64_t(s.blocks);
+    d["disk_misses"] = int64_t(s.disk_misses);
+    d["disk_mb"] = s.disk_mb;
     return d;
 }
 

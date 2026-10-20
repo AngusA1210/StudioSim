@@ -175,7 +175,7 @@ struct AudioEngine::Source {
         struct Clip {
             double start = 0.0, offset = 0.0, length = 0.0, fade_in = 0.0, fade_out = 0.0;
             float gain = 1.0f;
-            std::shared_ptr<const AudioData> audio;
+            std::shared_ptr<StreamedFile> file;  // read from disk as it plays (see disk_stream.h)
         };
         std::vector<Clip> clips;
         TrackAutomation automation;
@@ -459,7 +459,9 @@ bool AudioEngine::openDevice(const DeviceConfig& config, std::string* error) {
     device_config_.output_right = std::clamp(config.output_right, 0, last);
     setOutputChannels(device_config_.output_left, device_config_.output_right);
 
+    realtime_.store(true, std::memory_order_release);
     if (ma_device_start(&dev->device) != MA_SUCCESS) {
+        realtime_.store(false, std::memory_order_release);
         if (error) *error = "could not start the audio device";
         return false;
     }
@@ -470,6 +472,7 @@ bool AudioEngine::openDevice(const DeviceConfig& config, std::string* error) {
 
 void AudioEngine::stopDevice() {
     device_.reset();
+    realtime_.store(false, std::memory_order_release);
     device_stats_.device_running = false;
     device_stats_.live_input = false;
 }
@@ -605,6 +608,7 @@ void AudioEngine::reapPedals() {
 
 // ── The timeline and recording (game thread) ───────────────────────────────────────────────────────────────
 void AudioEngine::playFrom(double step) {
+    streamer_.prepare(std::max(step, 0.0) * 15.0 / transport_.bpm);  // (the first moments read in before it starts)
     Command c; c.type = Command::TimelinePlay; c.v[0] = float(std::max(step, 0.0)); push(c);
     transport_.running = true;
 }
@@ -613,13 +617,17 @@ void AudioEngine::setLoopRange(bool on, double start_step, double end_step) {
     Command c; c.type = Command::TimelineLoop; c.v[0] = on ? 1.0f : 0.0f; c.v[1] = float(start_step); c.v[2] = float(end_step); push(c);
 }
 
-std::shared_ptr<const AudioData> AudioEngine::audioFile(const std::string& path, std::string* error) {
-    for (const auto& [known, data] : audio_files_)
-        if (known == path) return data;
-    auto data = std::make_shared<AudioData>();
-    if (!readWav(path, data.get(), error)) return nullptr;
-    audio_files_.emplace_back(path, data);
-    return data;
+std::shared_ptr<StreamedFile> AudioEngine::audioFile(const std::string& path, std::string* error) {
+    for (auto it = audio_files_.begin(); it != audio_files_.end(); ++it)
+        if (it->first == path) {
+            if (it->second->unchanged()) return it->second;
+            audio_files_.erase(it);  // written again since: opened afresh (clips playing the old one keep it till they go)
+            break;
+        }
+    auto file = StreamedFile::open(path, error);
+    if (!file) return nullptr;
+    audio_files_.emplace_back(path, file);
+    return file;
 }
 
 bool AudioEngine::setTrack(int id, const std::vector<TimelineNote>& notes, const std::vector<ClipSpec>& clips, std::string* error,
@@ -648,6 +656,9 @@ bool AudioEngine::setTrack(int id, const std::vector<TimelineNote>& notes, const
         const double fade_in = std::clamp(spec.fade_in, 0.0, spec.length), fade_out = std::clamp(spec.fade_out, 0.0, spec.length - fade_in);
         track->clips.push_back({spec.start, spec.offset, spec.length, fade_in, fade_out, std::max(spec.gain, 0.0f), audio});
     }
+    std::vector<StreamRegion> regions;  // for the disk thread to read ahead of
+    for (const auto& clip : track->clips) regions.push_back({clip.file, clip.start, clip.offset, clip.length});
+    streamer_.setRegions(id, std::move(regions));
     Command c; c.type = Command::TrackSet; c.id = id; c.data = track.get(); c.epoch = s->board_sent + 1;
     if (!commands_.push(c)) {
         if (error) *error = "the audio engine is busy: try again";
@@ -663,15 +674,24 @@ std::vector<float> AudioEngine::audioPeaks(const std::string& path, double per_s
     std::vector<float> out;
     auto audio = audioFile(path, nullptr);
     if (!audio || per_second <= 0.0) return out;
-    const size_t bucket = std::max<size_t>(1, size_t(audio->rate / per_second));
-    out.assign((audio->samples.size() + bucket - 1) / bucket, 0.0f);
-    for (size_t i = 0; i < audio->samples.size(); ++i) out[i / bucket] = std::max(out[i / bucket], std::fabs(audio->samples[i]));
+    const size_t bucket = std::max<size_t>(1, size_t(audio->rate() / per_second));
+    out.assign((size_t(audio->frames()) + bucket - 1) / bucket, 0.0f);
+    std::vector<float> piece(StreamedFile::kChunkFrames);  // read through once, a piece at a time, and not kept
+    for (int64_t at = 0; at < audio->frames();) {
+        const size_t got = audio->read(at, piece.size(), piece.data());
+        if (got == 0) break;
+        for (size_t i = 0; i < got; ++i) {
+            const size_t b = size_t(at + int64_t(i)) / bucket;
+            out[b] = std::max(out[b], std::fabs(piece[i]));
+        }
+        at += int64_t(got);
+    }
     return out;
 }
 
 double AudioEngine::audioSeconds(const std::string& path) {
     auto audio = audioFile(path, nullptr);
-    return audio ? audio->seconds() : 0.0;
+    return audio ? audio->seconds() : 0.0;  // (its header says)
 }
 
 void AudioEngine::setAutomationRead(int id, bool volume, bool mute, bool sustain, bool params) {
@@ -1248,6 +1268,7 @@ bool AudioEngine::removeSource(int id) {
     Command c; c.type = Command::RemoveSource; c.id = id;
     if (!commands_.push(c)) return false;
     s->removing = true;
+    streamer_.setRegions(id, {});
     reap();
     return true;
 }
@@ -1529,6 +1550,8 @@ EngineStats AudioEngine::stats() const {
     s.output_latency_ms = s.buffer_ms + s.device_ms + s.binaural_ms;
     s.cpu_load = cpu_load_.load(std::memory_order_relaxed);
     s.blocks = blocks_.load(std::memory_order_relaxed);
+    s.disk_misses = streamer_.misses();
+    s.disk_mb = double(streamer_.bytesInMemory()) / double(1 << 20);
     return s;
 }
 
@@ -1962,7 +1985,10 @@ void AudioEngine::render(const float* input, int input_channels, float* out, int
 void AudioEngine::renderTimeline() {
     const bool playing = sequencer_.running();
     const double step_seconds = sequencer_.stepSamples() / sr_;
+    const bool realtime = realtime_.load(std::memory_order_acquire);
     position_.store(sequencer_.position(clock_), std::memory_order_relaxed);
+    streamer_.follow(sequencer_.position(clock_) * step_seconds, playing, sequencer_.looping(), sequencer_.loopStart() * step_seconds,
+                     sequencer_.loopEnd() * step_seconds);  // (for the disk thread to read ahead of)
     for (int i = 0; i < block_; ++i) block_seconds_[size_t(i)] = playing ? sequencer_.position(clock_ + i) * step_seconds : -1.0;
     // A count-in's click: every beat before it ends, the first of each bar higher, whether the click is on or not.
     const int counting = count_in_end_ > clock_ ? int(std::min<int64_t>(count_in_end_ - clock_, block_)) : 0;  // its samples here
@@ -1999,20 +2025,46 @@ void AudioEngine::renderTimeline() {
         if (!playing || hear_input || !s->track_rt || s->track_rt->clips.empty()) continue;
         float* out = s->playback.data();
         for (const auto& clip : s->track_rt->clips) {
-            const std::vector<float>& x = clip.audio->samples;
-            const double rate = clip.audio->rate;
+            StreamedFile& file = *clip.file;
+            const double rate = file.rate();
+            const int64_t frames = file.frames();
+            // Its file's samples, from the chunks the disk thread has read in (looked up afresh each block). Rendering
+            // offline, a chunk not in yet is read in there and then; playing, it is a gap, and counted.
+            size_t held = SIZE_MAX;
+            const float* data = nullptr;
+            bool gap = false;
+            auto sample = [&](int64_t k, float* v) {
+                const size_t c = size_t(k) >> StreamedFile::kChunkShift;
+                if (c != held) {
+                    held = c;
+                    data = file.chunk(c);
+                    if (!data && !realtime) {
+                        file.load(c);
+                        data = file.chunk(c);
+                    }
+                }
+                if (!data) return false;
+                *v = data[size_t(k) & (StreamedFile::kChunkFrames - 1)];
+                return true;
+            };
             for (int i = counting; i < block_; ++i) {
                 const double t = block_seconds_[size_t(i)] - clip.start;
                 if (t < 0.0 || t >= clip.length) continue;
                 const double at = (t + clip.offset) * rate;
-                const size_t k = size_t(at);
-                if (k + 1 >= x.size()) continue;
+                const int64_t k = int64_t(at);
+                if (k < 0 || k + 1 >= frames) continue;
+                float a, b;
+                if (!sample(k, &a) || !sample(k + 1, &b)) {
+                    gap = true;
+                    continue;
+                }
                 const float frac = float(at - double(k));
                 float gain = clip.gain;  // and the fades, equal power: a quarter of a sine up, or down
                 if (t < clip.fade_in) gain = float(std::sin(0.5 * kPi * t / clip.fade_in));
                 if (clip.length - t < clip.fade_out) gain *= float(std::sin(0.5 * kPi * (clip.length - t) / clip.fade_out));
-                out[i] += (x[k] + (x[k + 1] - x[k]) * frac) * gain;
+                out[i] += (a + (b - a) * frac) * gain;
             }
+            if (gap) streamer_.missed();
         }
     }
 }
@@ -2474,6 +2526,7 @@ void AudioEngine::renderBlock() {
     const float load = float(used / (double(block_) / sr_));
     cpu_load_.store(cpu_load_.load(std::memory_order_relaxed) * 0.95f + load * 0.05f, std::memory_order_relaxed);
     blocks_.fetch_add(1, std::memory_order_relaxed);
+    streamer_.blockDone();  // (the chunks this block read may be let go of now)
 }
 
 }  // namespace sr

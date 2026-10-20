@@ -91,6 +91,7 @@ var _buffer_option: OptionButton
 var _rate_label: Label
 var _latency_label: Label
 var _cpu_label: Label
+var _disk_label: Label
 var _engine_note: Label
 
 # I/O
@@ -466,8 +467,11 @@ func _build_engine_page(page: VBoxContainer) -> void:
 	_field(page, "Output latency").add_child(_latency_label)
 	_cpu_label = Label.new()
 	_field(page, "Audio CPU").add_child(_cpu_label)
+	_disk_label = Label.new()
+	_field(page, "Disk").add_child(_disk_label)
 	_engine_note = _note(page, "")
 	_note(page, "A smaller buffer responds faster but needs more CPU. If you hear crackles, pick a larger one. The sample rate follows the device.")
+	_note(page, "Recorded audio is read from disk a few seconds ahead of the music and let go once it has played, so long rooms need little memory. Disk says how much is read ahead, and how many buffers the disk was too slow for, if any (heard as a gap).")
 
 
 func _build_io_page(page: VBoxContainer) -> void:
@@ -641,9 +645,12 @@ func _refresh_live() -> void:
 			parts += " + %.1f ms binaural" % s.binaural_ms
 		_latency_label.text = "%.1f ms   (%s)" % [s.output_latency_ms, parts]
 		_cpu_label.text = "%.0f %%" % (100.0 * float(s.cpu_load))
+		var short := int(s.get("disk_misses", 0))
+		_disk_label.text = "%.0f MB read ahead%s" % [float(s.get("disk_mb", 0.0)), "   ·   %d buffer%s short" % [short, "" if short == 1 else "s"] if short > 0 else ""]
 	else:
 		_latency_label.text = "-"
 		_cpu_label.text = "-"
+		_disk_label.text = "-"
 	var note := ""
 	if app.audio_error != "":
 		note = "Problem: %s." % app.audio_error

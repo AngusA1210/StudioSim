@@ -382,6 +382,11 @@ In a Record room:
   for how long), as Pro Tools' clips refer to their parent file, so moving, copying or covering one never touches
   the audio. Audio is placed in seconds (it stays where it was played if the tempo changes); MIDI in bars and beats
   (it follows the tempo). They are all saved in the room's file.
+- **Read from disk as it plays**, as a DAW reads its tracks: a recording's file is opened by its header alone, and a
+  disk thread reads its audio in chunks a few seconds ahead of the music (round the loop too, and from where playing
+  starts before it starts), letting go of what has played once more than 256 MB is in memory, so a room hours long
+  needs little memory. The Playback Engine page shows how much is read ahead, and how many buffers (if any) the disk
+  was too slow for.
 
 ## Presets
 
@@ -448,7 +453,8 @@ Aux tracks and sends). A fader whose track's automation is read moves with it, a
 - **Names**: click a strip's name to open the instrument's own window (an amp's knobs and pedals, a pattern, a
   Speaker's panel); the mix window comes back when it closes. Right-click the name to **duplicate** the instrument
   (as Pro Tools duplicates a track: the copy stands beside it, its strip comes next, and it has the same fader,
-  pattern, volume, head, cabinet, knobs, pedals and inserts, plug-in settings included; its input starts off, and a
+  pattern, volume, head, cabinet, knobs, pedals and inserts, plug-in settings included, and its clips and automation;
+  its input starts off, and a
   loop pedal comes without its loop), to rename it or give it a colour, to put it in a folder or take it out, or to
   remove it from the room.
 - **Output**, under each strip's input: where it plays, as a Pro Tools track's output: **→ Master**, or into a
@@ -585,6 +591,7 @@ audio_core/
     plugin_category.cpp    what kind of effect a plug-in seems to be, from its name
     sequencer.*            the clock (tempo, swing, playing from a step, loop playback), pattern notes, and the default groove
     recorder.* wav.*       recording: what armed tracks take in, written to WAV files on a thread of its own; reading them
+    disk_stream.*          the recordings read from disk as they play: in chunks, a few seconds ahead, by a thread of its own
     spatializer.*          Steam Audio: distance, air absorption, wall filtering, binaural (HRTF)
     room_geometry.*        the walls: which way round them sound reaches the listener, and how much further that is
     acoustics.h            how much each frequency band dims when sound bends around a wall edge
@@ -626,27 +633,25 @@ timeline, an edit window, recording audio and MIDI to clips (with a count-in, a 
 into takes, comped from them), editing them (trims, fades and crossfades, clip gain, splits, nudges, several at once, a MIDI editor
 for the notes, undo), tracks with names and colours, in routing folders (folders in folders too) with faders, inserts and sends of their own, and
 automation (volume, mute, the sustain pedal, an amp's knobs and its pedals', plug-ins' controls, sends and the master), drawn or
-written as it plays, and aux tracks with sends.
+written as it plays, aux tracks with sends, and recordings read from disk as they play.
 
 To do, roughly in this order:
 
-1. **More of the edit window**: audio read from disk
-   as it plays (for long rooms; takes are held in memory now).
-   Perhaps later a free version with Jam rooms only, Record rooms coming with the full one.
-2. **Microphones**: a new kind of track, placed anywhere in the room with precision, that records what the room
+1. **Microphones**: a new kind of track, placed anywhere in the room with precision, that records what the room
    sounds like from where it stands (the instruments as they reach it, from their direction, with the walls and the
    reverb), as a mic on a stand does, rather than the instrument's own input. A perfectly flat one first, then
    pickup patterns (omni, cardioid, figure-8) and models of real dynamics, condensers and ribbons with their
    frequency responses and proximity effect; then stereo pairs.
-3. **More plug-ins**: inserts on the master, and perhaps VST3 and Windows.
-4. **The room's sound**: wall materials, each absorbing and diffusing sound in its
+2. **More plug-ins**: inserts on the master, and perhaps VST3 and Windows.
+3. **The room's sound**: wall materials, each absorbing and diffusing sound in its
    own way, which shape how the room's reverb rings.
-5. **You in the room**: an avatar whose height you can set (the ears and eyes go with it; the view is a little tall
+4. **You in the room**: an avatar whose height you can set (the ears and eyes go with it; the view is a little tall
    for some now), which multiplayer will show to the others; and a free camera, detached from the avatar, that flies
    about the room with nothing in its way.
-6. **Multiplayer**, the final goal: a session server, a networked clock, note events and low-latency audio streams.
+5. **Multiplayer**, the final goal: a session server, a networked clock, note events and low-latency audio streams.
 
-Also wanted along the way: MIDI on Windows and Linux, and VR through OpenXR.
+Also wanted along the way: MIDI on Windows and Linux, and VR through OpenXR. Perhaps later a free version with Jam rooms
+only, Record rooms coming with the full one.
 
 ## Third-party
 

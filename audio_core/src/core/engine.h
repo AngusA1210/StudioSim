@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "amp.h"
+#include "disk_stream.h"
 #include "instruments.h"
 #include "looper.h"
 #include "midi_input.h"
@@ -70,6 +71,8 @@ struct EngineStats {
     double input_latency_ms = 0;   // from sound entering the input device to the engine receiving it
     float cpu_load = 0;            // share of each block's time budget spent rendering
     uint64_t blocks = 0;
+    uint64_t disk_misses = 0;      // recorded audio wanted before the disk thread had read it in (heard as a gap)
+    double disk_mb = 0;            // recorded audio held in memory, read ahead from disk
 };
 
 // Where the music is: the tempo everything follows, and the step the clock last reached.
@@ -387,6 +390,12 @@ public:
     // An audio file's loudest sample in each `1 / per_second` of a second, for drawing its clips (read once and kept).
     std::vector<float> audioPeaks(const std::string& path, double per_second);
     double audioSeconds(const std::string& path);  // 0 if it can't be read
+    // Recorded audio is read from disk as it plays (see disk_stream.h): how much of it may stay in memory beyond what is
+    // about to play. For the offline checks: waiting for the disk thread to go round, and rendering as a device does
+    // (never waiting for the disk) rather than offline (reading what isn't in yet there and then).
+    void setStreamBudget(size_t bytes) { streamer_.setBudget(bytes); }
+    void settleStreaming() { streamer_.settle(); }
+    void renderAsDevice(bool on) { realtime_.store(on, std::memory_order_release); }
 
     // ── Recording ────────────────────────────────────────────────────────────────────────────────────────
     // Arming a track for recording. An armed Speaker or amp records its hardware input as it comes in (before its
@@ -483,7 +492,7 @@ private:
     bool placeInsert(Source& source, int slot, std::unique_ptr<PluginPedal> pedal, bool on, std::string* error);
     void reapPedals();              // frees pedals (and tracks' timelines) the audio thread has let go of
     void renderTimeline();          // this block's place on the timeline, and each track's recorded audio
-    std::shared_ptr<const AudioData> audioFile(const std::string& path, std::string* error);
+    std::shared_ptr<StreamedFile> audioFile(const std::string& path, std::string* error);  // its header read (once, while it is unchanged)
     Source* owned(int id) const;  // the source with this id, unless it is on its way out
     void reap();                  // frees removed sources the audio thread has finished with
     void updatePath(Source& source);  // works out how its sound reaches the listener and tells the audio thread
@@ -510,7 +519,9 @@ private:
 
     // Game-thread state
     std::vector<std::unique_ptr<Source>> owned_;  // indexed by id; a removed source leaves an empty slot
-    std::vector<std::pair<std::string, std::shared_ptr<const AudioData>>> audio_files_;  // read once each
+    std::vector<std::pair<std::string, std::shared_ptr<StreamedFile>>> audio_files_;  // each opened once (again, if it changes)
+    DiskStreamer streamer_;  // reads the tracks' recorded audio from disk ahead of the music
+    std::atomic<bool> realtime_{false};  // a device is playing: the audio thread can't wait for the disk
     std::unique_ptr<Recorder> recorder_;
     bool recording_wanted_ = false;
     uint32_t record_epoch_ = 0;

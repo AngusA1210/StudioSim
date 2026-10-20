@@ -52,6 +52,9 @@ public:
     // Loop playback: on reaching step `end`, the music goes back to `start`. Suspended (while recording), it runs on.
     void setLoop(bool on, double start, double end);  // anywhere, not only on steps
     void suspendLoop(bool suspended) { loop_suspended_ = suspended; }
+    bool looping() const { return loop_on_ && !loop_suspended_; }
+    double loopStart() const { return loop_start_; }
+    double loopEnd() const { return loop_end_; }
     // Where the music is at sample `at` (near the block being rendered), in steps from the start of bar 1, counting a
     // jump back to the loop's start; while stopped, where it stopped.
     double position(int64_t at) const;

@@ -2337,6 +2337,77 @@ int main(int argc, char** argv) {
     }
 
     {
+        std::printf("\nReading recorded audio from disk as it plays\n");
+        const auto folder = std::filesystem::temp_directory_path() / "soundroom-streaming-tests";
+        std::filesystem::remove_all(folder);
+        std::filesystem::create_directories(folder);
+        // A minute of a tone growing louder as it goes, so its level says where in it the music is (16-bit and two
+        // channels, as a file brought in might be: read and mixed down as it plays).
+        const std::string long_file = (folder / "Long.wav").string();
+        const int rate = 48000, seconds = 60;
+        {
+            std::FILE* f = std::fopen(long_file.c_str(), "wb");
+            auto put32 = [&](uint32_t v) { const uint8_t b[4] = {uint8_t(v), uint8_t(v >> 8), uint8_t(v >> 16), uint8_t(v >> 24)}; std::fwrite(b, 1, 4, f); };
+            auto put16 = [&](uint16_t v) { const uint8_t b[2] = {uint8_t(v), uint8_t(v >> 8)}; std::fwrite(b, 1, 2, f); };
+            const uint32_t data = uint32_t(rate * seconds * 4);
+            std::fwrite("RIFF", 1, 4, f); put32(36 + data); std::fwrite("WAVEfmt ", 1, 8, f);
+            put32(16); put16(1); put16(2); put32(uint32_t(rate)); put32(uint32_t(rate * 4)); put16(4); put16(16);
+            std::fwrite("data", 1, 4, f); put32(data);
+            std::vector<int16_t> frames(size_t(rate) * 2);
+            for (int second = 0; second < seconds; ++second) {
+                for (int i = 0; i < rate; ++i) {
+                    const double t = second + double(i) / rate;
+                    const auto v = int16_t(32767.0 * (0.05 + 0.4 * t / seconds) * std::sin(6.2831853 * 440.0 * t));
+                    frames[size_t(2 * i)] = frames[size_t(2 * i + 1)] = v;
+                }
+                std::fwrite(frames.data(), sizeof(int16_t), frames.size(), f);
+            }
+            std::fclose(f);
+        }
+        Room room;
+        room.quietRoom(room.speaker);
+        room.engine.setTempo(120.0);  // a step is an eighth of a second
+        room.engine.setStreamBudget(size_t(2) << 20);  // 2 MB beyond what is about to play: under 11 s of it
+        std::string stream_error;
+        const bool placed = room.engine.setTrack(room.speaker, {}, {{long_file, 0.0, 0.0, double(seconds)}}, &stream_error);
+        room.engine.playFrom(15.0 * 8);
+        renderSeconds(room.engine, 0.2);
+        const Render early = renderSeconds(room.engine, 0.5);
+        room.engine.playFrom(45.0 * 8);
+        renderSeconds(room.engine, 0.2);
+        const Render late = renderSeconds(room.engine, 0.5);
+        const double expected = (0.05 + 0.4 * 15.35 / seconds) / (0.05 + 0.4 * 45.35 / seconds);
+        check(placed && early.rms_l > 1e-4 && std::fabs(early.rms_l / late.rms_l - expected) < 0.02,
+              "a clip's file is read from disk as it plays: from 15 s in and from 45 s in, the right moments of it",
+              fmt("%.3f of the level at 45 s (", early.rms_l / late.rms_l) + fmt("%.3f written)", expected) + stream_error);
+        renderSeconds(room.engine, 12.0);
+        room.engine.settleStreaming();
+        const double held_mb = room.engine.stats().disk_mb, whole_mb = double(rate) * seconds * 4.0 / double(1 << 20);
+        check(held_mb < 4.0 && held_mb < whole_mb / 2.0, "what has played is let go once more than the budget is in memory",
+              fmt("%.1f MB in memory, ", held_mb) + fmt("of %.1f MB in all", whole_mb));
+
+        // Played as a device plays (never waiting for the disk): the disk thread keeps ahead, round a loop too.
+        room.engine.renderAsDevice(true);
+        room.engine.setLoopRange(true, 50.0 * 8, 52.0 * 8);
+        const uint64_t missed_before = room.engine.stats().disk_misses;
+        room.engine.playFrom(49.0 * 8);
+        std::vector<float> buffer(size_t(room.engine.blockSize()) * 2);
+        double energy = 0.0;
+        const int blocks = int(3.0 * room.engine.sampleRate() / room.engine.blockSize());
+        for (int b = 0; b < blocks; ++b) {
+            room.engine.render(buffer.data(), room.engine.blockSize());
+            for (float v : buffer) energy += double(v) * v;
+            std::this_thread::sleep_for(std::chrono::microseconds(int64_t(1e6 * room.engine.blockSize() / room.engine.sampleRate())));
+        }
+        room.engine.renderAsDevice(false);
+        room.engine.setLoopRange(false, 0, 0);
+        const uint64_t missed = room.engine.stats().disk_misses - missed_before;
+        check(missed == 0 && energy > 0.0, "playing in real time, round a loop, nothing is wanted before the disk has read it",
+              fmt("%.0f blocks short", double(missed)));
+        std::filesystem::remove_all(folder);
+    }
+
+    {
         std::printf("\nAutomation\n");
         // Volume automation on the pad: 0 dB to step 8, down to silence by step 16; read, it takes the fader's place.
         Room room;

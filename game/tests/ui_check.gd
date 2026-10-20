@@ -259,6 +259,7 @@ func _run() -> void:
 	main.menu._binaural_toggle.button_pressed = true
 	await seconds(0.3)
 	check(main.settings.binaural and main.menu._latency_label.text.contains("binaural"), "switching it back on brings the delay back", main.menu._latency_label.text)
+	check(main.menu._disk_label.text.contains("MB read ahead"), "the page says how much recorded audio is read ahead from disk", main.menu._disk_label.text)
 	await tap(KEY_ENTER)
 	check(title.is_open() and not main.rooms_page.is_open(), "Enter doesn't slip through the menu to the title's buttons")
 	await tap(KEY_ESCAPE)
