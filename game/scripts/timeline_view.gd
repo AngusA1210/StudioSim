@@ -671,7 +671,7 @@ func _draw_header(inst, top: float, font: Font) -> void:
 	elif inst.is_folder:
 		what = "folder · %d" % inst.members.size()
 	else:
-		what = "audio" if not inst.playable else "MIDI"
+		what = "mic" if inst.is_mic else ("audio" if not inst.playable else "MIDI")
 	draw_string(font, Vector2(name_x, top + 40), what, HORIZONTAL_ALIGNMENT_LEFT, 60, 11, DIM)
 	for b in _buttons(inst, top):
 		var lit: bool = b.on
@@ -898,7 +898,8 @@ func hint_at(at: Vector2) -> String:
 						"arm":
 							return "Record-ready: it records when recording starts, and its input is heard while stopped or recording  ·  Option-click: every track"
 						"input":
-							return ("Input: the MIDI keyboard plays it" if track.playable else "Input monitoring: its input is heard, rather than what it recorded") + \
+							return ("Input: the MIDI keyboard plays it" if track.playable else ("Input monitoring: what it hears is heard, rather than what it recorded"
+								if track.is_mic else "Input monitoring: its input is heard, rather than what it recorded")) + \
 								"  ·  Option-click: every track"
 						"mute":
 							return ("Mute: its tracks are silent" if track.is_folder else "Mute") + "  ·  Option-click: every track"

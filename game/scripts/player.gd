@@ -176,7 +176,7 @@ func forget(inst) -> void:
 ## Walking about: with nothing open, or only the mix window, which docks along the bottom so the room stays in view
 ## (unless something in it is being typed into).
 func _can_move() -> bool:
-	for panel in [app.title, app.menu, app.sequencer, app.amp_panel, app.speaker_panel, app.instrument_menu, app.name_prompt, app.rooms_page]:
+	for panel in [app.title, app.menu, app.sequencer, app.amp_panel, app.speaker_panel, app.mic_panel, app.instrument_menu, app.name_prompt, app.rooms_page]:
 		if panel != null and panel.is_open():
 			return false
 	if app.session != null and app.session.is_asking():  # "Save the changes?": the arrows are for its buttons
@@ -189,7 +189,7 @@ func _can_move() -> bool:
 func _ui_open() -> bool:
 	if app.session != null and app.session.is_asking():
 		return true
-	for panel in [app.title, app.menu, app.sequencer, app.mixer, app.amp_panel, app.speaker_panel, app.instrument_menu, app.name_prompt, app.edit_window,
+	for panel in [app.title, app.menu, app.sequencer, app.mixer, app.amp_panel, app.speaker_panel, app.mic_panel, app.instrument_menu, app.name_prompt, app.edit_window,
 			app.rooms_page]:
 		if panel != null and panel.is_open():
 			return true
@@ -248,6 +248,8 @@ func _handle_key(event: InputEventKey) -> void:
 				app.sequencer.open(at)
 			elif at != null and at.is_amp and _distance_to(at) < PLAY_REACH + 0.5:
 				app.amp_panel.open(at)
+			elif at != null and at.is_mic and _distance_to(at) < PLAY_REACH + 0.5:
+				app.mic_panel.open(at)
 			elif at != null and not at.playable and _distance_to(at) < PLAY_REACH + 0.5:
 				app.speaker_panel.open(at)
 		"plugin_window":  # a plug-in instrument's own window, with the keyboard under it
@@ -486,6 +488,8 @@ func _pick_target():
 func _grab_or_drop() -> void:
 	if carried != null:
 		carried.set_carried(false)
+		if carried.is_mic and app.nearest_instrument(carried) != null:  # a microphone put down points at what it is nearest
+			app.aim_mic(carried, app.nearest_instrument(carried))
 		carried = null
 	elif target != null:
 		carried = target

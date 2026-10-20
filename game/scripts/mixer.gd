@@ -314,7 +314,7 @@ func _build_strip(inst) -> Dictionary:
 	var box: VBoxContainer = strip.get_child(0)
 	var inserts := _build_inserts(box, inst)
 	var sends := _build_sends(box, inst)
-	_small(box, "INSTRUMENT" if inst.plays_plugin else "INPUT")
+	_small(box, "INSTRUMENT" if inst.plays_plugin else ("MICROPHONE" if inst.is_mic else "INPUT"))
 	var source: Control
 	if inst.plays_plugin:  # the plug-in it plays, in place of where its input comes from
 		var plug := Button.new()
@@ -328,6 +328,14 @@ func _build_strip(inst) -> Dictionary:
 		Hints.give(plug, func() -> String: return "Its plug-in, %s: click for its window, right-click to replace it or for its presets" % (
 			inst.instrument_plugin.get("plugin_name", "")))
 		source = plug
+	elif inst.is_mic:  # what it hears: the room, from where it stands
+		var model := Label.new()
+		model.text = "Flat, omni"
+		model.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		model.custom_minimum_size.y = 24
+		model.add_theme_font_size_override("font_size", 12)
+		Hints.give(model, "A flat, omni microphone: it hears the room from where it stands. Its name opens its panel (where it stands, which way it points, its gain)")
+		source = model
 	elif inst.playable:
 		var midi := Label.new()
 		midi.text = "MIDI"
@@ -353,7 +361,8 @@ func _build_strip(inst) -> Dictionary:
 	buttons.alignment = BoxContainer.ALIGNMENT_CENTER
 	box.add_child(buttons)
 	var input := _toggle("I", INPUT_GREEN)
-	Hints.give(input, ("Input: the MIDI keyboard plays it" if inst.playable else "Input monitoring: it plays the hardware input chosen above") +
+	Hints.give(input, ("Input: the MIDI keyboard plays it" if inst.playable else ("Input monitoring: hear what it hears, rather than what it recorded"
+		if inst.is_mic else "Input monitoring: it plays the hardware input chosen above")) +
 		"  ·  Option-click: every track")
 	input.toggled.connect(_on_input_toggled.bind(inst))
 	buttons.add_child(input)
@@ -734,6 +743,8 @@ func _name_plate(text: String, color: Color, inst) -> Button:
 func _editor_name(inst) -> String:
 	if inst.is_amp:
 		return "amp and its pedals"
+	if inst.is_mic:
+		return "microphone's panel"
 	return "pattern editor" if inst.playable else "Speaker's panel"
 
 
@@ -1122,6 +1133,8 @@ func open_editor(inst) -> void:
 		app.amp_panel.open(inst, true)
 	elif inst.playable:
 		app.sequencer.open(inst, -1, true)
+	elif inst.is_mic:
+		app.mic_panel.open(inst, true)
 	else:
 		app.speaker_panel.open(inst, true)
 

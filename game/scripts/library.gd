@@ -26,7 +26,7 @@ const PRESET_EXT := "srpreset"
 const VERSION := 1
 const DEFAULT_TEMPLATE := "builtin:default"
 const EMPTY_TEMPLATE := "builtin:empty"
-const FAMILIES := {"amp": "Amps", "speaker": "Speakers", "midi": "MIDI instruments", "plugin": "Plug-in instruments"}
+const FAMILIES := {"amp": "Amps", "speaker": "Speakers", "midi": "MIDI instruments", "plugin": "Plug-in instruments", "mic": "Microphones"}
 
 var app
 var audio: SoundRoomAudio
@@ -70,17 +70,21 @@ func presets_dir(family := "") -> String:
 static func family_of(inst) -> String:
 	if inst.plays_plugin:
 		return "plugin"
+	if inst.is_mic:
+		return "mic"
 	return "amp" if inst.is_amp else ("midi" if inst.playable else "speaker")
 
 
 # ── An instrument's settings ─────────────────────────────────────────────────────────────────────────────────
 
 ## An instrument's sound, without where it stands or what it plays: its inserts (plug-ins and their settings), an amp's
-## head, cabinet, knobs and pedals, and a Speaker's volume.
+## head, cabinet, knobs and pedals, a Speaker's volume, and a microphone's gain.
 func instrument_settings(inst) -> Dictionary:
 	var out := {"kind": inst.kind, "family": family_of(inst), "inserts": inserts_data(inst)}
 	if family_of(inst) == "speaker":
 		out.volume_db = inst.volume_db
+	if inst.is_mic:
+		out.mic_gain_db = inst.mic_gain_db
 	var played: Dictionary = audio.get_instrument_plugin(inst.source_id) if inst.plays_plugin else {}
 	if str(played.get("plugin_id", "")) != "":  # a plug-in instrument's plug-in, which is the instrument itself
 		out.instrument_plugin = {"plugin_id": played.plugin_id, "plugin_name": played.plugin_name, "plugin_maker": played.plugin_maker,
@@ -139,6 +143,8 @@ func apply_instrument_settings(inst, settings: Dictionary, include := {}) -> Str
 					problems.append("%s on pedal %d: %s" % [pedal.get("plugin_name", "a plug-in"), at + 1, problem])
 	if family_of(inst) == "speaker" and settings.has("volume_db") and include.get("instrument_settings", true):
 		app.set_speaker_volume(inst, float(settings.volume_db))
+	if inst.is_mic and settings.has("mic_gain_db") and include.get("instrument_settings", true):
+		app.set_mic_gain(inst, float(settings.mic_gain_db))
 	var problem := apply_inserts(inst, settings.get("inserts", []) if with_plugins else [])
 	if problem != "":
 		problems.append(problem)
@@ -311,6 +317,9 @@ func room_data() -> Dictionary:
 			"sends": _sends_data(inst)}
 		if inst.named:
 			entry.name = inst.display_name
+		if inst.is_mic:  # (where it stands: its capsule's height, and how far it points down)
+			entry.height = inst.source_height
+			entry.tilt = inst.mic_tilt
 		if inst.playable:
 			entry.loop_on = inst.loop_on
 			entry.steps = audio.get_pattern_steps(inst.source_id)
@@ -462,8 +471,11 @@ func apply_room_data(data: Dictionary, carry := {}, size = null, mode := "") -> 
 		inst.set_color(_color_from(entry.get("color"), inst.color))
 		if entry.has("name"):
 			app.rename_track(inst, str(entry.name))
-		if not inst.playable:
+		if inst.is_live():
 			inst.set_input_channel(int(entry.get("input_channel", -1)))
+		if inst.is_mic:
+			app.set_mic_height(inst, float(entry.get("height", inst.source_height)))
+			app.set_mic_tilt(inst, float(entry.get("tilt", 0.0)))
 		if keep.call("mix"):
 			app.set_instrument_level(inst, float(entry.get("level_db", 0.0)))
 			inst.muted = bool(entry.get("muted", false))

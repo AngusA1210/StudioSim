@@ -199,7 +199,7 @@ func set_armed(inst, on: bool) -> void:
 		return
 	inst.armed = on
 	audio.set_record_arm(inst.source_id, on)
-	if not inst.playable:
+	if inst.is_live():
 		app.follow_live_inputs()  # the audio input open while anything wants it
 	changed.emit()
 
@@ -321,6 +321,8 @@ func _add_takes(took: Dictionary) -> void:
 		var inst = by_id.get(int(take.source))
 		if inst == null or float(take.seconds) <= 0.0:
 			continue
+		# (a microphone's take is what the room sounded like as it played, from the clock itself: nothing to undo)
+		var late: float = 0.0 if inst.is_mic else audio_late
 		var file: String = str(take.path).get_file()
 		var clip := {"kind": "audio", "file": AUDIO_FOLDER.path_join(file), "name": file.get_basename(), "fade_in": 0.0, "fade_out": 0.0}
 		if looped:  # each pass: the loop's span of the file, from where it was played
@@ -331,13 +333,13 @@ func _add_takes(took: Dictionary) -> void:
 				each.name = "%s take %d" % [file.get_basename(), k + 1]
 				each.take = k + 1
 				each.start = loop_start * sps
-				each.offset = (pass_span.x - start_step) * sps + audio_late
+				each.offset = (pass_span.x - start_step) * sps + late
 				each.length = minf((pass_span.y - pass_span.x) * sps, float(take.seconds) - float(each.offset))
 				if each.length > 0.05:
 					stack.append(each)
 			_stack(inst, "audio", stack, loop_start * sps, loop_end * sps, end_step)
 		else:
-			var at := start_step * sps - audio_late  # where the file's first moment was played (before bar 1, even)
+			var at := start_step * sps - late  # where the file's first moment was played (before bar 1, even)
 			clip.start = maxf(at, 0.0)
 			clip.offset = clip.start - at
 			clip.length = float(take.seconds) - float(clip.offset)

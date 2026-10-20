@@ -674,7 +674,7 @@ func _refresh_live() -> void:
 		_fill_grid(_output_grid, outputs, false, _output_label, _on_output_clicked)
 	_input_toggle.set_pressed_no_signal(app.live_input)
 	_input_toggle.text = "On (the audio input is open)" if app.live_input else "Off (the audio input is closed)"
-	var live_instruments: Array = app.instruments.filter(func(inst): return not inst.playable)
+	var live_instruments: Array = app.instruments.filter(func(inst): return inst.is_live())
 	signature = str(_input_channels)
 	for inst in live_instruments:
 		signature += "|%s:%d" % [inst.display_name, inst.input_channel]

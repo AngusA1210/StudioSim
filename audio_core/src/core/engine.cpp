@@ -191,6 +191,20 @@ struct AudioEngine::Source {
     std::vector<float> pre, out_l, out_r;  // a block of its sound before its fader, and placed in the room (for sends; a bus
                                            // keeps what reaches its fader in out_l and out_r)
     float auto_mute = 1.0f;     // its mute automation's share of it heard, glided
+    float solo_target = 1.0f, solo_gain = 1.0f;  // silenced by a solo elsewhere: out of the mix, still in the room
+    // A source in the room: its sound there (after its fader and mute), the last kHistory samples, for microphones to
+    // hear as late as it reaches them.
+    static constexpr size_t kHistory = size_t(1) << 16;  // 1.4 s at 48 kHz: 470 m of air
+    std::vector<float> history;
+    // A microphone: each source as it hears it (the audio thread's). Its distance along the way it comes (straight, or
+    // round a wall), what the walls leave of each band, all glided as they move; and its band split's state.
+    struct Pickup {
+        float distance = -1.0f, target = -1.0f;  // -1: not heard (no way worked out yet)
+        float band[3] = {1.0f, 1.0f, 1.0f}, band_target[3] = {1.0f, 1.0f, 1.0f};
+        float low = 0.0f, below_high = 0.0f;
+    };
+    std::unique_ptr<std::array<Pickup, AudioEngine::kSourceSlots>> pickups;
+    bool hear_input = false;  // a microphone, this block: what it hears (rather than its clips) is its track's sound
     bool auto_sustain = false;  // the sustain pedal down by automation
     Track* track_rt = nullptr;
     std::vector<std::pair<std::unique_ptr<Track>, uint32_t>> retired_tracks;
@@ -280,6 +294,7 @@ std::unique_ptr<Instrument> AudioEngine::makeInstrument(InstrumentKind kind) con
         case InstrumentKind::BassStack:
             return std::make_unique<Amp>(sr, kind, &input_bus_, block_);
         case InstrumentKind::Bus:
+        case InstrumentKind::Mic:  // (what it plays is what it hears: see hearRoom)
             return std::make_unique<Silence>(sr);
     }
     return nullptr;
@@ -1246,7 +1261,9 @@ int AudioEngine::addSource(InstrumentKind kind, Vec3 position, float gain, float
     src->bus_l.assign(size_t(block_), 0.0f);
     src->bus_r.assign(size_t(block_), 0.0f);
     for (auto* buffer : {&src->pre, &src->out_l, &src->out_r}) buffer->assign(size_t(block_), 0.0f);
-    if (isBus(kind)) reverb_send = 0.0f;  // (its tracks feed the reverb themselves)
+    if (!inRoom(kind)) reverb_send = 0.0f;  // (a folder's tracks feed the reverb themselves; a microphone makes no sound)
+    if (inRoom(kind)) src->history.assign(Source::kHistory, 0.0f);
+    if (isMic(kind)) src->pickups = std::make_unique<std::array<Source::Pickup, kSourceSlots>>();
     src->via = src->via_target = src->position = position;
     src->gain = src->gain_target = gain;
     src->send = reverb_send;
@@ -1259,6 +1276,7 @@ int AudioEngine::addSource(InstrumentKind kind, Vec3 position, float gain, float
     if (slot == owned_.size()) owned_.push_back(std::move(src));
     else owned_[slot] = std::move(src);
     updatePath(*owned_[slot]);
+    updateMicPaths(*owned_[slot]);
     return c.id;
 }
 
@@ -1290,6 +1308,7 @@ void AudioEngine::setSourcePosition(int id, Vec3 p) {
     if (!s) return;
     s->position = p;
     updatePath(*s);
+    updateMicPaths(*s);
 }
 
 void AudioEngine::setSourceVolume(int id, float gain) {
@@ -1307,7 +1326,7 @@ bool AudioEngine::sourceBlocked(int id) const {
 
 // ── The room (game thread) ─────────────────────────────────────────────────────────────────────────────────
 void AudioEngine::updatePath(Source& s) {
-    if (isBus(s.kind)) return;  // not in the room
+    if (!inRoom(s.kind)) return;  // not heard in the room
     if (geometry_.empty()) {  // no walls: straight from where it stands
         s.blocked = false;
         Command c; c.type = Command::SourcePosition; c.id = s.id;
@@ -1325,10 +1344,37 @@ void AudioEngine::updatePaths() {
         if (s && !s->removing) updatePath(*s);
 }
 
+void AudioEngine::updateMicPaths(Source& s) {
+    if (isBus(s.kind)) return;
+    for (auto& other : owned_) {
+        if (!other || other->removing || other.get() == &s) continue;
+        if (isMic(s.kind) && inRoom(other->kind)) updateMicPath(s, *other);
+        else if (inRoom(s.kind) && isMic(other->kind)) updateMicPath(*other, s);
+    }
+}
+
+// The way a source's sound reaches a microphone, as it reaches the listener: straight, or round a wall's edge (or over
+// it), the longer way dulled as the shorter way is shadowed.
+void AudioEngine::updateMicPath(const Source& mic, const Source& source) {
+    Command c; c.type = Command::MicPath; c.id = mic.id; c.v[0] = float(source.id);
+    float gains[3] = {1.0f, 1.0f, 1.0f};
+    if (geometry_.empty()) {
+        c.v[1] = length(sub(source.position, mic.position));
+    } else {
+        const DirectPath path = geometry_.directPath(mic.position, source.position);
+        c.v[1] = length(sub(path.via, mic.position)) + path.extra;
+        directPathGains(path.differences, path.count, path.blocked, gains);
+    }
+    for (int b = 0; b < 3; ++b) c.v[2 + b] = gains[b];
+    push(c);
+}
+
 void AudioEngine::setRoom(float width, float height, float depth, const std::vector<Wall>& walls) {
     const float room[3] = {std::clamp(width, 2.0f, 100.0f), std::clamp(height, 2.0f, 50.0f), std::clamp(depth, 2.0f, 100.0f)};
     geometry_.setRoom(room[0], room[2], room[1], walls);
     updatePaths();
+    for (auto& s : owned_)
+        if (s && !s->removing && isMic(s->kind)) updateMicPaths(*s);
     // Sabine: the reverb time grows with volume over surface (the same surfaces as the reference room, so the same
     // share of sound is absorbed at each bounce), and the reverberant level falls as the absorbing surface grows.
     wanted_size_ = (volumeOf(room) / surfaceOf(room)) / (volumeOf(kReferenceRoom) / surfaceOf(kReferenceRoom));
@@ -1366,6 +1412,9 @@ void AudioEngine::setSourceDirectPath(int id, Vec3 via, float extra_length, cons
 }
 void AudioEngine::setSourceMuted(int id, bool muted) {
     Command c; c.type = Command::SourceMuted; c.id = id; c.v[0] = muted ? 1.0f : 0.0f; push(c);
+}
+void AudioEngine::setSourceSoloMuted(int id, bool silenced) {
+    Command c; c.type = Command::SourceSoloMuted; c.id = id; c.v[0] = silenced ? 1.0f : 0.0f; push(c);
 }
 void AudioEngine::setSourceOutput(int id, int bus) {
     const Source* target = bus >= 0 ? owned(bus) : nullptr;
@@ -1563,6 +1612,18 @@ void AudioEngine::drainCommands() {
         switch (c.type) {
             case Command::AddSource:
                 sources_[size_t(c.id)] = c.source;
+                for (Source* mic : sources_)  // (heard afresh, once the way it comes is known)
+                    if (mic && mic->pickups) (*mic->pickups)[size_t(c.id)] = {};
+                break;
+            case Command::SourceSoloMuted:
+                if (s) s->solo_target = c.v[0] > 0.5f ? 0.0f : 1.0f;
+                break;
+            case Command::MicPath:
+                if (s && s->pickups && c.v[0] >= 0.0f && int(c.v[0]) < kSourceSlots) {
+                    Source::Pickup& k = (*s->pickups)[size_t(c.v[0])];
+                    k.target = std::max(c.v[1], 0.0f);
+                    for (int b = 0; b < 3; ++b) k.band_target[b] = c.v[2 + b];
+                }
                 break;
             case Command::RemoveSource:
                 if (s) {  // fade it out first, so it doesn't leave with a click
@@ -1598,12 +1659,12 @@ void AudioEngine::drainCommands() {
                 break;
             case Command::NoteOn:
                 if (s) s->instrument->noteOn(int(c.v[0]), c.v[1]);
-                if (s && s->armed && !isLiveInput(s->kind) && punchedIn())
+                if (s && s->armed && playsNotes(s->kind) && punchedIn())
                     captured_.push({s->id, int(c.v[0]), c.v[1], true, recordedSteps()});
                 break;
             case Command::NoteOff:
                 if (s) s->instrument->noteOff(int(c.v[0]));
-                if (s && recording_ && s->armed && !isLiveInput(s->kind) && clock_ >= punch_clock_)
+                if (s && recording_ && s->armed && playsNotes(s->kind) && clock_ >= punch_clock_)
                     captured_.push({s->id, int(c.v[0]), 0.0f, false, recordedSteps()});
                 break;
             case Command::TimelinePlay:
@@ -1855,7 +1916,7 @@ void AudioEngine::drainMidi() {
     MidiEvent e;
     while (midi_queue_.pop(e)) {
         for (Source* s : sources_) {  // every instrument with its input on, or armed for recording (as Pro Tools' MIDI thru)
-            if (!s || !(s->input_on || s->armed) || isLiveInput(s->kind)) continue;
+            if (!s || !(s->input_on || s->armed) || !playsNotes(s->kind)) continue;
             const bool take = s->armed && punchedIn();
             switch (e.type) {
                 case MidiEvent::NoteOn:
@@ -1888,7 +1949,7 @@ void AudioEngine::step(int64_t index, double at, double step_samples) {
     const double straight = at - (index % 2 ? step_samples * sequencer_.swing() : 0.0);  // the step unswung
     for (Source* s : sources_) {
         if (!s) continue;
-        if (s->track_rt && s->read_sustain && !s->track_rt->automation.sustain.empty() && !isLiveInput(s->kind)) {  // its pedal, as automated
+        if (s->track_rt && s->read_sustain && !s->track_rt->automation.sustain.empty() && playsNotes(s->kind)) {  // its pedal, as automated
             const auto& pedal = s->track_rt->automation.sustain;
             auto p = std::lower_bound(pedal.begin(), pedal.end(), double(index), [](const AutoPoint& a, double v) { return a.step < v; });
             for (; p != pedal.end() && p->step < double(index + 1); ++p) {
@@ -1896,7 +1957,7 @@ void AudioEngine::step(int64_t index, double at, double step_samples) {
                 s->instrument->sustain(s->auto_sustain);
             }
         }
-        if (s->track_rt && !s->track_rt->notes.empty() && !isLiveInput(s->kind)) {  // its recorded notes, to the sample
+        if (s->track_rt && !s->track_rt->notes.empty() && playsNotes(s->kind)) {  // its recorded notes, to the sample
             const auto& notes = s->track_rt->notes;
             auto n = std::lower_bound(notes.begin(), notes.end(), double(index), [](const TimelineNote& a, double v) { return a.step < v; });
             for (; n != notes.end() && n->step < double(index + 1); ++n)
@@ -1985,7 +2046,6 @@ void AudioEngine::render(const float* input, int input_channels, float* out, int
 void AudioEngine::renderTimeline() {
     const bool playing = sequencer_.running();
     const double step_seconds = sequencer_.stepSamples() / sr_;
-    const bool realtime = realtime_.load(std::memory_order_acquire);
     position_.store(sequencer_.position(clock_), std::memory_order_relaxed);
     streamer_.follow(sequencer_.position(clock_) * step_seconds, playing, sequencer_.looping(), sequencer_.loopStart() * step_seconds,
                      sequencer_.loopEnd() * step_seconds);  // (for the disk thread to read ahead of)
@@ -2009,7 +2069,16 @@ void AudioEngine::renderTimeline() {
     const int record_from = int(std::clamp<int64_t>(punch_clock_ - clock_, 0, block_));
     const int record_to = int(std::clamp<int64_t>(punch_out_clock_ == INT64_MAX ? block_ : punch_out_clock_ - clock_, 0, block_));
     const bool punching = recording_ && clock_ + block_ > punch_clock_ && clock_ < punch_out_clock_;
+    record_from_ = record_from;
+    record_to_ = record_to;
+    punching_ = punching;
     for (Source* s : sources_) {
+        if (s && isMic(s->kind)) {  // a microphone: what it hears (recorded once it is worked out), or its clips
+            std::fill(s->playback.begin(), s->playback.end(), 0.0f);
+            s->hear_input = s->input_on || (s->armed && (punching || !playing));
+            if (playing && !s->hear_input) playClips(*s, counting);
+            continue;
+        }
         if (!s || !isLiveInput(s->kind)) continue;
         std::fill(s->playback.begin(), s->playback.end(), 0.0f);
         // What is heard from it, as Pro Tools has it: its input while input monitoring (I) is on, or while it is armed
@@ -2022,50 +2091,56 @@ void AudioEngine::renderTimeline() {
             s->instrument->readInput(take_.data(), block_);
             recorder_rt_->write(recorder_rt_->slotOf(s->id), take_.data() + record_from, record_to - record_from);
         }
-        if (!playing || hear_input || !s->track_rt || s->track_rt->clips.empty()) continue;
-        float* out = s->playback.data();
-        for (const auto& clip : s->track_rt->clips) {
-            StreamedFile& file = *clip.file;
-            const double rate = file.rate();
-            const int64_t frames = file.frames();
-            // Its file's samples, from the chunks the disk thread has read in (looked up afresh each block). Rendering
-            // offline, a chunk not in yet is read in there and then; playing, it is a gap, and counted.
-            size_t held = SIZE_MAX;
-            const float* data = nullptr;
-            bool gap = false;
-            auto sample = [&](int64_t k, float* v) {
-                const size_t c = size_t(k) >> StreamedFile::kChunkShift;
-                if (c != held) {
-                    held = c;
+        if (playing && !hear_input) playClips(*s, counting);
+    }
+}
+
+// A track's audio clips, from sample `from` of this block, into its playback: each from its file's chunks that the disk
+// thread has read in (looked up afresh each block). Rendering offline, a chunk not in yet is read in there and then;
+// playing, it is a gap, and counted.
+void AudioEngine::playClips(Source& source, int from) {
+    if (!source.track_rt || source.track_rt->clips.empty()) return;
+    const bool realtime = realtime_.load(std::memory_order_acquire);
+    float* out = source.playback.data();
+    for (const auto& clip : source.track_rt->clips) {
+        StreamedFile& file = *clip.file;
+        const double rate = file.rate();
+        const int64_t frames = file.frames();
+        size_t held = SIZE_MAX;
+        const float* data = nullptr;
+        bool gap = false;
+        auto sample = [&](int64_t k, float* v) {
+            const size_t c = size_t(k) >> StreamedFile::kChunkShift;
+            if (c != held) {
+                held = c;
+                data = file.chunk(c);
+                if (!data && !realtime) {
+                    file.load(c);
                     data = file.chunk(c);
-                    if (!data && !realtime) {
-                        file.load(c);
-                        data = file.chunk(c);
-                    }
                 }
-                if (!data) return false;
-                *v = data[size_t(k) & (StreamedFile::kChunkFrames - 1)];
-                return true;
-            };
-            for (int i = counting; i < block_; ++i) {
-                const double t = block_seconds_[size_t(i)] - clip.start;
-                if (t < 0.0 || t >= clip.length) continue;
-                const double at = (t + clip.offset) * rate;
-                const int64_t k = int64_t(at);
-                if (k < 0 || k + 1 >= frames) continue;
-                float a, b;
-                if (!sample(k, &a) || !sample(k + 1, &b)) {
-                    gap = true;
-                    continue;
-                }
-                const float frac = float(at - double(k));
-                float gain = clip.gain;  // and the fades, equal power: a quarter of a sine up, or down
-                if (t < clip.fade_in) gain = float(std::sin(0.5 * kPi * t / clip.fade_in));
-                if (clip.length - t < clip.fade_out) gain *= float(std::sin(0.5 * kPi * (clip.length - t) / clip.fade_out));
-                out[i] += (a + (b - a) * frac) * gain;
             }
-            if (gap) streamer_.missed();
+            if (!data) return false;
+            *v = data[size_t(k) & (StreamedFile::kChunkFrames - 1)];
+            return true;
+        };
+        for (int i = from; i < block_; ++i) {
+            const double t = block_seconds_[size_t(i)] - clip.start;
+            if (t < 0.0 || t >= clip.length) continue;
+            const double at = (t + clip.offset) * rate;
+            const int64_t k = int64_t(at);
+            if (k < 0 || k + 1 >= frames) continue;
+            float a, b;
+            if (!sample(k, &a) || !sample(k + 1, &b)) {
+                gap = true;
+                continue;
+            }
+            const float frac = float(at - double(k));
+            float gain = clip.gain;  // and the fades, equal power: a quarter of a sine up, or down
+            if (t < clip.fade_in) gain = float(std::sin(0.5 * kPi * t / clip.fade_in));
+            if (clip.length - t < clip.fade_out) gain *= float(std::sin(0.5 * kPi * (clip.length - t) / clip.fade_out));
+            out[i] += (a + (b - a) * frac) * gain;
         }
+        if (gap) streamer_.missed();
     }
 }
 
@@ -2126,7 +2201,7 @@ struct AudioEngine::Automating {
 
 void AudioEngine::chaseSustain(double step) {
     for (Source* s : sources_) {
-        if (!s || !s->track_rt || !s->read_sustain || s->track_rt->automation.sustain.empty() || isLiveInput(s->kind)) continue;
+        if (!s || !s->track_rt || !s->read_sustain || s->track_rt->automation.sustain.empty() || !playsNotes(s->kind)) continue;
         const bool down = switchAt(s->track_rt->automation.sustain, step - 1e-6) > 0.5f;
         if (down != s->auto_sustain) {
             s->auto_sustain = down;
@@ -2172,6 +2247,177 @@ void AudioEngine::applyParams(Source& s, double at) {
                 break;
         }
         if (plugin) plugin->setParameter(lane.param, value);
+    }
+}
+
+// What a microphone hears this block, into its mono: each source in the room from its history, as late as its sound
+// takes to arrive (glided as either moves, so a move bends the pitch as it would), as loud as the distance leaves it,
+// its bands as the air and the walls leave them (split at 800 Hz and 8 kHz, as Steam Audio splits the listener's);
+// the room's reverb, as diffuse there as anywhere; and its gain, before anything records it.
+void AudioEngine::hearRoom(Source& mic, float reverb_level, float glide) {
+    float* out = mic.mono.data();
+    std::fill(mic.mono.begin(), mic.mono.end(), 0.0f);
+    const double rate = double(sr_);
+    const float lows = 1.0f - std::exp(-2.0f * float(kPi) * SourceSpatializer::kBandEdges[0] / float(sr_));
+    const float highs = 1.0f - std::exp(-2.0f * float(kPi) * SourceSpatializer::kBandEdges[1] / float(sr_));
+    const double furthest = double(Source::kHistory - size_t(block_) - 4);  // samples late it can hear at most
+    auto loudness = [&](float d) { return std::pow(SourceSpatializer::kRefDistance / std::max(d, kMicNearest), falloff_); };
+    for (size_t j = 0; j < sources_.size(); ++j) {
+        const Source* s = sources_[j];
+        if (!s || !inRoom(s->kind) || s->history.empty()) continue;
+        Source::Pickup& k = (*mic.pickups)[j];
+        if (k.target < 0.0f) continue;
+        if (k.distance < 0.0f) {  // heard for the first time: from where it is
+            k.distance = k.target;
+            std::copy(k.band_target, k.band_target + 3, k.band);
+        }
+        const float from = k.distance;
+        float band_from[3], air_from[3], air_to[3];
+        k.distance += (k.target - k.distance) * glide;
+        for (int b = 0; b < 3; ++b) {
+            band_from[b] = k.band[b];
+            k.band[b] += (k.band_target[b] - k.band[b]) * glide;
+            air_from[b] = std::exp(-SourceSpatializer::kAirAbsorption[b] * from) * band_from[b];
+            air_to[b] = std::exp(-SourceSpatializer::kAirAbsorption[b] * k.distance) * k.band[b];
+        }
+        const float gain_from = loudness(from), gain_to = loudness(k.distance);
+        const float* heard = s->history.data();
+        for (int i = 0; i < block_; ++i) {
+            const float a = float(i + 1) / float(block_);
+            const double late = std::clamp(double(from + (k.distance - from) * a) / kSpeedOfSound * rate, 1.0, furthest);
+            const double at = double(clock_ + i) - late;
+            const int64_t n = int64_t(std::floor(at));
+            const float frac = float(at - double(n));
+            const float x0 = heard[size_t(n) & (Source::kHistory - 1)], x1 = heard[size_t(n + 1) & (Source::kHistory - 1)];
+            const float x = x0 + (x1 - x0) * frac;
+            k.low += (x - k.low) * lows;
+            k.below_high += (x - k.below_high) * highs;
+            const float low = k.low, mid = k.below_high - k.low, high = x - k.below_high;
+            const float y = low * (air_from[0] + (air_to[0] - air_from[0]) * a) + mid * (air_from[1] + (air_to[1] - air_from[1]) * a) +
+                            high * (air_from[2] + (air_to[2] - air_from[2]) * a);
+            out[i] += y * (gain_from + (gain_to - gain_from) * a);
+        }
+    }
+    for (int i = 0; i < block_; ++i) {
+        out[i] += (rev_l_[size_t(i)] + rev_r_[size_t(i)]) * kDryPan * reverb_level;  // (the room's own, whatever its fader says)
+        mic.volume += (mic.volume_target - mic.volume) * (1.0f - std::exp(-1.0f / (0.01f * float(sr_))));
+        out[i] *= mic.volume;
+    }
+}
+
+// One source's block: an instrument's sound (or a microphone's: what it hears, or its clips), through its inserts,
+// volume, fader and mute, metered, into the room for the listener (a microphone's, in the middle of the stereo) and
+// into its folder or the master, and its sends.
+void AudioEngine::playSource(size_t index, float binaural_from, float glide, float wall_glide, float mute_coef) {
+    Source* s = sources_[index];
+    const bool mic = isMic(s->kind);  // (a microphone's mono holds what it plays: what it hears, or its clips)
+    float* mono = s->mono.data();
+    if (!mic) {
+        std::fill(s->mono.begin(), s->mono.end(), 0.0f);
+        if (s->kind == InstrumentKind::PluginSynth)  // the room's tempo, for plug-ins that keep time
+            static_cast<PluginSynth*>(s->instrument.get())->setBeatSamples(double(bar_timing_[1]) / 4.0);
+        s->instrument->render(mono, block_);
+    }
+    if (s->insert_board.count > 0) {  // its inserts, before its fader
+        const PedalTiming timing{double(bar_timing_[1]) / 4.0, bar_timing_[0], bar_timing_[1]};
+        for (int p = 0; p < s->insert_board.count; ++p) s->insert_board.pedals[size_t(p)]->process(mono, block_, timing);
+    }
+
+    double energy = 0.0, pre_energy = 0.0;
+    float peak = 0.0f, pre_peak = 0.0f;
+    Automating automating(*this, *s);
+    bool sending = false, sending_pre = false;  // its sends: to an aux track's bus, after its fader or before
+    for (const auto& send : s->sends)
+        if (send.bus >= 0 && (send.on || send.gain > 1e-6f)) {
+            sending = true;
+            sending_pre = sending_pre || send.pre;
+        }
+    float* heard = s->history.empty() ? nullptr : s->history.data();
+    for (int i = 0; i < block_; ++i) {
+        if (!mic) {  // (a microphone's gain came before it was recorded)
+            s->volume += (s->volume_target - s->volume) * mute_coef;
+            mono[i] *= s->volume;
+        }
+        if (sending_pre) s->pre[size_t(i)] = mono[i];
+        pre_energy += double(mono[i]) * mono[i];  // what reaches the fader
+        pre_peak = std::max(pre_peak, std::fabs(mono[i]));
+        s->mute_gain += (s->mute_target - s->mute_gain) * mute_coef;
+        s->solo_gain += (s->solo_target - s->solo_gain) * mute_coef;
+        automating.next(i, mute_coef);  // the fader, or its automation in its place
+        mono[i] *= s->gain * s->mute_gain * s->auto_mute;
+        if (heard) heard[size_t(clock_ + i) & (Source::kHistory - 1)] = mono[i];  // as it sounds in the room
+        mono[i] *= s->solo_gain;  // (a solo elsewhere takes it out of the mix, not out of the room)
+        energy += double(mono[i]) * mono[i];
+        peak = std::max(peak, std::fabs(mono[i]));
+        send_[size_t(i)] += mono[i] * s->send;  // the room hears the source even when a wall blocks your view of it
+    }
+    levels_[size_t(s->id)].store(float(std::sqrt(energy / block_)), std::memory_order_relaxed);
+    if (peak > peaks_[size_t(s->id)].load(std::memory_order_relaxed)) peaks_[size_t(s->id)].store(peak, std::memory_order_relaxed);
+    pre_levels_[size_t(s->id)].store(float(std::sqrt(pre_energy / block_)), std::memory_order_relaxed);
+    if (pre_peak > pre_peaks_[size_t(s->id)].load(std::memory_order_relaxed))
+        pre_peaks_[size_t(s->id)].store(pre_peak, std::memory_order_relaxed);
+
+    s->via = lerp(s->via, s->via_target, glide);
+    s->extra += (s->extra_target - s->extra) * wall_glide;
+    SpatialParams p;
+    for (int b = 0; b < 3; ++b) {
+        s->band[b] += (s->band_target[b] - s->band[b]) * wall_glide;
+        p.band_gain[b] = s->band[b];
+    }
+    p.direction = steam_.relativeDirection(s->via, listener_pos_, listener_ahead_, listener_up_);
+    p.distance = length(sub(s->via, listener_pos_)) + s->extra;
+    p.binaural_from = binaural_from;
+    p.binaural_to = binaural_mix_;
+    p.falloff = falloff_;
+    Source* bus = s->output >= 0 && size_t(s->output) < sources_.size() ? sources_[size_t(s->output)] : nullptr;
+    float* to_l = bus && isBus(bus->kind) ? bus->bus_l.data() : mix_l_.data();  // into its folder, or the master
+    float* to_r = bus && isBus(bus->kind) ? bus->bus_r.data() : mix_r_.data();
+    if (mic) {  // a microphone's track: in the middle of the stereo, as a mono track is
+        for (int i = 0; i < block_; ++i) s->out_l[size_t(i)] = s->out_r[size_t(i)] = mono[i] * kDryPan;
+    }
+    if (!sending && !mic) {
+        s->spatializer.process(mono, to_l, to_r, p);
+    } else if (!sending) {
+        for (int i = 0; i < block_; ++i) {
+            to_l[i] += s->out_l[size_t(i)];
+            to_r[i] += s->out_r[size_t(i)];
+        }
+    } else {  // placed in the room on its own first, for its sends to take a copy of
+        if (!mic) {
+            std::fill(s->out_l.begin(), s->out_l.end(), 0.0f);
+            std::fill(s->out_r.begin(), s->out_r.end(), 0.0f);
+            s->spatializer.process(mono, s->out_l.data(), s->out_r.data(), p);
+        }
+        for (int i = 0; i < block_; ++i) {
+            to_l[i] += s->out_l[size_t(i)];
+            to_r[i] += s->out_r[size_t(i)];
+        }
+        const float muted = s->mute_gain * s->auto_mute * s->solo_gain;
+        for (auto& send : s->sends) {
+            Source* aux = send.bus >= 0 && size_t(send.bus) < sources_.size() ? sources_[size_t(send.bus)] : nullptr;
+            if (!aux || !isBus(aux->kind)) continue;
+            const float target = send.on ? send.gain_target : 0.0f;
+            for (int i = 0; i < block_; ++i) {
+                send.gain += (target - send.gain) * mute_coef;
+                if (send.pre) {  // its own sound, straight, as at the centre of the stereo
+                    const float v = s->pre[size_t(i)] * kDryPan * muted * send.gain;
+                    aux->bus_l[size_t(i)] += v;
+                    aux->bus_r[size_t(i)] += v;
+                } else {
+                    aux->bus_l[size_t(i)] += s->out_l[size_t(i)] * send.gain;
+                    aux->bus_r[size_t(i)] += s->out_r[size_t(i)] * send.gain;
+                }
+            }
+        }
+    }
+
+    if (s->fade_blocks >= 0 && --s->fade_blocks < 0) {  // removed and faded out: forget it and hand it back
+        sources_[index] = nullptr;
+        levels_[index].store(0.0f, std::memory_order_relaxed);
+        peaks_[index].store(0.0f, std::memory_order_relaxed);
+        pre_levels_[index].store(0.0f, std::memory_order_relaxed);
+        pre_peaks_[index].store(0.0f, std::memory_order_relaxed);
+        s->released.store(true, std::memory_order_release);  // must be the last thing this thread does with it
     }
 }
 
@@ -2233,99 +2479,41 @@ void AudioEngine::renderBlock() {
             std::fill(s->bus_l.begin(), s->bus_l.end(), 0.0f);
             std::fill(s->bus_r.begin(), s->bus_r.end(), 0.0f);
         }
-    for (size_t index = 0; index < sources_.size(); ++index) {
-        Source* s = sources_[index];
-        if (!s || isBus(s->kind)) continue;  // (buses after the tracks that play into them)
-        float* mono = s->mono.data();
-        std::fill(s->mono.begin(), s->mono.end(), 0.0f);
-        if (s->kind == InstrumentKind::PluginSynth)  // the room's tempo, for plug-ins that keep time
-            static_cast<PluginSynth*>(s->instrument.get())->setBeatSamples(double(bar_timing_[1]) / 4.0);
-        s->instrument->render(mono, block_);
-        if (s->insert_board.count > 0) {  // its inserts, before its fader
-            const PedalTiming timing{double(bar_timing_[1]) / 4.0, bar_timing_[0], bar_timing_[1]};
-            for (int p = 0; p < s->insert_board.count; ++p) s->insert_board.pedals[size_t(p)]->process(mono, block_, timing);
-        }
+    for (size_t index = 0; index < sources_.size(); ++index)  // the room's sources (buses after the tracks that play
+        if (sources_[index] && inRoom(sources_[index]->kind))     // into them, and microphones after what they hear)
+            playSource(index, binaural_from, glide, wall_glide, mute_coef);
 
-        double energy = 0.0, pre_energy = 0.0;
-        float peak = 0.0f, pre_peak = 0.0f;
-        Automating automating(*this, *s);
-        bool sending = false, sending_pre = false;  // its sends: to an aux track's bus, after its fader or before
-        for (const auto& send : s->sends)
-            if (send.bus >= 0 && (send.on || send.gain > 1e-6f)) {
-                sending = true;
-                sending_pre = sending_pre || send.pre;
-            }
+    // The room's reverb, from what the sources fed it: for the listener, and for the microphones.
+    send_delay_.process(send_.data(), block_, binaural_from, binaural_mix_);
+    reverbs_[size_t(reverb_active_)].process(send_.data(), rev_l_.data(), rev_r_.data(), block_);
+    float reverb_level = reverb_level_;
+    if (reverb_fade_left_ > 0) {  // changing rooms: the old reverb dies away as the new one comes up
+        reverbs_[size_t(reverb_next_)].process(send_.data(), rev2_l_.data(), rev2_r_.data(), block_);
         for (int i = 0; i < block_; ++i) {
-            s->volume += (s->volume_target - s->volume) * mute_coef;
-            mono[i] *= s->volume;
-            if (sending_pre) s->pre[size_t(i)] = mono[i];
-            pre_energy += double(mono[i]) * mono[i];  // what reaches the fader
-            pre_peak = std::max(pre_peak, std::fabs(mono[i]));
-            s->mute_gain += (s->mute_target - s->mute_gain) * mute_coef;
-            automating.next(i, mute_coef);  // the fader, or its automation in its place
-            mono[i] *= s->gain * s->mute_gain * s->auto_mute;
-            energy += double(mono[i]) * mono[i];
-            peak = std::max(peak, std::fabs(mono[i]));
-            send_[size_t(i)] += mono[i] * s->send;  // the room hears the source even when a wall blocks your view of it
+            const float in = 1.0f - float(std::max(reverb_fade_left_ - i, 0)) / float(reverb_fade_len_);
+            const float old_gain = reverb_level_ * (1.0f - in), new_gain = reverb_next_level_ * in;
+            rev_l_[size_t(i)] = rev_l_[size_t(i)] * old_gain + rev2_l_[size_t(i)] * new_gain;
+            rev_r_[size_t(i)] = rev_r_[size_t(i)] * old_gain + rev2_r_[size_t(i)] * new_gain;
         }
-        levels_[size_t(s->id)].store(float(std::sqrt(energy / block_)), std::memory_order_relaxed);
-        if (peak > peaks_[size_t(s->id)].load(std::memory_order_relaxed)) peaks_[size_t(s->id)].store(peak, std::memory_order_relaxed);
-        pre_levels_[size_t(s->id)].store(float(std::sqrt(pre_energy / block_)), std::memory_order_relaxed);
-        if (pre_peak > pre_peaks_[size_t(s->id)].load(std::memory_order_relaxed))
-            pre_peaks_[size_t(s->id)].store(pre_peak, std::memory_order_relaxed);
+        reverb_level = 1.0f;  // the levels are already in
+        reverb_fade_left_ -= block_;
+        if (reverb_fade_left_ <= 0) {
+            reverb_fade_left_ = 0;
+            reverb_active_ = reverb_next_;
+            reverb_level_ = reverb_next_level_;
+            reverb_changing_.store(false, std::memory_order_release);  // the game thread may now reuse the old one
+        }
+    }
 
-        s->via = lerp(s->via, s->via_target, glide);
-        s->extra += (s->extra_target - s->extra) * wall_glide;
-        SpatialParams p;
-        for (int b = 0; b < 3; ++b) {
-            s->band[b] += (s->band_target[b] - s->band[b]) * wall_glide;
-            p.band_gain[b] = s->band[b];
-        }
-        p.direction = steam_.relativeDirection(s->via, listener_pos_, listener_ahead_, listener_up_);
-        p.distance = length(sub(s->via, listener_pos_)) + s->extra;
-        p.binaural_from = binaural_from;
-        p.binaural_to = binaural_mix_;
-        p.falloff = falloff_;
-        Source* bus = s->output >= 0 && size_t(s->output) < sources_.size() ? sources_[size_t(s->output)] : nullptr;
-        float* to_l = bus && isBus(bus->kind) ? bus->bus_l.data() : mix_l_.data();  // into its folder, or the master
-        float* to_r = bus && isBus(bus->kind) ? bus->bus_r.data() : mix_r_.data();
-        if (!sending) {
-            s->spatializer.process(mono, to_l, to_r, p);
-        } else {  // placed in the room on its own first, for its sends to take a copy of
-            std::fill(s->out_l.begin(), s->out_l.end(), 0.0f);
-            std::fill(s->out_r.begin(), s->out_r.end(), 0.0f);
-            s->spatializer.process(mono, s->out_l.data(), s->out_r.data(), p);
-            for (int i = 0; i < block_; ++i) {
-                to_l[i] += s->out_l[size_t(i)];
-                to_r[i] += s->out_r[size_t(i)];
-            }
-            const float muted = s->mute_gain * s->auto_mute;
-            for (auto& send : s->sends) {
-                Source* aux = send.bus >= 0 && size_t(send.bus) < sources_.size() ? sources_[size_t(send.bus)] : nullptr;
-                if (!aux || !isBus(aux->kind)) continue;
-                const float target = send.on ? send.gain_target : 0.0f;
-                for (int i = 0; i < block_; ++i) {
-                    send.gain += (target - send.gain) * mute_coef;
-                    if (send.pre) {  // its own sound, straight, as at the centre of the stereo
-                        const float v = s->pre[size_t(i)] * kDryPan * muted * send.gain;
-                        aux->bus_l[size_t(i)] += v;
-                        aux->bus_r[size_t(i)] += v;
-                    } else {
-                        aux->bus_l[size_t(i)] += s->out_l[size_t(i)] * send.gain;
-                        aux->bus_r[size_t(i)] += s->out_r[size_t(i)] * send.gain;
-                    }
-                }
-            }
-        }
-
-        if (s->fade_blocks >= 0 && --s->fade_blocks < 0) {  // removed and faded out: forget it and hand it back
-            sources_[index] = nullptr;
-            levels_[index].store(0.0f, std::memory_order_relaxed);
-            peaks_[index].store(0.0f, std::memory_order_relaxed);
-            pre_levels_[index].store(0.0f, std::memory_order_relaxed);
-            pre_peaks_[index].store(0.0f, std::memory_order_relaxed);
-            s->released.store(true, std::memory_order_release);  // must be the last thing this thread does with it
-        }
+    // The microphones: what each hears of the room (recorded, if it is armed), then its track, as any track's.
+    for (size_t index = 0; index < sources_.size(); ++index) {
+        Source* mic = sources_[index];
+        if (!mic || !isMic(mic->kind)) continue;
+        hearRoom(*mic, reverb_level, wall_glide);
+        if (punching_ && mic->armed && recorder_rt_ && record_to_ > record_from_)
+            recorder_rt_->write(recorder_rt_->slotOf(mic->id), mic->mono.data() + record_from_, record_to_ - record_from_);
+        if (!mic->hear_input) std::copy(mic->playback.begin(), mic->playback.end(), mic->mono.begin());
+        playSource(index, binaural_from, glide, wall_glide, mute_coef);
     }
 
     // The buses (folders and aux tracks), each after every bus that plays into it, by its output or a send: what reached
@@ -2434,26 +2622,6 @@ void AudioEngine::renderBlock() {
         }
     }
 
-    send_delay_.process(send_.data(), block_, binaural_from, binaural_mix_);
-    reverbs_[size_t(reverb_active_)].process(send_.data(), rev_l_.data(), rev_r_.data(), block_);
-    float reverb_level = reverb_level_;
-    if (reverb_fade_left_ > 0) {  // changing rooms: the old reverb dies away as the new one comes up
-        reverbs_[size_t(reverb_next_)].process(send_.data(), rev2_l_.data(), rev2_r_.data(), block_);
-        for (int i = 0; i < block_; ++i) {
-            const float in = 1.0f - float(std::max(reverb_fade_left_ - i, 0)) / float(reverb_fade_len_);
-            const float old_gain = reverb_level_ * (1.0f - in), new_gain = reverb_next_level_ * in;
-            rev_l_[size_t(i)] = rev_l_[size_t(i)] * old_gain + rev2_l_[size_t(i)] * new_gain;
-            rev_r_[size_t(i)] = rev_r_[size_t(i)] * old_gain + rev2_r_[size_t(i)] * new_gain;
-        }
-        reverb_level = 1.0f;  // the levels are already in
-        reverb_fade_left_ -= block_;
-        if (reverb_fade_left_ <= 0) {
-            reverb_fade_left_ = 0;
-            reverb_active_ = reverb_next_;
-            reverb_level_ = reverb_next_level_;
-            reverb_changing_.store(false, std::memory_order_release);  // the game thread may now reuse the old one
-        }
-    }
     const float slow = 1.0f - std::exp(-1.0f / (0.05f * float(sr_)));
     float reverb_peak_l = 0.0f, reverb_peak_r = 0.0f;
     double reverb_sq_l = 0.0, reverb_sq_r = 0.0;

@@ -54,6 +54,10 @@ public:
     static int binauralDelay(int frame_size) { return frame_size / 4; }
 
     static constexpr float kRefDistance = 1.5f;  // full level inside this distance, falling away beyond it
+    // Steam Audio's default air absorption coefficients (per metre) for its low / mid / high bands (below 800 Hz,
+    // 800 Hz–8 kHz, above 8 kHz).
+    static constexpr float kAirAbsorption[3] = {0.0002f, 0.0017f, 0.0182f};
+    static constexpr float kBandEdges[2] = {800.0f, 8000.0f};
 
 private:
     const SteamAudio* steam_ = nullptr;

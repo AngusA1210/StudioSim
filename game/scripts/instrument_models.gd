@@ -1,8 +1,8 @@
 extends RefCounted
 ## What each kind of instrument looks like, built from simple shapes: a drum kit, a monophonic bass synth, a
 ## modular synth for the pad, tubular bells, an electric piano, a PA speaker on a tripod, and guitar and bass amps
-## (combos, and heads on cabinets). An amp's effect pedals stand on the floor in front of it as they are put on its
-## board (stomp_box, and loop_pedal for the loop pedal).
+## (combos, and heads on cabinets), and a microphone on a boom stand. An amp's effect pedals stand on the floor in
+## front of it as they are put on its board (stomp_box, and loop_pedal for the loop pedal).
 ##
 ## Each model stands on the floor (y = 0) and faces +z. The parts drawn in the instrument's own colour use the
 ## `accent` material, which the instrument lights up as it plays. An amp's pedal has an `led` material too, which
@@ -24,8 +24,9 @@ const CABINETS := {
 
 ## Returns {node: Node3D, accent: StandardMaterial3D} and, for an amp, how tall it stands and the floor it covers
 ## {top: float, footprint: Vector2} and where its pedals stand {pedal_spot: Vector3}. An amp is drawn with `cabinet`:
-## a combo has its controls across the top of it, a stack its head standing on it.
-static func build(kind: String, color: Color, cabinet := "") -> Dictionary:
+## a combo has its controls across the top of it, a stack its head standing on it. A microphone is drawn with
+## `mic` {height (its capsule's, in metres), tilt (degrees it points down)}, and says how tall it stands.
+static func build(kind: String, color: Color, cabinet := "", mic := {}) -> Dictionary:
 	var node := Node3D.new()
 	var accent := StandardMaterial3D.new()
 	accent.albedo_color = color.darkened(0.35)
@@ -66,6 +67,8 @@ static func build(kind: String, color: Color, cabinet := "") -> Dictionary:
 			_electric_piano(node, accent)
 		"live":
 			_speaker(node, accent)
+		"mic":
+			built.top = _microphone(node, accent, float(mic.get("height", 1.2)), float(mic.get("tilt", 0.0)))
 	return built
 
 
@@ -274,6 +277,28 @@ static func _speaker(node: Node3D, accent: Material) -> void:
 	_ring(node, 0.03, 0.04, accent, Vector3(0, 1.62, 0.163), Vector3(PI / 2, 0, 0))
 	_rod(node, Vector3(0, 0.55, 0), Vector3(0, 1.18, 0), 0.018, chrome)  # the pole
 	_tripod(node, Vector3(0, 0.62, 0), 0.42, chrome)
+
+
+## A measurement microphone on a boom stand: its capsule (where it hears from, lit in its colour as it hears) at
+## `height` over the floor, its slim body behind it pointing down by `tilt` degrees, the boom back to the stand's pole,
+## and a tripod. It points along +z. Returns how tall it stands.
+static func _microphone(node: Node3D, accent: Material, height: float, tilt: float) -> float:
+	var black := _finish("black")
+	var chrome := _finish("chrome")
+	var stand := _finish("panel")
+	var t := deg_to_rad(tilt)
+	var aim := Vector3(0.0, -sin(t), cos(t))  # the way it points
+	var capsule := Vector3(0.0, height, 0.0)
+	var tail := capsule - aim * 0.24
+	_rod(node, capsule - aim * 0.035, tail, 0.0095, chrome)  # its body
+	_rod(node, capsule, capsule - aim * 0.035, 0.0055, chrome)  # its tip, round the capsule
+	_sphere(node, 0.0065, accent, capsule)
+	_rod(node, tail + aim * 0.03, tail - aim * 0.01, 0.014, black)  # the clip holding it
+	var pole_top := Vector3(0.0, maxf(tail.y + 0.03, 0.25), tail.z - 0.42)
+	_rod(node, tail, pole_top, 0.007, stand)  # the boom
+	_sphere(node, 0.016, black, pole_top)  # where the boom meets the pole
+	_tripod(node, pole_top, 0.3, stand)
+	return maxf(maxf(capsule.y, tail.y), pole_top.y) + 0.05
 
 
 ## A guitar or bass amp's box: tolex all round, grille cloth on the front, metal corners, and for a combo the control

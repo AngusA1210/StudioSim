@@ -161,7 +161,7 @@ func _process(_delta: float) -> void:
 		_notice_panel.reset_size()
 		_notice_panel.position = Vector2(14, 14 + (_stats_panel.size.y + 8 if _stats_panel.visible and _root.visible else 0.0))
 	var covered := false
-	for panel in [app.title, app.menu, app.sequencer, app.mixer, app.amp_panel, app.speaker_panel, app.instrument_menu, app.edit_window]:
+	for panel in [app.title, app.menu, app.sequencer, app.mixer, app.amp_panel, app.speaker_panel, app.mic_panel, app.instrument_menu, app.edit_window]:
 		covered = covered or (panel != null and panel.is_open())
 	_root.visible = not covered
 	if covered:
@@ -341,6 +341,10 @@ func _show_hint(vp: Vector2) -> void:
 				rows.append([keys.label("plugin_window"), "its plug-in's window"])
 			rows.append([keys.label("input"), "input off" if t.input_on else "input on"])
 			rows.append([keys.label("loop"), "loop on" if not t.loop_on else "loop off"])
+		elif t.is_mic:  # a microphone: where it stands and points, its gain; hearing what it hears
+			rows.append([keys.label("edit"), "where it stands and points"])
+			rows.append([keys.label("input"), "stop hearing it" if t.input_on else "hear what it hears"])
+			rows.append([keys.label("loop"), "unmute" if t.muted else "mute"])
 		elif not t.is_amp:
 			rows.append([keys.label("input"), "input off" if t.input_on else "input on"])
 			rows.append([keys.label("edit"), "volume and input"])

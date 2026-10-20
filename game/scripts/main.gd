@@ -32,6 +32,7 @@ const Mixer := preload("res://scripts/mixer.gd")
 const AmpPanel := preload("res://scripts/amp_panel.gd")
 const PluginBrowser := preload("res://scripts/plugin_browser.gd")
 const SpeakerPanel := preload("res://scripts/speaker_panel.gd")
+const MicPanel := preload("res://scripts/mic_panel.gd")
 const Bindings := preload("res://scripts/bindings.gd")
 const Title := preload("res://scripts/title.gd")
 const Catalog := preload("res://scripts/catalog.gd")
@@ -72,6 +73,7 @@ var mixer  # the mix window (Tab)
 var amp_panel  # an amp's knobs and its pedals (' at an amp)
 var plugin_browser  # the effect plug-ins on the computer, to choose one for an insert or a Plug-in pedal
 var speaker_panel  # a Speaker's volume and input (' at a Speaker)
+var mic_panel      # a microphone's place, aim and gain (' at a microphone)
 var bindings  # the keys, as set on the Controls page
 var library  # rooms' and templates' contents, presets, and settings copied to be pasted
 var session  # the room that is open: its file, saving, backups
@@ -201,6 +203,9 @@ func _ready() -> void:
 	speaker_panel = SpeakerPanel.new()
 	add_child(speaker_panel)
 	speaker_panel.setup(self)
+	mic_panel = MicPanel.new()
+	add_child(mic_panel)
+	mic_panel.setup(self)
 	plugin_browser = PluginBrowser.new()
 	add_child(plugin_browser)
 	instrument_menu = InstrumentMenu.new()
@@ -479,7 +484,7 @@ func set_input_device(device_name: String) -> void:
 ## Every Speaker's input on or off at once (the I/O page's switch).
 func set_live_input(on: bool) -> void:
 	for inst in instruments:
-		if not inst.playable:
+		if inst.is_live():
 			inst.set_input(on)
 	follow_live_inputs()
 
@@ -490,7 +495,7 @@ func set_input(inst, on: bool) -> void:
 	inst.set_input(on)
 	if player != null:
 		player.notice_input(inst)
-	if not inst.playable:
+	if inst.is_live():
 		follow_live_inputs()
 
 
@@ -501,14 +506,14 @@ func armed_instruments() -> Array:
 
 ## Opens the audio input while any Speaker or amp wants it (its input on, or armed to record), and closes it when none does.
 func follow_live_inputs() -> void:
-	var wanted := instruments.any(func(inst): return not inst.playable and (inst.input_on or inst.armed))
+	var wanted := instruments.any(func(inst): return inst.is_live() and (inst.input_on or inst.armed))
 	if wanted == live_input:
 		return
 	live_input = wanted
 	open_audio()
 	if wanted and not live_input:  # the input wouldn't open: say so through the Speakers too
 		for inst in instruments:
-			if not inst.playable:
+			if inst.is_live():
 				inst.set_input(false)
 
 
@@ -795,15 +800,15 @@ func _apply_channels() -> void:
 			if track.soloed or folders_around(track).any(func(f): return f.soloed):
 				_heard_from(track, heard)
 	silenced = {}
-	for track in every:
+	for track in every:  # (a solo elsewhere takes an instrument out of the mix, not out of the room: its mics still hear it)
 		var muted_here: bool = track.muted or folders_around(track).any(func(f): return f.muted)
-		var silent: bool = muted_here or (any_solo and not heard.has(track))
-		if silent:
+		var solo_muted: bool = any_solo and not heard.has(track)
+		if muted_here or solo_muted:
 			silenced[track] = true
 		if track.is_folder:
-			audio.set_source_muted(track.source_id, silent)
+			audio.set_source_muted(track.source_id, muted_here or solo_muted)
 		else:
-			track.set_channel(track.muted, track.soloed, silent)
+			track.set_channel(track.muted, track.soloed, muted_here, solo_muted)
 
 
 ## A track heard, and everything its sound goes through on the way to the master.
@@ -1218,7 +1223,7 @@ func listener_position() -> Vector3:
 
 ## Back to the title screen. The room carries on as it is.
 func show_title() -> void:
-	for panel in [menu, sequencer, mixer, amp_panel, speaker_panel, instrument_menu, edit_window]:
+	for panel in [menu, sequencer, mixer, amp_panel, speaker_panel, mic_panel, instrument_menu, edit_window]:
 		if panel.is_open():
 			panel.close()
 	player.stop_playing()
@@ -1326,6 +1331,10 @@ func duplicate_instrument(inst, at = null):
 		audio.set_pattern_steps(copy.source_id, audio.get_pattern_steps(inst.source_id))
 		audio.set_pattern(copy.source_id, audio.get_pattern(inst.source_id))
 		copy.set_loop(inst.loop_on)
+	elif inst.is_mic:  # as high, as tilted, as loud
+		set_mic_height(copy, inst.source_height)
+		set_mic_tilt(copy, inst.mic_tilt)
+		set_mic_gain(copy, inst.mic_gain_db)
 	else:
 		set_input_channel(copy, inst.input_channel)
 		set_speaker_volume(copy, inst.volume_db)
@@ -1372,6 +1381,8 @@ func remove_instrument(inst) -> void:
 		amp_panel.close()
 	if speaker_panel.is_open() and speaker_panel.inst == inst:
 		speaker_panel.close()
+	if mic_panel.is_open() and mic_panel.inst == inst:
+		mic_panel.close()
 	player.forget(inst)
 	var folder = folder_of(inst)
 	if folder != null:
@@ -1420,6 +1431,54 @@ func set_master_volume_db(db: float) -> void:
 
 
 ## A Speaker's own volume (its panel), in decibels: after its inserts, before its fader. -80 is off.
+# ── Microphones ─────────────────────────────────────────────────────────────────────────────────────────────
+
+## A microphone's place: where it stands on the floor (x and z, metres from the middle of the room, kept inside it),
+## its capsule's height, which way it points (its bearing, degrees clockwise from north, the way you first face, and
+## how far down), and its gain (dB, before it records).
+func set_mic_spot(mic, x: float, z: float) -> void:
+	var half: Vector3 = room.size / 2.0
+	mic.global_position = Vector3(clampf(x, -half.x + 0.05, half.x - 0.05), mic.source_height, clampf(z, -half.z + 0.05, half.z - 0.05))
+	mic.sync_position()
+
+
+func set_mic_height(mic, height: float) -> void:
+	mic.set_mic_height(clampf(height, 0.05, room.size.y - 0.05))
+
+
+func set_mic_bearing(mic, degrees: float) -> void:
+	mic.rotation.y = PI - deg_to_rad(fposmod(degrees, 360.0))
+
+
+static func mic_bearing(mic) -> float:
+	return fposmod(rad_to_deg(PI - mic.rotation.y), 360.0)
+
+
+func set_mic_tilt(mic, degrees: float) -> void:
+	mic.set_mic_tilt(degrees)
+
+
+func set_mic_gain(mic, db: float) -> void:
+	mic.set_mic_gain(db)
+
+
+## Points a microphone at an instrument: at where its sound comes from.
+func aim_mic(mic, at) -> void:
+	var to: Vector3 = at.global_position - mic.global_position
+	if Vector2(to.x, to.z).length() > 0.001:
+		mic.rotation.y = atan2(to.x, to.z)
+	mic.set_mic_tilt(rad_to_deg(atan2(-to.y, Vector2(to.x, to.z).length())))
+
+
+## The instrument nearest a microphone (another microphone never), or null.
+func nearest_instrument(mic):
+	var best = null
+	for inst in instruments:
+		if inst != mic and not inst.is_mic and (best == null or inst.global_position.distance_to(mic.global_position) < best.global_position.distance_to(mic.global_position)):
+			best = inst
+	return best
+
+
 func set_speaker_volume(inst, db: float) -> void:
 	inst.volume_db = clampf(db, -80.0, SpeakerPanel.MAX_DB)
 	audio.set_source_volume(inst.source_id, 0.0 if inst.volume_db <= -79.0 else db_to_linear(inst.volume_db))

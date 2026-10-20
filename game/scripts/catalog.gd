@@ -5,7 +5,8 @@ extends RefCounted
 ## floor it covers, `footprint`, both in metres), the height its sound comes from, how loud it is and how much of
 ## it goes to the room reverb, and for MIDI instruments the octave the computer keyboard starts in. "live_input"
 ## marks the kinds that play an audio input rather than notes, "drum_kit" those whose keys are drums (each key a
-## piece), and "plugin" the one that plays an instrument plug-in. scripts/instrument_models.gd draws them.
+## piece), "plugin" the one that plays an instrument plug-in, and "mic" the microphones, which hear the room rather
+## than sound in it (their "height" is the capsule's). scripts/instrument_models.gd draws them.
 ## Then the effect pedals an amp can have in front of it, and how their knobs read.
 
 const KINDS := {
@@ -46,6 +47,10 @@ const KINDS := {
 	"bass_stack": {"name": "Bass Stack", "about": "A head on an 8x10 cabinet: punchy, with more drive. With room for pedals.",
 		"color": Color(0.82, 0.86, 0.95), "top": 1.62, "footprint": Vector2(0.62, 0.48), "height": 0.7, "gain": 1.0, "send": 0.4,
 		"live_input": true, "amp": true, "head": "bass_punch", "cabinet": "8x10"},
+	# A microphone on a boom stand: a track of its own, recording what the room sounds like where it stands.
+	"mic": {"name": "Microphone", "about": "A flat measurement mic on a stand: it hears the room from where it stands, and records that.",
+		"color": Color(0.86, 0.88, 0.94), "top": 1.4, "footprint": Vector2(0.4, 0.4), "height": 1.2, "gain": 1.0, "send": 0.0, "mic": true,
+		"model": "Flat (measurement), omni"},
 }
 
 # An amp's knobs, in the order they sit on its panel.
@@ -125,8 +130,11 @@ const GROUPS := [
 		"about": "Played from the computer keyboard or a MIDI controller, and each can loop a pattern on the sequencer. A new one starts with an empty pattern.",
 		"kinds": ["drums", "garage_drums", "studio_drums", "bass", "pad", "bells", "keys", "plugin_synth"], "coming": ""},
 	{"title": "Live input",
-		"about": "Bring a microphone, or a guitar or bass plugged into your audio interface, into the room. Switch its input on (I) to hear it.",
+		"about": "Bring what you plug into your audio interface (your own microphone, a guitar, a bass) into the room. Switch its input on (I) to hear it.",
 		"kinds": ["live", "guitar_combo", "guitar_stack", "bass_combo", "bass_stack"], "coming": ""},
+	{"title": "Microphones",
+		"about": "Placed anywhere in the room, a microphone hears it from where it stands (the instruments as they reach it, with the walls and the reverb) and records that. Arm it (R) to record it; its input on (I) lets you hear it.",
+		"kinds": ["mic"], "coming": "Dynamic, condenser and ribbon microphones, with their pickup patterns and frequency responses, are on the way."},
 ]
 
 

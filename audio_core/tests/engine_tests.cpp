@@ -2408,6 +2408,86 @@ int main(int argc, char** argv) {
     }
 
     {
+        std::printf("\nMicrophones\n");
+        // A flat omni microphone beside the drums, then three times as far. The drums are taken out of the mix by a
+        // solo elsewhere (so what is heard is the microphone's track alone), but they still sound in the room.
+        Room room;
+        room.quietRoom(room.drums);
+        room.engine.setSourceSoloMuted(room.drums, true);
+        const Vec3 drums_at{0.5f, 0.9f, -3.6f};
+        const int mic = room.engine.addSource(InstrumentKind::Mic, {drums_at.x + 1.5f, drums_at.y, drums_at.z}, 1.0f, 0.0f);
+        room.engine.setSourceInput(mic, true);  // its input monitored: what it hears is its track's sound
+        renderSeconds(room.engine, 0.3);
+        auto hit = [&](int note = 36) {  // (the kick, the same every time, for its level; the snare, sharp, for when it comes)
+            room.engine.noteOn(room.drums, note, 0.9f);
+            Render r = renderSeconds(room.engine, 0.4);
+            renderSeconds(room.engine, 0.6);
+            return r;
+        };
+        const Render near_hit = hit(), near_snare = hit(38);
+        room.engine.setSourcePosition(mic, {drums_at.x + 4.5f, drums_at.y, drums_at.z});
+        renderSeconds(room.engine, 0.5);  // (the way there glides over a moment)
+        const Render far_hit = hit(), far_snare = hit(38);
+        const int near_onset = onsetAfter(near_snare.l, 0), far_onset = onsetAfter(far_snare.l, 0);
+        const double late_ms = 1000.0 * double(far_onset - near_onset) / room.engine.sampleRate(), physics_ms = 1000.0 * 3.0 / 343.0;
+        const double quieter = db(far_hit.rms_l) - db(near_hit.rms_l);
+        bool centred = true;
+        for (size_t i = 0; i < near_hit.l.size(); ++i) centred = centred && std::fabs(near_hit.l[i] - near_hit.r[i]) < 1e-6f;
+        check(near_hit.peak > 0.01 && std::fabs(late_ms - physics_ms) < 0.3 && std::fabs(quieter + 9.54) < 0.3 && centred,
+              "a microphone hears the drums from where it stands: three times as far, 3 m of air later and 9.5 dB quieter (its "
+              "track in the middle of the stereo, the drums still in the room though a solo takes them out of the mix)",
+              fmt("%.2f ms later (", late_ms) + fmt("%.2f for 3 m of air), ", physics_ms) + fmt("%.1f dB", quieter));
+        room.engine.setSourceVolume(mic, 2.0f);  // its gain up 6 dB
+        renderSeconds(room.engine, 0.2);
+        const Render gained = hit();
+        room.engine.setSourceMuted(room.drums, true);
+        renderSeconds(room.engine, 0.2);
+        const Render muted = hit();
+        room.engine.setSourceMuted(room.drums, false);
+        room.engine.setSourceInput(mic, false);
+        renderSeconds(room.engine, 0.2);
+        const Render unmonitored = hit();
+        check(std::fabs(db(gained.rms_l) - db(far_hit.rms_l) - 6.0) < 0.1 && muted.peak < 1e-5 && unmonitored.peak < 1e-5,
+              "its gain comes before anything else; a muted instrument is silent in the room, so it hears nothing; and its input "
+              "not monitored (and no clips), its track is silent",
+              fmt("+%.2f dB", db(gained.rms_l) - db(far_hit.rms_l)));
+
+        // A wall between them: the drums come round its end, further and dulled.
+        room.engine.setRoom(12.0f, 4.0f, 12.0f, {{drums_at.x + 2.2f, drums_at.z - 2.0f, drums_at.x + 2.2f, drums_at.z + 0.6f, 0.2f, 4.0f}});
+        room.engine.setSourceInput(mic, true);
+        renderSeconds(room.engine, 0.5);
+        const Render walled = hit();
+        check(walled.peak > 1e-5 && db(walled.peak) < db(gained.peak) - 3.0, "a wall between them shadows the drums from it",
+              fmt("%.1f dB quieter", db(gained.peak) - db(walled.peak)));
+        room.engine.setRoom(12.0f, 4.0f, 12.0f, {});
+
+        // Armed and recording, it records what it hears, as an amp records its input.
+        const auto folder = std::filesystem::temp_directory_path() / "soundroom-mic-tests";
+        std::filesystem::remove_all(folder);
+        std::filesystem::create_directories(folder);
+        room.engine.setSourceInput(mic, false);
+        room.engine.setRecordArm(mic, true);
+        std::string record_error;
+        const bool recording = room.engine.startRecording({{mic, (folder / "Mic_01.wav").string()}}, 0.0, &record_error);
+        renderSeconds(room.engine, 0.2);
+        room.engine.noteOn(room.drums, 38, 0.9f);
+        renderSeconds(room.engine, 0.6);
+        room.engine.stopRecording();
+        renderSeconds(room.engine, 0.05);
+        RecordingResult taken;
+        AudioData recorded;
+        std::string read_error;
+        const bool took = room.engine.takeRecording(&taken) && !taken.audio.empty() && readWav(taken.audio[0].path, &recorded, &read_error);
+        float loudest = 0.0f;
+        for (float v : recorded.samples) loudest = std::max(loudest, std::fabs(v));
+        check(recording && took && loudest > 0.01f && std::fabs(recorded.seconds() - 0.8) < 0.05,
+              "armed and recording, it records what it hears, before its fader", record_error + read_error +
+              fmt("%.1f dBFS in the file", db(loudest)));
+        room.engine.setRecordArm(mic, false);
+        std::filesystem::remove_all(folder);
+    }
+
+    {
         std::printf("\nAutomation\n");
         // Volume automation on the pad: 0 dB to step 8, down to silence by step 16; read, it takes the fader's place.
         Room room;

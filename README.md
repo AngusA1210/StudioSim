@@ -73,20 +73,22 @@ you get up or close it.
 
 ## Instruments
 
-There are two families of instrument, and the instrument menu (T) adds either to the room, up to 32 in all:
+There are two families of instrument, and microphones; the instrument menu (T) adds any of them to the room, up to
+32 in all:
 
 - **MIDI instruments** (a drum machine, a garage kit, a studio kit, bass, pad, bells, keys, and plug-in instruments) are played from
   the computer keyboard or a MIDI controller, and each can loop a pattern on the sequencer.
-- **Live inputs** bring a microphone, or an instrument plugged into the audio interface, into the room: the Speaker,
-  which plays an input just as it comes in, and four guitar and bass amplifiers, each with a board of pedals in
-  front of it (see below).
+- **Live inputs** bring what you plug into the audio interface (your own microphone, a guitar, a bass) into the room:
+  the Speaker, which plays an input just as it comes in, and four guitar and bass amplifiers, each with a board of
+  pedals in front of it (see below).
+- **Microphones** hear the room from where they stand, and record that (see Microphones, below).
 
 Each is drawn as its real counterpart, standing on the floor: the drum kits (set up as a drummer plays them, the
 stool on your side with the kick and hi-hat pedals at your feet; the garage kit red on an old rug, the studio kit
 purple), a bass
 synthesizer, a modular synthesizer for the pad, tubular bells, an electric piano, a controller keyboard with a laptop
-for a plug-in instrument, a PA speaker on a tripod, and the amps with their pedals in front of them. The parts in the
-instrument's colour light up as it plays.
+for a plug-in instrument, a PA speaker on a tripod, the amps with their pedals in front of them, and a microphone on a
+boom stand. The parts in the instrument's colour light up as it plays.
 
 **Drums** is a drum machine. The **Garage Kit** and the **Studio Kit** are one acoustic kit voiced two ways. Each
 drum is its head's modes settling in pitch after the hit, the snare's wires buzz along with the kick and toms,
@@ -117,6 +119,37 @@ its mix window strip or on the I/O page; several Speakers can each play a differ
 **volume** (' at it, or click its name in the mix window) goes up to +24 dB, as on a big powered PA speaker, so that
 it can fill a large room; it comes after the Speaker's inserts and before its fader. A second instrument of a kind is numbered and a
 paler colour, to tell them apart. Everything in the room is saved with it (see Rooms).
+
+### Microphones
+
+A **microphone** is a track of its own that records what the room sounds like from where it stands, rather than an
+instrument's own input (its DI, or its notes): the instruments as they reach it, each from where it stands, with the
+walls between them and the room's reverb, as a mic on a stand in a real room does. The first is a flat measurement
+microphone, hearing all frequencies alike and all round alike (omni); dynamic, condenser and ribbon microphones, with
+their pickup patterns and frequency responses, come later.
+
+- **What it hears** follows the physics: each instrument's sound arrives as late as it takes to travel there at 343 m/s
+  (two mics at different distances from a drum hear it at different times, as real ones do, with the same phase
+  effects between them), 6 dB quieter for each doubling of the distance (and louder closer than 1.5 m, the distance
+  an instrument is heard at its own level, down to 10 cm), dulled a little by the air and more by a wall it has to
+  bend round, with the room's reverb on top, as diffuse there as anywhere. Moving a mic (or an instrument) while it
+  plays bends the pitch a touch, as moving a real one would. A muted instrument is silent in the room, so a mic hears
+  nothing of it; but a solo only takes the others out of the mix, so soloing a mic's track lets you hear just what it
+  hears, every instrument still playing in the room. A microphone isn't heard in the room itself, so no mic hears
+  another (nor itself).
+- **Placing it**: pick one from the menu, carry it (G) and put it down: it points at the instrument nearest it. Then
+  **'** at it (or its name in the mix window) opens its panel: where it stands, to the centimetre (across and along the
+  room, from its middle), its capsule's height (where it hears from), which way it points (its bearing, clockwise from
+  north, and how far down) or **Point it at** an instrument, and its **gain**, which comes before it records, as a
+  preamp's does. Beside them, how far each instrument is from it, how late its sound arrives, and how loud it is there.
+- **Its track** is an audio track: arm it (R) and record, and it records what it hears (32-bit float, so a mic right up
+  against a loud amp never clips the file); its input on (I) lets you hear it as it hears, and while it is armed it is
+  heard while recording or stopped, its clips otherwise, as Pro Tools' Auto Input has a track. It plays through its
+  inserts, fader and sends to the master (or its folder), in the middle of the stereo, as a mono track does. Its
+  takes are placed where they were heard, with no input latency to take off, since nothing came in through the
+  interface; something played live along with it is heard by it as late as you play it, though, as in a real room
+  with headphones that are late.
+- It is kept with the room: where it stands, how high, how it points, and its gain.
 
 ### Inputs
 
@@ -564,11 +597,12 @@ isn't connected, the system default is used until it is.
 
 ```
 game/                      Godot project: the room, player, instruments, HUD, menus, mix window, pattern editor (GDScript)
-  scripts/catalog.gd       every kind of instrument and the two groups the instrument menu shows them in
+  scripts/catalog.gd       every kind of instrument (and the microphone) and the groups the instrument menu shows them in
   scripts/room.gd          the room's floor, ceiling and walls, built to whatever size and layout is set
   scripts/instrument_models.gd   what each instrument looks like, built from simple shapes
   scripts/mixer.gd         the mix window: channel strips, faders (fader.gd) and meters (level_meter.gd)
   scripts/amp_panel.gd     an amp's knobs (knob.gd) and its pedalboard
+  scripts/mic_panel.gd     a microphone's place, aim and gain, and how far each instrument is from it
   scripts/plugin_browser.gd  the plug-ins installed, by type or by maker, for an insert or a Plug-in pedal
   scripts/session.gd       the open room: its file, saving, auto-save and backups
   scripts/rooms_page.gd    making a new room (from a template) and opening one
@@ -581,7 +615,7 @@ game/                      Godot project: the room, player, instruments, HUD, me
   scripts/preset_menu.gd   the Presets menu of a plug-in or an instrument
 audio_core/
   src/core/                the audio engine, plain C++ with no Godot dependency
-    engine.*               device, command queue, mixing, the shared clock
+    engine.*               device, command queue, mixing, the shared clock; microphones hearing the room
     instruments.*          synthesized drums, the garage kit, bass, pad, bells and keys (each playable live or by pattern), live input
     plugin_synth.*         a plug-in instrument: an instrument plug-in played by MIDI, live and by pattern, to the sample
     amp.*                  the guitar and bass amps: preamp drive (oversampled), tone stack, presence, cabinet
@@ -633,15 +667,14 @@ timeline, an edit window, recording audio and MIDI to clips (with a count-in, a 
 into takes, comped from them), editing them (trims, fades and crossfades, clip gain, splits, nudges, several at once, a MIDI editor
 for the notes, undo), tracks with names and colours, in routing folders (folders in folders too) with faders, inserts and sends of their own, and
 automation (volume, mute, the sustain pedal, an amp's knobs and its pedals', plug-ins' controls, sends and the master), drawn or
-written as it plays, aux tracks with sends, and recordings read from disk as they play.
+written as it plays, aux tracks with sends, recordings read from disk as they play, and microphones that record the
+room from where they stand (a flat, omni one so far).
 
 To do, roughly in this order:
 
-1. **Microphones**: a new kind of track, placed anywhere in the room with precision, that records what the room
-   sounds like from where it stands (the instruments as they reach it, from their direction, with the walls and the
-   reverb), as a mic on a stand does, rather than the instrument's own input. A perfectly flat one first, then
-   pickup patterns (omni, cardioid, figure-8) and models of real dynamics, condensers and ribbons with their
-   frequency responses and proximity effect; then stereo pairs.
+1. **More microphones**: pickup patterns (cardioid, figure-8 and the rest, so which way a mic points matters), and
+   models of real dynamics, condensers and ribbons with their frequency responses and proximity effect; then stereo
+   pairs.
 2. **More plug-ins**: inserts on the master, and perhaps VST3 and Windows.
 3. **The room's sound**: wall materials, each absorbing and diffusing sound in its
    own way, which shape how the room's reverb rings.

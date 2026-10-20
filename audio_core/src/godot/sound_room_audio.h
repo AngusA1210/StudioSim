@@ -64,6 +64,7 @@ public:
     bool is_room_settled();          // false while the reverb is still changing over to a new size
     float get_room_decay() const;    // the reverb time (RT60) that goes with the room's size, in seconds
     void set_source_muted(int id, bool muted);
+    void set_source_solo_muted(int id, bool silenced);
     void set_source_output(int id, int bus);  // a bus's id (a source added as "bus"), or -1 for the master
     void set_source_input_channel(int id, int channel);  // live sources: 0-based hardware input, or -1 for all
     // Whether a source takes input: an instrument plays what MIDI controllers send, a live source plays its

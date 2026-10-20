@@ -1,6 +1,8 @@
 extends Node3D
 ## One instrument in the room: its model, label and light, plus its sound source in the audio core.
-## It stands on the floor; the node's origin is where the sound comes from, `source_height` above the floor.
+## It stands on the floor; the node's origin is where the sound comes from, `source_height` above the floor. A
+## microphone (`is_mic`) is one of these too: its origin is its capsule, where it hears the room from, and the way it
+## faces is the way it points.
 
 const Models := preload("res://scripts/instrument_models.gd")
 const Catalog := preload("res://scripts/catalog.gd")
@@ -47,6 +49,9 @@ var peak_hold := 0.0
 var is_amp := false    # a guitar or bass amp, with knobs and a loop pedal
 var drum_kit := false  # each key plays a drum (the drums, the garage kit)
 var plays_plugin := false  # a plug-in instrument: it plays one of the instrument plug-ins on the computer
+var is_mic := false    # a microphone: it hears the room from where it stands, and its track records that
+var mic_tilt := 0.0    # a microphone: how far it points down (degrees; the way it faces is its aim round)
+var mic_gain_db := 0.0 # a microphone's gain, before it is recorded, as a preamp's
 var instrument_plugin := {}  # what that plug-in is, from the audio core: {plugin_id, plugin_name, plugin_maker, editor_open}
 var amp_controls := {"gain": 5.0, "bass": 5.0, "mid": 5.0, "treble": 5.0, "presence": 5.0, "master": 5.0}
 var amp_head := ""      # an amp's head and cabinet (catalog.gd lists them), and whether each is in use
@@ -88,7 +93,8 @@ func setup(spec: Dictionary, audio: SoundRoomAudio) -> void:
 	source_height = spec.height
 	top = spec.top
 	footprint = spec.footprint
-	playable = not spec.get("live_input", false)
+	is_mic = spec.get("mic", false)
+	playable = not spec.get("live_input", false) and not is_mic
 	default_octave = spec.get("octave", 0)
 	is_amp = spec.get("amp", false)
 	drum_kit = spec.get("drum_kit", false)
@@ -152,7 +158,7 @@ func _build_model() -> void:
 	if _model != null:
 		_model.remove_child(_pedal_row)
 		_model.queue_free()
-	var built: Dictionary = Models.build(kind, model_color, amp_cabinet)
+	var built: Dictionary = Models.build(kind, model_color, amp_cabinet, {"height": source_height, "tilt": mic_tilt})
 	_model = built.node
 	_model.position.y = -source_height  # the model is drawn from the floor up
 	add_child(_model)
@@ -267,12 +273,40 @@ func face(point: Vector3) -> void:
 	rotation.y = atan2(point.x - global_position.x, point.z - global_position.z)
 
 
-## Its mixer channel: muted, soloed, and whether that leaves it silent once every solo in the room is counted.
-func set_channel(is_muted: bool, is_soloed: bool, silent: bool) -> void:
+## Its mixer channel: muted and soloed; whether that (or its folder's mute) silences it in the room; and whether a
+## solo elsewhere takes it out of the mix, which leaves it sounding in the room, for the microphones to hear.
+func set_channel(is_muted: bool, is_soloed: bool, silent: bool, solo_muted := false) -> void:
 	muted = is_muted
 	soloed = is_soloed
 	_audio.set_source_muted(source_id, silent)
+	_audio.set_source_solo_muted(source_id, solo_muted)
 	_refresh_label()
+
+
+## Whether it plays one of the audio interface's inputs (a Speaker, an amp), rather than notes or what a mic hears.
+func is_live() -> bool:
+	return not playable and not is_mic
+
+
+## A microphone's capsule height over the floor (metres), how far it points down (degrees), its gain (dB): the stand
+## drawn again to match.
+func set_mic_height(height: float) -> void:
+	source_height = clampf(height, 0.05, 4.0)
+	position.y = source_height
+	_build_model()
+	_place_parts()
+	sync_position()
+
+
+func set_mic_tilt(degrees: float) -> void:
+	mic_tilt = clampf(degrees, -90.0, 90.0)
+	_build_model()
+	_place_parts()
+
+
+func set_mic_gain(db: float) -> void:
+	mic_gain_db = clampf(db, -20.0, 40.0)
+	_audio.set_source_volume(source_id, db_to_linear(mic_gain_db))
 
 
 ## Its level: 0 dB is the level it was made at, heard from within a metre and a half.

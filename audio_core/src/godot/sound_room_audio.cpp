@@ -135,6 +135,7 @@ int SoundRoomAudio::add_source(const String& kind, const Vector3& position, floa
     else if (kind == "bass_combo") k = sr::InstrumentKind::BassCombo;
     else if (kind == "bass_stack") k = sr::InstrumentKind::BassStack;
     else if (kind == "bus") k = sr::InstrumentKind::Bus;
+    else if (kind == "mic") k = sr::InstrumentKind::Mic;
     else {
         UtilityFunctions::push_error("SoundRoomAudio: unknown instrument kind ", kind);
         return -1;
@@ -166,6 +167,7 @@ bool SoundRoomAudio::is_room_settled() { return engine_ && engine_->roomSettled(
 float SoundRoomAudio::get_room_decay() const { return engine_ ? engine_->roomDecaySeconds() : 0.0f; }
 
 void SoundRoomAudio::set_source_muted(int id, bool muted) { if (engine_) engine_->setSourceMuted(id, muted); }
+void SoundRoomAudio::set_source_solo_muted(int id, bool silenced) { if (engine_) engine_->setSourceSoloMuted(id, silenced); }
 void SoundRoomAudio::set_source_output(int id, int bus) { if (engine_) engine_->setSourceOutput(id, bus); }
 void SoundRoomAudio::set_source_input_channel(int id, int channel) { if (engine_) engine_->setSourceInputChannel(id, channel); }
 void SoundRoomAudio::set_source_input(int id, bool on) { if (engine_) engine_->setSourceInput(id, on); }
@@ -743,6 +745,7 @@ void SoundRoomAudio::_bind_methods() {
     ClassDB::bind_method(D_METHOD("is_room_settled"), &SoundRoomAudio::is_room_settled);
     ClassDB::bind_method(D_METHOD("get_room_decay"), &SoundRoomAudio::get_room_decay);
     ClassDB::bind_method(D_METHOD("set_source_muted", "id", "muted"), &SoundRoomAudio::set_source_muted);
+    ClassDB::bind_method(D_METHOD("set_source_solo_muted", "id", "silenced"), &SoundRoomAudio::set_source_solo_muted);
     ClassDB::bind_method(D_METHOD("set_source_output", "id", "bus"), &SoundRoomAudio::set_source_output);
     ClassDB::bind_method(D_METHOD("set_source_input_channel", "id", "channel"), &SoundRoomAudio::set_source_input_channel);
     ClassDB::bind_method(D_METHOD("set_source_input", "id", "on"), &SoundRoomAudio::set_source_input);

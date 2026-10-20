@@ -58,7 +58,7 @@ func create(kind: String):
 	var inst = app.add_instrument(kind, player.global_position + Vector3(0.0, Catalog.KINDS[kind].height, 0.0))
 	if inst == null:
 		return null
-	if not inst.playable:
+	if inst.is_live():
 		app.set_input_channel(inst, _input_choice)
 	player.carry(inst)
 	inst.face(player.global_position)

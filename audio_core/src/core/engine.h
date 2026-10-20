@@ -242,6 +242,19 @@ public:
     // It holds until the source or the listener next moves.
     void setSourceDirectPath(int id, Vec3 via, float extra_length, const float* path_differences, int count, bool blocked);
     void setSourceMuted(int id, bool muted);
+    // Silenced by a solo elsewhere, as Pro Tools' implied mute: out of the mix, but (unlike a mute) still sounding in
+    // the room, so a microphone still hears it.
+    void setSourceSoloMuted(int id, bool silenced);
+    // Microphones (sources added as InstrumentKind::Mic, at the capsule's position): each hears every source in the
+    // room as it reaches it, from where it stands: late by the time the sound takes to get there (343 m/s), quieter
+    // by 6 dB for each doubling of the distance (louder too, closer than the 1.5 m a source is heard at its own level,
+    // down to 10 cm), dulled by the air and by the walls it bends round, with the room's reverb. A flat, omni
+    // microphone, for now. Its gain (setSourceVolume) comes before it is recorded, as a preamp's does. What it hears
+    // is its track's input: heard while its input monitoring is on, or armed and recording or stopped (Pro Tools'
+    // Auto Input), its clips otherwise, through its inserts and fader to the master (or its folder), in the middle of
+    // the stereo. It isn't heard in the room itself, so no microphone ever hears another.
+    static constexpr float kSpeedOfSound = 343.0f;  // metres a second
+    static constexpr float kMicNearest = 0.1f;      // metres: no closer than this, for the level
     // Where a source's sound goes: the master (-1), or a bus (a source added as InstrumentKind::Bus), as a track's
     // output is assigned in Pro Tools. A bus is a routing folder's aux input: what its tracks play there (placed in the
     // room as ever, in stereo) goes through its inserts, in two channels, and its fader to the master; it plays nothing
@@ -460,7 +473,7 @@ private:
             SequencerRunning, Tempo, Swing, Click, ClickVolume, Reverb2, SourceGain, Falloff, LimiterOn,
             AmpKnob, AmpHeadSet, AmpCabinetSet, LooperMemory, LooperAct, PedalBoardSet, PedalOn, PedalControl, SynthPlugin,
             TimelinePlay, TimelineLoop, TrackSet, RecordArm, RecordStart, RecordStop, SourceOutput, AutomationRead, SendSet,
-            MasterAutomation, MasterRead,
+            MasterAutomation, MasterRead, SourceSoloMuted, MicPath,
         } type = AddSource;
         int id = 0;
         float v[9] = {};
@@ -497,6 +510,11 @@ private:
     void reap();                  // frees removed sources the audio thread has finished with
     void updatePath(Source& source);  // works out how its sound reaches the listener and tells the audio thread
     void updatePaths();
+    void updateMicPaths(Source& source);  // how its sound reaches each microphone (or, a microphone, how each reaches it)
+    void updateMicPath(const Source& mic, const Source& source);
+    void hearRoom(Source& mic, float reverb_level, float glide);  // what a microphone hears this block, into its mono
+    void playSource(size_t index, float binaural_from, float glide, float wall_glide, float mute_coef);
+    void playClips(Source& source, int from);  // a track's audio clips this block, into its playback
     int delayFor(double at) const;
 
     // StepSink: plays every source's pattern notes for this step, and the click.
@@ -522,6 +540,9 @@ private:
     std::vector<std::pair<std::string, std::shared_ptr<StreamedFile>>> audio_files_;  // each opened once (again, if it changes)
     DiskStreamer streamer_;  // reads the tracks' recorded audio from disk ahead of the music
     std::atomic<bool> realtime_{false};  // a device is playing: the audio thread can't wait for the disk
+    // Recording, this block (the audio thread's): from which sample to which, and whether it records at all.
+    int record_from_ = 0, record_to_ = 0;
+    bool punching_ = false;
     std::unique_ptr<Recorder> recorder_;
     bool recording_wanted_ = false;
     uint32_t record_epoch_ = 0;

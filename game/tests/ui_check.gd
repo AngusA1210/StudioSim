@@ -477,7 +477,7 @@ func _run() -> void:
 	await tap(KEY_BACKSPACE)
 	check(player.target == null and player.remove_pending == null, "Backspace does nothing when you aren't facing an instrument")
 	await tap(KEY_T)
-	check(im.is_open() and im._cards.size() == 13 and not im._cards[0].disabled, "N opens the instrument menu, with the amps among the live inputs",
+	check(im.is_open() and im._cards.size() == 14 and not im._cards[0].disabled, "N opens the instrument menu, with the amps among the live inputs, and a microphone",
 		im._footer.text)
 	await click(im._card_for.bass.get_global_rect().get_center())
 	var bass2 = player.carried
@@ -2026,6 +2026,70 @@ func _run() -> void:
 	main.settings.loop_record = false
 	timeline.set_loop(true, loop_before.x, loop_before.y)
 	check(main.speaker.clips.size() == 1 and keys_inst.clips.size() == 2, "(the loop recording undone)")
+
+	print("Microphones")
+	var drums_heard = main.find_instrument("drums")
+	var mic = main.add_instrument("mic", Vector3(drums_heard.global_position.x + 2.0, 0.0, drums_heard.global_position.z + 1.0))
+	main.mixer.open()
+	await frames(3)
+	var mic_strip: Dictionary = main.mixer._strip_for(mic)
+	var mic_card: String = mic_strip.source.text if not mic_strip.is_empty() else ""
+	main.mixer.close()
+	check(mic != null and mic.is_mic and not mic.playable and not mic.is_live() and is_equal_approx(mic.global_position.y, 1.2) and mic_card == "Flat, omni",
+		"a microphone stands in the room on its stand, its capsule 1.2 m up: an audio track, its strip saying what it is", mic_card)
+	var mp = main.mic_panel
+	mp.open(mic)
+	await frames(2)
+	mp._x.value = drums_heard.global_position.x + 1.5
+	mp._z.value = drums_heard.global_position.z
+	mp._height.value = 0.6
+	mp._aim_at.item_selected.emit(mp._aim_choices.find(drums_heard) + 1)
+	await frames(2)
+	var points: Vector3 = Vector3(sin(mic.rotation.y) * cos(deg_to_rad(mic.mic_tilt)), -sin(deg_to_rad(mic.mic_tilt)), cos(mic.rotation.y) * cos(deg_to_rad(mic.mic_tilt)))
+	var toward: Vector3 = (drums_heard.global_position - mic.global_position).normalized()
+	var from_it: Array = mp.distances(mic, main.instruments)
+	check(is_equal_approx(mic.global_position.x, drums_heard.global_position.x + 1.5) and is_equal_approx(mic.source_height, 0.6) and
+		is_equal_approx(mic.global_position.y, 0.6) and points.dot(toward) > 0.999 and from_it[0].name == drums_heard.display_name and
+		absf(from_it[0].ms - 1000.0 * from_it[0].metres / 343.0) < 0.01 and mp.distances_text().begins_with(drums_heard.display_name),
+		"its panel puts it to the centimetre, its capsule as high as wanted, pointing straight at the drums; and says how far each instrument is, and how late it is heard",
+		mp.distances_text().get_slice("\n", 0))
+	mp._gain.value = 6.0
+	check(is_equal_approx(mic.mic_gain_db, 6.0), "and its gain, before it records")
+	mp.close()
+	main.set_input(mic, true)
+	main.set_soloed(mic, true)
+	main.set_pre_fader_meters(true)
+	mic.peak_hold = 0.0
+	main.master_peak_hold = 0.0
+	timeline.locate(0.0)
+	timeline.start_playing()
+	await seconds(0.8)
+	timeline.stop()
+	check(mic.peak_hold > 0.001 and main.master_peak_hold > 0.001 and main.silenced.has(drums_heard),
+		"its input on and soloed, what it hears is heard: the drums through it (a solo takes them out of the mix, not out of the room)",
+		"%.0f dBFS" % linear_to_db(maxf(mic.peak_hold, 1e-9)))
+	main.set_soloed(mic, false)
+	main.set_input(mic, false)
+	timeline.set_armed(mic, true)
+	timeline.locate(0.0)
+	var mic_record: String = timeline.start_recording()
+	await seconds(0.8)
+	timeline.stop()
+	for wait in 20:
+		await frames(3)
+		if not timeline._taking:
+			break
+	var mic_clip: Dictionary = mic.clips.back() if not mic.clips.is_empty() else {}
+	check(mic_record == "" and mic_clip.get("kind", "") == "audio" and FileAccess.file_exists(timeline.file_path(mic_clip)) and
+		absf(float(mic_clip.get("start", -1.0))) < 0.05,
+		"armed, it records what it hears to an audio clip, from where it started (no input latency to take off)", mic_record)
+	timeline.set_armed(mic, false)
+	var mic_entry: Array = main.library.room_data().instruments.filter(func(e): return e.kind == "mic")
+	check(mic_entry.size() == 1 and is_equal_approx(float(mic_entry[0].height), 0.6) and is_equal_approx(float(mic_entry[0].tilt), mic.mic_tilt) and
+		is_equal_approx(float(mic_entry[0].settings.mic_gain_db), 6.0), "it is kept with the room: where it stands, how high, how it points, and its gain")
+	timeline.undo()
+	main.remove_instrument(mic)
+	await frames(2)
 
 	print("The MIDI editor")
 	timeline.grid = 1
