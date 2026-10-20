@@ -89,6 +89,7 @@ var instruments: Array = []
 var folders: Array = []        # the routing folders (folder.gd)
 var auxes: Array = []          # the aux tracks (folder.gd, is_aux): buses the tracks' sends play into
 var master_track               # the master, as a track for automation (master_track.gd)
+var silenced := {}             # the tracks a mute or a solo elsewhere keeps from being heard (track → true), as last set
 var chosen_tracks: Array = []  # the tracks chosen by their names in the edit and mix windows: instruments and folders
 var speaker  # the Speaker the room starts with: the one whose input choice is remembered between runs
 # The room's clock. These belong to the room rather than the player's settings, so they start from the defaults.
@@ -782,22 +783,40 @@ func set_soloed(inst, on: bool) -> void:
 	_apply_channels()
 
 
-## Mute and solo, as Pro Tools has them, folders too: a folder muted silences its tracks, a folder soloed solos them,
-## and a track soloed lets its folder be heard.
+## Mute and solo, as Pro Tools has them, folders too: a folder muted silences what is in it (folders in it too), a
+## folder soloed solos them; and whatever is soloed is heard all the way to the master: through the folders it is in,
+## and the aux tracks it sends to (and the folders they are in).
 func _apply_channels() -> void:
-	var any_solo := instruments.any(func(inst): return inst.soloed) or folders.any(func(folder): return folder.soloed) or \
-		auxes.any(func(aux): return aux.soloed)
-	for inst in instruments:
-		var folder = folder_of(inst)
-		var soloed_here: bool = inst.soloed or (folder != null and folder.soloed)
-		var muted_here: bool = inst.muted or (folder != null and folder.muted)
-		inst.set_channel(inst.muted, inst.soloed, muted_here or (any_solo and not soloed_here))
-	for folder in folders:
-		var heard: bool = folder.soloed or folder.members.any(func(inst): return inst.soloed)
-		audio.set_source_muted(folder.source_id, folder.muted or (any_solo and not heard))
-	for aux in auxes:  # heard while soloed, or while a track sending to it is
-		var heard: bool = aux.soloed or instruments.any(func(inst): return inst.soloed and inst.sends.any(func(send): return send.get("aux") == aux))
-		audio.set_source_muted(aux.source_id, aux.muted or (any_solo and not heard))
+	var every := instruments + folders + auxes
+	var any_solo: bool = every.any(func(t): return t.soloed)
+	var heard := {}
+	if any_solo:
+		for track in every:
+			if track.soloed or folders_around(track).any(func(f): return f.soloed):
+				_heard_from(track, heard)
+	silenced = {}
+	for track in every:
+		var muted_here: bool = track.muted or folders_around(track).any(func(f): return f.muted)
+		var silent: bool = muted_here or (any_solo and not heard.has(track))
+		if silent:
+			silenced[track] = true
+		if track.is_folder:
+			audio.set_source_muted(track.source_id, silent)
+		else:
+			track.set_channel(track.muted, track.soloed, silent)
+
+
+## A track heard, and everything its sound goes through on the way to the master.
+func _heard_from(track, heard: Dictionary) -> void:
+	if heard.has(track):
+		return
+	heard[track] = true
+	var folder = folder_of(track)
+	if folder != null:
+		_heard_from(folder, heard)
+	for send in track.sends:
+		if not send.is_empty():
+			_heard_from(send.aux, heard)
 
 
 # ── Tracks and folders ──────────────────────────────────────────────────────────────────────────────────────
@@ -814,32 +833,80 @@ func has_track(track) -> bool:
 	return instruments.has(track) or folders.has(track) or auxes.has(track)
 
 
-## Every track in order, as the edit and mix windows show them: each folder just before its tracks, and any folder
-## without tracks at the end.
+## Every track in order, as the edit and mix windows show them: each folder just before what is in it (in its order,
+## folders in it with theirs), the aux tracks not in a folder at the end.
 func track_order() -> Array:
+	var top := []
+	for track in instruments + folders + auxes:
+		var outermost = track
+		while folder_of(outermost) != null:
+			outermost = folder_of(outermost)
+		if not top.has(outermost):
+			top.append(outermost)
 	var out := []
-	for inst in instruments:
-		var folder = folder_of(inst)
-		if folder != null and not out.has(folder):
-			out.append(folder)
-		out.append(inst)
-	for folder in folders:
-		if not out.has(folder):
-			out.append(folder)
-	return out + auxes
+	for track in top:
+		_with_members(track, out)
+	return out
 
 
-## The folder an instrument's track is in, or null.
-func folder_of(inst):
+func _with_members(track, out: Array) -> void:
+	out.append(track)
+	if track.is_folder and not track.is_aux:
+		for member in track.members:
+			_with_members(member, out)
+
+
+## The folder a track is in (an instrument's, a folder's, an aux's), or null.
+func folder_of(track):
 	for folder in folders:
-		if folder.members.has(inst):
+		if folder.members.has(track):
 			return folder
 	return null
 
 
-## A new routing folder (Cmd-G), with these tracks in it: its bus in the audio core, its tracks playing into it rather
-## than the master. Null if the room's channels are all in use.
-func add_folder(members: Array, the_name := ""):
+## The folders a track is in, the nearest first.
+func folders_around(track) -> Array:
+	var out := []
+	var folder = folder_of(track)
+	while folder != null and not out.has(folder):
+		out.append(folder)
+		folder = folder_of(folder)
+	return out
+
+
+## Whether a track's sound reaches another's on its way to the master: through the folder it is in (and theirs), or
+## its sends (and where those auxes go).
+func routes_to(from, to) -> bool:
+	var seen := {}
+	var waiting := [from]
+	while not waiting.is_empty():
+		var track = waiting.pop_back()
+		if track == to:
+			return true
+		if track == null or seen.has(track):
+			continue
+		seen[track] = true
+		waiting.append(folder_of(track))
+		for send in track.sends:
+			if not send.is_empty():
+				waiting.append(send.aux)
+	return false
+
+
+## Whether a track can go in a folder (null: straight to the master): not into itself, nor into a folder its own sound
+## reaches it through (that would go round in a circle).
+func can_put_in(track, folder) -> bool:
+	return folder == null or (folder.is_folder and not folder.is_aux and folder != track and not routes_to(folder, track))
+
+
+## Whether a track can send to an aux: not to one its sound already comes back to it from.
+func can_send(track, aux) -> bool:
+	return aux != null and aux != track and not routes_to(aux, track)
+
+
+## A new routing folder (Cmd-G), with these tracks in it (instruments, folders, auxes): its bus in the audio core, its
+## tracks playing into it rather than the master; in `parent`, if given. Null if the room's channels are all in use.
+func add_folder(members: Array, the_name := "", parent = null):
 	var id: int = audio.add_source("bus", Vector3.ZERO, 1.0, 0.0)
 	if id < 0:
 		return null
@@ -848,8 +915,10 @@ func add_folder(members: Array, the_name := ""):
 	folder.display_name = the_name if the_name != "" else _folder_name()
 	folder.inserts = audio.get_inserts(id)
 	folders.append(folder)
-	for inst in members:
-		put_in_folder(inst, folder)
+	if parent != null:
+		put_in_folder(folder, parent, members.front() if not members.is_empty() and parent.members.has(members.front()) else null, true)
+	for track in members:
+		put_in_folder(track, folder)
 	_apply_channels()
 	return folder
 
@@ -863,28 +932,43 @@ func _folder_name() -> String:
 
 
 ## Puts a track in a folder (null: out of any, to the master), as assigning its output to the folder's bus does in Pro
-## Tools; it goes after the folder's last track (or `after`, one of them), so that a folder's tracks stay together.
-func put_in_folder(inst, folder, after = null) -> void:
-	var was = folder_of(inst)
+## Tools: an instrument's track, an aux track, or another folder with all that is in it. It goes after the folder's
+## last track (or after `after`, one of them; with `before`, just before it). Returns false (and nothing changes) where
+## it can't go: into itself, or into a folder that its own sound reaches (a folder in it, an aux it sends to...).
+func put_in_folder(track, folder, after = null, before := false) -> bool:
+	if not can_put_in(track, folder):
+		return false
+	var was = folder_of(track)
 	if was != null:
-		was.members.erase(inst)
+		was.members.erase(track)
 	if folder != null:
-		var next_to = after if after != null and folder.members.has(after) else (folder.members.back() if not folder.members.is_empty() else null)
-		if next_to != null and next_to != inst:
-			instruments.erase(inst)
-			instruments.insert(instruments.find(next_to) + 1, inst)
-		folder.members.append(inst)
-		folder.members.sort_custom(func(a, b): return instruments.find(a) < instruments.find(b))
-	audio.set_source_output(inst.source_id, folder.source_id if folder != null else -1)
+		var at: int = folder.members.size()
+		if after != null and folder.members.has(after):
+			at = folder.members.find(after) + (0 if before else 1)
+		folder.members.insert(at, track)
+		if track is Node and not was == folder:  # an instrument: next to the folder's others in the room's list too
+			var next_to = null
+			for member in folder.members:
+				if member != track and instruments.has(member):
+					next_to = member
+			if next_to != null:
+				instruments.erase(track)
+				instruments.insert(instruments.find(next_to) + 1, track)
+	audio.set_source_output(track.source_id, folder.source_id if folder != null else -1)
 	_apply_channels()
+	return true
 
 
-## Takes a folder away: its tracks go straight to the master again.
+## Takes a folder away: what is in it goes to the folder it was in (or straight to the master).
 func remove_folder(folder) -> void:
 	if not folders.has(folder):
 		return
-	for inst in folder.members.duplicate():
-		put_in_folder(inst, null)
+	var parent = folder_of(folder)
+	for track in folder.members.duplicate():
+		folder.members.erase(track)
+		put_in_folder(track, parent, folder, true)
+	if parent != null:
+		parent.members.erase(folder)
 	hide_insert_editors(folder)
 	folders.erase(folder)
 	chosen_tracks.erase(folder)
@@ -921,10 +1005,12 @@ func add_aux(the_name := ""):
 func remove_aux(aux) -> void:
 	if not auxes.has(aux):
 		return
-	for inst in instruments:
-		for slot in inst.sends.size():
-			if inst.sends[slot].get("aux") == aux:
-				set_send(inst, slot, null)
+	for track in instruments + folders + auxes:
+		for slot in track.sends.size():
+			if track.sends[slot].get("aux") == aux:
+				set_send(track, slot, null)
+	if folder_of(aux) != null:
+		folder_of(aux).members.erase(aux)
 	hide_insert_editors(aux)
 	auxes.erase(aux)
 	chosen_tracks.erase(aux)
@@ -933,10 +1019,16 @@ func remove_aux(aux) -> void:
 
 
 ## A track's send (A to E), as Pro Tools': to an aux track (null takes it away), at a level in dB, after its fader
-## (the track as heard in the room) or `pre` before it (its own sound, straight), on or off.
-func set_send(inst, slot: int, aux, level_db := 0.0, pre := false, on := true) -> void:
+## (the track as heard in the room; a folder's or an aux's, what leaves its fader) or `pre` before it (its own sound,
+## straight), on or off. A folder and an aux have sends too. Returns false (nothing changes) for an aux whose sound
+## comes back to the track (one in it, if it is a folder; one sending to it...).
+func set_send(inst, slot: int, aux, level_db := 0.0, pre := false, on := true) -> bool:
+	if aux != null and not can_send(inst, aux):
+		return false
 	inst.sends[slot] = {} if aux == null else {"aux": aux, "level_db": clampf(level_db, -80.0, 12.0), "pre": pre, "on": on}
 	_send_send(inst, slot)
+	_apply_channels()
+	return true
 
 
 func set_send_level(inst, slot: int, db: float) -> void:
@@ -960,13 +1052,17 @@ func apply_master_gain(gain: float) -> void:
 	audio.set_master_volume(gain * _stage_gain)
 
 
-## Cmd-G: the tracks chosen, in a new folder (one already in a folder moves to the new one).
+## Cmd-G: the tracks chosen, in a new folder: instruments' tracks, aux tracks and folders (with all that is in them),
+## in their order. The new folder goes where the first of them was (in the folder it was in, if any).
 func group_chosen() -> void:
-	var tracks: Array = instruments.filter(func(inst): return chosen_tracks.has(inst))
+	var tracks: Array = track_order().filter(func(t): return chosen_tracks.has(t) and not folders_around(t).any(func(f): return chosen_tracks.has(f)))
 	if tracks.is_empty():
 		session.notice.emit("Choose the tracks for a folder first: click their names (Shift or Cmd-click for more), then %s" % bindings.label("group"))
 		return
-	var folder = add_folder(tracks)
+	var parent = folder_of(tracks.front())
+	while parent != null and tracks.has(parent):
+		parent = folder_of(parent)
+	var folder = add_folder(tracks, "", parent)
 	if folder == null:
 		session.notice.emit("There's no room for another folder")
 		return

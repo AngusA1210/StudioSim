@@ -19,6 +19,11 @@ var armed := false
 var input_on := false
 var source_id := -1
 var inserts: Array = []
+var sends: Array = []
+
+
+func normal_gain() -> float:
+	return 1.0
 var level_db: float:  # the master fader
 	get:
 		return app.master_volume_db if app != null else 0.0

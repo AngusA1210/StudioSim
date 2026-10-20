@@ -188,7 +188,8 @@ struct AudioEngine::Source {
         bool pre = false, on = true;
     };
     std::array<Send, AudioEngine::kMaxSends> sends;  // the audio thread's
-    std::vector<float> pre, out_l, out_r;  // a block of its sound before its fader, and placed in the room (for sends)
+    std::vector<float> pre, out_l, out_r;  // a block of its sound before its fader, and placed in the room (for sends; a bus
+                                           // keeps what reaches its fader in out_l and out_r)
     float auto_mute = 1.0f;     // its mute automation's share of it heard, glided
     bool auto_sustain = false;  // the sustain pedal down by automation
     Track* track_rt = nullptr;
@@ -1347,7 +1348,7 @@ void AudioEngine::setSourceMuted(int id, bool muted) {
 }
 void AudioEngine::setSourceOutput(int id, int bus) {
     const Source* target = bus >= 0 ? owned(bus) : nullptr;
-    if (bus >= 0 && (!target || !isBus(target->kind) || bus == id)) bus = -1;  // (no bus into itself: one level of folders)
+    if (bus >= 0 && (!target || !isBus(target->kind) || bus == id)) bus = -1;  // (no bus into itself; folders in folders, though)
     Command c; c.type = Command::SourceOutput; c.id = id; c.v[0] = float(bus); push(c);
 }
 void AudioEngine::setSourceInputChannel(int id, int channel) {
@@ -2275,22 +2276,69 @@ void AudioEngine::renderBlock() {
         }
     }
 
-    // The buses: what their tracks played into them, through their inserts (in two channels) and faders to the master.
-    for (size_t index = 0; index < sources_.size(); ++index) {
-        Source* s = sources_[index];
+    // The buses (folders and aux tracks), each after every bus that plays into it, by its output or a send: what reached
+    // them, through their inserts (in two channels) and faders, to the master or the bus they are in, and their sends.
+    // (The game refuses routing that would go round in a circle; were there one, its buses would still each play once.)
+    auto bus_at = [&](int id) -> Source* {
+        Source* b = id >= 0 && id < kSourceSlots ? sources_[size_t(id)] : nullptr;
+        return b && isBus(b->kind) ? b : nullptr;
+    };
+    std::array<int, kSourceSlots> order{}, waiting{};
+    std::array<bool, kSourceSlots> placed{};
+    int buses = 0;
+    for (const Source* s : sources_) {
         if (!s || !isBus(s->kind)) continue;
+        if (bus_at(s->output)) ++waiting[size_t(s->output)];
+        for (const auto& send : s->sends)
+            if (bus_at(send.bus)) ++waiting[size_t(send.bus)];
+    }
+    for (int i = 0; i < kSourceSlots; ++i)
+        if (bus_at(i) && waiting[size_t(i)] == 0) {
+            order[size_t(buses++)] = i;
+            placed[size_t(i)] = true;
+        }
+    auto release = [&](int id) {
+        if (bus_at(id) && --waiting[size_t(id)] <= 0 && !placed[size_t(id)]) {
+            order[size_t(buses++)] = id;
+            placed[size_t(id)] = true;
+        }
+    };
+    for (int next = 0; next < buses; ++next) {
+        const Source* b = sources_[size_t(order[size_t(next)])];
+        release(b->output);
+        for (const auto& send : b->sends) release(send.bus);
+    }
+    for (int i = 0; i < kSourceSlots; ++i)
+        if (bus_at(i) && !placed[size_t(i)]) order[size_t(buses++)] = i;  // (a circle)
+
+    for (int k = 0; k < buses; ++k) {
+        const size_t index = size_t(order[size_t(k)]);
+        Source* s = sources_[index];
         float* l = s->bus_l.data();
         float* r = s->bus_r.data();
         if (s->insert_board.count > 0) {
             const PedalTiming timing{double(bar_timing_[1]) / 4.0, bar_timing_[0], bar_timing_[1]};
             for (int p = 0; p < s->insert_board.count; ++p) s->insert_board.pedals[size_t(p)]->processStereo(l, r, block_, timing);
         }
+        bool sending = false, sending_pre = false;
+        for (const auto& send : s->sends)
+            if (bus_at(send.bus) && (send.on || send.gain > 1e-6f)) {
+                sending = true;
+                sending_pre = sending_pre || send.pre;
+            }
+        Source* into = bus_at(s->output);
+        float* to_l = into ? into->bus_l.data() : mix_l_.data();  // into the folder it is in, or the master
+        float* to_r = into ? into->bus_r.data() : mix_r_.data();
         double energy = 0.0, pre_energy = 0.0;
         float peak = 0.0f, pre_peak = 0.0f;
         Automating automating(*this, *s);
         for (int i = 0; i < block_; ++i) {
             pre_energy += 0.5 * (double(l[i]) * l[i] + double(r[i]) * r[i]);
             pre_peak = std::max(pre_peak, std::max(std::fabs(l[i]), std::fabs(r[i])));
+            if (sending_pre) {  // (a bus keeps what reaches its fader where a track keeps its place in the room)
+                s->out_l[size_t(i)] = l[i];
+                s->out_r[size_t(i)] = r[i];
+            }
             s->mute_gain += (s->mute_target - s->mute_gain) * mute_coef;
             automating.next(i, mute_coef);
             const float g = s->gain * s->mute_gain * s->auto_mute;
@@ -2298,8 +2346,24 @@ void AudioEngine::renderBlock() {
             r[i] *= g;
             energy += 0.5 * (double(l[i]) * l[i] + double(r[i]) * r[i]);
             peak = std::max(peak, std::max(std::fabs(l[i]), std::fabs(r[i])));
-            mix_l_[size_t(i)] += l[i];
-            mix_r_[size_t(i)] += r[i];
+            to_l[i] += l[i];
+            to_r[i] += r[i];
+        }
+        if (sending) {  // its sends: after its fader, or before it (muted with it, as a track's)
+            const float muted = s->mute_gain * s->auto_mute;
+            for (auto& send : s->sends) {
+                Source* aux = bus_at(send.bus);
+                if (!aux) continue;
+                const float target = send.on ? send.gain_target : 0.0f;
+                const float* from_l = send.pre ? s->out_l.data() : l;
+                const float* from_r = send.pre ? s->out_r.data() : r;
+                const float scale = send.pre ? muted : 1.0f;
+                for (int i = 0; i < block_; ++i) {
+                    send.gain += (target - send.gain) * mute_coef;
+                    aux->bus_l[size_t(i)] += from_l[i] * scale * send.gain;
+                    aux->bus_r[size_t(i)] += from_r[i] * scale * send.gain;
+                }
+            }
         }
         // Metered as it reaches the master, before the master fader: as dBFS.
         levels_[size_t(s->id)].store(float(std::sqrt(energy / block_)) * kMasterGain, std::memory_order_relaxed);

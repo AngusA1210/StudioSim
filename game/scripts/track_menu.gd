@@ -1,7 +1,8 @@
 extends RefCounted
 ## What a track's menu offers (a right-click on its name, in the mix window or the edit window), whatever else that
 ## window adds: renaming it, its colour (from Pro Tools' kind of palette), and its folder: the tracks chosen in a new
-## one (Cmd-G), into another folder, out of its own; and for a folder, taking it away. These are the ids it uses.
+## one (Cmd-G), into another folder, out of its own (an instrument's track, an aux track, or a folder with all in it);
+## a new aux track; and for a folder or an aux, taking it away. These are the ids it uses.
 
 const RENAME := 500
 const NEW_FOLDER := 501
@@ -41,31 +42,30 @@ static func add_items(menu: PopupMenu, app, track, colors: PopupMenu, modes: Pop
 			modes.set_item_checked(i, app.automation.MODES[i] == track.auto_mode)
 		menu.add_submenu_node_item("Automation: %s" % app.automation.MODE_NAMES[track.auto_mode], modes)
 	menu.add_separator()
-	if track.is_aux:
-		menu.add_item("New aux track", NEW_AUX)
-		menu.add_item("Remove the aux track (and the sends to it)", REMOVE_AUX)
-		return
-	if track.is_folder:
-		menu.add_item("New aux track", NEW_AUX)
-		menu.add_item("Remove the folder (its tracks go straight to the master)", REMOVE_FOLDER)
+	if track.get("is_master"):
 		return
 	menu.add_item("New aux track", NEW_AUX)
-	var chosen: int = app.chosen_tracks.filter(func(t): return not t.is_folder).size() if app.chosen_tracks.has(track) else 1
+	var chosen: int = app.chosen_tracks.size() if app.chosen_tracks.has(track) else 1
 	menu.add_item("New folder with %s  (%s)" % ["the %d chosen tracks" % chosen if chosen > 1 else "it", app.bindings.label("group")], NEW_FOLDER)
 	var own = app.folder_of(track)
-	for i in app.folders.size():
-		if app.folders[i] != own:
+	for i in app.folders.size():  # (those it can go in: not itself, nor one its own sound reaches)
+		if app.folders[i] != own and app.can_put_in(track, app.folders[i]):
 			menu.add_item("Into %s" % app.folders[i].display_name, INTO + i)
 	if own != null:
 		menu.add_item("Out of %s" % own.display_name, OUT)
+	if track.is_aux:
+		menu.add_item("Remove the aux track (and the sends to it)", REMOVE_AUX)
+	elif track.is_folder:
+		menu.add_item("Remove the folder (its tracks go where it went)", REMOVE_FOLDER)
 
 
 ## Acts on one of the track's items. Returns whether `id` was one of them.
 static func chosen(app, track, id: int) -> bool:
 	if not app.has_track(track):
 		return id >= RENAME
-	# The tracks it acts on: every one chosen, if this is one of them, or else just this one.
-	var tracks: Array = app.instruments.filter(func(inst): return app.chosen_tracks.has(inst)) if app.chosen_tracks.has(track) else [track]
+	# The tracks it acts on: every one chosen, if this is one of them (a folder's tracks going with it), or else just this one.
+	var outermost_chosen := func(t): return app.chosen_tracks.has(t) and not app.folders_around(t).any(func(f): return app.chosen_tracks.has(f))
+	var tracks: Array = app.track_order().filter(outermost_chosen) if app.chosen_tracks.has(track) else [track]
 	match id:
 		RENAME:
 			app.ask_track_name(track)
@@ -73,9 +73,11 @@ static func chosen(app, track, id: int) -> bool:
 			if not app.chosen_tracks.has(track):
 				app.choose_track(track)
 			app.group_chosen()
-		OUT:
-			for inst in tracks:
-				app.put_in_folder(inst, null)
+		OUT:  # (out of the folder it is in, into the one that one is in)
+			for t in tracks:
+				var own = app.folder_of(t)
+				if own != null:
+					app.put_in_folder(t, app.folder_of(own), own)
 		REMOVE_FOLDER:
 			app.remove_folder(track)
 		NEW_AUX:
@@ -85,7 +87,6 @@ static func chosen(app, track, id: int) -> bool:
 		_:
 			if id < INTO or id - INTO >= app.folders.size():
 				return false
-			for inst in tracks:
-				if not inst.is_folder:
-					app.put_in_folder(inst, app.folders[id - INTO])
+			for t in tracks:
+				app.put_in_folder(t, app.folders[id - INTO])
 	return true

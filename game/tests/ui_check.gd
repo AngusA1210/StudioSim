@@ -2399,6 +2399,8 @@ func _run() -> void:
 	main.mixer._send_menu.id_pressed.emit(100)
 	main.mixer._send_menu.hide()
 	await frames(2)
+	drums_send_strip = main.mixer._strip_for(drums_send)  # (built again: where the sends go is drawn into them)
+	aux_strip = main.mixer._strip_for(aux)
 	check(aux != null and not aux_strip.is_empty() and aux_strip.source.text == "1 send in" and offered_aux and drums_send.sends[0].get("aux") == aux and
 		drums_send_strip.sends[0].button.text.begins_with(aux.display_name) and drums_send_strip.sends[0].button.get_parent().get_parent().visible,
 		"an aux track has a strip of its own; a track's empty send (under its inserts) offers it, and sends to it", drums_send_strip.sends[0].button.text)
@@ -2413,6 +2415,7 @@ func _run() -> void:
 	check(aux_heard > 0.001 and drums_send.sends[0].pre and is_equal_approx(float(drums_send.sends[0].level_db), -6.0) and
 		auto.params_for(drums_send).has("send:0"), "it plays into the aux (its meter reads it), before the fader or after, at a level that can be automated too",
 		"%.0f dBFS" % linear_to_db(maxf(aux_heard, 1e-9)))
+
 	main.mixer.close()
 	check(view.tracks().has(aux) and view.tracks().find(aux) == view.tracks().size() - 2, "the aux has a row in the edit window, after the tracks")
 	var aux_row: int = view.tracks().find(aux)
@@ -2426,6 +2429,65 @@ func _run() -> void:
 	await tap(KEY_A)
 	check(not view.show_automation, "and A hides the lanes again")
 	main.edit_window.close()
+
+	print("Folders in folders; aux tracks in folders; folders' and auxes' own sends")
+	var rhythm = main.folder_of(drums_send)
+	var band = main.add_folder([], "Band")
+	var into_band: bool = main.put_in_folder(rhythm, band)
+	var circle_refused: bool = not main.put_in_folder(band, rhythm) and main.folder_of(band) == null
+	var nested_order: Array = main.track_order()
+	check(into_band and circle_refused and main.folders_around(drums_send) == [rhythm, band] and nested_order.find(rhythm) == nested_order.find(band) + 1 and
+		nested_order.find(drums_send) > nested_order.find(rhythm), "a folder goes into another, with its tracks (never into one inside it)",
+		str(nested_order.map(func(t): return t.display_name)))
+	main.edit_window.open()
+	await frames(2)
+	var indents: Array = [view._indent(band), view._indent(rhythm), view._indent(drums_send)]
+	band.open = false
+	var band_closed: bool = not view.tracks().has(rhythm) and not view.tracks().has(drums_send) and view.tracks().has(band)
+	band.open = true
+	check(indents == [0.0, 10.0, 20.0] and band_closed, "in the edit window each is set in under the one it is in; closing the outer one hides all in it",
+		str(indents))
+	main.edit_window.close()
+	var verb = main.add_aux("Verb")
+	main.put_in_folder(aux, band)
+	main.mixer.open()
+	await frames(3)
+	var band_strip: Dictionary = main.mixer._strip_for(band)
+	var aux_out: Array = main.mixer._strip_for(aux).output.get_meta("choices")
+	var rhythm_out: Array = main.mixer._strip_for(rhythm).output.get_meta("choices")
+	main.mixer.show_send_menu(band, 0, band_strip.sends[0].button)
+	var offers_verb: bool = main.mixer._send_menu.get_item_index(100 + main.auxes.find(verb)) >= 0
+	var offers_own_aux: bool = main.mixer._send_menu.get_item_index(100 + main.auxes.find(aux)) >= 0
+	main.mixer._send_menu.id_pressed.emit(100 + main.auxes.find(verb))
+	main.mixer._send_menu.hide()
+	check(main.folder_of(aux) == band and aux_out.has(band) and not rhythm_out.has(rhythm) and rhythm_out.has(band) and
+		offers_verb and not offers_own_aux and band.sends[0].get("aux") == verb and not main.set_send(verb, 0, aux) and
+		auto.params_for(band).has("send:0"),
+		"an aux track goes in a folder too; a folder's strip has sends (not to an aux in it, nor one whose sound would come back round)")
+	main.set_pre_fader_meters(false)
+	for track in [band, verb, aux]:
+		track.peak_hold = 0.0
+	main.set_soloed(drums_send, true)
+	var silenced_by_solo: Array = main.silenced.keys()
+	timeline.locate(0.0)
+	timeline.start_playing()
+	await seconds(0.8)
+	timeline.stop()
+	check(band.peak_hold > 0.001 and verb.peak_hold > 0.001 and not main.silenced.has(band) and not main.silenced.has(rhythm) and
+		not main.silenced.has(aux) and not main.silenced.has(verb) and silenced_by_solo.has(main.find_instrument("keys")) and
+		silenced_by_solo.has(main.find_instrument("bass")),
+		"the drums soloed are heard all the way: through Rhythm and Band, the aux they send to, and Verb that Band sends to; the rest are silent",
+		"Band %.0f dBFS, Verb %.0f" % [linear_to_db(maxf(band.peak_hold, 1e-9)), linear_to_db(maxf(verb.peak_hold, 1e-9))])
+	main.set_soloed(drums_send, false)
+	main.set_pre_fader_meters(true)
+	main.chosen_tracks = [rhythm, aux]
+	main.group_chosen()
+	var grouped = main.chosen_tracks[0] if main.chosen_tracks.size() == 1 else null
+	check(grouped != null and main.folder_of(grouped) == band and grouped.members == [rhythm, aux] and main.folder_of(drums_send) == rhythm,
+		"Cmd-G puts folders and aux tracks in a new folder too, where the first of them was")
+	main.remove_folder(grouped)
+	check(main.folder_of(rhythm) == band and main.folder_of(aux) == band and band.members.find(rhythm) < band.members.find(aux),
+		"a folder taken away leaves what was in it in the folder it was in")
 	timeline.locate(0.0)
 	session.save()
 	var record_file: String = session.path
@@ -2442,23 +2504,31 @@ func _run() -> void:
 	check(timeline.is_record() and reopened_keys.clips.size() == 2 and main.speaker.clips.size() == 1 and is_equal_approx(timeline.loop_start, saved_loop.x) and
 		is_equal_approx(timeline.loop_end, saved_loop.y), "saved and opened again, the room is a Record room with its clips and loop",
 		"%.2f to %.2f" % [timeline.loop_start, timeline.loop_end])
-	var reopened_folder = main.folders[0] if main.folders.size() == 1 else null
+	var reopened_folder = main.folders.filter(func(f): return f.display_name == "Rhythm").front() if main.folders.size() == 2 else null
+	var reopened_band = main.folders.filter(func(f): return f.display_name == "Band").front() if main.folders.size() == 2 else null
 	check(reopened_keys.display_name == "Rhodes" and reopened_keys.named and reopened_keys.color == main.TRACK_COLORS[8][1] and reopened_folder != null and
-		reopened_folder.display_name == "Rhythm" and reopened_folder.members.map(func(i): return i.kind) == ["drums", "bass"] and
+		reopened_folder.members.map(func(i): return i.kind) == ["drums", "bass"] and
 		str(reopened_folder.inserts[0].plugin_name) == "AUDelay", "and its tracks' names and colours, and its folder with its tracks and inserts")
 	var reopened_keys_volume: Array = main.automation.points(reopened_keys, "volume")
 	check(reopened_keys_volume.size() == 2 and main.automation.points(reopened_keys, "sustain").size() == 3, "its automation is kept with the room",
 		str(reopened_keys_volume))
-	var reopened_aux = main.auxes[0] if main.auxes.size() == 1 else null
+	var reopened_aux = main.auxes.filter(func(a): return a.display_name == "Aux 1").front() if main.auxes.size() == 2 else null
+	var reopened_verb = main.auxes.filter(func(a): return a.display_name == "Verb").front() if main.auxes.size() == 2 else null
 	var reopened_drums_send: Dictionary = main.find_instrument("drums").sends[0]
 	check(reopened_aux != null and reopened_drums_send.get("aux") == reopened_aux and reopened_drums_send.get("pre", false) and
 		main.automation.points(main.master_track, "volume").size() == 2, "and its aux track, the sends to it, and the master's automation")
+	check(reopened_band != null and reopened_band.members == [reopened_folder, reopened_aux] and reopened_band.sends[0].get("aux") == reopened_verb and
+		main.folders_around(main.find_instrument("drums")) == [reopened_folder, reopened_band], "and its folders in folders, the aux in one, and a folder's send")
 	main.remove_aux(reopened_aux)
-	check(main.auxes.is_empty() and main.find_instrument("drums").sends[0].is_empty(), "an aux track taken away takes the sends to it with it")
+	check(main.auxes.size() == 1 and main.find_instrument("drums").sends[0].is_empty() and not reopened_band.members.has(reopened_aux),
+		"an aux track taken away takes the sends to it with it")
+	main.remove_aux(reopened_verb)
 	main.master_track.automation = {}
 	timeline.sync(main.master_track)
+	main.remove_folder(reopened_band)
 	main.remove_folder(reopened_folder)
-	check(main.folders.is_empty() and main.folder_of(main.find_instrument("drums")) == null, "a folder taken away leaves its tracks going to the master")
+	check(main.folders.is_empty() and main.folder_of(main.find_instrument("drums")) == null,
+		"a folder taken away leaves its tracks going to the master")
 	main.mixer.open()
 	await seconds(0.6)
 	var reverb_heard: float = main.mixer._reverb.meter.held_db()

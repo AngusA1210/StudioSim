@@ -346,16 +346,7 @@ func _build_strip(inst) -> Dictionary:
 		Hints.give(choice, "Which of your interface's inputs it plays")
 		source = choice
 	box.add_child(source)
-	var output := OptionButton.new()  # where it plays: the master, or a folder's bus (an aux input), as a Pro Tools track's output
-	output.add_theme_font_size_override("font_size", 12)
-	output.fit_to_longest_item = false
-	output.focus_mode = Control.FOCUS_NONE
-	output.custom_minimum_size = Vector2(STRIP_WIDTH - 16, 24)
-	output.add_item("→ Master")
-	for folder in app.folders:
-		output.add_item("→ %s" % folder.display_name)
-	output.item_selected.connect(func(i: int) -> void: app.put_in_folder(inst, app.folders[i - 1] if i > 0 else null))
-	Hints.give(output, "Its output: straight to the master, or into a folder, through the folder's inserts and fader")
+	var output := _output_button(inst)
 	box.add_child(output)
 	var buttons := HBoxContainer.new()
 	buttons.add_theme_constant_override("separation", 3)
@@ -385,8 +376,27 @@ func _build_strip(inst) -> Dictionary:
 		"frame": strip.get_theme_stylebox("panel"), "panel": strip}
 
 
-## A routing folder's strip: its inserts (in stereo), how many tracks it has, mute and solo, and its fader, through
-## which they reach the master.
+## Where a track plays, as a Pro Tools track's output: the master, or a folder's bus (an aux input). Only the folders
+## it can go in are offered (not itself, nor one its own sound reaches: a folder in it, an aux it sends to...).
+func _output_button(track) -> OptionButton:
+	var output := OptionButton.new()
+	output.add_theme_font_size_override("font_size", 12)
+	output.fit_to_longest_item = false
+	output.focus_mode = Control.FOCUS_NONE
+	output.custom_minimum_size = Vector2(STRIP_WIDTH - 16, 24)
+	var choices: Array = [null] + app.folders.filter(func(folder): return app.can_put_in(track, folder))
+	for folder in choices:
+		output.add_item("→ %s" % (folder.display_name if folder != null else "Master"))
+	output.set_meta("choices", choices)
+	output.item_selected.connect(func(i: int) -> void:
+		if not app.put_in_folder(track, choices[i]):
+			_report("It can't go there: its own sound would come round to it again."))
+	Hints.give(output, "Its output: straight to the master, or into a folder, through the folder's inserts and fader")
+	return output
+
+
+## A routing folder's strip (an aux track's too): its inserts (in stereo) and sends, how many tracks it has (or sends
+## come in), its output, mute and solo, and its fader, through which they reach the master or the folder it is in.
 func _build_folder_strip(folder) -> Dictionary:
 	var strip := _strip_panel(STRIP_WIDTH)
 	var box: VBoxContainer = strip.get_child(0)
@@ -397,12 +407,11 @@ func _build_folder_strip(folder) -> Dictionary:
 	count.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	count.custom_minimum_size.y = 24
 	count.add_theme_font_size_override("font_size", 12)
-	Hints.give(count, "The tracks' sends to it play into it, and through its inserts and fader to the master" if folder.is_aux else
-		"The tracks in it play into it, and through its inserts and fader to the master")
+	Hints.give(count, "The tracks' sends to it play into it, and through its inserts and fader to its output" if folder.is_aux else
+		"The tracks in it play into it, and through its inserts and fader to its output")
 	box.add_child(count)
-	var gap := Control.new()  # (where a track has its output)
-	gap.custom_minimum_size.y = 24
-	box.add_child(gap)
+	var output := _output_button(folder)
+	box.add_child(output)
 	var buttons := HBoxContainer.new()
 	buttons.add_theme_constant_override("separation", 3)
 	buttons.alignment = BoxContainer.ALIGNMENT_CENTER
@@ -422,7 +431,7 @@ func _build_folder_strip(folder) -> Dictionary:
 	box.add_child(plate)
 	_strip_row.add_child(strip)
 	return {"inst": folder, "fader": pair.fader, "meter": pair.meter, "value": readouts.value, "peak": readouts.peak, "input": null,
-		"mute": mute, "solo": solo, "source": count, "output": null, "inserts": inserts, "sends": sends, "plate": plate,
+		"mute": mute, "solo": solo, "source": count, "output": output, "inserts": inserts, "sends": sends, "plate": plate,
 		"frame": strip.get_theme_stylebox("panel"), "panel": strip}
 
 
@@ -493,12 +502,8 @@ func _build_sends(box: VBoxContainer, inst) -> Array:
 		style.content_margin_right = 4
 		for state in ["normal", "hover", "pressed", "hover_pressed"]:
 			button.add_theme_stylebox_override(state, style)
-		if inst.is_folder:
-			button.disabled = true
-			button.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		else:
-			button.gui_input.connect(_on_send_input.bind(inst, slot, button))
-			Hints.give(button, _send_hint.bind(inst, slot))
+		button.gui_input.connect(_on_send_input.bind(inst, slot, button))
+		Hints.give(button, _send_hint.bind(inst, slot))
 		column.add_child(button)
 		slots.append({"button": button, "style": style})
 	return slots
@@ -511,7 +516,7 @@ func _show_sends(strip: Dictionary) -> void:
 	for slot in strip.sends.size():
 		var button: Button = strip.sends[slot].button
 		var style: StyleBoxFlat = strip.sends[slot].style
-		var send: Dictionary = {} if inst.is_folder else inst.sends[slot]
+		var send: Dictionary = inst.sends[slot]
 		if send.is_empty():
 			button.text = ""
 			style.bg_color = Color(0.1, 0.105, 0.12)
@@ -577,8 +582,8 @@ func show_send_menu(inst, slot: int, near: Control) -> void:
 		_send_menu.add_check_item("On", 2)
 		_send_menu.set_item_checked(_send_menu.item_count - 1, send.on)
 		_send_menu.add_separator()
-	for i in app.auxes.size():
-		if send.is_empty() or app.auxes[i] != send.aux:
+	for i in app.auxes.size():  # (those whose sound doesn't come back to it)
+		if (send.is_empty() or app.auxes[i] != send.aux) and app.can_send(inst, app.auxes[i]):
 			_send_menu.add_item(("To %s" if not send.is_empty() else "%s") % app.auxes[i].display_name, 100 + i)
 	_send_menu.add_item("To a new aux track" if not send.is_empty() else "A new aux track", 3)
 	if not send.is_empty():
@@ -589,7 +594,7 @@ func show_send_menu(inst, slot: int, near: Control) -> void:
 
 
 func _on_send_menu_chosen(id: int) -> void:
-	if _send_menu_for.is_empty() or not app.instruments.has(_send_menu_for[0]):
+	if _send_menu_for.is_empty() or not app.has_track(_send_menu_for[0]):
 		return
 	var inst = _send_menu_for[0]
 	var slot: int = _send_menu_for[1]
@@ -768,10 +773,12 @@ func _toggle(text: String, lit: Color) -> Button:
 func _refresh() -> void:
 	var settings = app.settings
 	var signature := ""
-	for track in app.track_order():  # (a folder's name and every track's colour are drawn into strips: change them, build them again)
-		var folder = track if track.is_folder else app.folder_of(track)
-		signature += "%d:%s:%s:%s|" % [track.get_instance_id(), track.color.to_html(), folder.display_name if folder != null else "",
+	for track in app.track_order():  # (the folders' names, the routing and every track's colour are drawn into strips: change them, build them again)
+		var folder = app.folder_of(track)
+		signature += "%d:%s:%s:%s|" % [track.get_instance_id(), track.color.to_html(), track.display_name if track.is_folder else "",
 			"%d" % folder.get_instance_id() if folder != null else ""]
+		for send in track.sends:
+			signature += "%d," % send.aux.get_instance_id() if not send.is_empty() else ","
 	if signature != _signature:  # tracks came or went, or moved: one strip each again
 		_signature = signature
 		for child in _strip_row.get_children():
@@ -801,8 +808,10 @@ func _refresh() -> void:
 		_show_peak(strip.peak, inst.peak_hold)
 		_show_inserts(strip.inserts, inst.inserts)
 		_show_sends(strip)
+		if inst.is_folder:
+			strip.output.select(strip.output.get_meta("choices").find(app.folder_of(inst)))
 		if inst.is_aux:
-			var sending: int = app.instruments.filter(func(i): return i.sends.any(func(send): return send.get("aux") == inst)).size()
+			var sending: int = (app.instruments + app.folders + app.auxes).filter(func(t): return t.sends.any(func(send): return send.get("aux") == inst)).size()
 			strip.source.text = "%d send%s in" % [sending, "" if sending == 1 else "s"]
 			continue
 		if inst.is_folder:
@@ -818,7 +827,7 @@ func _refresh() -> void:
 				for i in channels:
 					strip.source.add_item("In %d" % (i + 1))
 			strip.source.select(clampi(inst.input_channel + 1, 0, strip.source.item_count - 1))
-		strip.output.select(app.folders.find(app.folder_of(inst)) + 1)
+		strip.output.select(strip.output.get_meta("choices").find(app.folder_of(inst)))
 
 	var m: Dictionary = app.meter
 	_master.meter.feed([m.get("peak_l", 0.0), m.get("peak_r", 0.0)], [m.get("rms_l", 0.0), m.get("rms_r", 0.0)])

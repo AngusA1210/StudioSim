@@ -2551,6 +2551,55 @@ int main(int argc, char** argv) {
               "a send to an aux's bus: after the fader it follows it, before the fader it doesn't, and off it sends nothing",
               fmt("none %.0f, ", db(none.second)) + fmt("aux %.0f dBFS after the fader, ", db(post.second)) + fmt("%.0f with it down, ", db(post_down.second)) +
                   fmt("%.0f before it with the fader down, ", db(pre_down.second)) + fmt("%.0f off", db(off.second)));
+
+        // Folders in folders, and buses' own sends: the drums into folder G, G into folder F, F to the master; G sends to
+        // the aux, after its fader or before it, and the aux plays into F too.
+        sends.engine.setSend(sends.drums, 0, -1, 0.0f, false, false);
+        sends.engine.setSourceGain(sends.drums, 1.0f);
+        const int inner = sends.engine.addSource(InstrumentKind::Bus, {0.0f, 0.0f, 0.0f}, 1.0f, 0.0f);
+        const int outer = sends.engine.addSource(InstrumentKind::Bus, {0.0f, 0.0f, 0.0f}, 1.0f, 0.0f);
+        sends.engine.setSourceMuted(inner, false);
+        sends.engine.setSourceMuted(outer, false);
+        sends.engine.setSourceOutput(sends.drums, inner);
+        sends.engine.setSourceOutput(inner, outer);
+        renderSeconds(sends.engine, 0.3);
+        auto through = [&]() {
+            sends.engine.noteOn(sends.drums, 38, 0.9f);
+            renderSeconds(sends.engine, 0.1);
+            const float in_inner = sends.engine.sourcePeak(inner), in_outer = sends.engine.sourcePeak(outer), in_aux = sends.engine.sourcePeak(aux);
+            renderSeconds(sends.engine, 0.8);
+            for (int id : {inner, outer, aux}) sends.engine.sourcePeak(id);
+            return std::array<float, 3>{in_inner, in_outer, in_aux};
+        };
+        const auto nested = through();
+        sends.engine.setSourceGain(outer, 0.0f);
+        renderSeconds(sends.engine, 0.3);
+        sends.engine.noteOn(sends.drums, 38, 0.9f);
+        const Render outer_down = renderSeconds(sends.engine, 0.3);
+        sends.engine.setSourceGain(outer, 1.0f);
+        renderSeconds(sends.engine, 0.6);
+        check(nested[0] > 0.01f && std::fabs(db(nested[1]) - db(nested[0])) < 0.5f && outer_down.peak < 1e-5f,
+              "a folder in a folder: the drums through the inner one, and through the outer one to the master (its fader down: silence)",
+              fmt("inner %.0f dBFS, ", db(nested[0])) + fmt("outer %.0f", db(nested[1])));
+        sends.engine.setSend(inner, 0, aux, 1.0f, false, true);
+        sends.engine.setSourceOutput(aux, outer);
+        renderSeconds(sends.engine, 0.3);
+        const auto bus_post = through();
+        sends.engine.setSourceGain(inner, 0.0f);
+        renderSeconds(sends.engine, 0.3);
+        const auto bus_post_down = through();
+        sends.engine.setSend(inner, 0, aux, 1.0f, true, true);
+        renderSeconds(sends.engine, 0.3);
+        const auto bus_pre_down = through();
+        check(bus_post[2] > 0.01f && std::fabs(db(bus_post[2]) - db(bus_post[0])) < 0.5f && bus_post[1] > 1.5f * bus_post[0] &&
+                  bus_post_down[2] < 1e-5f && bus_pre_down[2] > 0.01f,
+              "a folder's own send: after its fader the aux gets what leaves it (and the aux, in the outer folder, joins it there); "
+              "with its fader down, nothing, unless the send is before the fader",
+              fmt("aux %.0f dBFS, ", db(bus_post[2])) + fmt("outer %.0f; ", db(bus_post[1])) + fmt("%.0f down, ", db(bus_post_down[2])) +
+                  fmt("%.0f before the fader", db(bus_pre_down[2])));
+        sends.engine.setSourceOutput(aux, inner);  // round in a circle (the game never asks for one): it still plays, and ends
+        const Render circle = renderSeconds(sends.engine, 0.3);
+        check(std::isfinite(circle.peak), "routing round in a circle neither hangs nor blows up", fmt("%.0f dBFS", db(circle.peak)));
     }
 
     {

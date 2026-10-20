@@ -221,10 +221,15 @@ func _most_scroll() -> float:
 	return maxf(total - (size.y - RULER), 0.0)
 
 
-## The rows: every track in order, each folder before its tracks (those of a folder that is closed left out), the aux
-## tracks after them, and the master at the foot.
+## The rows: every track in order, each folder before its tracks (those of a folder that is closed left out, and of
+## one inside it), the aux tracks not in a folder after them, and the master at the foot.
 func tracks() -> Array:
-	return app.track_order().filter(func(t): return t.is_folder or app.folder_of(t) == null or app.folder_of(t).open) + [app.master_track]
+	return app.track_order().filter(func(t): return app.folders_around(t).all(func(f): return f.open)) + [app.master_track]
+
+
+## How far a track's header is set in: by as many folders as it is in.
+func _indent(track) -> float:
+	return 10.0 * mini(app.folders_around(track).size(), 4)
 
 
 # ── Drawing ──────────────────────────────────────────────────────────────────────────────────────────────────
@@ -572,13 +577,13 @@ func _draw_fades(clip: Dictionary, x0: float, x1: float, inner: Rect2, rect: Rec
 
 func _draw_header(inst, top: float, font: Font) -> void:
 	var chosen_track: bool = app.chosen_tracks.has(inst)
-	var indent := 12.0 if not inst.is_folder and app.folder_of(inst) != null else 0.0  # a folder's tracks, under it
+	var indent := _indent(inst)  # a folder's tracks, under it
 	draw_rect(Rect2(0, top, HEADER, ROW - 1), Color(0.24, 0.26, 0.31) if chosen_track else Color(0.16, 0.17, 0.19))
 	draw_rect(Rect2(indent, top, 5, ROW - 1), inst.color)
 	var name_x := 12.0 + indent
 	if _folds(inst):  # its arrow, to show or hide its tracks
-		draw_string(font, Vector2(10, top + 20), "▾" if inst.open else "▸", HORIZONTAL_ALIGNMENT_LEFT, -1, 13, inst.color.lightened(0.45))
-		name_x = 26.0
+		draw_string(font, Vector2(10 + indent, top + 20), "▾" if inst.open else "▸", HORIZONTAL_ALIGNMENT_LEFT, -1, 13, inst.color.lightened(0.45))
+		name_x = 26.0 + indent
 	draw_string(font, Vector2(name_x, top + 20), inst.display_name, HORIZONTAL_ALIGNMENT_LEFT, HEADER - name_x - 8, 13, inst.color.lightened(0.45))
 	var what: String
 	if inst.get("is_master"):
@@ -670,7 +675,7 @@ func _on_button(e: InputEventMouseButton) -> void:
 			app.edit_window.edit_notes(found.inst, found.index)
 			return
 		if found.get("zone", "") == "header" and not _buttons(found.inst, row_top(found.row)).any(func(b): return b.rect.has_point(e.position)) and \
-				not (_folds(found.inst) and e.position.x < 24.0) and not found.inst.get("is_master"):
+				not (_folds(found.inst) and e.position.x < 24.0 + _indent(found.inst)) and not found.inst.get("is_master"):
 			app.ask_track_name(found.inst)
 			return
 	if e.pressed:
@@ -787,7 +792,7 @@ func hint_at(at: Vector2) -> String:
 				_lane_value(at.y, found.param, found.top))
 		"header":
 			var track = found.inst
-			if _folds(track) and at.x < 24.0:
+			if _folds(track) and at.x < 24.0 + _indent(track):
 				return "Show or hide its tracks"
 			for b in _buttons(track, row_top(found.row)):
 				if b.rect.has_point(at):
@@ -842,7 +847,7 @@ func press(at: Vector2, all := false, add := false, command := false) -> void:
 		"ruler":
 			_drag = {"what": "ruler", "from_x": at.x, "from": step_at(at.x)}
 		"header":
-			if _folds(found.inst) and at.x < 24.0:  # its arrow
+			if _folds(found.inst) and at.x < 24.0 + _indent(found.inst):  # its arrow
 				found.inst.open = not found.inst.open
 				return
 			if not _buttons(found.inst, row_top(found.row)).any(func(b): return b.rect.has_point(at)):  # its name: choosing tracks

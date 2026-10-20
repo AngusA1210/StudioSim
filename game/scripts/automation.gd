@@ -86,16 +86,14 @@ static func plugin_parts(param: String) -> Array:
 
 
 ## The params a track has besides its plug-ins': volume and mute; an instrument's sustain pedal; an amp's knobs; its
-## sends (those that go somewhere). The master has its volume only.
+## sends (those that go somewhere: a folder's and an aux's too). The master has its volume only.
 func params_for(track) -> Array:
 	if track.get("is_master"):
 		return ["volume"]
 	var out := ["volume", "mute"]
-	if track.is_folder:
-		return out
-	if track.playable:
+	if not track.is_folder and track.playable:
 		out.append("sustain")
-	if track.is_amp:
+	if not track.is_folder and track.is_amp:
 		for control in KNOB_NAMES:
 			out.append("amp:" + control)
 	for slot in track.sends.size():

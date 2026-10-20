@@ -411,10 +411,14 @@ Each instrument is a track, in the mix window and (in a Record room) the edit wi
   inserts and its fader to the master, so one fader brings a whole drum kit up or down, and a compressor or EQ on it
   works on them together. Muting a folder silences its tracks; soloing it solos them, and soloing one of its tracks
   lets the folder be heard. The room's reverb of its tracks comes from the tracks themselves, as their own sends
-  would, so its fader is their direct sound. In the edit window the folder's row comes over its tracks', which are
-  set in under it; its arrow shows or hides them. A track's menu moves it **into** another folder or **out of** its
-  own, and so does its output in the mix window; a folder's menu takes it away, its tracks going straight to the
-  master again.
+  would, so its fader is their direct sound. A folder can hold aux tracks and other folders too, as many deep as you
+  like (a drum folder in a band folder, say): each plays into the one it is in. In the edit window the folder's row
+  comes over its tracks', which are set in under it; its arrow shows or hides them (and all in them). A track's menu
+  moves it **into** another folder or **out of** its own (into the one that is in), and so does its output in the
+  mix window; only folders it can go in are offered (never itself, or one its own sound already reaches, which would
+  go round in a circle). Cmd-G puts the chosen tracks, folders and aux tracks among them, in a new folder where the
+  first of them was. A folder's menu takes it away, what was in it going where the folder went. Soloing a track lets
+  everything its sound goes through be heard: the folders it is in, and the aux tracks it sends to.
 - **Aux tracks and sends**, as in Pro Tools: **New aux track** (in a track's menu, or an empty send's) makes an aux
   track, a bus with its own inserts (a reverb or a delay, say), mute, solo and fader, playing to the master. A
   track's **sends**, A to E, play a copy of it into an aux: after the track's fader, the track as heard in the room
@@ -422,8 +426,10 @@ Each instrument is a track, in the mix window and (in a Record room) the edit wi
   own. In the mix window each strip's sends are under its inserts, as in Pro Tools: click
   an empty send to send to an aux (or a new one); drag a send up or down for its level (Shift for fine moves; the
   scroll wheel nudges it), double-click it for 0 dB, Cmd-click it off and on, right-click it for before or after the
-  fader, another aux, or none. An aux's strip comes after the tracks', saying how many sends come in; soloing a track
-  lets the auxes it sends to be heard. An aux has a row in the edit window, after the tracks.
+  fader, another aux, or none. Folders and aux tracks have sends of their own (after their fader, what leaves it;
+  before it, what reaches it), and an aux track can go in a folder. An aux's strip comes after the tracks' (or in its
+  folder), saying how many sends come in; soloing a track lets the auxes it sends to be heard. An aux has a row in the
+  edit window, after the tracks (or in its folder).
 - Folders, aux tracks, sends, names and colours are all kept with the room (and in templates).
 
 ## The mix window
@@ -440,7 +446,7 @@ Aux tracks and sends). A fader whose track's automation is read moves with it, a
   loop pedal comes without its loop), to rename it or give it a colour, to put it in a folder or take it out, or to
   remove it from the room.
 - **Output**, under each strip's input: where it plays, as a Pro Tools track's output: **→ Master**, or into a
-  routing folder.
+  routing folder (a folder's and an aux's strip have one too: into another folder).
 - **Inserts** at the top of each strip, A to E, as in Pro Tools: plug-ins played in order on the instrument's sound
   before its fader (on an amp, after its pedals and the amp). Click an empty one to choose a plug-in, a full one to
   open or close its window, Cmd-click (or Ctrl-click) to bypass it, which turns it blue, and right-click to replace or
@@ -612,14 +618,13 @@ can be changed, with sound bending round the walls and a reverb that follows the
 templates, auto-save and backups), presets and copy and paste for plug-ins and instruments, and Record rooms: a
 timeline, an edit window, recording audio and MIDI to clips (with a count-in, a pre-roll and post-roll, punching in and out, and loop recording
 into takes), editing them (trims, fades and crossfades, clip gain, splits, nudges, several at once, a MIDI editor
-for the notes, undo), tracks with names and colours, in routing folders with faders and inserts of their own, and
+for the notes, undo), tracks with names and colours, in routing folders (folders in folders too) with faders, inserts and sends of their own, and
 automation (volume, mute, the sustain pedal, an amp's knobs and its pedals', plug-ins' controls, sends and the master), drawn or
 written as it plays, and aux tracks with sends.
 
 To do, roughly in this order:
 
-1. **More of the edit window**: comping from takes (a part of one, a part of another); sends on folders and aux
-   tracks too, and an aux in a folder; folders within folders; and audio read from disk
+1. **More of the edit window**: comping from takes (a part of one, a part of another); and audio read from disk
    as it plays (for long rooms; takes are held in memory now).
    Perhaps later a free version with Jam rooms only, Record rooms coming with the full one.
 2. **Microphones**: a new kind of track, placed anywhere in the room with precision, that records what the room
