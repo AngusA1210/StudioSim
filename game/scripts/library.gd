@@ -473,16 +473,16 @@ func apply_room_data(data: Dictionary, carry := {}, size = null, mode := "") -> 
 		folder.color = _color_from(entry.get("color"), folder.color)
 		folder.open = bool(entry.get("open", true))
 		if keep.call("mix"):
-			folder.automation = entry.get("automation", {}).duplicate(true)
-			folder.auto_mode = str(entry.get("auto_mode", "read"))
-			folder.lanes = entry.get("lanes", ["volume"]).duplicate()
-		if keep.call("mix"):
 			app.set_folder_level(folder, float(entry.get("level_db", 0.0)))
 			folder.muted = bool(entry.get("muted", false))
 			folder.soloed = bool(entry.get("soloed", false))
 		var problem := apply_inserts(folder, entry.get("inserts", []) if keep.call("plugins") else [])
 		if problem != "":
 			problems.append("%s: %s" % [folder.display_name, problem])
+		if keep.call("mix"):  # (after its plug-ins: one that isn't installed here keeps its automation, for where it is)
+			folder.automation = entry.get("automation", {}).duplicate(true)
+			folder.auto_mode = str(entry.get("auto_mode", "read"))
+			folder.lanes = entry.get("lanes", ["volume"]).duplicate()
 	var auxes := []  # the aux tracks, and then the tracks' sends to them
 	for entry in data.get("auxes", []) if keep.call("instruments") else []:
 		var aux = app.add_aux(str(entry.get("name", "")))
@@ -495,12 +495,13 @@ func apply_room_data(data: Dictionary, carry := {}, size = null, mode := "") -> 
 			app.set_folder_level(aux, float(entry.get("level_db", 0.0)))
 			aux.muted = bool(entry.get("muted", false))
 			aux.soloed = bool(entry.get("soloed", false))
-			aux.automation = entry.get("automation", {}).duplicate(true)
-			aux.auto_mode = str(entry.get("auto_mode", "read"))
-			aux.lanes = entry.get("lanes", ["volume"]).duplicate()
 		var problem := apply_inserts(aux, entry.get("inserts", []) if keep.call("plugins") else [])
 		if problem != "":
 			problems.append("%s: %s" % [aux.display_name, problem])
+		if keep.call("mix"):
+			aux.automation = entry.get("automation", {}).duplicate(true)
+			aux.auto_mode = str(entry.get("auto_mode", "read"))
+			aux.lanes = entry.get("lanes", ["volume"]).duplicate()
 	var entries: Array = data.get("instruments", []) if keep.call("instruments") else []
 	for i in mini(entries.size(), made.size()):
 		var sends: Array = entries[i].get("sends", []) if made[i] != null and keep.call("mix") else []

@@ -462,8 +462,14 @@ func _refresh_pedal() -> void:
 		if control.node is CheckButton:
 			control.node.set_pressed_no_signal(value > 0.5)
 		else:
-			if not control.node._dragging:
-				control.node.set_value_no_signal(value)
+			var param := "stomp:%d:%d" % [selected, i]
+			var held: bool = control.node._dragging
+			if held != control.node.get_meta("held", false):  # taken hold of, or let go: Touch and Latch write while it is held
+				control.node.set_meta("held", held)
+				control.node.set_meta("param", param)
+				app.automation.touch(inst, held, param)
+			if not held:  # (as its automation has it, while that is read)
+				control.node.set_value_no_signal(app.automation.shown(inst, param))
 			control.node.readout = Catalog.pedal_readout(control.readout, control.node.value, pedal.controls)
 			control.node.queue_redraw()
 	_tuner_box.visible = pedal.kind == "tuner"
@@ -492,6 +498,8 @@ func _refresh_footer() -> void:
 ## The controls for a kind of pedal: a knob for each of its knobs, a switch for each switch.
 func _build_controls(kind: String) -> void:
 	for child in _pedal_controls.get_children():
+		if child.get_meta("held", false):  # (a knob let go of as it goes)
+			app.automation.touch(inst, false, child.get_meta("param"))
 		_pedal_controls.remove_child(child)
 		child.queue_free()
 	_controls.clear()

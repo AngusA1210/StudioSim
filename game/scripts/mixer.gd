@@ -13,10 +13,10 @@ extends CanvasLayer
 ## colour it, put it in a folder or take it out, duplicate it or remove it from the room. Under its input, each strip's
 ## output: the master, or a routing folder. A folder's strip (before its tracks') has its inserts, its mute and solo,
 ## and its fader, through which its tracks reach the master. An aux track's strip (after the tracks') has its inserts
-## (a reverb, a delay), mute and solo and its fader: the tracks' sends play into it. The buttons at the top switch the
-## strips' top between their inserts and their sends, A to E as Pro Tools has them: click an empty send to send to an
-## aux (or a new one); drag a send up or down for its level (Shift for fine moves), double-click it for 0 dB, Cmd-click
-## to switch it off and on, right-click it for before the fader or after, another aux, or none. As in Pro Tools, the peak readout holds the
+## (a reverb, a delay), mute and solo and its fader: the tracks' sends play into it. Under the inserts, as in Pro Tools,
+## each strip's sends, A to E: click an empty send to send to an aux (or a new one); drag a send up or down for its
+## level (Shift for fine moves), double-click it for 0 dB, Cmd-click to switch it off and on, right-click it for before
+## the fader or after, another aux, or none. As in Pro Tools, the peak readout holds the
 ## highest peak until it is clicked (Alt-click clears them all), and clicking a meter does the same. The channel meters
 ## read before the fader; right-click any fader to have them read after it instead.
 ## Rather than instructions written across it, the line at the foot of the window describes whatever the mouse is over.
@@ -45,9 +45,6 @@ var _panel: PanelContainer
 var _strip_row: HBoxContainer
 var _strips: Array = []  # {inst (an instrument or a folder), fader, meter, value, peak, input, mute, solo, source, output, inserts: [{button, style}], plate, frame}
 var _colors: PopupMenu   # the Colour submenu of a track's menu
-var show_sends := false  # the strips' top showing their sends rather than their inserts
-var _view_inserts: Button
-var _view_sends: Button
 var _send_menu: PopupMenu  # an empty send's auxes to choose from, or a full one's options
 var _send_menu_for := []   # [instrument, slot]
 var _send_drag := {}       # a send's level being dragged: {inst, slot, from_y, from_db}
@@ -140,13 +137,25 @@ func _process(_delta: float) -> void:
 	if not is_open():
 		return
 	var vp := get_viewport().get_visible_rect().size
-	var height := minf(520.0, vp.y - 60.0)
+	var height := minf(620.0, vp.y - 60.0)
 	_panel.position = Vector2(12, vp.y - height - 12)
 	_panel.size = Vector2(vp.x - 24, height)
 	_refresh()
+	_line_up()
 	_to_edit.visible = app.timeline.is_record()
 	_to_edit.text = "Edit window  (%s)" % app.bindings.label("edit_window")
 	_hint.text = Hints.under_mouse(_panel)
+
+
+## The reverb's and the master's faders level with the tracks': the space above them grown or shrunk to match.
+func _line_up() -> void:
+	if _strips.is_empty():
+		return
+	var top: float = _strips[0].fader.global_position.y
+	for strip in [_reverb, _master]:
+		var off: float = top - strip.fader.global_position.y
+		if absf(off) > 0.5:
+			strip.gap.custom_minimum_size.y = maxf(strip.gap.custom_minimum_size.y + off, 0.0)
 
 
 # ── Building ────────────────────────────────────────────────────────────────────────────────────────────────
@@ -181,11 +190,6 @@ func _build() -> void:
 	_status.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_status.clip_text = true
 	header.add_child(_status)
-	var view_group := ButtonGroup.new()
-	_view_inserts = _view_button(header, "Inserts", view_group, "The strips' inserts at their top, A to E")
-	_view_sends = _view_button(header, "Sends", view_group, "The strips' sends at their top, A to E: copies of a track's sound to aux tracks")
-	_view_inserts.button_pressed = true
-	_view_sends.toggled.connect(func(on: bool) -> void: set_show_sends(on))
 	_to_edit = Button.new()
 	_to_edit.text = "Edit window  (R)"
 	_to_edit.focus_mode = Control.FOCUS_NONE
@@ -266,7 +270,7 @@ func _build_reverb() -> PanelContainer:
 	var strip := _strip_panel(STRIP_WIDTH + 14)
 	var box: VBoxContainer = strip.get_child(0)
 	var level_with_inserts := Control.new()  # so its fader lines up with the others
-	level_with_inserts.custom_minimum_size.y = _inserts_height()
+	level_with_inserts.custom_minimum_size.y = _slots_height()
 	box.add_child(level_with_inserts)
 	_small(box, "RETURN")
 	var gap := Control.new()
@@ -276,7 +280,7 @@ func _build_reverb() -> PanelContainer:
 	pair.fader.value_changed.connect(func(db: float) -> void: app.set_reverb_db(db))
 	var readouts := _readouts(box, REVERB)
 	box.add_child(_name_plate("Reverb", Color(0.4, 0.86, 0.78), null))
-	_reverb = {"fader": pair.fader, "meter": pair.meter, "value": readouts.value, "peak": readouts.peak}
+	_reverb = {"fader": pair.fader, "meter": pair.meter, "value": readouts.value, "peak": readouts.peak, "gap": gap}
 	return strip
 
 
@@ -284,7 +288,7 @@ func _build_master() -> PanelContainer:
 	var strip := _strip_panel(STRIP_WIDTH + 14)
 	var box: VBoxContainer = strip.get_child(0)
 	var level_with_inserts := Control.new()  # so the faders line up with the instruments'
-	level_with_inserts.custom_minimum_size.y = _inserts_height()
+	level_with_inserts.custom_minimum_size.y = _slots_height()
 	box.add_child(level_with_inserts)
 	_small(box, "OUTPUT")
 	var limiter := _toggle("LIMIT", Color(0.55, 0.78, 1.0))
@@ -300,7 +304,7 @@ func _build_master() -> PanelContainer:
 	pair.fader.value_changed.connect(_on_master_changed)
 	var readouts := _readouts(box, null)
 	box.add_child(_name_plate("Master", Color(0.75, 0.77, 0.82), null))
-	_master = {"fader": pair.fader, "meter": pair.meter, "value": readouts.value, "peak": readouts.peak, "limiter": limiter}
+	_master = {"fader": pair.fader, "meter": pair.meter, "value": readouts.value, "peak": readouts.peak, "limiter": limiter, "gap": gap}
 	return strip
 
 
@@ -422,23 +426,23 @@ func _build_folder_strip(folder) -> Dictionary:
 		"frame": strip.get_theme_stylebox("panel"), "panel": strip}
 
 
-const INSERT_HEIGHT := 19.0
+const INSERT_HEIGHT := 17.0
 
 
-func _inserts_height() -> float:
-	return 14.0 + 6.0 + audio.get_max_inserts() * (INSERT_HEIGHT + 2.0)
+## How tall a strip's inserts and sends are together (the reverb's and the master's strips leave the room empty).
+func _slots_height() -> float:
+	var section := func(count: int) -> float: return 14.0 + 3.0 + count * INSERT_HEIGHT + (count - 1) * 1.0
+	return section.call(audio.get_max_inserts()) + 8.0 + section.call(audio.get_max_sends())
 
 
-## A strip's insert slots, A to E as in Pro Tools; and in the same place (shown instead, in the sends view), its sends.
+## A strip's insert slots, A to E as in Pro Tools.
 func _build_inserts(box: VBoxContainer, inst) -> Array:
 	var section := VBoxContainer.new()
-	section.add_theme_constant_override("separation", 6)
-	section.visible = not show_sends
-	section.set_meta("inserts", true)
+	section.add_theme_constant_override("separation", 3)
 	box.add_child(section)
 	_small(section, "INSERTS")
 	var column := VBoxContainer.new()
-	column.add_theme_constant_override("separation", 2)
+	column.add_theme_constant_override("separation", 1)
 	section.add_child(column)
 	var slots := []
 	for slot in audio.get_max_inserts():
@@ -465,17 +469,14 @@ func _build_inserts(box: VBoxContainer, inst) -> Array:
 	return slots
 
 
-## A strip's sends, A to E as Pro Tools has them (an aux's or a folder's strip has none: the place is kept, empty).
+## A strip's sends, A to E as Pro Tools has them, under its inserts.
 func _build_sends(box: VBoxContainer, inst) -> Array:
 	var section := VBoxContainer.new()
-	section.add_theme_constant_override("separation", 6)
-	section.visible = show_sends
-	section.set_meta("sends", true)
+	section.add_theme_constant_override("separation", 3)
 	box.add_child(section)
-	box.move_child(section, 1)
 	_small(section, "SENDS")
 	var column := VBoxContainer.new()
-	column.add_theme_constant_override("separation", 2)
+	column.add_theme_constant_override("separation", 1)
 	section.add_child(column)
 	var slots := []
 	for slot in audio.get_max_sends():
@@ -501,30 +502,6 @@ func _build_sends(box: VBoxContainer, inst) -> Array:
 		column.add_child(button)
 		slots.append({"button": button, "style": style})
 	return slots
-
-
-func _view_button(header: Control, text: String, group: ButtonGroup, hint: String) -> Button:
-	var button := Button.new()
-	button.text = text
-	button.toggle_mode = true
-	button.button_group = group
-	button.focus_mode = Control.FOCUS_NONE
-	Hints.give(button, hint)
-	header.add_child(button)
-	return button
-
-
-## The strips' top: their sends, or their inserts.
-func set_show_sends(on: bool) -> void:
-	show_sends = on
-	_view_sends.set_pressed_no_signal(on)
-	_view_inserts.set_pressed_no_signal(not on)
-	for strip in _strips:
-		for child in strip.panel.get_child(0).get_children():
-			if child.has_meta("inserts"):
-				child.visible = not on
-			elif child.has_meta("sends"):
-				child.visible = on
 
 
 ## What each send shows: the aux it goes to and its level (as its automation has it, playing), pre-fader marked,

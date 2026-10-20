@@ -2112,6 +2112,11 @@ void AudioEngine::applyParams(Source& s, double at) {
             case ParamLane::Send:
                 if (lane.index >= 0 && lane.index < kMaxSends) s.sends[size_t(lane.index)].gain_target = gainOf(value);
                 break;
+            case ParamLane::PedalKnob:
+                if (lane.index >= 0 && lane.index < s.board.count && lane.param < uint32_t(kPedalControls) &&
+                    s.board.pedals[size_t(lane.index)]->kind() != PedalKind::Plugin)
+                    s.board.pedals[size_t(lane.index)]->setControl(int(lane.param), std::clamp(value, 0.0f, 10.0f));
+                break;
         }
         if (plugin) plugin->setParameter(lane.param, value);
     }

@@ -2492,6 +2492,27 @@ int main(int argc, char** argv) {
               "the master fader's automation brings the whole mix down; not read, the master fader is heard again",
               fmt("%.0f dBFS, then ", db(master_up.rms_l)) + fmt("%.0f", db(master_down.peak)));
         amp_room.engine.setSequencerRunning(false);
+
+        // A stock pedal's knob automated: an overdrive's Level from 5 down to 0 over a bar, the guitar going with it.
+        amp_room.engine.setMasterAutomation({});
+        const int drive = amp_room.engine.addPedal(amp, PedalKind::Overdrive, -1);
+        TrackAutomation stomped;
+        ParamLane level_knob;
+        level_knob.target = ParamLane::PedalKnob;
+        level_knob.index = drive;
+        level_knob.param = 2;  // (its Level)
+        level_knob.points = {{0.0, 5.0f}, {8.0, 5.0f}, {16.0, 0.0f}};
+        stomped.params.push_back(level_knob);
+        amp_room.engine.setTrack(amp, {}, {}, &auto_error, stomped);
+        amp_room.engine.playFrom(0.0);
+        renderSeconds(amp_room.engine, 0.3, guitar);
+        const Render driven = renderSeconds(amp_room.engine, 0.5, guitar);
+        renderSeconds(amp_room.engine, 1.4, guitar);
+        const Render drive_down = renderSeconds(amp_room.engine, 0.3, guitar);
+        check(drive >= 0 && driven.rms_l > 0.003 && drive_down.rms_l < 0.1 * driven.rms_l,
+              "a stock pedal's knob automated turns as it plays: an overdrive's Level down from 5 to 0",
+              fmt("%.0f dB lower", db(driven.rms_l) - db(drive_down.rms_l)));
+        amp_room.engine.setSequencerRunning(false);
     }
 
     {

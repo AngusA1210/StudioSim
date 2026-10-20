@@ -135,7 +135,9 @@ struct AutoPoint {
 // plug-in instrument's (`param` the plug-in's own id for it, in its own range), or a send's level (`index` the send, in
 // dB as volume is).
 struct ParamLane {
-    enum Target : uint8_t { AmpKnob, Insert, Pedal, Instrument, Send } target = AmpKnob;
+    // A stock pedal's knob (PedalKnob) is `param` of the pedal at `index` on the board, 0 to 10; a plug-in's control
+    // (Insert, Pedal, Instrument) is its parameter `param`, in its own units.
+    enum Target : uint8_t { AmpKnob, Insert, Pedal, Instrument, Send, PedalKnob } target = AmpKnob;
     int index = 0;
     uint32_t param = 0;
     std::vector<AutoPoint> points;  // in order of their steps

@@ -494,7 +494,7 @@ func show_param(track, k: int, param: String) -> void:
 		track.lanes[already] = track.lanes[k]
 	track.lanes[k] = param
 	chosen_points = []
-	if app.automation.is_plugin(param) or param.begins_with("amp:") or param.begins_with("send:"):
+	if app.automation.is_plugin(param) or app.automation.is_knob(param) or param.begins_with("send:"):
 		timeline.sync(track)  # (the audio core plays every control with points: nothing new, but its lanes are read anew)
 
 
@@ -681,7 +681,7 @@ func _on_button(e: InputEventMouseButton) -> void:
 
 ## What is at a point: {zone, inst, index, row}, the zone one of "ruler", "header", "xfade" (the top of a seam where two
 ## audio clips meet: `index` is the first), "fade_in", "fade_out" (an audio clip's top corners), "trim_start", "trim_end"
-## (a clip's ends), "clip", "lane", or nothing.
+## (a clip's ends), "clip", "track" (an empty part of its row), or nothing.
 func zone_at(at: Vector2) -> Dictionary:
 	if at.y < 0.0 or at.x < 0.0 or at.x > size.x or at.y > size.y:
 		return {}
@@ -697,7 +697,7 @@ func zone_at(at: Vector2) -> Dictionary:
 	if at.x < HEADER:
 		return {"zone": "header", "inst": inst, "row": row}
 	if inst.is_folder:
-		return {"zone": "lane", "inst": inst, "row": row}
+		return {"zone": "track", "inst": inst, "row": row}
 	var top := row_top(row)
 	if at.y < top + 2.0 + NAME_STRIP:  # the top of a seam: a crossfade
 		for c in inst.clips.size():
@@ -732,7 +732,7 @@ func zone_at(at: Vector2) -> Dictionary:
 		elif x1 - at.x <= edge:
 			found.zone = "trim_end"
 		return found
-	return {"zone": "lane", "inst": inst, "row": row}
+	return {"zone": "track", "inst": inst, "row": row}
 
 
 ## The cursor at a point: the trim cursor at a clip's ends, the fade cursor (made above) at an audio clip's top corners.
@@ -773,7 +773,7 @@ func hint_at(at: Vector2) -> String:
 		"ruler":
 			return "Click to put the playhead here; drag along to loop the range  ·  L loop playback on or off, U loops the chosen clip"
 		"lane_button":
-			return {"param": "What this lane shows: volume, mute, an instrument's sustain pedal, an amp's knobs, sends, or a plug-in's controls",
+			return {"param": "What this lane shows: volume, mute, an instrument's sustain pedal, an amp's knobs and its pedals', sends, or a plug-in's controls",
 				"mode": "The track's automation mode: Off, Read, Touch (written while a control is held), Latch (from then until it stops) or Write (as it plays)",
 				"add": "Another lane under the track, for another of its controls", "remove": "No lane for this one (its points are kept)"}[found.button]
 		"lane_header":
@@ -819,7 +819,7 @@ func hint_at(at: Vector2) -> String:
 			return "Drag to move it (Option as you drop: a copy), Shift-click to choose more  ·  %s splits it at the playhead  ·  , and . nudge it  ·  U loops it%s" % [
 				app.bindings.label("separate"), "  ·  double-click for its notes" if clip.kind == "midi" else
 				("  ·  right-click for its takes" if not clip.get("takes", []).is_empty() else "")]
-		"lane":
+		"track":
 			return "Click to put the playhead here"
 	return ""
 
@@ -886,7 +886,7 @@ func press(at: Vector2, all := false, add := false, command := false) -> void:
 					timeline.remember("Clip gain")
 					timeline.set_clip_gain(items, 0.0)
 					_drag = {}
-		"lane":
+		"track":
 			chosen = []
 			timeline.locate(timeline.snap(step_at(at.x)))
 

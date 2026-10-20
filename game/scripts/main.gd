@@ -549,31 +549,52 @@ func stomp(inst, index: int) -> void:
 ## Mute and solo, as on a mixing desk: while anything is soloed, everything else is silent.
 ## An amp's effect pedals (the amp panel sets them up; 1-8 in the room switch them). The instrument's `pedals` is
 ## brought up to date at once, rather than waiting for its next frame.
+## The pedals' automation follows them about the board (see automation.pedals_moved).
 func add_pedal(inst, kind: String, at := -1) -> int:
+	var count: int = inst.pedals.size()
 	var index := audio.add_pedal(inst.source_id, kind, at)
 	inst.pedals = audio.get_pedals(inst.source_id)
 	inst.looper = audio.get_looper(inst.source_id)
+	if index >= 0 and index < count:
+		automation.pedals_moved(inst, range(count).map(func(i): return i + 1 if i >= index else i))
 	return index
 
 
 func remove_pedal(inst, index: int) -> void:
-	audio.remove_pedal(inst.source_id, index)
+	var count: int = inst.pedals.size()
+	if audio.remove_pedal(inst.source_id, index):
+		automation.pedals_moved(inst, range(count).map(func(i): return -1 if i == index else (i - 1 if i > index else i)))
 	inst.pedals = audio.get_pedals(inst.source_id)
 	inst.looper = audio.get_looper(inst.source_id)
 
 
 func move_pedal(inst, from: int, to: int) -> bool:
+	var count: int = inst.pedals.size()
 	var moved := audio.move_pedal(inst.source_id, from, to)
 	inst.pedals = audio.get_pedals(inst.source_id)
+	if moved and from != to:
+		automation.pedals_moved(inst, range(count).map(func(i):
+			if i == from:
+				return to
+			if from < to and i > from and i <= to:
+				return i - 1
+			if to < from and i >= to and i < from:
+				return i + 1
+			return i))
 	return moved
 
 
 ## A second of a pedal (Option-drag on the board, or duplicating the amp), switch, knobs and plug-in settings and all,
 ## on `to_inst`'s board at `at` (-1: the end). Where it went, or -1, with the reason in `audio.get_error()`.
 func copy_pedal(inst, index: int, to_inst, at := -1) -> int:
+	var count: int = to_inst.pedals.size()
 	var placed := audio.copy_pedal(inst.source_id, index, to_inst.source_id, at)
 	to_inst.pedals = audio.get_pedals(to_inst.source_id)
 	to_inst.looper = audio.get_looper(to_inst.source_id)
+	if placed >= 0:  # its automation copied with it (the others on that board moved along first)
+		if placed < count:
+			automation.pedals_moved(to_inst, range(count).map(func(i): return i + 1 if i >= placed else i))
+		automation.copied(inst, "pedal", index + 1 if inst == to_inst and index >= placed else index, to_inst, placed)
 	return placed
 
 
@@ -589,8 +610,11 @@ func set_pedal_control(inst, index: int, control: int, value: float) -> void:
 
 ## Loads one of the computer's effect plug-ins into a Plug-in pedal. Returns why it couldn't, or "".
 func load_pedal_plugin(inst, index: int, plugin_id: String, state := PackedByteArray()) -> String:
+	var before: String = str(inst.pedals[index].get("plugin_id", "")) if index < inst.pedals.size() else ""
 	var loaded := audio.load_pedal_plugin(inst.source_id, index, plugin_id, state)
 	inst.pedals = audio.get_pedals(inst.source_id)
+	if loaded and before != "" and before != plugin_id:  # another plug-in: the old one's automation goes with it
+		automation.dropped(inst, "pedal", index)
 	return "" if loaded else audio.get_error()
 
 
@@ -622,9 +646,12 @@ func available_instrument_plugins() -> Array:
 ## Loads an instrument plug-in into a plug-in instrument (with these settings, if given), which then goes by its name.
 ## Returns why it couldn't, or "".
 func set_instrument_plugin(inst, plugin_id: String, state := PackedByteArray()) -> String:
+	var before: String = str(inst.instrument_plugin.get("plugin_id", ""))
 	if not audio.set_instrument_plugin(inst.source_id, plugin_id, state):
 		return audio.get_error()
 	inst.instrument_plugin = audio.get_instrument_plugin(inst.source_id)
+	if before != "" and before != plugin_id:
+		automation.dropped(inst, "instrument")
 	if not inst.named:  # (a track given a name keeps it)
 		inst.set_display_name(unique_name(inst.instrument_plugin.plugin_name, inst))
 	return ""
@@ -656,30 +683,39 @@ func unique_name(base: String, except = null) -> String:
 
 
 ## A channel's inserts, as in a DAW's mix window: a plug-in in each of a few slots, before the fader. Loading one
-## returns why it couldn't be loaded, or "".
+## returns why it couldn't be loaded, or "". A plug-in's automation goes where it goes: moved, copied, or (taken away,
+## or another put in its place) gone with it.
 func set_insert(inst, slot: int, plugin_id: String, state := PackedByteArray()) -> String:
+	var before: String = str(inst.inserts[slot].get("plugin_id", "")) if slot < inst.inserts.size() else ""
 	var loaded := audio.set_insert(inst.source_id, slot, plugin_id, state)
 	inst.inserts = audio.get_inserts(inst.source_id)
+	if loaded and before != "" and before != plugin_id:
+		automation.dropped(inst, "insert", slot)
 	return "" if loaded else audio.get_error()
 
 
 ## Dragging an insert to another slot, on this channel or another: it moves there and whatever was there takes its
 ## place. Copying instead puts a second of the same plug-in there, with its settings; it returns why it couldn't, or "".
 func move_insert(from_inst, from_slot: int, to_inst, to_slot: int) -> void:
-	audio.move_insert(from_inst.source_id, from_slot, to_inst.source_id, to_slot)
+	var moved := audio.move_insert(from_inst.source_id, from_slot, to_inst.source_id, to_slot)
 	from_inst.inserts = audio.get_inserts(from_inst.source_id)
 	to_inst.inserts = audio.get_inserts(to_inst.source_id)
+	if moved and not (from_inst == to_inst and from_slot == to_slot):
+		automation.insert_moved(from_inst, from_slot, to_inst, to_slot)
 
 
 func copy_insert(from_inst, from_slot: int, to_inst, to_slot: int) -> String:
 	var copied := audio.copy_insert(from_inst.source_id, from_slot, to_inst.source_id, to_slot)
 	to_inst.inserts = audio.get_inserts(to_inst.source_id)
+	if copied and not (from_inst == to_inst and from_slot == to_slot):
+		automation.copied(from_inst, "insert", from_slot, to_inst, to_slot)
 	return "" if copied else audio.get_error()
 
 
 func clear_insert(inst, slot: int) -> void:
 	audio.clear_insert(inst.source_id, slot)
 	inst.inserts = audio.get_inserts(inst.source_id)
+	automation.dropped(inst, "insert", slot)
 
 
 func set_insert_on(inst, slot: int, on: bool) -> void:
@@ -1210,6 +1246,10 @@ func duplicate_instrument(inst, at = null):
 			var problem := copy_insert(inst, slot, copy, slot)
 			if problem != "":
 				problems.append("insert %s: %s" % [char(65 + slot), problem])
+	copy.automation = inst.automation.duplicate(true)  # its automation, all of it
+	copy.lanes = inst.lanes.duplicate()
+	copy.auto_mode = inst.auto_mode
+	timeline.sync(copy)
 	copy_problem = "; ".join(problems)
 	return copy
 

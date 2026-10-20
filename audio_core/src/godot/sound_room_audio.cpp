@@ -559,14 +559,15 @@ bool SoundRoomAudio::set_track(int id, const Array& notes, const Array& clips, c
         }
     };
     for (const auto& [name, lane] : named) read(automation.get(name, Array()), lane);
-    // Its controls: [{target ("amp", "insert", "pedal", "instrument" or "send"), index, param, points}]
+    // Its controls: [{target ("amp", "insert", "pedal", "instrument", "send" or "stomp": a stock pedal's knob), index, param, points}]
     const Array params = automation.get("params", Array());
     for (int64_t i = 0; i < params.size(); ++i) {
         const Dictionary d = params[i];
         sr::ParamLane lane;
         const String target = d.get("target", "amp");
         lane.target = target == "insert" ? sr::ParamLane::Insert : target == "pedal" ? sr::ParamLane::Pedal
-                    : target == "instrument" ? sr::ParamLane::Instrument : target == "send" ? sr::ParamLane::Send : sr::ParamLane::AmpKnob;
+                    : target == "instrument" ? sr::ParamLane::Instrument : target == "send" ? sr::ParamLane::Send
+                    : target == "stomp" ? sr::ParamLane::PedalKnob : sr::ParamLane::AmpKnob;
         lane.index = int(d.get("index", 0));
         lane.param = uint32_t(int64_t(d.get("param", 0)));
         read(d.get("points", Array()), &lane.points);

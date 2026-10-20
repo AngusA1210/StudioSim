@@ -2331,6 +2331,46 @@ func _run() -> void:
 	keys_inst.auto_mode = "read"
 	keys_inst.automation.erase(control_param)
 	keys_inst.lanes = ["volume"]
+	# A plug-in's automation goes where it goes: to another slot, another track; copied with it, gone with it.
+	keys_inst.automation[control_param] = [[0.0, 0.25]]
+	keys_inst.lanes = [control_param]
+	var moved_param: String = "insert:2:%d" % control_parts[2]
+	main.mixer.drop_insert({"inst": keys_inst, "slot": 0}, keys_inst, 2, false)
+	timeline.locate(5.0)
+	await frames(3)
+	var moved_value: float = audio.get_plugin_parameter(keys_inst.source_id, "insert", 2, control_parts[2])
+	check(keys_inst.automation.has(moved_param) and not keys_inst.automation.has(control_param) and keys_inst.lanes == [moved_param] and
+		absf(moved_value - control_wanted) < 0.01 * maxf(1.0, absf(control_info.get("max", 1.0) - control_info.get("min", 0.0))),
+		"a plug-in dragged to another insert slot takes its automation (and its lane) with it", str(keys_inst.lanes))
+	main.mixer.drop_insert({"inst": keys_inst, "slot": 2}, amp_auto, 1, false)
+	var other_param: String = "insert:1:%d" % control_parts[2]
+	var went_across: bool = amp_auto.automation.has(other_param) and amp_auto.lanes.has(other_param) and not keys_inst.automation.has(moved_param) and \
+		keys_inst.lanes == ["volume"]
+	main.mixer.drop_insert({"inst": amp_auto, "slot": 1}, keys_inst, 0, true)
+	var copied_back: bool = keys_inst.automation.get(control_param, []) == [[0.0, 0.25]] and amp_auto.automation.has(other_param) and \
+		not is_same(keys_inst.automation[control_param], amp_auto.automation[other_param])
+	main.clear_insert(amp_auto, 1)
+	check(went_across and copied_back and not amp_auto.automation.has(other_param) and not amp_auto.lanes.has(other_param),
+		"to another track too; Option-dropped, a copy takes a copy of it; taken away, the plug-in takes its automation with it")
+	keys_inst.automation.erase(control_param)
+	var drive_at: int = main.add_pedal(amp_auto, "overdrive")
+	var pedal_menu: Array = auto.plugin_params(amp_auto).filter(func(p): return p.name == "Overdrive (pedal %d)" % (drive_at + 1))
+	var drive_param := "stomp:%d:0" % drive_at
+	amp_auto.automation[drive_param] = [[0.0, 2.0], [16.0, 6.0]]
+	amp_auto.lanes = [drive_param]
+	timeline.sync(amp_auto)
+	timeline.locate(8.0)
+	await frames(3)
+	check(not pedal_menu.is_empty() and pedal_menu[0].params.any(func(c): return c.param == drive_param and c.name == "Drive") and
+		absf(float(amp_auto.pedals[drive_at].controls[0]) - 4.0) < 0.01 and auto.value_text(amp_auto, drive_param, 4.0).begins_with("4.0"),
+		"a stock pedal's knobs can be automated (its own submenu): stopped, its Drive is where its lane has it", str(amp_auto.pedals[drive_at].controls))
+	main.add_pedal(amp_auto, "fuzz", 0)
+	var after_add: bool = amp_auto.automation.has("stomp:%d:0" % (drive_at + 1)) and amp_auto.lanes == ["stomp:%d:0" % (drive_at + 1)]
+	main.move_pedal(amp_auto, drive_at + 1, 0)
+	var after_move: bool = amp_auto.automation.has("stomp:0:0") and amp_auto.pedals[0].kind == "overdrive"
+	main.remove_pedal(amp_auto, 0)
+	check(after_add and after_move and not amp_auto.automation.keys().any(func(p): return p.begins_with("stomp:")) and amp_auto.lanes == ["volume"],
+		"a pedal's automation follows it about the board, and goes when it is taken off", str(amp_auto.automation.keys()))
 	main.clear_insert(keys_inst, 0)
 	main.remove_instrument(amp_auto)
 	var master_row: int = view.tracks().size() - 1
@@ -2352,8 +2392,6 @@ func _run() -> void:
 	var drums_send = main.find_instrument("drums")
 	main.mixer.open()
 	await frames(3)
-	main.mixer.set_show_sends(true)
-	await frames(2)
 	var drums_send_strip: Dictionary = main.mixer._strip_for(drums_send)
 	var aux_strip: Dictionary = main.mixer._strip_for(aux)
 	main.mixer.show_send_menu(drums_send, 0, drums_send_strip.sends[0].button)
@@ -2363,7 +2401,7 @@ func _run() -> void:
 	await frames(2)
 	check(aux != null and not aux_strip.is_empty() and aux_strip.source.text == "1 send in" and offered_aux and drums_send.sends[0].get("aux") == aux and
 		drums_send_strip.sends[0].button.text.begins_with(aux.display_name) and drums_send_strip.sends[0].button.get_parent().get_parent().visible,
-		"an aux track has a strip of its own; in the sends view, a track's empty send offers it, and sends to it", drums_send_strip.sends[0].button.text)
+		"an aux track has a strip of its own; a track's empty send (under its inserts) offers it, and sends to it", drums_send_strip.sends[0].button.text)
 	timeline.locate(0.0)
 	timeline.start_playing()
 	await seconds(0.8)
@@ -2375,9 +2413,16 @@ func _run() -> void:
 	check(aux_heard > 0.001 and drums_send.sends[0].pre and is_equal_approx(float(drums_send.sends[0].level_db), -6.0) and
 		auto.params_for(drums_send).has("send:0"), "it plays into the aux (its meter reads it), before the fader or after, at a level that can be automated too",
 		"%.0f dBFS" % linear_to_db(maxf(aux_heard, 1e-9)))
-	main.mixer.set_show_sends(false)
 	main.mixer.close()
 	check(view.tracks().has(aux) and view.tracks().find(aux) == view.tracks().size() - 2, "the aux has a row in the edit window, after the tracks")
+	var aux_row: int = view.tracks().find(aux)
+	view.scroll_y = clampf(view.row_top(aux_row) + view.scroll_y - view.RULER, 0.0, view._most_scroll())
+	var empty_at := Vector2(view.x_of(6.0), view.row_top(aux_row) + view.ROW / 2.0)
+	var empty_hint: String = view.hint_at(empty_at)
+	view.press(empty_at)
+	view.release(empty_at)
+	check(view.zone_at(empty_at).get("zone", "") == "track" and empty_hint == "Click to put the playhead here" and absf(timeline.playhead - timeline.snap(6.0)) < 0.01,
+		"over an empty part of a row (a folder's, an aux's) the hint line says so, and a click puts the playhead there", "%s, %.2f" % [empty_hint, timeline.playhead])
 	await tap(KEY_A)
 	check(not view.show_automation, "and A hides the lanes again")
 	main.edit_window.close()
