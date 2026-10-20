@@ -156,6 +156,11 @@ to another in its panel:
   +20 dB, so a dynamic that sounds lean at a metre sounds full at a few centimetres.
 - **Its sensitivity** is how loud it is for the same sound, against the measurement mic: a dynamic or a ribbon needs
   more gain than a condenser, as real ones do.
+- **Its noise**: each hisses as quietly as its model's self-noise (the sound level, A-weighted, that would make as
+  much noise: a large condenser 8 dB(A), a pencil 14, a ribbon 16, a dynamic 18, the measurement mic 22), and its
+  preamp adds its own, the more of it the more gain a quiet mic needs. The room's levels are set so that full scale,
+  through the measurement mic at 0 dB of gain, is 120 dB SPL (an instrument heard at its own level is around 90 to
+  105 dB SPL), so it is far below the music, but there in a quiet passage with a lot of gain, as with a real mic.
 - **Placing it**: pick one from the menu, carry it (G) and put it down: it points at the instrument nearest it. Then
   **'** at it (or its name in the mix window) opens its panel: its model and pattern (with its frequency response and
   its pattern drawn, the lows and highs fainter), where it stands, to the centimetre (across and along the room, from
@@ -171,15 +176,21 @@ to another in its panel:
   where they were heard, with no input latency to take off, since nothing came in through the interface; something
   played live along with it is heard by it as late as you play it, though, as in a real room with headphones that
   are late.
-- **Stereo pairs**: two mics on one stand, two tracks ("Stereo Pair L" and "R"), panned hard left and right, in a
-  folder of their own, set up as one of the classic ways: **XY** (two cardioids at one point, 90° apart: mono-safe,
-  the image from their angles), **ORTF** (two cardioids 17 cm apart, 110° apart: angles and timing both, as ears
-  have it), a **spaced pair** (A/B: two omnis side by side, as far apart as you like, wide and roomy) or **Blumlein**
-  (two figure-8s at one point, 90° apart: the front and the room behind in true stereo). The pair takes the pattern
-  its setup wants (pencils for the cardioids and omnis, ribbons for Blumlein, unless their model has it). Its panel
-  places and points the two as one (where the stand is, between them), and picking up either picks up the pair.
+- **Stereo pairs**: two mics on a bar on one stand, as one **stereo track**: they record one stereo file, and it plays
+  back in two channels, through stereo inserts, its fader, and its pan (a balance, as a stereo track's). Its panel
+  sets it up as one of the classic ways: **XY** (two cardioids at one point, 90° apart: mono-safe, the image from
+  their angles), **ORTF** (two cardioids 17 cm apart, 110° apart: angles and timing both, as ears have it), a
+  **spaced pair** (A/B: two omnis side by side, as far apart as you like, wide and roomy), **Blumlein** (two
+  figure-8s at one point, 90° apart: the front and the room behind in true stereo) or **mid-side** (M/S: a mid mic
+  facing ahead, cardioid, omni or figure-8, and a figure-8 side mic across it). A mid-side pair is recorded as it
+  hears, mid and side, and decoded to left and right in its track (left is mid plus side, right mid less side) as wide
+  as its **width** says: 0 is mono, 100 % as the two hear it, more wider still, and it can be changed after recording.
+  The pair takes the patterns its setup wants (pencils for the cardioids and omnis, ribbons for Blumlein, a large
+  condenser's figure-8 for the side, unless their model has them), and is placed and pointed as one.
+- **Its pan** (a stereo mic's balance) can be automated, as a lane under its track, and written as it plays by moving it
+  on its strip or in its panel.
 - It is kept with the room: where it stands, how high, how it points, its model, pattern, gain and pan, and a pair's
-  setup.
+  setup. (A stereo pair kept as two mono mics, as rooms had it for a while, opens as two mics.)
 
 ### Inputs
 
@@ -383,7 +394,7 @@ In a Record room:
 - **Automation**, as Pro Tools and Logic have it: **A** (or the edit window's Auto button) shows a lane under each
   track (a folder's, an aux's, and the master's, whose row is at the foot of the edit window). A lane shows one
   thing, chosen with its first button: **Volume**, **Mute**, an instrument's **Sustain pedal**, an amp's knobs
-  (**Gain** to **Master**), a send's level (**Send A** to **E**), any of the controls of the plug-ins on the
+  (**Gain** to **Master**), a microphone's **Pan**, a send's level (**Send A** to **E**), any of the controls of the plug-ins on the
   track, each plug-in's in a submenu of its own (on its inserts, its Plug-in pedals, a plug-in instrument's own),
   or the knobs of an amp's stock pedals, each pedal's in a submenu too; the master's lane is its fader. A plug-in's
   automation goes where the plug-in goes: dragged to another insert slot (on its track or another), its points and
@@ -701,19 +712,17 @@ for the notes, undo), tracks with names and colours, in routing folders (folders
 automation (volume, mute, the sustain pedal, an amp's knobs and its pedals', plug-ins' controls, sends and the master), drawn or
 written as it plays, aux tracks with sends, recordings read from disk as they play, and microphones that record the
 room from where they stand (dynamics, condensers, ribbons and a measurement mic, with their patterns, proximity
-effect and responses, and stereo pairs).
+effect, responses and noise, and stereo pairs on stereo tracks, mid-side among them).
 
 To do, roughly in this order:
 
-1. **More microphones**: mid-side pairs (decoded to left and right), a pair recorded as one stereo track, and a mic's
-   own noise.
-2. **More plug-ins**: inserts on the master, and perhaps VST3 and Windows.
-3. **The room's sound**: wall materials, each absorbing and diffusing sound in its
+1. **More plug-ins**: inserts on the master, and perhaps VST3 and Windows.
+2. **The room's sound**: wall materials, each absorbing and diffusing sound in its
    own way, which shape how the room's reverb rings.
-4. **You in the room**: an avatar whose height you can set (the ears and eyes go with it; the view is a little tall
+3. **You in the room**: an avatar whose height you can set (the ears and eyes go with it; the view is a little tall
    for some now), which multiplayer will show to the others; and a free camera, detached from the avatar, that flies
    about the room with nothing in its way.
-5. **Multiplayer**, the final goal: a session server, a networked clock, note events and low-latency audio streams.
+4. **Multiplayer**, the final goal: a session server, a networked clock, note events and low-latency audio streams.
 
 Also wanted along the way: MIDI on Windows and Linux, and VR through OpenXR. Perhaps later a free version with Jam rooms
 only, Record rooms coming with the full one.

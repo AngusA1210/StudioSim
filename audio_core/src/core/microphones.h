@@ -13,7 +13,11 @@
 //    a third of the reverb an omni does, from the same place;
 //  - its frequency response on axis, far off (as makers draw it): a few filters, as an equalizer has them;
 //  - its sensitivity: how loud it is for the same sound, against the flat measurement mic. A dynamic or a ribbon
-//    needs more gain, as real ones do.
+//    needs more gain, as real ones do;
+//  - its self-noise, as makers give it (the sound level, A-weighted, that would make as much noise), to which the
+//    preamp adds its own: the same at the preamp for every mic, so the more gain a quiet mic needs, the more of it.
+// The room's sound levels are such that a full-scale sample, through the measurement mic at 0 dB of gain, is 120 dB
+// SPL: an instrument heard at its own level, 1.5 m away, is around 90 to 105 dB SPL.
 // Models of the kinds a studio has, not of any one maker's.
 
 #include <array>
@@ -39,9 +43,15 @@ struct MicFilter {
 struct MicModel {
     std::string id, name, about;
     float sensitivity_db = 0.0f;
+    float self_noise_db = 15.0f;  // dB(A) SPL
     std::vector<std::pair<MicPattern, MicPolar>> patterns;  // the patterns it can be switched to, its own first
     std::vector<MicFilter> response;
 };
+
+constexpr float kFullScaleSpl = 120.0f;    // dB SPL a full-scale sample stands for, through the measurement mic
+constexpr float kPreampNoiseSpl = 12.0f;   // the preamp's own noise, as a sound level, through the measurement mic
+// A model's noise, its own and its preamp's together, as a sound level (dB SPL).
+float micNoiseSpl(const MicModel& model);
 
 // Every model, in the order a menu lists them.
 const std::vector<MicModel>& micModels();

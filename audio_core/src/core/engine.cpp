@@ -221,20 +221,33 @@ struct AudioEngine::Source {
         float near_in = 0.0f, near_out = 0.0f;  // the proximity effect's filter
     };
     // A microphone's model, as the audio thread plays it: its pattern band by band, what of the reverb it hears band by
-    // band, its response on axis, its sensitivity; which way it points (glided); where its track sits in the stereo.
+    // band, its response on axis, its sensitivity, its noise (its own and its preamp's, as a white noise's amplitude).
     struct MicSound {
         MicPolar polar;
         float diffuse[3] = {1.0f, 1.0f, 1.0f};
         std::array<EqFilter, 8> eq{};
         int eq_count = 0;
         float sensitivity = 1.0f;
+        float noise = 0.0f;
         float rev_low = 0.0f, rev_below_high = 0.0f;
         bool gradient = false;  // some of it hears the pressure gradient (and so has a proximity effect)
         int model = 0, pattern = 0;  // (made again for a new sample rate)
-    } mic_sound;
-    Vec3 aim{0.0f, 0.0f, 1.0f}, aim_target{0.0f, 0.0f, 1.0f};
-    float pan = 0.0f, pan_target = 0.0f;
-    std::unique_ptr<std::array<Pickup, AudioEngine::kSourceSlots>> pickups;
+    };
+    // A microphone's capsule: where it hears from (the game thread's; a mono mic's is where it stands, a stereo mic's
+    // either side of that), what kind it is, which way it points (glided), and each source as it hears it.
+    struct Capsule {
+        Vec3 position;
+        MicSound sound;
+        Vec3 aim{0.0f, 0.0f, 1.0f}, aim_target{0.0f, 0.0f, 1.0f};
+        std::unique_ptr<std::array<Pickup, AudioEngine::kSourceSlots>> pickups;
+        Rng hiss;
+    };
+    std::array<Capsule, 2> capsules;
+    int capsule_count = 0;  // a microphone's one, a stereo mic's two (left and right, or mid and side)
+    bool mid_side = false;  // a stereo mic's capsules are mid and side, decoded to left and right
+    float width = 1.0f, width_target = 1.0f;  // (how much of the side, decoding)
+    std::vector<float> mono_r, pre_r, playback_r;  // a stereo mic's second channel
+    float pan = 0.0f, pan_target = 0.0f;  // a microphone's track: where it sits in the stereo (a stereo one's, its balance)
     bool hear_input = false;  // a microphone, this block: what it hears (rather than its clips) is its track's sound
     bool auto_sustain = false;  // the sustain pedal down by automation
     Track* track_rt = nullptr;
@@ -325,7 +338,8 @@ std::unique_ptr<Instrument> AudioEngine::makeInstrument(InstrumentKind kind) con
         case InstrumentKind::BassStack:
             return std::make_unique<Amp>(sr, kind, &input_bus_, block_);
         case InstrumentKind::Bus:
-        case InstrumentKind::Mic:  // (what it plays is what it hears: see hearRoom)
+        case InstrumentKind::Mic:  // (what it plays is what it hears: see hearCapsule)
+        case InstrumentKind::StereoMic:
             return std::make_unique<Silence>(sr);
     }
     return nullptr;
@@ -403,7 +417,10 @@ bool AudioEngine::configure(int sample_rate, int block_size, std::string* error)
         s->bus_l.assign(size_t(block_), 0.0f);
         s->bus_r.assign(size_t(block_), 0.0f);
         for (auto* buffer : {&s->pre, &s->out_l, &s->out_r}) buffer->assign(size_t(block_), 0.0f);
-        if (isMic(s->kind)) soundAs(*s, s->mic_sound.model, s->mic_sound.pattern);  // (its filters at the new rate)
+        for (int k = 0; k < s->capsule_count; ++k)  // (its filters at the new rate)
+            soundAs(*s, k, s->capsules[size_t(k)].sound.model, s->capsules[size_t(k)].sound.pattern);
+        for (auto* buffer : {&s->mono_r, &s->pre_r, &s->playback_r})
+            if (!buffer->empty()) buffer->assign(size_t(block_), 0.0f);
         if (!s->spatializer.init(steam_, error)) return false;
     }
     return true;
@@ -781,8 +798,11 @@ bool AudioEngine::startRecording(const std::vector<std::pair<int, std::string>>&
         if (error) *error = "it is recording already";
         return false;
     }
+    std::vector<int> stereo;  // (a stereo mic records a file of two channels)
+    for (const auto& [source, path] : files)
+        if (const Source* s = owned(source); s && s->kind == InstrumentKind::StereoMic) stereo.push_back(source);
     auto recorder = std::make_unique<Recorder>();
-    if (!recorder->begin(files, sr_, error)) return false;
+    if (!recorder->begin(files, sr_, error, stereo)) return false;
     Captured stale;
     while (captured_.pop(stale)) {}
     Command c; c.type = Command::RecordStart; c.data = recorder.get(); c.v[0] = float(std::max(from_step, 0.0));
@@ -1041,7 +1061,7 @@ bool AudioEngine::setInsert(int id, int slot, const std::string& plugin_id, std:
         if (error) *error = "there is no such insert";
         return false;
     }
-    std::unique_ptr<PluginPedal> pedal = makePluginPedal(plugin_id, state, error, isBus(s->kind));
+    std::unique_ptr<PluginPedal> pedal = makePluginPedal(plugin_id, state, error, isStereo(s->kind));
     return pedal && placeInsert(*s, slot, std::move(pedal), true, error);
 }
 
@@ -1070,7 +1090,7 @@ bool AudioEngine::moveInsert(int from_id, int from_slot, int to_id, int to_slot)
     if (!a || !b || from_slot < 0 || from_slot >= kMaxInserts || to_slot < 0 || to_slot >= kMaxInserts || !a->inserts[size_t(from_slot)].pedal)
         return false;
     if (a == b && from_slot == to_slot) return true;
-    if (isBus(a->kind) != isBus(b->kind)) {  // between a track (one channel) and a bus (two): made again there, settings and all
+    if (isStereo(a->kind) != isStereo(b->kind)) {  // between a channel of one and one of two: made again there, settings and all
         if (b->inserts[size_t(to_slot)].pedal) return false;  // (only into an empty slot)
         return copyInsert(from_id, from_slot, to_id, to_slot, nullptr) && clearInsert(from_id, from_slot);
     }
@@ -1103,7 +1123,7 @@ bool AudioEngine::copyInsert(int from_id, int from_slot, int to_id, int to_slot,
     }
     if (a == b && from_slot == to_slot) return true;
     const std::vector<uint8_t> state = original->saveState();
-    std::unique_ptr<PluginPedal> copy = makePluginPedal(original->description().id, &state, error, isBus(b->kind));
+    std::unique_ptr<PluginPedal> copy = makePluginPedal(original->description().id, &state, error, isStereo(b->kind));
     return copy && placeInsert(*b, to_slot, std::move(copy), a->inserts[size_t(from_slot)].on, error);
 }
 
@@ -1295,9 +1315,17 @@ int AudioEngine::addSource(InstrumentKind kind, Vec3 position, float gain, float
     for (auto* buffer : {&src->pre, &src->out_l, &src->out_r}) buffer->assign(size_t(block_), 0.0f);
     if (!inRoom(kind)) reverb_send = 0.0f;  // (a folder's tracks feed the reverb themselves; a microphone makes no sound)
     if (inRoom(kind)) src->history.assign(Source::kHistory, 0.0f);
-    if (isMic(kind)) {
-        src->pickups = std::make_unique<std::array<Source::Pickup, kSourceSlots>>();
-        soundAs(*src, micModelIndex("flat"), 0);
+    if (isMic(kind)) {  // a flat omni to begin with, where it stands (a stereo mic's two, there, till they are placed)
+        src->capsule_count = kind == InstrumentKind::StereoMic ? 2 : 1;
+        for (int k = 0; k < src->capsule_count; ++k) {
+            Source::Capsule& capsule = src->capsules[size_t(k)];
+            capsule.pickups = std::make_unique<std::array<Source::Pickup, kSourceSlots>>();
+            capsule.position = position;
+            capsule.hiss.s = 0x9E3779B9u + uint32_t(slot * 2 + size_t(k)) * 0x85EBCA6Bu;
+            soundAs(*src, k, micModelIndex("flat"), 0);
+        }
+        if (kind == InstrumentKind::StereoMic)
+            for (auto* buffer : {&src->mono_r, &src->pre_r, &src->playback_r}) buffer->assign(size_t(block_), 0.0f);
     }
     src->via = src->via_target = src->position = position;
     src->gain = src->gain_target = gain;
@@ -1342,6 +1370,7 @@ void AudioEngine::setSourcePosition(int id, Vec3 p) {
     Source* s = owned(id);
     if (!s) return;
     s->position = p;
+    if (s->kind == InstrumentKind::Mic) s->capsules[0].position = p;  // (a stereo mic's capsules are placed apart)
     updatePath(*s);
     updateMicPaths(*s);
 }
@@ -1379,14 +1408,14 @@ void AudioEngine::updatePaths() {
         if (s && !s->removing) updatePath(*s);
 }
 
-// A microphone's model and pattern, made ready to play: its pattern band by band, what of a diffuse field it hears,
-// its response's filters at the engine's sample rate, its sensitivity.
-void AudioEngine::soundAs(Source& mic, int model_index, int pattern_index) {
+// A microphone capsule's model and pattern, made ready to play: its pattern band by band, what of a diffuse field it
+// hears, its response's filters at the engine's sample rate, its sensitivity, its noise.
+void AudioEngine::soundAs(Source& mic, int capsule, int model_index, int pattern_index) {
     const auto& models = micModels();
-    if (model_index < 0 || model_index >= int(models.size())) return;
+    if (model_index < 0 || model_index >= int(models.size()) || capsule < 0 || capsule >= mic.capsule_count) return;
     const MicModel& model = models[size_t(model_index)];
     const auto& pattern = model.patterns[size_t(std::clamp(pattern_index, 0, int(model.patterns.size()) - 1))];
-    auto& sound = mic.mic_sound;
+    auto& sound = mic.capsules[size_t(capsule)].sound;
     sound.model = model_index;
     sound.pattern = pattern_index;
     sound.polar = pattern.second;
@@ -1402,22 +1431,39 @@ void AudioEngine::soundAs(Source& mic, int model_index, int pattern_index) {
         sound.eq[size_t(f)].design(model.response[size_t(f)], float(sr_));
     }
     sound.sensitivity = std::pow(10.0f, model.sensitivity_db / 20.0f);
+    // Its noise as a sound level, in the room's terms (a full-scale sample is kFullScaleSpl), as white noise (whose
+    // amplitude is sqrt 3 times its RMS).
+    sound.noise = std::pow(10.0f, (micNoiseSpl(model) - kFullScaleSpl) / 20.0f) * std::sqrt(3.0f);
 }
 
-void AudioEngine::setMicModel(int id, const std::string& model, MicPattern pattern) {
+void AudioEngine::setMicModel(int id, const std::string& model, MicPattern pattern, int capsule) {
     const int index = micModelIndex(model);
     if (index < 0) return;
     const auto& patterns = micModels()[size_t(index)].patterns;
     int which = 0;
     for (size_t p = 0; p < patterns.size(); ++p)
         if (patterns[p].first == pattern) which = int(p);
-    Command c; c.type = Command::MicModelSet; c.id = id; c.v[0] = float(index); c.v[1] = float(which); push(c);
+    Command c; c.type = Command::MicModelSet; c.id = id; c.v[0] = float(index); c.v[1] = float(which); c.v[2] = float(capsule); push(c);
 }
 
-void AudioEngine::setMicAim(int id, Vec3 aim) {
+void AudioEngine::setMicAim(int id, Vec3 aim, int capsule) {
     const float n = length(aim);
     if (n < 1e-6f) return;
-    Command c; c.type = Command::MicAim; c.id = id; c.v[0] = aim.x / n; c.v[1] = aim.y / n; c.v[2] = aim.z / n; push(c);
+    Command c; c.type = Command::MicAim; c.id = id; c.v[0] = aim.x / n; c.v[1] = aim.y / n; c.v[2] = aim.z / n; c.v[3] = float(capsule);
+    push(c);
+}
+
+void AudioEngine::setMicCapsule(int id, int capsule, Vec3 position) {
+    Source* s = owned(id);
+    if (!s || capsule < 0 || capsule >= s->capsule_count) return;
+    const Vec3 was = s->capsules[size_t(capsule)].position;
+    if (was.x == position.x && was.y == position.y && was.z == position.z) return;
+    s->capsules[size_t(capsule)].position = position;
+    updateMicPaths(*s);
+}
+
+void AudioEngine::setMicMidSide(int id, bool mid_side, float width) {
+    Command c; c.type = Command::MicMidSide; c.id = id; c.v[0] = mid_side ? 1.0f : 0.0f; c.v[1] = std::clamp(width, 0.0f, 4.0f); push(c);
 }
 
 void AudioEngine::setSourcePan(int id, float pan) {
@@ -1433,27 +1479,30 @@ void AudioEngine::updateMicPaths(Source& s) {
     }
 }
 
-// The way a source's sound reaches a microphone, as it reaches the listener: straight, or round a wall's edge (or over
-// it), the longer way dulled as the shorter way is shadowed.
+// The way a source's sound reaches each of a microphone's capsules, as it reaches the listener: straight, or round a
+// wall's edge (or over it), the longer way dulled as the shorter way is shadowed.
 void AudioEngine::updateMicPath(const Source& mic, const Source& source) {
-    Command c; c.type = Command::MicPath; c.id = mic.id; c.v[0] = float(source.id);
-    float gains[3] = {1.0f, 1.0f, 1.0f};
-    Vec3 via = source.position;  // where it arrives from: the source itself, or the edge it bends round
-    if (geometry_.empty()) {
-        c.v[1] = length(sub(source.position, mic.position));
-    } else {
-        const DirectPath path = geometry_.directPath(mic.position, source.position);
-        via = path.via;
-        c.v[1] = length(sub(path.via, mic.position)) + path.extra;
-        directPathGains(path.differences, path.count, path.blocked, gains);
+    for (int k = 0; k < mic.capsule_count; ++k) {
+        const Vec3 at = mic.capsules[size_t(k)].position;
+        Command c; c.type = Command::MicPath; c.id = mic.id; c.v[0] = float(source.id); c.v[8] = float(k);
+        float gains[3] = {1.0f, 1.0f, 1.0f};
+        Vec3 via = source.position;  // where it arrives from: the source itself, or the edge it bends round
+        if (geometry_.empty()) {
+            c.v[1] = length(sub(source.position, at));
+        } else {
+            const DirectPath path = geometry_.directPath(at, source.position);
+            via = path.via;
+            c.v[1] = length(sub(path.via, at)) + path.extra;
+            directPathGains(path.differences, path.count, path.blocked, gains);
+        }
+        for (int b = 0; b < 3; ++b) c.v[2 + b] = gains[b];
+        const Vec3 way = sub(via, at);
+        const float n = length(way);
+        c.v[5] = n > 1e-6f ? way.x / n : 0.0f;
+        c.v[6] = n > 1e-6f ? way.y / n : 0.0f;
+        c.v[7] = n > 1e-6f ? way.z / n : 1.0f;
+        push(c);
     }
-    for (int b = 0; b < 3; ++b) c.v[2 + b] = gains[b];
-    const Vec3 way = sub(via, mic.position);
-    const float n = length(way);
-    c.v[5] = n > 1e-6f ? way.x / n : 0.0f;
-    c.v[6] = n > 1e-6f ? way.y / n : 0.0f;
-    c.v[7] = n > 1e-6f ? way.z / n : 1.0f;
-    push(c);
 }
 
 void AudioEngine::setRoom(float width, float height, float depth, const std::vector<Wall>& walls) {
@@ -1700,24 +1749,33 @@ void AudioEngine::drainCommands() {
             case Command::AddSource:
                 sources_[size_t(c.id)] = c.source;
                 for (Source* mic : sources_)  // (heard afresh, once the way it comes is known)
-                    if (mic && mic->pickups) (*mic->pickups)[size_t(c.id)] = {};
+                    if (mic)
+                        for (int k = 0; k < mic->capsule_count; ++k) (*mic->capsules[size_t(k)].pickups)[size_t(c.id)] = {};
                 break;
             case Command::SourceSoloMuted:
                 if (s) s->solo_target = c.v[0] > 0.5f ? 0.0f : 1.0f;
                 break;
             case Command::MicPath:
-                if (s && s->pickups && c.v[0] >= 0.0f && int(c.v[0]) < kSourceSlots) {
-                    Source::Pickup& k = (*s->pickups)[size_t(c.v[0])];
+                if (s && int(c.v[8]) < s->capsule_count && c.v[0] >= 0.0f && int(c.v[0]) < kSourceSlots) {
+                    Source::Pickup& k = (*s->capsules[size_t(c.v[8])].pickups)[size_t(c.v[0])];
                     k.target = std::max(c.v[1], 0.0f);
                     for (int b = 0; b < 3; ++b) k.band_target[b] = c.v[2 + b];
                     k.from_target = {c.v[5], c.v[6], c.v[7]};
                 }
                 break;
             case Command::MicModelSet:
-                if (s && isMic(s->kind)) soundAs(*s, int(c.v[0]), int(c.v[1]));
+                if (s && isMic(s->kind))
+                    for (int k = 0; k < s->capsule_count; ++k)
+                        if (int(c.v[2]) < 0 || int(c.v[2]) == k) soundAs(*s, k, int(c.v[0]), int(c.v[1]));
                 break;
             case Command::MicAim:
-                if (s) s->aim_target = {c.v[0], c.v[1], c.v[2]};
+                if (s && int(c.v[3]) < s->capsule_count) s->capsules[size_t(c.v[3])].aim_target = {c.v[0], c.v[1], c.v[2]};
+                break;
+            case Command::MicMidSide:
+                if (s) {
+                    s->mid_side = c.v[0] > 0.5f;
+                    s->width_target = c.v[1];
+                }
                 break;
             case Command::SourcePan:
                 if (s) s->pan_target = c.v[0];
@@ -2172,6 +2230,7 @@ void AudioEngine::renderTimeline() {
     for (Source* s : sources_) {
         if (s && isMic(s->kind)) {  // a microphone: what it hears (recorded once it is worked out), or its clips
             std::fill(s->playback.begin(), s->playback.end(), 0.0f);
+            std::fill(s->playback_r.begin(), s->playback_r.end(), 0.0f);
             s->hear_input = s->input_on || (s->armed && (punching || !playing));
             if (playing && !s->hear_input) playClips(*s, counting);
             continue;
@@ -2199,14 +2258,16 @@ void AudioEngine::playClips(Source& source, int from) {
     if (!source.track_rt || source.track_rt->clips.empty()) return;
     const bool realtime = realtime_.load(std::memory_order_acquire);
     float* out = source.playback.data();
+    float* out_r = source.playback_r.empty() ? nullptr : source.playback_r.data();  // (a stereo track's second channel)
     for (const auto& clip : source.track_rt->clips) {
         StreamedFile& file = *clip.file;
         const double rate = file.rate();
         const int64_t frames = file.frames();
+        const size_t kept = size_t(file.channels());  // a stereo file's two channels: both, for a stereo track; mixed, for one
         size_t held = SIZE_MAX;
         const float* data = nullptr;
         bool gap = false;
-        auto sample = [&](int64_t k, float* v) {
+        auto frame = [&](int64_t k, float* l, float* r) {
             const size_t c = size_t(k) >> StreamedFile::kChunkShift;
             if (c != held) {
                 held = c;
@@ -2217,7 +2278,9 @@ void AudioEngine::playClips(Source& source, int from) {
                 }
             }
             if (!data) return false;
-            *v = data[size_t(k) & (StreamedFile::kChunkFrames - 1)];
+            const size_t at = (size_t(k) & (StreamedFile::kChunkFrames - 1)) * kept;
+            *l = data[at];
+            *r = kept == 2 ? data[at + 1] : data[at];
             return true;
         };
         for (int i = from; i < block_; ++i) {
@@ -2226,8 +2289,8 @@ void AudioEngine::playClips(Source& source, int from) {
             const double at = (t + clip.offset) * rate;
             const int64_t k = int64_t(at);
             if (k < 0 || k + 1 >= frames) continue;
-            float a, b;
-            if (!sample(k, &a) || !sample(k + 1, &b)) {
+            float al, ar, bl, br;
+            if (!frame(k, &al, &ar) || !frame(k + 1, &bl, &br)) {
                 gap = true;
                 continue;
             }
@@ -2235,7 +2298,13 @@ void AudioEngine::playClips(Source& source, int from) {
             float gain = clip.gain;  // and the fades, equal power: a quarter of a sine up, or down
             if (t < clip.fade_in) gain = float(std::sin(0.5 * kPi * t / clip.fade_in));
             if (clip.length - t < clip.fade_out) gain *= float(std::sin(0.5 * kPi * (clip.length - t) / clip.fade_out));
-            out[i] += (a + (b - a) * frac) * gain;
+            const float l = al + (bl - al) * frac, r = ar + (br - ar) * frac;
+            if (out_r) {
+                out[i] += l * gain;
+                out_r[i] += r * gain;
+            } else {
+                out[i] += (kept == 2 ? 0.5f * (l + r) : l) * gain;
+            }
         }
         if (gap) streamer_.missed();
     }
@@ -2337,6 +2406,9 @@ void AudioEngine::applyParams(Source& s, double at) {
             case ParamLane::Send:
                 if (lane.index >= 0 && lane.index < kMaxSends) s.sends[size_t(lane.index)].gain_target = gainOf(value);
                 break;
+            case ParamLane::Pan:
+                s.pan_target = std::clamp(value, -1.0f, 1.0f);
+                break;
             case ParamLane::PedalKnob:
                 if (lane.index >= 0 && lane.index < s.board.count && lane.param < uint32_t(kPedalControls) &&
                     s.board.pedals[size_t(lane.index)]->kind() != PedalKind::Plugin)
@@ -2351,17 +2423,17 @@ void AudioEngine::applyParams(Source& s, double at) {
 // takes to arrive (glided as either moves, so a move bends the pitch as it would), as loud as the distance leaves it,
 // its bands as the air and the walls leave them (split at 800 Hz and 8 kHz, as Steam Audio splits the listener's);
 // the room's reverb, as diffuse there as anywhere; and its gain, before anything records it.
-void AudioEngine::hearRoom(Source& mic, float reverb_level, float glide) {
-    float* out = mic.mono.data();
-    std::fill(mic.mono.begin(), mic.mono.end(), 0.0f);
-    auto& sound = mic.mic_sound;
+void AudioEngine::hearCapsule(Source& mic, int capsule_index, float* out, float reverb_level, float glide) {
+    std::fill(out, out + block_, 0.0f);
+    Source::Capsule& capsule = mic.capsules[size_t(capsule_index)];
+    auto& sound = capsule.sound;
     const double rate = double(sr_);
     const float lows = 1.0f - std::exp(-2.0f * float(kPi) * SourceSpatializer::kBandEdges[0] / float(sr_));
     const float highs = 1.0f - std::exp(-2.0f * float(kPi) * SourceSpatializer::kBandEdges[1] / float(sr_));
     const double furthest = double(Source::kHistory - size_t(block_) - 4);  // samples late it can hear at most
     auto loudness = [&](float d) { return std::pow(SourceSpatializer::kRefDistance / std::max(d, kMicNearest), falloff_); };
-    const Vec3 aim_from = mic.aim;  // which way it points, glided as it turns
-    mic.aim = turnToward(mic.aim, mic.aim_target, glide);
+    const Vec3 aim_from = capsule.aim;  // which way it points, glided as it turns
+    capsule.aim = turnToward(capsule.aim, capsule.aim_target, glide);
     const float* pressure = sound.polar.pressure.data();
     const float* gradient = sound.polar.gradient.data();
     const float k2 = 2.0f * float(sr_);  // (the bilinear transform's)
@@ -2369,7 +2441,7 @@ void AudioEngine::hearRoom(Source& mic, float reverb_level, float glide) {
     for (size_t j = 0; j < sources_.size(); ++j) {
         const Source* s = sources_[j];
         if (!s || !inRoom(s->kind) || s->history.empty()) continue;
-        Source::Pickup& k = (*mic.pickups)[j];
+        Source::Pickup& k = (*capsule.pickups)[j];
         if (k.target < 0.0f) continue;
         if (k.distance < 0.0f) {  // heard for the first time: from where it is
             k.distance = k.target;
@@ -2388,7 +2460,7 @@ void AudioEngine::hearRoom(Source& mic, float reverb_level, float glide) {
         // How far off its axis the sound arrives: the gradient part of its pattern hears cos of that.
         const float off_from = dot(k.from, aim_from);
         k.from = turnToward(k.from, k.from_target, glide);
-        const float off_to = dot(k.from, mic.aim);
+        const float off_to = dot(k.from, capsule.aim);
         // The proximity effect: the gradient part's lows rise 6 dB an octave below c / 2 pi r, up to a point.
         const float near_corner = kSpeedOfSound / std::max(k.distance, kProximityNearest);  // radians a second
         const float wide = near_corner / most, n0 = k2 + wide;
@@ -2420,18 +2492,23 @@ void AudioEngine::hearRoom(Source& mic, float reverb_level, float glide) {
         }
     }
     // The room's reverb, as diffuse there as anywhere (whatever its fader says): what of it the pattern hears, band by
-    // band. Then its response, its sensitivity, and its gain, before anything records it.
+    // band; and its noise. Then its response, its sensitivity, and its gain, before anything records it. (A stereo
+    // mic's two hear the reverb's two sides, as two ears would; the gain glides once, with the first.)
+    const float* rev_a = capsule_index == 0 ? rev_l_.data() : rev_r_.data();
+    const float* rev_b = capsule_index == 0 ? rev_r_.data() : rev_l_.data();
     const float coef = 1.0f - std::exp(-1.0f / (0.01f * float(sr_)));
+    const float gain_from = mic.volume;
+    if (capsule_index == 0) mic.volume += (mic.volume_target - mic.volume) * (1.0f - std::pow(1.0f - coef, float(block_)));
     for (int i = 0; i < block_; ++i) {
-        const float r = (rev_l_[size_t(i)] + rev_r_[size_t(i)]) * kDryPan * reverb_level;
+        const float r = (mic.capsule_count == 1 ? (rev_a[size_t(i)] + rev_b[size_t(i)]) * kDryPan
+                                                 : (rev_a[size_t(i)] * 0.9f + rev_b[size_t(i)] * 0.1f) * 1.104f) * reverb_level;
         sound.rev_low += (r - sound.rev_low) * lows;
         sound.rev_below_high += (r - sound.rev_below_high) * highs;
         out[i] += sound.rev_low * sound.diffuse[0] + (sound.rev_below_high - sound.rev_low) * sound.diffuse[1] +
                   (r - sound.rev_below_high) * sound.diffuse[2];
-        float y = out[i];
+        float y = out[i] + capsule.hiss.next() * sound.noise;
         for (int f = 0; f < sound.eq_count; ++f) y = sound.eq[size_t(f)].process(y);
-        mic.volume += (mic.volume_target - mic.volume) * coef;
-        out[i] = y * sound.sensitivity * mic.volume;
+        out[i] = y * sound.sensitivity * (gain_from + (mic.volume - gain_from) * float(i + 1) / float(block_));
     }
 }
 
@@ -2558,6 +2635,98 @@ void AudioEngine::playSource(size_t index, float binaural_from, float glide, flo
     }
 }
 
+// A stereo mic's track (its mono and mono_r hold what it plays: what its two capsules hear, or its clips), as a bus's
+// strip is: mid and side decoded to left and right, its inserts in stereo, its fader and mute, its balance, metered,
+// into its folder or the master, and its sends.
+void AudioEngine::playStereoMic(size_t index, float wall_glide, float mute_coef) {
+    Source* s = sources_[index];
+    float* l = s->mono.data();
+    float* r = s->mono_r.data();
+    if (s->mid_side) {  // L = M + S, R = M - S, the side as wide as it is set
+        const float width_from = s->width;
+        s->width += (s->width_target - s->width) * wall_glide;
+        for (int i = 0; i < block_; ++i) {
+            const float side = r[i] * (width_from + (s->width - width_from) * float(i + 1) / float(block_));
+            const float mid = l[i];
+            l[i] = mid + side;
+            r[i] = mid - side;
+        }
+    }
+    if (s->insert_board.count > 0) {
+        const PedalTiming timing{double(bar_timing_[1]) / 4.0, bar_timing_[0], bar_timing_[1]};
+        for (int p = 0; p < s->insert_board.count; ++p) s->insert_board.pedals[size_t(p)]->processStereo(l, r, block_, timing);
+    }
+    auto bus_at = [&](int id) -> Source* {
+        Source* b = id >= 0 && id < kSourceSlots ? sources_[size_t(id)] : nullptr;
+        return b && isBus(b->kind) ? b : nullptr;
+    };
+    bool sending = false, sending_pre = false;
+    for (const auto& send : s->sends)
+        if (bus_at(send.bus) && (send.on || send.gain > 1e-6f)) {
+            sending = true;
+            sending_pre = sending_pre || send.pre;
+        }
+    Source* into = bus_at(s->output);
+    float* to_l = into ? into->bus_l.data() : mix_l_.data();
+    float* to_r = into ? into->bus_r.data() : mix_r_.data();
+    double energy = 0.0, pre_energy = 0.0;
+    float peak = 0.0f, pre_peak = 0.0f;
+    Automating automating(*this, *s);
+    const float pan_from = s->pan;
+    s->pan += (s->pan_target - s->pan) * wall_glide;
+    for (int i = 0; i < block_; ++i) {
+        pre_energy += 0.5 * (double(l[i]) * l[i] + double(r[i]) * r[i]);
+        pre_peak = std::max(pre_peak, std::max(std::fabs(l[i]), std::fabs(r[i])));
+        if (sending_pre) {
+            s->pre[size_t(i)] = l[i];
+            s->pre_r[size_t(i)] = r[i];
+        }
+        s->mute_gain += (s->mute_target - s->mute_gain) * mute_coef;
+        s->solo_gain += (s->solo_target - s->solo_gain) * mute_coef;
+        automating.next(i, mute_coef);
+        const float g = s->gain * s->mute_gain * s->auto_mute * s->solo_gain;
+        const float a = l[i] * g, b = r[i] * g;
+        energy += 0.5 * (double(a) * a + double(b) * b);
+        peak = std::max(peak, std::max(std::fabs(a), std::fabs(b)));
+        // Its balance: turned one way, the other side is turned down (equal power), as a stereo track's.
+        const float pan = pan_from + (s->pan - pan_from) * float(i + 1) / float(block_);
+        const float keep_l = pan > 0.0f ? std::cos(pan * 0.5f * float(kPi)) : 1.0f, keep_r = pan < 0.0f ? std::cos(-pan * 0.5f * float(kPi)) : 1.0f;
+        s->out_l[size_t(i)] = a * keep_l;
+        s->out_r[size_t(i)] = b * keep_r;
+        to_l[i] += s->out_l[size_t(i)];
+        to_r[i] += s->out_r[size_t(i)];
+    }
+    levels_[size_t(s->id)].store(float(std::sqrt(energy / block_)), std::memory_order_relaxed);
+    if (peak > peaks_[size_t(s->id)].load(std::memory_order_relaxed)) peaks_[size_t(s->id)].store(peak, std::memory_order_relaxed);
+    pre_levels_[size_t(s->id)].store(float(std::sqrt(pre_energy / block_)), std::memory_order_relaxed);
+    if (pre_peak > pre_peaks_[size_t(s->id)].load(std::memory_order_relaxed))
+        pre_peaks_[size_t(s->id)].store(pre_peak, std::memory_order_relaxed);
+    if (sending) {  // its sends: after its fader (and balance), or before it (muted with it)
+        const float muted = s->mute_gain * s->auto_mute * s->solo_gain;
+        for (auto& send : s->sends) {
+            Source* aux = bus_at(send.bus);
+            if (!aux) continue;
+            const float target = send.on ? send.gain_target : 0.0f;
+            const float* from_l = send.pre ? s->pre.data() : s->out_l.data();
+            const float* from_r = send.pre ? s->pre_r.data() : s->out_r.data();
+            const float scale = send.pre ? muted : 1.0f;
+            for (int i = 0; i < block_; ++i) {
+                send.gain += (target - send.gain) * mute_coef;
+                aux->bus_l[size_t(i)] += from_l[i] * scale * send.gain;
+                aux->bus_r[size_t(i)] += from_r[i] * scale * send.gain;
+            }
+        }
+    }
+    if (s->fade_blocks >= 0 && --s->fade_blocks < 0) {  // removed and faded out
+        sources_[index] = nullptr;
+        levels_[index].store(0.0f, std::memory_order_relaxed);
+        peaks_[index].store(0.0f, std::memory_order_relaxed);
+        pre_levels_[index].store(0.0f, std::memory_order_relaxed);
+        pre_peaks_[index].store(0.0f, std::memory_order_relaxed);
+        s->released.store(true, std::memory_order_release);
+    }
+}
+
 void AudioEngine::renderBlock() {
     const auto t0 = std::chrono::steady_clock::now();
     drainCommands();
@@ -2646,11 +2815,20 @@ void AudioEngine::renderBlock() {
     for (size_t index = 0; index < sources_.size(); ++index) {
         Source* mic = sources_[index];
         if (!mic || !isMic(mic->kind)) continue;
-        hearRoom(*mic, reverb_level, wall_glide);
-        if (punching_ && mic->armed && recorder_rt_ && record_to_ > record_from_)
-            recorder_rt_->write(recorder_rt_->slotOf(mic->id), mic->mono.data() + record_from_, record_to_ - record_from_);
-        if (!mic->hear_input) std::copy(mic->playback.begin(), mic->playback.end(), mic->mono.begin());
-        playSource(index, binaural_from, glide, wall_glide, mute_coef);
+        const bool stereo = mic->capsule_count == 2;
+        hearCapsule(*mic, 0, mic->mono.data(), reverb_level, wall_glide);
+        if (stereo) hearCapsule(*mic, 1, mic->mono_r.data(), reverb_level, wall_glide);
+        if (punching_ && mic->armed && recorder_rt_ && record_to_ > record_from_) {  // (a stereo mic's two, as one stereo file)
+            const int slot = recorder_rt_->slotOf(mic->id), n = record_to_ - record_from_;
+            if (stereo) recorder_rt_->write(slot, mic->mono.data() + record_from_, mic->mono_r.data() + record_from_, n);
+            else recorder_rt_->write(slot, mic->mono.data() + record_from_, n);
+        }
+        if (!mic->hear_input) {
+            std::copy(mic->playback.begin(), mic->playback.end(), mic->mono.begin());
+            if (stereo) std::copy(mic->playback_r.begin(), mic->playback_r.end(), mic->mono_r.begin());
+        }
+        if (stereo) playStereoMic(index, wall_glide, mute_coef);
+        else playSource(index, binaural_from, glide, wall_glide, mute_coef);
     }
 
     // The buses (folders and aux tracks), each after every bus that plays into it, by its output or a send: what reached

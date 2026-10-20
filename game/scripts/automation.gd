@@ -15,7 +15,8 @@ extends Node
 ##
 ## A track keeps its points as `automation`: {param: [[step, value], ...]}, in steps (they follow the tempo), and the
 ## lanes the edit window shows it in as `lanes`. A param is "volume" (dB), "mute" and "sustain" (1 on, 0 off),
-## "amp:gain" and the other knobs (0 to 10), a stock pedal's knob "stomp:<place on the board>:<knob>" (0 to 10),
+## "amp:gain" and the other knobs (0 to 10), a stock pedal's knob "stomp:<place on the board>:<knob>" (0 to 10), a
+## microphone track's "pan" (-1 left to 1 right; a stereo mic's balance),
 ## "send:0" to "send:4" (dB), or a plug-in's control: "insert:<slot>:<id>", "pedal:<place on the board>:<id>" or
 ## "instrument:<id>", kept from 0 to 1 across the control's range. A plug-in's automation (or a pedal's) goes where it
 ## goes: to another slot, another track, another place on the board. The audio core plays them all to the block
@@ -24,7 +25,8 @@ extends Node
 const MODES := ["off", "read", "touch", "latch", "write"]
 const MODE_NAMES := {"off": "Off", "read": "Read", "touch": "Touch", "latch": "Latch", "write": "Write"}
 const Catalog := preload("res://scripts/catalog.gd")
-const NAMES := {"volume": "Volume", "mute": "Mute", "sustain": "Sustain pedal"}
+const NAMES := {"volume": "Volume", "mute": "Mute", "sustain": "Sustain pedal", "pan": "Pan"}
+const PanControl := preload("res://scripts/pan_control.gd")
 const KNOB_NAMES := {"gain": "Gain", "bass": "Bass", "mid": "Middle", "treble": "Treble", "presence": "Presence", "master": "Master"}
 const RETURN_STEPS := 0.5   # how long Touch takes to go back to what was there, after a control is let go
 const THIN := 0.2           # points written closer than this (dB) to the line between their neighbours are left out
@@ -96,6 +98,8 @@ func params_for(track) -> Array:
 	if not track.is_folder and track.is_amp:
 		for control in KNOB_NAMES:
 			out.append("amp:" + control)
+	if not track.is_folder and track.is_mic:
+		out.append("pan")
 	for slot in track.sends.size():
 		if not track.sends[slot].is_empty():
 			out.append("send:%d" % slot)
@@ -179,6 +183,8 @@ func value_text(track, param: String, value: float) -> String:
 		return "-inf" if value <= -79.0 else "%+.1f dB" % value
 	if is_switch(param):
 		return "on" if value > 0.5 else "off"
+	if param == "pan":
+		return PanControl.readout(value)
 	if param.begins_with("amp:"):
 		return "%.1f" % value
 	if param.begins_with("stomp:"):
@@ -198,6 +204,8 @@ static func height_of(param: String, value: float) -> float:
 		return preload("res://scripts/fader.gd").position_of(value)
 	if is_knob(param):
 		return value / 10.0
+	if param == "pan":  # (left at the foot, right at the top)
+		return (clampf(value, -1.0, 1.0) + 1.0) / 2.0
 	return clampf(value, 0.0, 1.0)
 
 
@@ -207,6 +215,8 @@ static func value_from(param: String, height: float) -> float:
 		return snappedf(preload("res://scripts/fader.gd").level_at(height), 0.1)
 	if is_knob(param):
 		return snappedf(height * 10.0, 0.05)
+	if param == "pan":
+		return snappedf(height * 2.0 - 1.0, 0.01)
 	if is_switch(param):
 		return 1.0 if height > 0.5 else 0.0
 	return snappedf(height, 0.001)
@@ -266,6 +276,8 @@ func now(track, param: String) -> float:
 		return track.level_db
 	if param == "mute":
 		return 1.0 if track.muted else 0.0
+	if param == "pan":
+		return float(track.get("mic_pan")) if track.get("mic_pan") != null else 0.0
 	if param.begins_with("amp:"):
 		return float(track.amp_controls.get(param.substr(4), 5.0))
 	if param.begins_with("stomp:"):
@@ -469,6 +481,8 @@ func _apply(track, param: String, value: float) -> void:
 			app.apply_master_gain(gain)
 		else:
 			audio.set_source_gain(track.source_id, gain * (1.0 if track.is_folder else track.normal_gain()))
+	elif param == "pan":
+		app.set_mic_pan(track, value)
 	elif param.begins_with("amp:"):
 		app.set_amp_control(track, param.substr(4), value)
 	elif param.begins_with("stomp:"):
@@ -686,7 +700,9 @@ func param_lanes(track) -> Array:
 		var lane: Array = track.automation[param]
 		if lane.is_empty() or back.has(param) or param in ["volume", "mute", "sustain"]:
 			continue
-		if param.begins_with("amp:"):
+		if param == "pan":
+			out.append({"target": "pan", "index": 0, "param": 0, "points": lane})
+		elif param.begins_with("amp:"):
 			out.append({"target": "amp", "index": KNOB_NAMES.keys().find(param.substr(4)), "param": 0, "points": lane})
 		elif param.begins_with("stomp:"):
 			var parts: PackedStringArray = str(param).split(":")

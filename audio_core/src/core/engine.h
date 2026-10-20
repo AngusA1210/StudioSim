@@ -141,7 +141,8 @@ struct AutoPoint {
 struct ParamLane {
     // A stock pedal's knob (PedalKnob) is `param` of the pedal at `index` on the board, 0 to 10; a plug-in's control
     // (Insert, Pedal, Instrument) is its parameter `param`, in its own units.
-    enum Target : uint8_t { AmpKnob, Insert, Pedal, Instrument, Send, PedalKnob } target = AmpKnob;
+    // Pan is a microphone track's, -1 to 1.
+    enum Target : uint8_t { AmpKnob, Insert, Pedal, Instrument, Send, PedalKnob, Pan } target = AmpKnob;
     int index = 0;
     uint32_t param = 0;
     std::vector<AutoPoint> points;  // in order of their steps
@@ -257,8 +258,14 @@ public:
     // What kind of microphone it is (see microphones.h: its pickup pattern, frequency response and sensitivity),
     // which of its patterns, which way it points (a unit vector in the room), and where its track sits in the stereo
     // (-1 left, 0 the middle, 1 right). A new one is the flat omni measurement mic, pointing along +z, in the middle.
-    void setMicModel(int id, const std::string& model, MicPattern pattern);
-    void setMicAim(int id, Vec3 aim);
+    // A stereo mic (InstrumentKind::StereoMic) has two capsules, 0 and 1 (left and right, or mid and side), each of
+    // its own model and aim, placed either side of where it stands (setMicCapsule); a mono mic's is where it stands.
+    // `capsule` -1 sets both. A stereo mic's track is in two channels, recorded as one stereo file: mid and side are
+    // decoded to left and right (L = M + S, R = M - S, the side `width` times as loud) before its inserts.
+    void setMicModel(int id, const std::string& model, MicPattern pattern, int capsule = -1);
+    void setMicAim(int id, Vec3 aim, int capsule = 0);
+    void setMicCapsule(int id, int capsule, Vec3 position);
+    void setMicMidSide(int id, bool mid_side, float width = 1.0f);
     void setSourcePan(int id, float pan);  // (a microphone's track: the instruments are placed by where they stand)
     static constexpr float kSpeedOfSound = 343.0f;  // metres a second
     static constexpr float kMicNearest = 0.1f;      // metres: no closer than this, for the level
@@ -482,7 +489,7 @@ private:
             SequencerRunning, Tempo, Swing, Click, ClickVolume, Reverb2, SourceGain, Falloff, LimiterOn,
             AmpKnob, AmpHeadSet, AmpCabinetSet, LooperMemory, LooperAct, PedalBoardSet, PedalOn, PedalControl, SynthPlugin,
             TimelinePlay, TimelineLoop, TrackSet, RecordArm, RecordStart, RecordStop, SourceOutput, AutomationRead, SendSet,
-            MasterAutomation, MasterRead, SourceSoloMuted, MicPath, MicModelSet, MicAim, SourcePan,
+            MasterAutomation, MasterRead, SourceSoloMuted, MicPath, MicModelSet, MicAim, SourcePan, MicMidSide,
         } type = AddSource;
         int id = 0;
         float v[9] = {};
@@ -521,10 +528,11 @@ private:
     void updatePaths();
     void updateMicPaths(Source& source);  // how its sound reaches each microphone (or, a microphone, how each reaches it)
     void updateMicPath(const Source& mic, const Source& source);
-    void hearRoom(Source& mic, float reverb_level, float glide);  // what a microphone hears this block, into its mono
     void playSource(size_t index, float binaural_from, float glide, float wall_glide, float mute_coef);
     void playClips(Source& source, int from);  // a track's audio clips this block, into its playback
-    void soundAs(Source& mic, int model_index, int pattern_index);  // a microphone's model, ready to play
+    void soundAs(Source& mic, int capsule, int model_index, int pattern_index);  // a microphone capsule's model, ready to play
+    void hearCapsule(Source& mic, int capsule, float* out, float reverb_level, float glide);  // what one capsule hears
+    void playStereoMic(size_t index, float wall_glide, float mute_coef);  // a stereo mic's track, as a bus's strip
     int delayFor(double at) const;
 
     // StepSink: plays every source's pattern notes for this step, and the click.

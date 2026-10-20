@@ -19,23 +19,24 @@ uint16_t get16(const uint8_t* p) { return uint16_t(p[0] | p[1] << 8); }
 
 }  // namespace
 
-bool WavWriter::open(const std::string& path, int sample_rate, std::string* error) {
+bool WavWriter::open(const std::string& path, int sample_rate, std::string* error, int channels) {
     close();
     file_ = std::fopen(path.c_str(), "wb");
     if (!file_) {
         if (error) *error = "it couldn't be made: " + path;
         return false;
     }
-    frames_ = 0;
+    samples_ = 0;
+    channels_ = std::clamp(channels, 1, 2);
     std::fwrite("RIFF", 1, 4, file_);
     put32(file_, 0);  // filled in on closing
     std::fwrite("WAVEfmt ", 1, 8, file_);
     put32(file_, 16);
     put16(file_, 3);  // IEEE float
-    put16(file_, 1);  // one channel
+    put16(file_, uint16_t(channels_));
     put32(file_, uint32_t(sample_rate));
-    put32(file_, uint32_t(sample_rate) * 4);
-    put16(file_, 4);
+    put32(file_, uint32_t(sample_rate) * 4 * uint32_t(channels_));
+    put16(file_, uint16_t(4 * channels_));
     put16(file_, 32);
     std::fwrite("data", 1, 4, file_);
     put32(file_, 0);
@@ -45,12 +46,12 @@ bool WavWriter::open(const std::string& path, int sample_rate, std::string* erro
 void WavWriter::write(const float* samples, size_t count) {
     if (!file_ || count == 0) return;
     std::fwrite(samples, sizeof(float), count, file_);
-    frames_ += int64_t(count);
+    samples_ += int64_t(count);
 }
 
 void WavWriter::close() {
     if (!file_) return;
-    const uint32_t data = uint32_t(frames_ * 4);
+    const uint32_t data = uint32_t(samples_ * 4);
     std::fseek(file_, 4, SEEK_SET);
     put32(file_, 36 + data);
     std::fseek(file_, 40, SEEK_SET);

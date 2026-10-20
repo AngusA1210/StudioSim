@@ -835,9 +835,14 @@ func _refresh() -> void:
 			continue
 		strip.input.set_pressed_no_signal(inst.input_on)
 		if inst.is_mic:  # its model and pattern, and its pan
-			strip.small.text = "%s · %s" % [Catalog.MIC_MODELS_SHORT.get(inst.mic_model, "MIC"), Catalog.MIC_PATTERNS_SHORT.get(app.mic_pattern_of(inst), "")]
-			if not strip.source._dragging:
-				strip.source.set_value_no_signal(inst.mic_pan)
+			strip.small.text = "%s · %s" % [Catalog.MIC_MODELS_SHORT.get(inst.mic_model, "MIC"), Catalog.MIC_PAIRS_SHORT.get(inst.pair_technique, "")
+				if inst.is_stereo_mic else Catalog.MIC_PATTERNS_SHORT.get(app.mic_pattern_of(inst), "")]
+			var pan_held: bool = strip.source._dragging
+			if pan_held != strip.source.get_meta("held", false):  # (Touch and Latch write it while it is held)
+				strip.source.set_meta("held", pan_held)
+				app.automation.touch(inst, pan_held, "pan")
+			if not pan_held:  # (as its automation has it, while that is read)
+				strip.source.set_value_no_signal(app.automation.shown(inst, "pan"))
 		if inst.plays_plugin:
 			strip.source.text = inst.instrument_plugin.get("plugin_name", "")
 		if strip.source is OptionButton:

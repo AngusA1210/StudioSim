@@ -2447,9 +2447,9 @@ int main(int argc, char** argv) {
         room.engine.setSourceInput(mic, false);
         renderSeconds(room.engine, 0.2);
         const Render unmonitored = hit();
-        check(std::fabs(db(gained.rms_l) - db(far_hit.rms_l) - 6.0) < 0.1 && muted.peak < 1e-5 && unmonitored.peak < 1e-5,
-              "its gain comes before anything else; a muted instrument is silent in the room, so it hears nothing; and its input "
-              "not monitored (and no clips), its track is silent",
+        check(std::fabs(db(gained.rms_l) - db(far_hit.rms_l) - 6.0) < 0.1 && muted.peak < 3e-4 && unmonitored.peak < 1e-5,
+              "its gain comes before anything else; a muted instrument is silent in the room, so it hears nothing (but its own "
+              "hiss); and its input not monitored (and no clips), its track is silent",
               fmt("+%.2f dB", db(gained.rms_l) - db(far_hit.rms_l)));
 
         // A wall between them: the drums come round its end, further and dulled.
@@ -2603,6 +2603,110 @@ int main(int argc, char** argv) {
         const double diffuse = db(eight_tail) - db(omni_tail) - 6.0;  // (less the condenser's extra sensitivity)
         check(omni_tail > 1e-5f && std::fabs(diffuse + 4.8) < 1.5, "a figure-8 hears a third of the room's reverb (in energy) that an omni does",
               fmt("%.1f dB (sensitivity aside)", diffuse));
+
+        // Self-noise: in a silent room, each hears its own hiss and its preamp's, as loud as its model says. A large
+        // condenser's is far below the measurement mic's, even with its higher output.
+        Room hush;
+        hush.soloOnly(-1);
+        hush.engine.setReverb(false);
+        hush.engine.setSequencerRunning(false);
+        const int quiet_mic = hush.engine.addSource(InstrumentKind::Mic, {0.0f, 1.2f, 0.0f}, 1.0f, 0.0f);
+        hush.engine.setSourceInput(quiet_mic, true);
+        auto hiss = [&](const char* model) {
+            hush.engine.setMicModel(quiet_mic, model, MicPattern::Cardioid);
+            renderSeconds(hush.engine, 0.3);
+            double sum = 0.0;
+            for (int b = 0; b < 50; ++b) {
+                renderSeconds(hush.engine, 0.01);
+                const double level = hush.engine.sourceLevel(quiet_mic, true);
+                sum += level * level;
+            }
+            return db(std::sqrt(sum / 50.0));
+        };
+        const double flat_hiss = hiss("flat"), condenser_hiss = hiss("condenser");
+        const double flat_expected = micNoiseSpl(flat) - kFullScaleSpl;
+        const double condenser_expected = micNoiseSpl(models[size_t(micModelIndex("condenser"))]) - kFullScaleSpl + 6.0;
+        check(std::fabs(flat_hiss - flat_expected) < 1.5 && std::fabs(condenser_hiss - condenser_expected) < 2.0 && condenser_hiss < flat_hiss - 5.0,
+              "self-noise: each hears its own hiss and its preamp's, as loud as its model has it (a large condenser far quieter)",
+              fmt("measurement %.1f dBFS (", flat_hiss) + fmt("%.1f wanted), ", flat_expected) + fmt("condenser %.1f", condenser_hiss));
+    }
+
+    {
+        std::printf("\nStereo microphones\n");
+        // A stereo mic, XY: two cardioids at one point, 90 degrees apart, the drums to its left. Its track is in two
+        // channels: the left louder.
+        Room room;
+        room.quietRoom(room.drums);
+        room.engine.setSourceSoloMuted(room.drums, true);
+        const Vec3 drums_at{0.5f, 0.9f, -3.6f};
+        const Vec3 at{drums_at.x, drums_at.y, drums_at.z + 1.5f};  // south of the drums: they are to the north
+        const int pair = room.engine.addSource(InstrumentKind::StereoMic, at, 1.0f, 0.0f);
+        room.engine.setSourceInput(pair, true);
+        room.engine.setMicModel(pair, "pencil", MicPattern::Cardioid);
+        const float c45 = 0.70710678f;
+        // Facing east, its left capsule points north-east, its right south-east: the drums (north) on its left.
+        room.engine.setMicAim(pair, {c45, 0.0f, -c45}, 0);
+        room.engine.setMicAim(pair, {c45, 0.0f, c45}, 1);
+        renderSeconds(room.engine, 0.5);
+        room.engine.noteOn(room.drums, 36, 0.9f);
+        const Render xy = renderSeconds(room.engine, 0.4);
+        renderSeconds(room.engine, 0.6);
+        check(xy.rms_l > 0.003 && db(xy.rms_l) - db(xy.rms_r) > 6.0, "an XY pair hears the drums on its left louder on the left",
+              fmt("left %+.1f dB", db(xy.rms_l) - db(xy.rms_r)));
+
+        // Mid-side: a cardioid facing east (mid) and a figure-8 facing north (side): decoded, the drums on the left;
+        // the side's width taken away, the two channels alike (mono).
+        room.engine.setMicModel(pair, "pencil", MicPattern::Cardioid, 0);
+        room.engine.setMicModel(pair, "condenser", MicPattern::Figure8, 1);
+        room.engine.setMicAim(pair, {1.0f, 0.0f, 0.0f}, 0);
+        room.engine.setMicAim(pair, {0.0f, 0.0f, -1.0f}, 1);
+        room.engine.setMicMidSide(pair, true, 1.0f);
+        renderSeconds(room.engine, 0.5);
+        room.engine.noteOn(room.drums, 36, 0.9f);
+        const Render ms = renderSeconds(room.engine, 0.4);
+        renderSeconds(room.engine, 0.6);
+        room.engine.setMicMidSide(pair, true, 0.0f);
+        renderSeconds(room.engine, 0.5);
+        room.engine.noteOn(room.drums, 36, 0.9f);
+        const Render narrow = renderSeconds(room.engine, 0.4);
+        renderSeconds(room.engine, 0.6);
+        check(db(ms.rms_l) - db(ms.rms_r) > 3.0 && std::fabs(db(narrow.rms_l) - db(narrow.rms_r)) < 0.2,
+              "mid-side, decoded: the drums on the left; its width at nothing, mono",
+              fmt("left %+.1f dB, ", db(ms.rms_l) - db(ms.rms_r)) + fmt("width 0: %+.2f", db(narrow.rms_l) - db(narrow.rms_r)));
+        room.engine.setMicMidSide(pair, false);
+
+        // Armed, it records one stereo file; played back, its clip is in two channels again.
+        const auto folder = std::filesystem::temp_directory_path() / "soundroom-stereo-mic-tests";
+        std::filesystem::remove_all(folder);
+        std::filesystem::create_directories(folder);
+        room.engine.setMicModel(pair, "pencil", MicPattern::Cardioid);
+        room.engine.setMicAim(pair, {c45, 0.0f, -c45}, 0);
+        room.engine.setMicAim(pair, {c45, 0.0f, c45}, 1);
+        room.engine.setSourceInput(pair, false);
+        room.engine.setSourceLoop(room.drums, false);  // (the one kick, not the drums' pattern too)
+        renderSeconds(room.engine, 0.6);  // (turned back, and the last kick died away)
+        room.engine.setRecordArm(pair, true);
+        std::string record_error;
+        const std::string file = (folder / "Pair_01.wav").string();
+        const bool recording = room.engine.startRecording({{pair, file}}, 0.0, &record_error);
+        renderSeconds(room.engine, 0.3);
+        room.engine.noteOn(room.drums, 36, 0.9f);
+        renderSeconds(room.engine, 0.6);
+        room.engine.stopRecording();
+        renderSeconds(room.engine, 0.05);
+        RecordingResult taken;
+        const bool took = room.engine.takeRecording(&taken) && !taken.audio.empty();
+        room.engine.setRecordArm(pair, false);
+        auto streamed = StreamedFile::open(file, &record_error);
+        room.engine.setTrack(pair, {}, {{file, 0.0, 0.0, took ? taken.audio[0].seconds : 0.0}}, &record_error);
+        room.engine.playFrom(0.0);
+        const Render played = renderSeconds(room.engine, 0.9);
+        room.engine.setSequencerRunning(false);
+        check(recording && took && streamed && streamed->channels() == 2 && std::fabs(taken.audio[0].seconds - 0.9) < 0.05 && played.rms_l > 0.001 &&
+                  db(played.rms_l) - db(played.rms_r) > 6.0,
+              "armed, it records one stereo file; its clip plays back in two channels, the drums still on the left",
+              record_error + (took ? fmt("%.2f s, ", taken.audio[0].seconds) : std::string()) + fmt("left %+.1f dB", db(played.rms_l) - db(played.rms_r)));
+        std::filesystem::remove_all(folder);
     }
 
     {

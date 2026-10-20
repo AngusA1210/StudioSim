@@ -25,9 +25,8 @@ const CABINETS := {
 ## Returns {node: Node3D, accent: StandardMaterial3D} and, for an amp, how tall it stands and the floor it covers
 ## {top: float, footprint: Vector2} and where its pedals stand {pedal_spot: Vector3}. An amp is drawn with `cabinet`:
 ## a combo has its controls across the top of it, a stack its head standing on it. A microphone is drawn with
-## `mic` {height (its capsule's, in metres), tilt (degrees it points down), model (microphones.h's), stand (whether
-## it has one: a stereo pair's right mic is on its left one's), pair (the left mic of a pair: where the stand under the
-## two is and where the other is, see instrument.pair_stand)}, and says how tall it stands.
+## `mic` {height (its capsule's, in metres), tilt (degrees it points down), model (microphones.h's), capsules (a stereo
+## mic's two: [{at, turn, model}], see instrument.mic_capsules)}, and says how tall it stands.
 static func build(kind: String, color: Color, cabinet := "", mic := {}) -> Dictionary:
 	var node := Node3D.new()
 	var accent := StandardMaterial3D.new()
@@ -71,7 +70,7 @@ static func build(kind: String, color: Color, cabinet := "", mic := {}) -> Dicti
 			_speaker(node, accent)
 		"mic":
 			built.top = _microphone(node, accent, float(mic.get("height", 1.2)), float(mic.get("tilt", 0.0)), str(mic.get("model", "flat")),
-				bool(mic.get("stand", true)), mic.get("pair", {}))
+				mic.get("capsules", []))
 	return built
 
 
@@ -285,24 +284,34 @@ static func _speaker(node: Node3D, accent: Material) -> void:
 ## A microphone on a boom stand: its capsule (where it hears from, lit in its colour as it hears) at `height` over the
 ## floor, pointing along +z and down by `tilt` degrees; its body as its model has it (end-address, the body behind the
 ## capsule: the measurement mic, the dynamics, the pencil; side-address, the body below it: the large condenser, the
-## ribbon); and the boom back to the stand's pole, and a tripod. A stereo pair's left mic draws the stand under the
-## two and the bar they are on instead; its right mic, no stand. Returns how tall it stands.
-static func _microphone(node: Node3D, accent: Material, height: float, tilt: float, model := "flat", stand := true, pair := {}) -> float:
+## ribbon); and the boom back to the stand's pole, and a tripod. A stereo mic's two (`capsules`) are on a bar across,
+## on a stand right under it. Returns how tall it stands.
+static func _microphone(node: Node3D, accent: Material, height: float, tilt: float, model := "flat", capsules := []) -> float:
 	var t := deg_to_rad(tilt)
 	var aim := Vector3(0.0, -sin(t), cos(t))  # the way it points
 	var up := Vector3(0.0, cos(t), sin(t))    # and up, as it is tilted
 	var capsule := Vector3(0.0, height, 0.0)
+	if not capsules.is_empty():  # a stereo pair: each on the bar, turned its own way; the bar on a stand
+		var clips := []
+		var top := capsule.y
+		for each in capsules:
+			var turn := Basis(Vector3.UP, float(each.turn))
+			var at: Vector3 = capsule + each.at
+			var tail := _mic_body(node, accent, str(each.model), at, turn * aim, turn * up)
+			clips.append(tail)
+			top = maxf(top, maxf(at.y, tail.y))
+		var middle: Vector3 = (clips[0] + clips[1]) / 2.0
+		var bar_y: float = minf(clips[0].y, clips[1].y) - 0.02
+		for tail in clips:  # each clip down to the bar
+			_rod(node, tail, Vector3(tail.x, bar_y, tail.z), 0.005, _finish("black"))
+		_rod(node, Vector3(clips[0].x, bar_y, clips[0].z) + Vector3(0.02, 0, 0), Vector3(clips[1].x, bar_y, clips[1].z) - Vector3(0.02, 0, 0),
+			0.006, _finish("panel"))
+		var hub := Vector3(middle.x, bar_y, middle.z)
+		_sphere(node, 0.014, _finish("black"), hub)
+		_tripod(node, hub, 0.3, _finish("panel"))
+		return top + 0.08
 	var tail := _mic_body(node, accent, model, capsule, aim, up)
 	var top := maxf(capsule.y, tail.y) + 0.08
-	if not pair.is_empty():  # a stereo pair: a bar from this one's clip to the other's, on a stand between them
-		var other: Vector3 = pair.partner + Basis(Vector3.UP, float(pair.partner_turn)) * (tail - capsule)
-		_rod(node, tail, other, 0.006, _finish("panel"))
-		var middle := (tail + other) / 2.0
-		_sphere(node, 0.014, _finish("black"), middle)
-		_tripod(node, middle, 0.3, _finish("panel"))
-		return maxf(top, middle.y + 0.05)
-	if not stand:
-		return top
 	var pole_top := Vector3(0.0, maxf(tail.y + 0.03, 0.25), tail.z - 0.42)
 	_rod(node, tail, pole_top, 0.007, _finish("panel"))  # the boom
 	_sphere(node, 0.016, _finish("black"), pole_top)  # where the boom meets the pole

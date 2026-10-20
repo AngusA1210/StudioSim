@@ -403,9 +403,6 @@ func clear_all_peaks() -> void:
 
 ## Tell the audio core where each instrument is. It works out how the sound gets from there to the listener.
 func _physics_process(_delta: float) -> void:
-	for inst in instruments:  # (a stereo pair's right mic follows its left one first)
-		if inst.pair_side == "left":
-			place_pair(inst)
 	for inst in instruments:
 		inst.sync_position()
 
@@ -1335,10 +1332,17 @@ func duplicate_instrument(inst, at = null):
 		audio.set_pattern_steps(copy.source_id, audio.get_pattern_steps(inst.source_id))
 		audio.set_pattern(copy.source_id, audio.get_pattern(inst.source_id))
 		copy.set_loop(inst.loop_on)
-	elif inst.is_mic:  # as high, as tilted, as loud
+	elif inst.is_mic:  # as high, as tilted, as loud, the same model (a stereo mic set up the same way), as panned
 		set_mic_height(copy, inst.source_height)
 		set_mic_tilt(copy, inst.mic_tilt)
 		set_mic_gain(copy, inst.mic_gain_db)
+		if inst.is_stereo_mic:
+			copy.mic_model = inst.mic_model
+			copy.mic_pattern = inst.mic_pattern
+			copy.set_pair(inst.pair_technique, inst.pair_spacing, inst.side_model, inst.ms_width)
+		else:
+			copy.set_mic_model(inst.mic_model, inst.mic_pattern)
+		set_mic_pan(copy, inst.mic_pan)
 	else:
 		set_input_channel(copy, inst.input_channel)
 		set_speaker_volume(copy, inst.volume_db)
@@ -1387,7 +1391,6 @@ func remove_instrument(inst) -> void:
 		speaker_panel.close()
 	if mic_panel.is_open() and mic_panel.inst == inst:
 		mic_panel.close()
-	_part_pair(inst)
 	player.forget(inst)
 	var folder = folder_of(inst)
 	if folder != null:
@@ -1440,47 +1443,40 @@ func set_master_volume_db(db: float) -> void:
 
 ## A microphone's place: where it stands on the floor (x and z, metres from the middle of the room, kept inside it),
 ## its capsule's height, which way it points (its bearing, degrees clockwise from north, the way you first face, and
-## how far down), and its gain (dB, before it records). A stereo pair is placed and pointed as one: where its stand is
-## (the middle of the two) and the way the two point between them; its two mics have one height, tilt and gain.
+## how far down), and its gain (dB, before it records). A stereo mic's are its stand's (between its two) and the way
+## the two point between them.
 func set_mic_spot(mic, x: float, z: float) -> void:
 	var half: Vector3 = room.size / 2.0
-	var to := Vector3(clampf(x, -half.x + 0.05, half.x - 0.05), 0.0, clampf(z, -half.z + 0.05, half.z - 0.05))
-	var left = pair_left(mic)
-	var centre := rig_centre(mic)
-	left.global_position += Vector3(to.x - centre.x, 0.0, to.z - centre.z)
-	_settle_rig(left)
+	mic.global_position = Vector3(clampf(x, -half.x + 0.05, half.x - 0.05), mic.source_height, clampf(z, -half.z + 0.05, half.z - 0.05))
+	mic.sync_position()
 
 
 func set_mic_height(mic, height: float) -> void:
-	for each in _rig(mic):
-		each.set_mic_height(clampf(height, 0.05, room.size.y - 0.05))
-	_settle_rig(pair_left(mic))
+	mic.set_mic_height(clampf(height, 0.05, room.size.y - 0.05))
 
 
 func set_mic_bearing(mic, degrees: float) -> void:
-	_turn_rig(mic, PI - deg_to_rad(fposmod(degrees, 360.0)))
+	mic.rotation.y = PI - deg_to_rad(fposmod(degrees, 360.0))
 
 
 func mic_bearing(mic) -> float:
-	return fposmod(rad_to_deg(PI - rig_yaw(mic)), 360.0)
+	return fposmod(rad_to_deg(PI - mic.rotation.y), 360.0)
 
 
 func set_mic_tilt(mic, degrees: float) -> void:
-	for each in _rig(mic):
-		each.set_mic_tilt(degrees)
+	mic.set_mic_tilt(degrees)
 
 
 func set_mic_gain(mic, db: float) -> void:
-	for each in _rig(mic):
-		each.set_mic_gain(db)
+	mic.set_mic_gain(db)
 
 
-## Points a microphone (a pair, as one) at an instrument: at where its sound comes from.
+## Points a microphone (a stereo mic, between its two) at an instrument: at where its sound comes from.
 func aim_mic(mic, at) -> void:
-	var to: Vector3 = at.global_position - (rig_centre(mic) + Vector3(0.0, mic.source_height, 0.0))
+	var to: Vector3 = at.global_position - mic.global_position
 	if Vector2(to.x, to.z).length() > 0.001:
-		_turn_rig(mic, atan2(to.x, to.z))
-	set_mic_tilt(mic, rad_to_deg(atan2(-to.y, Vector2(to.x, to.z).length())))
+		mic.rotation.y = atan2(to.x, to.z)
+	mic.set_mic_tilt(rad_to_deg(atan2(-to.y, Vector2(to.x, to.z).length())))
 
 
 ## The instrument nearest a microphone (another microphone never), or null.
@@ -1492,30 +1488,32 @@ func nearest_instrument(mic):
 	return best
 
 
-## A microphone's model (microphones.h's: get_mic_models lists them) and its pattern ("" for the model's own), both
-## mics of a pair alike; one not given a name takes its model's.
+## A microphone's model (microphones.h's: get_mic_models lists them) and its pattern ("" for the model's own); one not
+## given a name takes its model's. A stereo mic's two take it alike (a mid-side pair's mid only: its side stays a
+## figure-8); the patterns of a pair set up some other way are its setup's.
 func set_mic_model(mic, model: String, pattern := "") -> void:
 	var info := mic_model_info(model)
 	if info.is_empty():
 		return
+	if mic.is_stereo_mic and not Catalog.MIC_PAIRS.get(mic.pair_technique, {}).get("mid_side", false):
+		pattern = Catalog.MIC_PAIRS.get(mic.pair_technique, Catalog.MIC_PAIRS.xy).patterns[0]
 	if pattern != "" and not info.patterns.any(func(p): return p.name == pattern):
+		if mic.is_stereo_mic:
+			return  # (it hasn't the pattern its setup wants)
 		pattern = ""
-	for each in _rig(mic):
-		each.set_mic_model(model, pattern)
-		if not each.named and each.pair_side == "":
-			for kind in Catalog.KINDS:
-				if Catalog.KINDS[kind].get("model", "") == model and not Catalog.KINDS[kind].get("pair", false):
-					each.set_display_name(unique_name(Catalog.KINDS[kind].name, each))
-	if mic.pair_side != "":
-		pair_left(mic).rebuild()
+	mic.set_mic_model(model, pattern)
+	if not mic.named and not mic.is_stereo_mic:
+		for kind in Catalog.KINDS:
+			if Catalog.KINDS[kind].get("model", "") == model and not Catalog.KINDS[kind].get("stereo", false):
+				mic.set_display_name(unique_name(Catalog.KINDS[kind].name, mic))
 
 
-## Where a microphone's track sits in the stereo (-1 left, 1 right).
+## Where a microphone's track sits in the stereo (-1 left, 1 right); a stereo mic's, its balance.
 func set_mic_pan(mic, pan: float) -> void:
 	mic.set_mic_pan(pan)
 
 
-## The models there are, as the audio core has them (asked for once): [{id, name, about, sensitivity_db, patterns}].
+## The models there are, as the audio core has them (asked for once): [{id, name, about, sensitivity_db, noise_db, patterns}].
 func mic_models() -> Array:
 	if _mic_models == null:
 		_mic_models = audio.get_mic_models()
@@ -1537,144 +1535,31 @@ func mic_pattern_of(mic) -> String:
 	return mic.mic_pattern if mic.mic_pattern != "" else str(info.patterns[0].name)
 
 
-# ── Stereo pairs ────────────────────────────────────────────────────────────────────────────────────────────
+# ── Stereo mics ─────────────────────────────────────────────────────────────────────────────────────────────
 
-## A stereo pair of microphones at a spot on the floor, set up as `technique` (catalog.gd's MIC_PAIRS): two mics on one
-## stand, two tracks, "<name> L" and "<name> R", panned left and right, in a folder of their own. Returns its left mic,
-## or null if the room hasn't room for them.
-func add_mic_pair(at: Vector3, technique := "xy"):
-	var left = add_instrument("mic_pair", at)
-	if left == null:
-		return null
-	var right = add_instrument("mic_pair", at)
-	if right == null:
-		remove_instrument(left)
-		return null
-	var base := "Stereo Pair"
-	var number := 2
-	while folders.any(func(f): return f.display_name == base) or instruments.any(func(i): return i.display_name == base + " L" and i != left):
-		base = "Stereo Pair %d" % number
-		number += 1
-	for each in [left, right]:
-		each.named = true
-	left.set_display_name(base + " L")
-	right.set_display_name(base + " R")
-	right.set_color(left.color)
-	left.pair_partner = right
-	right.pair_partner = left
-	left.pair_side = "left"
-	right.pair_side = "right"
-	set_pair_technique(left, technique)
-	add_folder([left, right], base)
-	return left
-
-
-## How a pair is set up: its technique, and (a spaced pair) how far apart its mics are. The two take the pattern it
-## wants (a model that has it, if theirs hasn't), and are panned left and right.
+## How a stereo mic is set up: its technique (catalog.gd's MIC_PAIRS), and (a spaced pair) how far apart its two are.
+## The two take the patterns it wants (a model that has them, if theirs hasn't: pencils for the cardioids and omnis,
+## ribbons for figure-8s; a mid-side pair's side, the large condenser's figure-8). Its track is in the middle.
 func set_pair_technique(mic, technique: String, spacing := -1.0) -> void:
-	var left = pair_left(mic)
-	var right = left.pair_partner
-	if right == null or not Catalog.MIC_PAIRS.has(technique):
+	if not mic.is_stereo_mic or not Catalog.MIC_PAIRS.has(technique):
 		return
 	var spec: Dictionary = Catalog.MIC_PAIRS[technique]
-	var centre := rig_centre(left)
-	var yaw := rig_yaw(left)
-	for each in [left, right]:
-		each.pair_technique = technique
-		each.pair_spacing = clampf(spacing, 0.0, 3.0) if spacing >= 0.0 else float(spec.spacing)
-	var pattern: String = spec.pattern
-	var model: String = left.mic_model
+	var pattern: String = spec.patterns[0]
+	var model: String = mic.mic_model
 	if not mic_model_info(model).get("patterns", []).any(func(p): return p.name == pattern):
 		model = "ribbon" if pattern == "figure8" else "pencil"
-	for each in [left, right]:
-		each.set_mic_model(model, pattern)
-	set_mic_pan(left, -1.0)
-	set_mic_pan(right, 1.0)
-	left.rebuild()
-	_place_rig(left, centre, yaw)
+	mic.mic_model = model
+	mic.mic_pattern = pattern
+	mic.set_pair(technique, clampf(spacing, 0.0, 3.0) if spacing >= 0.0 else float(spec.spacing), "condenser", mic.ms_width)
 
 
 func set_pair_spacing(mic, metres: float) -> void:
-	set_pair_technique(mic, pair_left(mic).pair_technique, metres)
+	set_pair_technique(mic, mic.pair_technique, metres)
 
 
-## The left mic of a pair (it holds the stand), or the mic itself.
-static func pair_left(mic):
-	return mic.pair_partner if mic.pair_side == "right" and mic.pair_partner != null else mic
-
-
-func _rig(mic) -> Array:
-	return [mic] if mic.pair_partner == null else [mic, mic.pair_partner]
-
-
-## Where a microphone's stand is (a pair's: between its two), on the floor; and the way it points round, as a node's
-## turn (a pair's: between its two).
-func rig_centre(mic) -> Vector3:
-	var left = pair_left(mic)
-	var at: Vector3 = left.global_position
-	if left.pair_partner != null and left.pair_technique != "":
-		at += Basis(Vector3.UP, left.rotation.y) * left.pair_stand().centre
-	return Vector3(at.x, 0.0, at.z)
-
-
-func rig_yaw(mic) -> float:
-	var left = pair_left(mic)
-	if left.pair_partner == null or left.pair_technique == "":
-		return left.rotation.y
-	return left.rotation.y - deg_to_rad(float(Catalog.MIC_PAIRS[left.pair_technique].angle) / 2.0)
-
-
-func _turn_rig(mic, yaw: float) -> void:
-	_place_rig(pair_left(mic), rig_centre(mic), yaw)
-
-
-## A rig with its stand at `centre`, pointing round to `yaw`: a pair's left mic half its angle to the left of that,
-## half its spacing to the left; the right one where that puts it.
-func _place_rig(left, centre: Vector3, yaw: float) -> void:
-	if left.pair_partner == null:
-		left.rotation.y = yaw
-		return
-	var half := deg_to_rad(float(Catalog.MIC_PAIRS[left.pair_technique].angle) / 2.0)
-	left.rotation.y = yaw + half
-	var spot: Vector3 = centre + Basis(Vector3.UP, yaw) * Vector3(left.pair_spacing / 2.0, 0.0, 0.0)
-	left.global_position = Vector3(spot.x, left.source_height, spot.z)
-	place_pair(left)
-
-
-## Keeps a rig inside the room.
-func _settle_rig(left) -> void:
-	var half: Vector3 = room.size / 2.0
-	var p: Vector3 = left.global_position
-	left.global_position = Vector3(clampf(p.x, -half.x + 0.05, half.x - 0.05), left.source_height, clampf(p.z, -half.z + 0.05, half.z - 0.05))
-	place_pair(left)
-	left.sync_position()
-
-
-## A pair's right mic, where its left one and how they are set up put it: as high, as tilted, beside it.
-func place_pair(left) -> void:
-	var right = left.pair_partner
-	if right == null or left.pair_side != "left":
-		return
-	var stand: Dictionary = left.pair_stand()
-	right.global_position = left.global_position + Basis(Vector3.UP, left.rotation.y) * stand.partner
-	right.rotation.y = left.rotation.y + float(stand.partner_turn)
-	if not is_equal_approx(right.source_height, left.source_height):
-		right.set_mic_height(left.source_height)
-		right.global_position = left.global_position + Basis(Vector3.UP, left.rotation.y) * stand.partner
-	if not is_equal_approx(right.mic_tilt, left.mic_tilt):
-		right.set_mic_tilt(left.mic_tilt)
-
-
-## One of a pair taken away: the other stands on its own again, on a stand of its own.
-func _part_pair(mic) -> void:
-	var other = mic.pair_partner
-	if other == null:
-		return
-	for each in [mic, other]:
-		each.pair_partner = null
-		each.pair_side = ""
-		each.pair_technique = ""
-	other.rebuild()
+## A mid-side pair's width: how much of its side is decoded into the left and right (0 mono, 1 as it hears it, 2 wider).
+func set_mic_width(mic, width: float) -> void:
+	mic.set_ms_width(width)
 
 
 func set_speaker_volume(inst, db: float) -> void:

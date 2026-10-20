@@ -17,7 +17,8 @@ namespace sr {
 enum class InstrumentKind : uint8_t {
     Drums, Bass, Pad, Bells, Keys, GarageDrums, StudioDrums, PluginSynth, Live, GuitarCombo, GuitarStack, BassCombo, BassStack,
     Bus,  // not an instrument: a routing folder's bus, an aux input that tracks play into (see AudioEngine::setSourceOutput)
-    Mic   // not an instrument: a microphone, hearing the room from where it stands (see AudioEngine::Source::pickups)
+    Mic,  // not an instrument: a microphone, hearing the room from where it stands (see AudioEngine::Source::Capsule)
+    StereoMic  // two microphones as one stereo track (a stereo pair: XY, ORTF, a spaced pair, Blumlein, mid-side)
 };
 constexpr int kInstrumentKinds = 14;
 
@@ -26,7 +27,9 @@ inline bool playsNotes(InstrumentKind kind) { return kind <= InstrumentKind::Plu
 inline bool isLiveInput(InstrumentKind kind) { return kind >= InstrumentKind::Live && kind <= InstrumentKind::BassStack; }
 inline bool isAmp(InstrumentKind kind) { return kind >= InstrumentKind::GuitarCombo && kind <= InstrumentKind::BassStack; }
 inline bool isBus(InstrumentKind kind) { return kind == InstrumentKind::Bus; }
-inline bool isMic(InstrumentKind kind) { return kind == InstrumentKind::Mic; }
+inline bool isMic(InstrumentKind kind) { return kind == InstrumentKind::Mic || kind == InstrumentKind::StereoMic; }
+// A channel of two (a folder's or an aux's bus, a stereo mic's track): its inserts' plug-ins play in stereo.
+inline bool isStereo(InstrumentKind kind) { return kind == InstrumentKind::Bus || kind == InstrumentKind::StereoMic; }
 inline bool inRoom(InstrumentKind kind) { return !isBus(kind) && !isMic(kind); }  // heard in the room (and by its microphones)
 
 class Instrument {

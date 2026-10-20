@@ -56,9 +56,11 @@ func close() -> void:
 func create(kind: String):
 	var player = app.player
 	var at: Vector3 = player.global_position + Vector3(0.0, Catalog.KINDS[kind].height, 0.0)
-	var inst = app.add_mic_pair(at) if Catalog.KINDS[kind].get("pair", false) else app.add_instrument(kind, at)
+	var inst = app.add_instrument(kind, at)
 	if inst == null:
 		return null
+	if inst.is_stereo_mic:  # (XY, to begin with)
+		app.set_pair_technique(inst, "xy")
 	if inst.is_live():
 		app.set_input_channel(inst, _input_choice)
 	player.carry(inst)

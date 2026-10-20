@@ -26,8 +26,6 @@ int64_t writtenAt(const std::string& path) {
     return ec ? 0 : int64_t(when.time_since_epoch().count());
 }
 
-constexpr size_t kChunkBytes = StreamedFile::kChunkFrames * sizeof(float);
-
 }  // namespace
 
 // ── A file ──────────────────────────────────────────────────────────────────────────────────────────────────
@@ -82,6 +80,7 @@ std::shared_ptr<StreamedFile> StreamedFile::open(const std::string& path, std::s
     file->format_ = format;
     file->channels_ = channels;
     file->bits_ = bits;
+    file->kept_ = channels >= 2 ? 2 : 1;
     file->rate_ = double(rate);
     file->data_offset_ = data_at;
     file->frames_ = data_size / (int64_t(bits / 8) * channels);
@@ -108,8 +107,8 @@ bool StreamedFile::load(size_t i) {
     std::lock_guard<std::mutex> lock(reading_);
     if (chunks_[i].load(std::memory_order_acquire)) return true;
     const int64_t from = int64_t(i) << kChunkShift;
-    float* data = new float[kChunkFrames]();  // (silent past what there is to read)
-    readLocked(from, size_t(std::min<int64_t>(int64_t(kChunkFrames), frames_ - from)), data);
+    float* data = new float[kChunkFrames * size_t(kept_)]();  // (silent past what there is to read)
+    readLocked(from, size_t(std::min<int64_t>(int64_t(kChunkFrames), frames_ - from)), data, true);
     chunks_[i].store(data, std::memory_order_release);
     return true;
 }
@@ -125,7 +124,8 @@ size_t StreamedFile::read(int64_t from, size_t count, float* out) {
     return readLocked(from, count, out);
 }
 
-size_t StreamedFile::readLocked(int64_t from, size_t count, float* out) {
+// Reads frames mixed down to one channel; or, with `keep_channels`, as many as it keeps (its first two, interleaved).
+size_t StreamedFile::readLocked(int64_t from, size_t count, float* out, bool keep_channels) {
     if (from < 0 || from >= frames_ || count == 0) return 0;
     count = size_t(std::min<int64_t>(int64_t(count), frames_ - from));
     std::FILE* f = std::fopen(path_.c_str(), "rb");  // (opened for each read: a room may have hundreds of files)
@@ -136,17 +136,23 @@ size_t StreamedFile::readLocked(int64_t from, size_t count, float* out) {
     if (seekTo(f, data_offset_ + from * int64_t(frame_bytes)) == 0) got = std::fread(raw_.data(), frame_bytes, count, f);
     std::fclose(f);
     const bool float32 = format_ == 3;
+    auto sample = [&](size_t frame, int c) {
+        const uint8_t* p = raw_.data() + frame * frame_bytes + size_t(c) * width;
+        float v;
+        if (float32) std::memcpy(&v, p, 4);
+        else if (bits_ == 16) v = float(int16_t(get16(p))) / 32768.0f;
+        else if (bits_ == 24) v = float(int32_t(uint32_t(p[0]) << 8 | uint32_t(p[1]) << 16 | uint32_t(p[2]) << 24) >> 8) / 8388608.0f;
+        else v = float(int32_t(get32(p))) / 2147483648.0f;
+        return v;
+    };
     for (size_t i = 0; i < got; ++i) {
-        float sum = 0.0f;
-        for (int c = 0; c < channels_; ++c) {
-            const uint8_t* p = raw_.data() + i * frame_bytes + size_t(c) * width;
-            float v;
-            if (float32) std::memcpy(&v, p, 4);
-            else if (bits_ == 16) v = float(int16_t(get16(p))) / 32768.0f;
-            else if (bits_ == 24) v = float(int32_t(uint32_t(p[0]) << 8 | uint32_t(p[1]) << 16 | uint32_t(p[2]) << 24) >> 8) / 8388608.0f;
-            else v = float(int32_t(get32(p))) / 2147483648.0f;
-            sum += v;
+        if (keep_channels && kept_ == 2) {
+            out[2 * i] = sample(i, 0);
+            out[2 * i + 1] = sample(i, 1);
+            continue;
         }
+        float sum = 0.0f;
+        for (int c = 0; c < channels_; ++c) sum += sample(i, c);
         out[i] = sum / float(channels_);
     }
     return got;
@@ -312,7 +318,7 @@ void DiskStreamer::cycle() {
         it->second.needed_at.resize(file->chunkCount(), 0);
         for (size_t c = 0; c < file->chunkCount(); ++c) {
             if (!file->loaded(c)) continue;
-            bytes += kChunkBytes;
+            bytes += file->chunkBytes();
             if (it->second.needed_at[c] != cycle_) spare.push_back({it->second.needed_at[c], file.get(), c});
         }
         alive.push_back(std::move(file));
@@ -324,7 +330,7 @@ void DiskStreamer::cycle() {
             if (bytes <= budget) break;
             if (float* memory = s.file->unload(s.chunk)) {  // (the block going now may still be reading it)
                 retired_.emplace_back(memory, blocks_.load(std::memory_order_acquire));
-                bytes -= kChunkBytes;
+                bytes -= s.file->chunkBytes();
             }
         }
     }

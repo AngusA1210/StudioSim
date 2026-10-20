@@ -671,7 +671,7 @@ func _draw_header(inst, top: float, font: Font) -> void:
 	elif inst.is_folder:
 		what = "folder · %d" % inst.members.size()
 	else:
-		what = "mic" if inst.is_mic else ("audio" if not inst.playable else "MIDI")
+		what = ("stereo mic" if inst.is_stereo_mic else "mic") if inst.is_mic else ("audio" if not inst.playable else "MIDI")
 	draw_string(font, Vector2(name_x, top + 40), what, HORIZONTAL_ALIGNMENT_LEFT, 60, 11, DIM)
 	for b in _buttons(inst, top):
 		var lit: bool = b.on

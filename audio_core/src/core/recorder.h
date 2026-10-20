@@ -23,10 +23,13 @@ public:
     };
 
     ~Recorder() { finish(); }
-    // Opens a file for each track (game thread) and starts writing. False, with the reason, if a file can't be made.
-    bool begin(const std::vector<std::pair<int, std::string>>& tracks, int sample_rate, std::string* error);
-    // Audio thread: `n` samples of what track `slot` (its place in begin's list) takes in.
+    // Opens a file for each track (game thread) and starts writing: of one channel, or of two for the sources in
+    // `stereo` (a stereo mic). False, with the reason, if a file can't be made.
+    bool begin(const std::vector<std::pair<int, std::string>>& tracks, int sample_rate, std::string* error,
+               const std::vector<int>& stereo = {});
+    // Audio thread: `n` samples of what track `slot` (its place in begin's list) takes in; a stereo one's, two at once.
     void write(int slot, const float* x, int n);
+    void write(int slot, const float* left, const float* right, int n);
     int slotOf(int source) const;  // its place in the list, or -1
     // Game thread, once the audio thread has stopped writing: what is left is written, and the files closed.
     void finish();
@@ -35,6 +38,7 @@ public:
 private:
     struct Track {
         int source = -1;
+        int channels = 1;
         std::vector<float> ring;
         std::atomic<size_t> head{0}, tail{0};
         std::atomic<int64_t> dropped{0};

@@ -69,8 +69,11 @@ public:
     // [3]}]}]), a model's response on axis at some frequencies (dB), and a mic's model, pattern, aim and pan.
     Array get_mic_models() const;
     PackedFloat32Array get_mic_response(const String& model, const PackedFloat32Array& frequencies) const;
-    void set_mic_model(int id, const String& model, const String& pattern);
-    void set_mic_aim(int id, const Vector3& aim);
+    void set_mic_model(int id, const String& model, const String& pattern, int capsule = -1);
+    void set_mic_aim(int id, const Vector3& aim, int capsule = 0);
+    void set_mic_capsule(int id, int capsule, const Vector3& position);
+    void set_mic_mid_side(int id, bool mid_side, float width = 1.0f);
+    float get_mic_noise(const String& model) const;  // its noise and its preamp's, as a sound level (dB SPL)
     void set_source_pan(int id, float pan);
     void set_source_output(int id, int bus);  // a bus's id (a source added as "bus"), or -1 for the master
     void set_source_input_channel(int id, int channel);  // live sources: 0-based hardware input, or -1 for all

@@ -5,8 +5,9 @@ extends CanvasLayer
 ## first face, and how far down), or straight at an instrument; its gain, before it records, as a preamp's; where its
 ## track sits in the stereo; and its input monitoring, with a meter of what it hears. Beside them, how far each
 ## instrument is from it, how late its sound arrives, and how loud it is there, for placing it with care (two mics at
-## different distances from one instrument hear it at different times, as real ones do). A stereo pair's panel sets
-## up the pair (XY, ORTF, a spaced pair, Blumlein) and places and points the two as one.
+## different distances from one instrument hear it at different times, as real ones do). A stereo mic's sets up its
+## pair (XY, ORTF, a spaced pair, Blumlein, mid-side: a spaced pair's spacing, a mid-side pair's width), placed and
+## pointed as one, its pan its balance.
 
 const Hints := preload("res://scripts/hints.gd")
 const LevelMeter := preload("res://scripts/level_meter.gd")
@@ -42,6 +43,8 @@ var _pair_row: HBoxContainer
 var _technique: OptionButton
 var _spacing: SpinBox
 var _spacing_label: Label
+var _width: SpinBox
+var _width_label: Label
 var _input_switch: CheckButton
 var _meter
 var _distances: GridContainer
@@ -76,7 +79,7 @@ func open(mic, from_mixer := false) -> void:
 	_z.max_value = half.z
 	_height.max_value = app.room.size.y - 0.05
 	_aim_at.clear()
-	_aim_at.add_item("Point it at…" if inst.pair_partner == null else "Point the pair at…")
+	_aim_at.add_item("Point the pair at…" if inst.is_stereo_mic else "Point it at…")
 	_aim_choices = app.instruments.filter(func(other): return other != inst and not other.is_mic)
 	for other in _aim_choices:
 		_aim_at.add_item(other.display_name)
@@ -121,9 +124,8 @@ func _process(_delta: float) -> void:
 
 
 func _refresh() -> void:
-	var centre: Vector3 = app.rig_centre(inst)
-	_show(_x, centre.x)
-	_show(_z, centre.z)
+	_show(_x, inst.global_position.x)
+	_show(_z, inst.global_position.z)
 	_show(_height, inst.source_height)
 	_show(_bearing, app.mic_bearing(inst))
 	_show(_tilt, inst.mic_tilt)
@@ -140,20 +142,29 @@ func _refresh() -> void:
 			_pattern.add_item(Catalog.MIC_PATTERNS.get(name, name))
 	var pattern: String = app.mic_pattern_of(inst)
 	_pattern.select(names.find(pattern))
-	_pattern.disabled = names.size() < 2
-	_about.text = "%s  Sensitivity %+.0f dB against the measurement mic." % [info.get("about", ""), float(info.get("sensitivity_db", 0.0))]
+	var mid_side: bool = inst.is_stereo_mic and Catalog.MIC_PAIRS.get(inst.pair_technique, {}).get("mid_side", false)
+	_pattern.disabled = names.size() < 2 or (inst.is_stereo_mic and not mid_side)  # (a pair's patterns are its setup's)
+	_about.text = "%s  Sensitivity %+.0f dB against the measurement mic; self-noise %.0f dB(A), %.0f dB SPL with the preamp's." % [info.get("about", ""),
+		float(info.get("sensitivity_db", 0.0)), float(info.get("self_noise_db", 0.0)), float(info.get("noise_db", 0.0))]
 	var patterns: Array = info.get("patterns", [])
 	_graph.ink = inst.color.lightened(0.2)
 	_graph.show_mic(inst.mic_model, patterns[maxi(names.find(pattern), 0)] if not patterns.is_empty() else {})
-	if not _pan._dragging:
-		_pan.set_value_no_signal(inst.mic_pan)
-	_pair_row.visible = inst.pair_partner != null
-	if inst.pair_partner != null:
+	var pan_held: bool = _pan._dragging
+	if pan_held != _pan.get_meta("held", false):  # (Touch and Latch write it while it is held)
+		_pan.set_meta("held", pan_held)
+		app.automation.touch(inst, pan_held, "pan")
+	if not pan_held:
+		_pan.set_value_no_signal(app.automation.shown(inst, "pan"))
+	_pair_row.visible = inst.is_stereo_mic
+	if inst.is_stereo_mic:
 		_technique.select(Catalog.MIC_PAIR_ORDER.find(inst.pair_technique))
 		var spaced: bool = inst.pair_technique == "ab"
 		_spacing.visible = spaced
 		_spacing_label.visible = spaced
 		_show(_spacing, inst.pair_spacing)
+		_width.visible = mid_side
+		_width_label.visible = mid_side
+		_show(_width, inst.ms_width * 100.0)
 	_input_switch.set_pressed_no_signal(inst.input_on)
 	_input_switch.text = "Hearing it" if inst.input_on else "Hear it"
 	var level: float = app.audio.get_source_level(inst.source_id, true)
@@ -314,6 +325,21 @@ func _build() -> void:
 			app.set_pair_spacing(inst, v))
 	Hints.give(_spacing, "How far apart a spaced pair's mics are: further, a wider image (and a hole in the middle, past a metre or so)")
 	_pair_row.add_child(_spacing)
+	_width_label = Label.new()
+	_width_label.text = "width"
+	_width_label.add_theme_color_override("font_color", DIM)
+	_pair_row.add_child(_width_label)
+	_width = SpinBox.new()
+	_width.min_value = 0.0
+	_width.max_value = 200.0
+	_width.step = 1.0
+	_width.suffix = " %"
+	_width.select_all_on_focus = true
+	_width.value_changed.connect(func(v: float) -> void:
+		if inst != null and app.instruments.has(inst):
+			app.set_mic_width(inst, v / 100.0))
+	Hints.give(_width, "How much of the side mic is decoded into the left and right: 0 is mono (the mid alone), 100 as the two hear it, more wider still. It can be changed after recording, as the two are recorded as they are")
+	_pair_row.add_child(_width)
 
 	var columns := HBoxContainer.new()
 	columns.add_theme_constant_override("separation", 26)
@@ -327,9 +353,9 @@ func _build() -> void:
 	grid.add_theme_constant_override("v_separation", 6)
 	left.add_child(grid)
 	_x = _number(grid, "Across", -10.0, 10.0, 0.01, " m", "Where it stands across the room, from its middle: to the east (right on the floor plan) is more",
-		func(v: float) -> void: app.set_mic_spot(inst, v, app.rig_centre(inst).z))
+		func(v: float) -> void: app.set_mic_spot(inst, v, inst.global_position.z))
 	_z = _number(grid, "Along", -10.0, 10.0, 0.01, " m", "Where it stands along the room, from its middle: to the south (towards you as you first face) is more",
-		func(v: float) -> void: app.set_mic_spot(inst, app.rig_centre(inst).x, v))
+		func(v: float) -> void: app.set_mic_spot(inst, inst.global_position.x, v))
 	_height = _number(grid, "Height", 0.05, 3.0, 0.01, " m", "How high its capsule is, where it hears from (over a kick drum's hole, low; over the kit, high)",
 		func(v: float) -> void: app.set_mic_height(inst, v))
 	_bearing = _number(grid, "Points to", 0.0, 359.0, 1.0, "°", "Which way it points, clockwise from north (the way you first face): 90 is east. An omni mic hears all round alike, so this is for its stand, for now",
@@ -347,7 +373,8 @@ func _build() -> void:
 	_pan.value_changed.connect(func(v: float) -> void:
 		if inst != null and app.instruments.has(inst):
 			app.set_mic_pan(inst, v))
-	Hints.give(_pan, "Where its track sits in the stereo: drag (Shift: fine), double-click for the middle. A stereo pair's are hard left and right")
+	Hints.give(_pan, func() -> String: return ("Its balance: turned one way, the other side is turned down" if inst != null and inst.is_stereo_mic else
+		"Where its track sits in the stereo") + ": drag (Shift: fine), double-click for the middle")
 	grid.add_child(_pan)
 	_aim_at = OptionButton.new()
 	_aim_at.item_selected.connect(func(index: int) -> void:

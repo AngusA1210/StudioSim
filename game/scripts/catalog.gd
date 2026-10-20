@@ -68,24 +68,29 @@ const KINDS := {
 	"mic_ribbon": {"name": "Ribbon Mic", "about": "A figure-8 ribbon: smooth and dark, front and back alike, big lows close up.",
 		"color": Color(0.78, 0.62, 0.86), "top": 1.4, "footprint": Vector2(0.4, 0.4), "height": 1.1, "gain": 1.0, "send": 0.0, "mic": true,
 		"model": "ribbon"},
-	"mic_pair": {"name": "Stereo Pair", "about": "Two mics on one stand for stereo: XY, ORTF, a spaced pair or Blumlein. Two tracks, left and right.",
+	"mic_pair": {"name": "Stereo Pair", "about": "Two mics on one bar, one stereo track: XY, ORTF, a spaced pair, Blumlein or mid-side.",
 		"color": Color(0.6, 0.86, 0.78), "top": 2.2, "footprint": Vector2(0.4, 0.4), "height": 1.9, "gain": 1.0, "send": 0.0, "mic": true,
-		"model": "pencil", "pair": true},
+		"model": "pencil", "stereo": true},
 }
 
-# The ways a stereo pair of microphones can be set up: the angle between their axes (degrees), how far apart their
-# capsules are (metres), and the pattern they want. A spaced pair's spacing can be changed.
+# The ways a stereo pair of microphones can be set up, on one bar: each capsule's turn from the way the pair points
+# (degrees; positive to the left), how far apart they are (metres: the first on the left), and the patterns they
+# want. A spaced pair's spacing can be changed; a mid-side pair's two are a mid (facing ahead) and a side (a figure-8,
+# its front to the left), decoded to left and right in its track, as wide as it is set.
 const MIC_PAIRS := {
 	"xy": {"name": "XY", "about": "Two cardioids at the same point, 90° apart: the image from their angles alone, mono-safe.",
-		"angle": 90.0, "spacing": 0.0, "pattern": "cardioid"},
+		"turns": [45.0, -45.0], "spacing": 0.0, "patterns": ["cardioid", "cardioid"]},
 	"ortf": {"name": "ORTF", "about": "Two cardioids 17 cm apart, 110° apart: their angles and their timing both make the image, as ears do.",
-		"angle": 110.0, "spacing": 0.17, "pattern": "cardioid"},
+		"turns": [55.0, -55.0], "spacing": 0.17, "patterns": ["cardioid", "cardioid"]},
 	"ab": {"name": "Spaced pair (A/B)", "about": "Two omnis side by side, apart by as much as you like: wide and roomy, the image from timing.",
-		"angle": 0.0, "spacing": 0.6, "pattern": "omni"},
+		"turns": [0.0, 0.0], "spacing": 0.6, "patterns": ["omni", "omni"]},
 	"blumlein": {"name": "Blumlein", "about": "Two figure-8s at the same point, 90° apart: the front and the room behind in true stereo.",
-		"angle": 90.0, "spacing": 0.0, "pattern": "figure8"},
+		"turns": [45.0, -45.0], "spacing": 0.0, "patterns": ["figure8", "figure8"]},
+	"ms": {"name": "Mid-side (M/S)", "about": "A mid mic facing ahead and a figure-8 side mic across it, decoded to left and right: as wide as you set it, and perfectly mono-safe.",
+		"turns": [0.0, 90.0], "spacing": 0.0, "patterns": ["cardioid", "figure8"], "mid_side": true},
 }
-const MIC_PAIR_ORDER := ["xy", "ortf", "ab", "blumlein"]
+const MIC_PAIR_ORDER := ["xy", "ortf", "ab", "blumlein", "ms"]
+const MIC_PAIRS_SHORT := {"xy": "XY", "ortf": "ORTF", "ab": "A/B", "blumlein": "BLUMLEIN", "ms": "M/S"}
 # The pattern names as they read, and as short as a mix window strip has room for; and the models' short names.
 const MIC_PATTERNS := {"omni": "Omni", "cardioid": "Cardioid", "supercardioid": "Supercardioid", "figure8": "Figure-8"}
 const MIC_PATTERNS_SHORT := {"omni": "OMNI", "cardioid": "CARD", "supercardioid": "SUPER", "figure8": "FIG-8"}

@@ -136,6 +136,7 @@ int SoundRoomAudio::add_source(const String& kind, const Vector3& position, floa
     else if (kind == "bass_stack") k = sr::InstrumentKind::BassStack;
     else if (kind == "bus") k = sr::InstrumentKind::Bus;
     else if (kind == "mic") k = sr::InstrumentKind::Mic;
+    else if (kind == "stereo_mic") k = sr::InstrumentKind::StereoMic;
     else {
         UtilityFunctions::push_error("SoundRoomAudio: unknown instrument kind ", kind);
         return -1;
@@ -177,6 +178,8 @@ Array SoundRoomAudio::get_mic_models() const {
         d["name"] = String::utf8(m.name.c_str());
         d["about"] = String::utf8(m.about.c_str());
         d["sensitivity_db"] = m.sensitivity_db;
+        d["self_noise_db"] = m.self_noise_db;
+        d["noise_db"] = sr::micNoiseSpl(m);
         Array patterns;
         for (const auto& [pattern, polar] : m.patterns) {
             Dictionary p;
@@ -204,15 +207,21 @@ PackedFloat32Array SoundRoomAudio::get_mic_response(const String& model, const P
     return out;
 }
 
-void SoundRoomAudio::set_mic_model(int id, const String& model, const String& pattern) {
+void SoundRoomAudio::set_mic_model(int id, const String& model, const String& pattern, int capsule) {
     if (!engine_) return;
     sr::MicPattern p = sr::MicPattern::Omni;
     for (sr::MicPattern each : {sr::MicPattern::Omni, sr::MicPattern::Cardioid, sr::MicPattern::Supercardioid, sr::MicPattern::Figure8})
         if (pattern == sr::micPatternName(each)) p = each;
-    engine_->setMicModel(id, str(model), p);
+    engine_->setMicModel(id, str(model), p, capsule);
 }
 
-void SoundRoomAudio::set_mic_aim(int id, const Vector3& aim) { if (engine_) engine_->setMicAim(id, vec(aim)); }
+void SoundRoomAudio::set_mic_aim(int id, const Vector3& aim, int capsule) { if (engine_) engine_->setMicAim(id, vec(aim), capsule); }
+void SoundRoomAudio::set_mic_capsule(int id, int capsule, const Vector3& position) { if (engine_) engine_->setMicCapsule(id, capsule, vec(position)); }
+void SoundRoomAudio::set_mic_mid_side(int id, bool mid_side, float width) { if (engine_) engine_->setMicMidSide(id, mid_side, width); }
+float SoundRoomAudio::get_mic_noise(const String& model) const {
+    const int index = sr::micModelIndex(str(model));
+    return index < 0 ? 0.0f : sr::micNoiseSpl(sr::micModels()[size_t(index)]);
+}
 void SoundRoomAudio::set_source_pan(int id, float pan) { if (engine_) engine_->setSourcePan(id, pan); }
 void SoundRoomAudio::set_source_output(int id, int bus) { if (engine_) engine_->setSourceOutput(id, bus); }
 void SoundRoomAudio::set_source_input_channel(int id, int channel) { if (engine_) engine_->setSourceInputChannel(id, channel); }
@@ -617,7 +626,7 @@ bool SoundRoomAudio::set_track(int id, const Array& notes, const Array& clips, c
         const String target = d.get("target", "amp");
         lane.target = target == "insert" ? sr::ParamLane::Insert : target == "pedal" ? sr::ParamLane::Pedal
                     : target == "instrument" ? sr::ParamLane::Instrument : target == "send" ? sr::ParamLane::Send
-                    : target == "stomp" ? sr::ParamLane::PedalKnob : sr::ParamLane::AmpKnob;
+                    : target == "stomp" ? sr::ParamLane::PedalKnob : target == "pan" ? sr::ParamLane::Pan : sr::ParamLane::AmpKnob;
         lane.index = int(d.get("index", 0));
         lane.param = uint32_t(int64_t(d.get("param", 0)));
         read(d.get("points", Array()), &lane.points);
@@ -794,8 +803,11 @@ void SoundRoomAudio::_bind_methods() {
     ClassDB::bind_method(D_METHOD("set_source_solo_muted", "id", "silenced"), &SoundRoomAudio::set_source_solo_muted);
     ClassDB::bind_method(D_METHOD("get_mic_models"), &SoundRoomAudio::get_mic_models);
     ClassDB::bind_method(D_METHOD("get_mic_response", "model", "frequencies"), &SoundRoomAudio::get_mic_response);
-    ClassDB::bind_method(D_METHOD("set_mic_model", "id", "model", "pattern"), &SoundRoomAudio::set_mic_model);
-    ClassDB::bind_method(D_METHOD("set_mic_aim", "id", "aim"), &SoundRoomAudio::set_mic_aim);
+    ClassDB::bind_method(D_METHOD("set_mic_model", "id", "model", "pattern", "capsule"), &SoundRoomAudio::set_mic_model, DEFVAL(-1));
+    ClassDB::bind_method(D_METHOD("set_mic_aim", "id", "aim", "capsule"), &SoundRoomAudio::set_mic_aim, DEFVAL(0));
+    ClassDB::bind_method(D_METHOD("set_mic_capsule", "id", "capsule", "position"), &SoundRoomAudio::set_mic_capsule);
+    ClassDB::bind_method(D_METHOD("set_mic_mid_side", "id", "mid_side", "width"), &SoundRoomAudio::set_mic_mid_side, DEFVAL(1.0f));
+    ClassDB::bind_method(D_METHOD("get_mic_noise", "model"), &SoundRoomAudio::get_mic_noise);
     ClassDB::bind_method(D_METHOD("set_source_pan", "id", "pan"), &SoundRoomAudio::set_source_pan);
     ClassDB::bind_method(D_METHOD("set_source_output", "id", "bus"), &SoundRoomAudio::set_source_output);
     ClassDB::bind_method(D_METHOD("set_source_input_channel", "id", "channel"), &SoundRoomAudio::set_source_input_channel);

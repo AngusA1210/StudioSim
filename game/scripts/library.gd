@@ -148,7 +148,10 @@ func apply_instrument_settings(inst, settings: Dictionary, include := {}) -> Str
 		app.set_speaker_volume(inst, float(settings.volume_db))
 	if inst.is_mic and include.get("instrument_settings", true):
 		if settings.has("mic_model"):
-			app.set_mic_model(inst, str(settings.mic_model), str(settings.get("mic_pattern", "")))
+			if inst.is_stereo_mic:  # (its setup's patterns, its model as it was)
+				inst.set_mic_model(str(settings.mic_model), str(settings.get("mic_pattern", "")))
+			else:
+				app.set_mic_model(inst, str(settings.mic_model), str(settings.get("mic_pattern", "")))
 		if settings.has("mic_gain_db"):
 			inst.set_mic_gain(float(settings.mic_gain_db))
 		if settings.has("mic_pan"):
@@ -328,9 +331,8 @@ func room_data() -> Dictionary:
 		if inst.is_mic:  # (where it stands: its capsule's height, and how far it points down; a stereo pair's other mic)
 			entry.height = inst.source_height
 			entry.tilt = inst.mic_tilt
-			if inst.pair_partner != null:
-				entry.pair = {"partner": app.instruments.find(inst.pair_partner), "side": inst.pair_side, "technique": inst.pair_technique,
-					"spacing": inst.pair_spacing}
+			if inst.is_stereo_mic:
+				entry.stereo = {"technique": inst.pair_technique, "spacing": inst.pair_spacing, "side_model": inst.side_model, "width": inst.ms_width}
 		if inst.playable:
 			entry.loop_on = inst.loop_on
 			entry.steps = audio.get_pattern_steps(inst.source_id)
@@ -472,6 +474,8 @@ func apply_room_data(data: Dictionary, carry := {}, size = null, mode := "") -> 
 	var made := []  # each instrument entry's instrument (null where it couldn't be made), for the folders
 	for entry in data.get("instruments", []) if keep.call("instruments") else []:
 		var kind := str(entry.get("kind", ""))
+		if kind == "mic_pair" and entry.has("pair"):  # (a stereo pair as two mono mics, as rooms kept them for a while: two mics)
+			kind = "mic"
 		var at: Array = entry.get("position", [0.0, 0.0])
 		var inst = app.add_instrument(kind, Vector3(float(at[0]), 0.0, float(at[1]))) if app.Catalog.KINDS.has(kind) else null
 		made.append(inst)
@@ -487,6 +491,11 @@ func apply_room_data(data: Dictionary, carry := {}, size = null, mode := "") -> 
 		if inst.is_mic:
 			app.set_mic_height(inst, float(entry.get("height", inst.source_height)))
 			app.set_mic_tilt(inst, float(entry.get("tilt", 0.0)))
+			var stereo = entry.get("stereo")
+			if inst.is_stereo_mic:
+				var setup: Dictionary = stereo if stereo is Dictionary else {}
+				inst.set_pair(str(setup.get("technique", "xy")), float(setup.get("spacing", 0.0)), str(setup.get("side_model", "condenser")),
+					float(setup.get("width", 1.0)))
 		if keep.call("mix"):
 			app.set_instrument_level(inst, float(entry.get("level_db", 0.0)))
 			inst.muted = bool(entry.get("muted", false))
@@ -506,26 +515,6 @@ func apply_room_data(data: Dictionary, carry := {}, size = null, mode := "") -> 
 			inst.automation = entry.get("automation", {}).duplicate(true)
 			inst.auto_mode = str(entry.get("auto_mode", "read"))
 			inst.lanes = entry.get("lanes", ["volume"]).duplicate()
-	var instrument_entries: Array = data.get("instruments", []) if keep.call("instruments") else []
-	for i in mini(instrument_entries.size(), made.size()):  # the stereo pairs, their mics together again
-		var pair = instrument_entries[i].get("pair")
-		var left = made[i]
-		if not (pair is Dictionary) or str(pair.get("side", "")) != "left" or left == null:
-			continue
-		var at := int(pair.get("partner", -1))
-		var right = made[at] if at >= 0 and at < made.size() else null
-		if right == null or not right.is_mic or not left.is_mic:
-			continue
-		left.pair_partner = right
-		right.pair_partner = left
-		left.pair_side = "left"
-		right.pair_side = "right"
-		for each in [left, right]:
-			each.pair_technique = str(pair.get("technique", "xy"))
-			each.pair_spacing = float(pair.get("spacing", 0.0))
-		left.rebuild()
-		right.rebuild()
-		app.place_pair(left)
 	var made_folders := []  # the routing folders (their tracks put in them once the aux tracks are made too)
 	for entry in data.get("folders", []) if keep.call("instruments") else []:
 		var folder = app.add_folder([], str(entry.get("name", "")))

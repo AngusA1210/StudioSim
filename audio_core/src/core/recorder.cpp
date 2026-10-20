@@ -8,15 +8,17 @@ namespace {
 constexpr size_t kRing = size_t(1) << 20;  // about 20 seconds at 48 kHz, should the disk ever stall
 }
 
-bool Recorder::begin(const std::vector<std::pair<int, std::string>>& tracks, int sample_rate, std::string* error) {
+bool Recorder::begin(const std::vector<std::pair<int, std::string>>& tracks, int sample_rate, std::string* error,
+                     const std::vector<int>& stereo) {
     finish();
     tracks_.clear();
     takes_.clear();
     for (const auto& [source, path] : tracks) {
         auto track = std::make_unique<Track>();
         track->source = source;
+        track->channels = std::find(stereo.begin(), stereo.end(), source) != stereo.end() ? 2 : 1;
         track->ring.assign(kRing, 0.0f);
-        if (!track->wav.open(path, sample_rate, error)) {
+        if (!track->wav.open(path, sample_rate, error, track->channels)) {
             tracks_.clear();
             return false;
         }
@@ -42,6 +44,24 @@ void Recorder::write(int slot, const float* x, int n) {
     const size_t take = std::min(space, size_t(n));
     for (size_t i = 0; i < take; ++i) t.ring[(head + i) & (kRing - 1)] = x[i];
     t.head.store(head + take, std::memory_order_release);
+    if (take < size_t(n)) t.dropped.fetch_add(int64_t(size_t(n) - take), std::memory_order_relaxed);
+}
+
+void Recorder::write(int slot, const float* left, const float* right, int n) {
+    if (slot < 0 || slot >= int(tracks_.size())) return;
+    Track& t = *tracks_[size_t(slot)];
+    if (t.channels < 2) {
+        write(slot, left, n);
+        return;
+    }
+    const size_t head = t.head.load(std::memory_order_relaxed), tail = t.tail.load(std::memory_order_acquire);
+    const size_t space = (kRing - (head - tail)) / 2;
+    const size_t take = std::min(space, size_t(n));
+    for (size_t i = 0; i < take; ++i) {
+        t.ring[(head + 2 * i) & (kRing - 1)] = left[i];
+        t.ring[(head + 2 * i + 1) & (kRing - 1)] = right[i];
+    }
+    t.head.store(head + 2 * take, std::memory_order_release);
     if (take < size_t(n)) t.dropped.fetch_add(int64_t(size_t(n) - take), std::memory_order_relaxed);
 }
 

@@ -2,7 +2,8 @@ extends Node3D
 ## One instrument in the room: its model, label and light, plus its sound source in the audio core.
 ## It stands on the floor; the node's origin is where the sound comes from, `source_height` above the floor. A
 ## microphone (`is_mic`) is one of these too: its origin is its capsule, where it hears the room from, and the way it
-## faces is the way it points.
+## faces is the way it points. A stereo mic (`is_stereo_mic`: a stereo pair, one stereo track) has two capsules on a
+## bar, either side of its origin, each turned from the way it faces as its setup has it.
 
 const Models := preload("res://scripts/instrument_models.gd")
 const Catalog := preload("res://scripts/catalog.gd")
@@ -55,12 +56,13 @@ var mic_gain_db := 0.0 # a microphone's gain, before it is recorded, as a preamp
 var mic_model := ""    # which model it is (microphones.h: "flat", "dynamic", "kick", "condenser", "pencil", "ribbon")
 var mic_pattern := ""  # and which of its pickup patterns ("omni", "cardioid", "supercardioid", "figure8")
 var mic_pan := 0.0     # where its track sits in the stereo: -1 left, 1 right
-# A stereo pair: the other mic of it, which side this one is (the left one carries the stand and is moved; the right
-# one follows it), how they are set up (catalog.gd's MIC_PAIRS) and how far apart a spaced pair is.
-var pair_partner = null
-var pair_side := ""
+# A stereo mic: how its two are set up (catalog.gd's MIC_PAIRS), how far apart they are, and for a mid-side pair its
+# side mic's model and how wide it is decoded (1: as it hears it).
+var is_stereo_mic := false
 var pair_technique := ""
 var pair_spacing := 0.0
+var side_model := "condenser"
+var ms_width := 1.0
 var instrument_plugin := {}  # what that plug-in is, from the audio core: {plugin_id, plugin_name, plugin_maker, editor_open}
 var amp_controls := {"gain": 5.0, "bass": 5.0, "mid": 5.0, "treble": 5.0, "presence": 5.0, "master": 5.0}
 var amp_head := ""      # an amp's head and cabinet (catalog.gd lists them), and whether each is in use
@@ -80,6 +82,7 @@ var _audio: SoundRoomAudio
 var _normal_gain := 1.0  # what 0 dB on its fader means to the audio core
 var _sent_position := Vector3.INF  # where the audio core last heard this instrument was
 var _sent_aim := Vector3.INF       # and, a microphone, which way it points
+var _capsules_moved := false       # a stereo mic set up afresh: its capsules sent again
 var _labels_shown := true          # (the title screen hides the names)
 var _model: Node3D
 var _accent: StandardMaterial3D  # the parts in its own colour, which light up as it plays
@@ -105,6 +108,7 @@ func setup(spec: Dictionary, audio: SoundRoomAudio) -> void:
 	top = spec.top
 	footprint = spec.footprint
 	is_mic = spec.get("mic", false)
+	is_stereo_mic = spec.get("stereo", false)
 	playable = not spec.get("live_input", false) and not is_mic
 	default_octave = spec.get("octave", 0)
 	is_amp = spec.get("amp", false)
@@ -116,7 +120,7 @@ func setup(spec: Dictionary, audio: SoundRoomAudio) -> void:
 	position = Vector3(spec.position.x, source_height, spec.position.z)
 
 	_normal_gain = spec.gain
-	source_id = audio.add_source("mic" if is_mic else kind, position, spec.gain, spec.send)
+	source_id = audio.add_source(("stereo_mic" if is_stereo_mic else "mic") if is_mic else kind, position, spec.gain, spec.send)
 	if source_id < 0:
 		return  # the room is full; whoever asked for this instrument gives up on it
 	if is_mic:
@@ -174,7 +178,7 @@ func _build_model() -> void:
 		_model.remove_child(_pedal_row)
 		_model.queue_free()
 	var built: Dictionary = Models.build("mic" if is_mic else kind, model_color, amp_cabinet, {"height": source_height, "tilt": mic_tilt,
-		"model": mic_model, "stand": pair_side != "right", "pair": pair_stand()})
+		"model": mic_model, "capsules": mic_capsules() if is_stereo_mic else []})
 	_model = built.node
 	_model.position.y = -source_height  # the model is drawn from the floor up
 	add_child(_model)
@@ -282,11 +286,19 @@ func sync_position() -> void:
 	if not global_position.is_equal_approx(_sent_position):
 		_sent_position = global_position
 		_audio.set_source_position(source_id, global_position)
+		_capsules_moved = is_stereo_mic
 	if is_mic:
 		var aim := mic_aim()
-		if not aim.is_equal_approx(_sent_aim):
+		if not aim.is_equal_approx(_sent_aim) or _capsules_moved:
 			_sent_aim = aim
-			_audio.set_mic_aim(source_id, aim)
+			_capsules_moved = false
+			if not is_stereo_mic:
+				_audio.set_mic_aim(source_id, aim)
+			else:  # each capsule, where it is on the bar and the way it points
+				var capsules := mic_capsules()
+				for k in capsules.size():
+					_audio.set_mic_capsule(source_id, k, global_transform * capsules[k].at)
+					_audio.set_mic_aim(source_id, (global_transform.basis * capsules[k].aim).normalized(), k)
 
 
 ## The way a microphone points, in the room: the way it faces, tilted down by its tilt.
@@ -295,30 +307,53 @@ func mic_aim() -> Vector3:
 	return (global_transform.basis * Vector3(0.0, -sin(t), cos(t))).normalized()
 
 
-## A microphone's model and pattern ("" for the model's own); and where its track sits in the stereo.
+## A stereo mic's two capsules, as it sees them: [{at (from its origin), aim, turn (radians), model}], the left (or
+## mid) one first.
+func mic_capsules() -> Array:
+	var spec: Dictionary = Catalog.MIC_PAIRS.get(pair_technique, Catalog.MIC_PAIRS.xy)
+	var t := deg_to_rad(mic_tilt)
+	var out := []
+	for k in 2:
+		var turn := deg_to_rad(float(spec.turns[k]))
+		var aim := Basis(Vector3.UP, turn) * Vector3(0.0, -sin(t), cos(t))
+		out.append({"at": Vector3(pair_spacing / 2.0 * (1.0 if k == 0 else -1.0), 0.0, 0.0), "aim": aim, "turn": turn,
+			"model": side_model if k == 1 and spec.get("mid_side", false) else mic_model})
+	return out
+
+
+## A microphone's model and pattern ("" for the model's own): a stereo mic's two alike, but a mid-side pair's side,
+## which stays a figure-8.
 func set_mic_model(model: String, pattern := "") -> void:
 	mic_model = model
 	mic_pattern = pattern
-	_audio.set_mic_model(source_id, model, pattern)
+	var mid_side: bool = is_stereo_mic and Catalog.MIC_PAIRS.get(pair_technique, {}).get("mid_side", false)
+	_audio.set_mic_model(source_id, model, pattern, 0 if mid_side else -1)
+	if mid_side:
+		_audio.set_mic_model(source_id, side_model, "figure8", 1)
 	_build_model()
 	_place_parts()
+	_capsules_moved = true
+
+
+## A stereo mic's setup: how its two are set up, how far apart, a mid-side pair's side mic and width.
+func set_pair(technique: String, spacing: float, side := "condenser", width := 1.0) -> void:
+	pair_technique = technique
+	pair_spacing = spacing
+	side_model = side
+	ms_width = width
+	var mid_side: bool = Catalog.MIC_PAIRS.get(technique, {}).get("mid_side", false)
+	_audio.set_mic_mid_side(source_id, mid_side, ms_width)
+	set_mic_model(mic_model, mic_pattern)
+
+
+func set_ms_width(width: float) -> void:
+	ms_width = clampf(width, 0.0, 2.0)
+	_audio.set_mic_mid_side(source_id, true, ms_width)
 
 
 func set_mic_pan(pan: float) -> void:
 	mic_pan = clampf(pan, -1.0, 1.0)
 	_audio.set_source_pan(source_id, mic_pan)
-
-
-## A stereo pair's left mic draws the stand under the two, and the bar they are on: where the stand is and where the
-## other mic is, as this one sees them (they turn together, so these stay put): {centre, partner, partner_turn}.
-func pair_stand() -> Dictionary:
-	if pair_side != "left" or pair_technique == "":
-		return {}
-	var spec: Dictionary = Catalog.MIC_PAIRS.get(pair_technique, {})
-	var half := deg_to_rad(float(spec.get("angle", 0.0)) / 2.0)
-	var spacing: float = pair_spacing
-	var back := Basis(Vector3.UP, -half)
-	return {"centre": back * Vector3(-spacing / 2.0, 0.0, 0.0), "partner": back * Vector3(-spacing, 0.0, 0.0), "partner_turn": -2.0 * half}
 
 
 ## Draws it again (a stereo pair set up another way).
@@ -362,6 +397,7 @@ func set_mic_tilt(degrees: float) -> void:
 	mic_tilt = clampf(degrees, -90.0, 90.0)
 	_build_model()
 	_place_parts()
+	_capsules_moved = true
 
 
 func set_mic_gain(db: float) -> void:
@@ -415,7 +451,7 @@ func set_display_name(new_name: String) -> void:
 ## The name floating above it. The title screen hides these so they don't drift behind its words.
 func set_label_visible(on: bool) -> void:
 	_labels_shown = on
-	_label.visible = on and pair_side != "right"
+	_label.visible = on
 	_input_badge.visible = on and input_on
 	if not on:
 		_loop_label.visible = false
@@ -436,9 +472,5 @@ func _refresh_label() -> void:
 		notes.append("muted")
 	if playable and not loop_on:
 		notes.append("loop off")
-	var shown := display_name
-	if pair_side == "left" and display_name.ends_with(" L"):  # a stereo pair goes by one name over its stand
-		shown = display_name.trim_suffix(" L")
-	_label.text = shown + ("  (%s)" % ", ".join(notes) if not notes.is_empty() else "")
-	_label.visible = _labels_shown and pair_side != "right"
+	_label.text = display_name + ("  (%s)" % ", ".join(notes) if not notes.is_empty() else "")
 	_label.modulate.a = 0.55 if not notes.is_empty() else 1.0

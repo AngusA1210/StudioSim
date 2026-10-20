@@ -492,7 +492,7 @@ func _grab_or_drop() -> void:
 			app.aim_mic(carried, app.nearest_instrument(carried))
 		carried = null
 	elif target != null:
-		carried = app.pair_left(target) if target.is_mic else target  # (a stereo pair is carried by its stand, its left mic's)
+		carried = target
 		carried.set_carried(true)
 		target.set_highlighted(false)
 		target = null

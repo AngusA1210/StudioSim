@@ -38,7 +38,11 @@ public:
     // Whether the file on disk is still as it was when it was opened (its size, and when it was last written).
     bool unchanged() const;
 
-    // Audio thread: chunk `i` (kChunkFrames samples; the last, fewer), or null while it isn't in memory.
+    // How many channels it keeps: two for a file of two or more (its first two: left and right), else one.
+    int channels() const { return kept_; }
+    size_t chunkBytes() const { return kChunkFrames * sizeof(float) * size_t(kept_); }
+    // Audio thread: chunk `i` (kChunkFrames frames, its channels interleaved; the last, fewer), or null while it
+    // isn't in memory.
     const float* chunk(size_t i) const { return i < chunk_count_ ? chunks_[i].load(std::memory_order_acquire) : nullptr; }
     bool loaded(size_t i) const { return chunk(i) != nullptr; }
     // Reads chunk `i` in, if it isn't in already: the disk thread, the game thread getting ready to play, or the audio
@@ -52,10 +56,10 @@ public:
 
 private:
     StreamedFile() = default;
-    size_t readLocked(int64_t from, size_t count, float* out);
+    size_t readLocked(int64_t from, size_t count, float* out, bool keep_channels = false);
 
     std::string path_;
-    int format_ = 0, channels_ = 0, bits_ = 0;
+    int format_ = 0, channels_ = 0, bits_ = 0, kept_ = 1;
     double rate_ = 0.0;
     int64_t frames_ = 0, data_offset_ = 0;
     uintmax_t size_on_disk_ = 0;
