@@ -1971,21 +1971,57 @@ func _run() -> void:
 			break
 	var stacked: Dictionary = main.speaker.clips.back() if not main.speaker.clips.is_empty() else {}
 	var keys_stack: Dictionary = keys_inst.clips.back()
-	check(loop_rec_text.contains("LOOP REC") and wrapped_back and stacked.get("takes", []).size() == 1 and int(stacked.get("take", 0)) == 2 and
+	check(loop_rec_text.contains("LOOP REC") and wrapped_back and stacked.get("takes", []).size() == 2 and int(stacked.get("take", 0)) == 2 and
 		is_equal_approx(float(stacked.start), 16.0 * timeline.step_seconds()) and absf(float(stacked.length) - pass_seconds) < 0.01,
 		"it goes round the loop as it records, and each whole pass is a take, stacked: the last one shown", loop_rec_text)
-	check(int(keys_stack.get("take", 0)) == 2 and keys_stack.get("takes", []).size() == 1 and keys_stack.notes.size() == 1 and
+	check(int(keys_stack.get("take", 0)) == 2 and keys_stack.get("takes", []).size() == 2 and keys_stack.notes.size() == 1 and
 		keys_stack.takes[0].notes.is_empty(), "the keys' takes too, the note played in the second pass in the second take")
 	var stacked_at: int = main.speaker.clips.size() - 1
 	view.show_takes(main.speaker, stacked_at, Vector2(300, 100))
 	var take_items: int = view._takes_menu.item_count
 	var second_checked: bool = view._takes_menu.is_item_checked(1)
+	view._takes_menu.id_pressed.emit(1)
 	view._takes_menu.hide()
-	timeline.choose_take(main.speaker, stacked_at, 0)
-	check(take_items == 2 and second_checked and int(main.speaker.clips.back().take) == 1 and int(main.speaker.clips.back().takes[0].take) == 2,
+	check(take_items == 4 and second_checked and int(main.speaker.clips.back().take) == 1 and main.speaker.clips.back().takes.size() == 2 and
+		absf(timeline.clip_steps(main.speaker.clips.back()).y - 24.0) < 0.01,
 		"right-click a clip for its takes, and choosing another shows it in the clip's place")
-	timeline.undo()
-	timeline.undo()
+
+	print("Comping")
+	timeline.grid = 2
+	main.edit_window.open()
+	await frames(2)
+	view.show_takes(main.speaker, main.speaker.clips.size() - 1, Vector2(300, 100))
+	view._takes_menu.id_pressed.emit(view.SHOW_TAKES)
+	view._takes_menu.hide()
+	var takes_row: int = view.tracks().find(main.speaker)
+	view.scroll_y = clampf(view.row_top(takes_row) + view.scroll_y - view.RULER, 0.0, view._most_scroll())
+	var take_two_y: float = view.take_top(takes_row, 1) + view.TAKE / 2.0
+	var take_hint: String = view.hint_at(Vector2(view.x_of(19.0), take_two_y))
+	check(main.speaker.takes_open and view.take_lanes(main.speaker) == 2 and is_equal_approx(view.height_of(main.speaker), view.ROW + 2 * view.TAKE) and
+		take_hint.begins_with("Take 2: drag along it"), "the takes menu shows the takes under the track, a lane each, to comp from", take_hint)
+	view.press(Vector2(view.x_of(18.0), take_two_y))
+	view._on_drag(Vector2(view.x_of(22.0), take_two_y))
+	view.release(Vector2(view.x_of(22.0), take_two_y))
+	var comped: Array = main.speaker.clips.filter(func(c): return timeline.group_of(c) == timeline.group_of(stacked))
+	comped.sort_custom(func(a, b): return float(a.start) < float(b.start))
+	var comp_parts: Array = comped.map(func(c): return [int(c.take), snappedf(timeline.clip_steps(c).x, 0.01), snappedf(timeline.clip_steps(c).y, 0.01)])
+	check(comp_parts == [[1, 16.0, 18.0], [2, 18.0, 22.0], [1, 22.0, 24.0]] and comped.all(func(c): return c.takes.size() == 2) and
+		is_equal_approx(float(comped[0].get("xfade", 0.0)), timeline.COMP_XFADE) and is_equal_approx(float(comped[1].get("xfade", 0.0)), timeline.COMP_XFADE),
+		"dragging along a take puts that part of it in the track, in place of what was there (a moment's crossfade at each join)", str(comp_parts))
+	var take_one_y: float = view.take_top(takes_row, 0) + view.TAKE / 2.0
+	view.press(Vector2(view.x_of(20.0), take_one_y))
+	view.release(Vector2(view.x_of(20.0), take_one_y))
+	var part_at_20: Array = main.speaker.clips.filter(func(c): return timeline.clip_steps(c).x <= 20.0 and timeline.clip_steps(c).y > 20.0)
+	check(part_at_20.size() == 1 and int(part_at_20[0].take) == 1 and is_equal_approx(timeline.clip_steps(part_at_20[0]).x, 18.0),
+		"clicking a take puts it in place of the part of the track over it")
+	view.show_takes(main.speaker, main.speaker.clips.size() - 1, Vector2(300, 100))
+	view._takes_menu.id_pressed.emit(view.SHOW_TAKES)
+	view._takes_menu.hide()
+	view.scroll_y = 0.0
+	main.edit_window.close()
+	timeline.grid = 4
+	for undo in 4:
+		timeline.undo()
 	main.settings.loop_record = false
 	timeline.set_loop(true, loop_before.x, loop_before.y)
 	check(main.speaker.clips.size() == 1 and keys_inst.clips.size() == 2, "(the loop recording undone)")

@@ -25,6 +25,7 @@ var automation := {}        # its automation's points: {volume, mute, sustain} (
 var auto_mode := "read"     # off, read, touch, latch or write
 var lanes := ["volume"]     # what its automation lanes show in the edit window, in order
 var sends := [{}, {}, {}, {}, {}]  # its sends, A to E: {} or {aux, level_db, pre, on} (see main.set_send)
+var takes_open := false     # its loop recordings' takes shown under it in the edit window, to comp from
 var source_height := 1.0  # metres above the floor the sound comes from
 var top := 1.0            # how tall the model stands
 var footprint := Vector2.ONE

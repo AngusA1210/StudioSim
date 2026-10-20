@@ -17,8 +17,9 @@ extends Node
 ## it was played if the tempo changes, while MIDI follows the tempo. Clips can be trimmed (an audio clip only ever shows
 ## less or more of its file; a MIDI clip keeps the notes trimmed off, and they come back if it is drawn out again),
 ## split, nudged, faded and given a gain, several at once, and every edit can be undone (Cmd-Z) and redone (Cmd-X). A
-## loop recording (Loop Record, Option-L) makes a take of each pass: the last one shown, the rest kept in the clip's
-## `takes` ({take: its number, and the rest of a clip}) to choose from.
+## loop recording (Loop Record, Option-L) makes a take of each pass: the last one shown, every one kept in full in the
+## clip's `takes` ({take: its number, group: the recording's, and the rest of a clip}). Comping puts a part of any take
+## in the track in place of what is there (see comp): each part keeps the takes, to comp from again.
 
 signal changed  # the clips or the transport changed: whatever draws them draws again
 
@@ -29,6 +30,7 @@ const UNDO_LEVELS := 32
 const NUDGE_SECONDS := 0.01  # how far a clip is nudged with the grid off
 const MIN_CLIP_GAIN_DB := -48.0  # and below: silent
 const MAX_CLIP_GAIN_DB := 24.0
+const COMP_XFADE := 0.01  # seconds: where two comped parts of a recording meet
 
 var app
 var audio: SoundRoomAudio
@@ -428,7 +430,7 @@ func _passes(end_step: float) -> Array:
 	return out
 
 
-## A loop recording's takes on a track: over the loop, covering what was there, the last whole one shown and the rest in
+## A loop recording's takes on a track: over the loop, covering what was there, the last whole one shown, every one in
 ## its `takes`.
 func _stack(inst, kind: String, stack: Array, from: float, to: float, end_step: float) -> void:
 	if stack.is_empty():
@@ -438,35 +440,122 @@ func _stack(inst, kind: String, stack: Array, from: float, to: float, end_step: 
 		if stack[k].length >= (loop_end - loop_start) * (step_seconds() if kind == "audio" else 1.0) - 0.01:
 			shown = k
 			break
-	var clip: Dictionary = stack[shown]
-	clip.takes = []
-	for k in stack.size():
-		if k != shown:
-			clip.takes.append(stack[k])
+	var group := "%s %d %d" % [kind, inst.source_id, Time.get_ticks_usec()]
+	for take in stack:
+		take.group = group
+	var clip: Dictionary = stack[shown].duplicate(true)
+	clip.takes = stack
 	_cover(inst, kind, from, to)
 	inst.clips.append(clip)
 
 
-## Shows take `which` of a clip's takes (its index in `takes`) in the clip's place, the one shown going in with the rest.
-func choose_take(inst, index: int, which: int) -> void:
-	var clip: Dictionary = inst.clips[index]
+# ── Takes and comping ────────────────────────────────────────────────────────────────────────────────────────
+
+## A clip's takes (from loop recording), every one in full, its own among them, in their order; [] for a clip without.
+static func takes_of(clip: Dictionary) -> Array:
 	var takes: Array = clip.get("takes", [])
-	if which < 0 or which >= takes.size():
-		return
-	remember("Choose take")
-	var chosen: Dictionary = takes[which].duplicate(true)
-	var others: Array = takes.duplicate(true)
-	others.remove_at(which)
-	var was: Dictionary = clip.duplicate(true)
-	was.erase("takes")
-	others.append(was)
-	others.sort_custom(func(a, b): return int(a.get("take", 0)) < int(b.get("take", 0)))
-	chosen.takes = others
-	inst.clips.remove_at(index)
-	_cover(inst, chosen.kind, float(chosen.start), float(chosen.start) + float(chosen.length))
-	inst.clips.append(chosen)
+	if takes.is_empty():
+		return []
+	var all := takes.duplicate()
+	if not all.any(func(t): return int(t.get("take", 0)) == int(clip.get("take", 0))):  # (as rooms saved before comping kept them)
+		var own: Dictionary = clip.duplicate(true)
+		own.erase("takes")
+		all.append(own)
+	all.sort_custom(func(a, b): return int(a.get("take", 0)) < int(b.get("take", 0)))
+	return all
+
+
+## Clips as rooms saved before comping kept them (the one shown not among its takes) made as they are now.
+static func with_all_takes(clips: Array) -> Array:
+	for clip in clips:
+		if not clip.get("takes", []).is_empty():
+			clip.takes = takes_of(clip)
+	return clips
+
+
+## The loop recording a clip's takes came from.
+static func group_of(clip: Dictionary) -> String:
+	var takes := takes_of(clip)
+	return str(clip.get("group", str(takes[0].get("name", "")) if not takes.is_empty() else ""))
+
+
+## A track's loop recordings: [{group, kind, takes (each in full, in order), span (steps, all of them)}], along it.
+func take_groups(inst) -> Array:
+	var out := []
+	var seen := {}
+	for clip in inst.clips:
+		if clip.get("takes", []).is_empty():
+			continue
+		var group := group_of(clip)
+		if seen.has(group):
+			continue
+		seen[group] = true
+		var takes := takes_of(clip)
+		var span := Vector2(INF, -INF)
+		for take in takes:
+			var steps := clip_steps(take)
+			span = Vector2(minf(span.x, steps.x), maxf(span.y, steps.y))
+		out.append({"group": group, "kind": clip.kind, "takes": takes, "span": span})
+	out.sort_custom(func(a, b): return a.span.x < b.span.x)
+	return out
+
+
+## Comping, as Pro Tools and Logic have it: take `number` of a loop recording from `from` to `to` (steps), put in the
+## track in place of what is there. The part that goes in keeps the recording's takes (to comp from again), and where it
+## meets another audio part of the same recording, they crossfade a moment. Returns whether anything changed.
+func comp(inst, group: String, number: int, from: float, to: float) -> bool:
+	var take = null
+	var takes := []
+	for found in take_groups(inst):
+		if found.group == group:
+			takes = found.takes
+			for t in takes:
+				if int(t.get("take", 0)) == number:
+					take = t
+	if take == null:
+		return false
+	var span := clip_steps(take)
+	from = maxf(from, span.x)
+	to = minf(to, span.y)
+	if to - from < 0.01:
+		return false
+	remember("Comp")
+	var part: Dictionary = take.duplicate(true)
+	part.erase("takes")
+	if part.kind == "audio":
+		var sps := step_seconds()
+		var cut: float = from * sps - float(take.start)
+		part.start = from * sps
+		part.offset = float(take.offset) + cut
+		part.length = minf((to - from) * sps, float(take.length) - cut)
+		part.fade_in = 0.0
+		part.fade_out = 0.0
+		part.erase("xfade")
+	else:
+		var cut: float = from - float(take.start)
+		part.start = from
+		part.length = to - from
+		part.notes = take.notes.map(func(n): return {"step": float(n.step) - cut, "length": n.length, "note": n.note, "velocity": n.velocity})
+		_trimmed(part)
+	part.group = group
+	part.takes = takes.map(func(t): return t.duplicate(true))
+	_cover(inst, part.kind, float(part.start), float(part.start) + float(part.length))
+	inst.clips.append(part)
+	if part.kind == "audio":  # a moment's crossfade wherever two parts of it meet
+		for c in inst.clips.size():
+			var next := _meets(inst, c)
+			if next >= 0 and group_of(inst.clips[c]) == group and group_of(inst.clips[next]) == group and float(inst.clips[c].get("xfade", 0.0)) <= 0.0:
+				set_crossfade(inst, c, COMP_XFADE, false)
 	sync(inst)
 	changed.emit()
+	return true
+
+
+## Shows take `number` in a clip's place (a right-click on it, or a click on a take under it), over the clip's span.
+func choose_take(inst, index: int, number: int) -> void:
+	var clip: Dictionary = inst.clips[index]
+	var span := clip_steps(clip)
+	comp(inst, group_of(clip), number, span.x, span.y)
 
 
 ## Cuts away what a track's clips of a kind have from `from` to `to` (seconds for audio, steps for MIDI), as a new take

@@ -356,6 +356,12 @@ In a Record room:
   instead, from its start: each time round is a **take**, stacked in one clip over the loop with the last whole pass
   shown, so you can play a part over and over and choose the best. A clip with takes says how many; right-click it to
   choose another, which shows in its place (the rest are kept, to choose again).
+  - **Comping**, as with Pro Tools' playlists and Logic's take folders: **Show the takes under the track** (in that
+    menu) gives each take a lane of its own under the track. Drag along a take to put that part of it in the track
+    (snapped to the grid), in place of what was there; click a take to put it in place of the part of the track over
+    it. The parts of each take in the track are lit in its lane, and where two parts meet they crossfade for 10 ms.
+    Every part keeps all the takes, so you can go on comping, and choosing a take from a part's menu changes that part
+    alone. Comping undoes as any edit does.
   The edit window's **Options** menu (beside Follow; all remembered) has the rest, as Pro Tools' transport does:
   - a **count-in**, one bar or two: recording from a stop, the click counts the bars first, the music waiting at the
     playhead (Pro Tools' Count Off); the screen counts down the beats;
@@ -617,14 +623,14 @@ screen, a mix window laid out like a DAW's with plug-in inserts on every channel
 can be changed, with sound bending round the walls and a reverb that follows the size (on a fader of its own), rooms saved as sessions (with
 templates, auto-save and backups), presets and copy and paste for plug-ins and instruments, and Record rooms: a
 timeline, an edit window, recording audio and MIDI to clips (with a count-in, a pre-roll and post-roll, punching in and out, and loop recording
-into takes), editing them (trims, fades and crossfades, clip gain, splits, nudges, several at once, a MIDI editor
+into takes, comped from them), editing them (trims, fades and crossfades, clip gain, splits, nudges, several at once, a MIDI editor
 for the notes, undo), tracks with names and colours, in routing folders (folders in folders too) with faders, inserts and sends of their own, and
 automation (volume, mute, the sustain pedal, an amp's knobs and its pedals', plug-ins' controls, sends and the master), drawn or
 written as it plays, and aux tracks with sends.
 
 To do, roughly in this order:
 
-1. **More of the edit window**: comping from takes (a part of one, a part of another); and audio read from disk
+1. **More of the edit window**: audio read from disk
    as it plays (for long rooms; takes are held in memory now).
    Perhaps later a free version with Jam rooms only, Record rooms coming with the full one.
 2. **Microphones**: a new kind of track, placed anywhere in the room with precision, that records what the room

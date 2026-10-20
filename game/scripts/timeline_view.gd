@@ -9,7 +9,9 @@ extends Control
 ## trackpad move about (Shift for along), Cmd and the wheel (or a pinch) zoom. The cursor and the hint line say what a
 ## press would do. Shift-click chooses more clips, to move (and edit) together. An audio clip's little fader at its foot
 ## is its clip gain: drag it up or down. A clip with takes (from loop recording) says how many; right-click it to choose
-## one. Double-click a MIDI clip for its notes. With the automation lanes showing (A), each track has one under it: its
+## one, or to show the takes under the track (as Pro Tools' playlists and Logic's take folders) and comp from them: drag
+## along a take for that part of it in the track, or click a take to put it in place of the part of the track it is
+## under; the parts of each take in the track are lit. Double-click a MIDI clip for its notes. With the automation lanes showing (A), each track has one under it: its
 ## buttons choose what it shows (volume, mute, an instrument's sustain pedal) and the track's automation mode; click
 ## in it to add a point, drag points to move them, Shift-click for more, Option-click to take one away.
 
@@ -28,6 +30,8 @@ const SOLO_YELLOW := Color(0.98, 0.86, 0.3)
 const NAME_STRIP := 15.0  # a clip's top strip, with its name: its corners hold the fade handles
 const EDGE := 7.0         # how near an end of a clip a press trims it
 const LANE := 46.0        # an automation lane, under its track (A shows them)
+const TAKE := 38.0        # a take's lane, under its track while its takes show
+const SHOW_TAKES := 1000  # the takes menu's item for showing them under the track (the others are the takes' numbers)
 const POINT_GREEN := Color(0.45, 0.9, 0.55)
 
 var app
@@ -71,7 +75,9 @@ func setup(the_app) -> void:
 	_takes_menu = PopupMenu.new()
 	_takes_menu.id_pressed.connect(func(id: int) -> void:
 		var at: int = timeline.index_of(_takes_for.inst, _takes_for.clip)
-		if at >= 0 and id < _takes_for.clip.get("takes", []).size():
+		if id == SHOW_TAKES:
+			_takes_for.inst.takes_open = not _takes_for.inst.takes_open
+		elif at >= 0 and id != int(_takes_for.clip.get("take", 0)):
 			timeline.choose_take(_takes_for.inst, at, id)
 			chosen = [{"inst": _takes_for.inst, "clip": _takes_for.inst.clips.back()}])
 	add_child(_takes_menu)
@@ -160,9 +166,33 @@ func row_height() -> float:
 	return ROW + (LANE if show_automation else 0.0)
 
 
-## How tall a track's place is: its row, and its automation lanes under it while they show.
+## How tall a track's place is: its row, its takes under it while they show, and its automation lanes while they do.
 func height_of(track) -> float:
-	return ROW + (LANE * track.lanes.size() if show_automation else 0.0)
+	return ROW + take_lanes(track) * TAKE + (LANE * track.lanes.size() if show_automation else 0.0)
+
+
+## How many take lanes a track shows: as many as its loop recording with the most takes has, while its takes show.
+func take_lanes(track) -> int:
+	if not track.get("takes_open"):
+		return 0
+	var most := 0
+	for clip in track.clips:
+		most = maxi(most, clip.get("takes", []).size())
+	return most
+
+
+func take_top(i: int, n: int) -> float:
+	return row_top(i) + ROW + n * TAKE
+
+
+## The track whose take lane is at a height, and which: [row, take lane], or [] for none.
+func take_at(y: float) -> Array:
+	var i := _row_of(y)
+	if i < 0:
+		return []
+	var below := y - row_top(i) - ROW
+	var lanes := take_lanes(tracks()[i])
+	return [i, int(floor(below / TAKE))] if below >= 0.0 and below < lanes * TAKE else []
 
 
 func row_top(i: int) -> float:
@@ -175,7 +205,7 @@ func row_top(i: int) -> float:
 
 ## The top of a track's automation lane `k` (its first, to begin with).
 func lane_top(i: int, k := 0) -> float:
-	return row_top(i) + ROW + k * LANE
+	return row_top(i) + ROW + take_lanes(tracks()[i]) * TAKE + k * LANE
 
 
 ## The track whose place (its row and its lanes) is at a height, or -1 below the last.
@@ -201,11 +231,11 @@ func row_at(y: float) -> int:
 ## The track whose automation lane is at a height, or -1 (lane_number_at says which of its lanes).
 func lane_at(y: float) -> int:
 	var i := _row_of(y)
-	return i if show_automation and i >= 0 and y - row_top(i) >= ROW else -1
+	return i if show_automation and i >= 0 and y >= lane_top(i) else -1
 
 
 func lane_number_at(y: float, i: int) -> int:
-	return clampi(int(floor((y - row_top(i) - ROW) / LANE)), 0, tracks()[i].lanes.size() - 1)
+	return clampi(int(floor((y - lane_top(i)) / LANE)), 0, tracks()[i].lanes.size() - 1)
 
 
 ## The track whose place (its row or its lanes) is at a height, for dragging clips over them.
@@ -253,9 +283,11 @@ func _draw() -> void:
 			if x >= HEADER:
 				draw_line(Vector2(x, top), Vector2(x, top + ROW - 1), Color(1, 1, 1, 0.12 if int(step) % 16 == 0 else 0.04))
 			step += 4.0
+		for n in take_lanes(inst):
+			_draw_take_lane(inst, n, top + ROW + n * TAKE, font, first_bar, last_step)
 		if show_automation:
 			for k in inst.lanes.size():
-				_draw_lane(inst, k, top + ROW + k * LANE, font, first_bar, last_step)
+				_draw_lane(inst, k, lane_top(i, k), font, first_bar, last_step)
 		if inst.is_folder:  # a folder's lane: no clips of its own
 			_draw_header(inst, top, font)
 			continue
@@ -316,6 +348,70 @@ func _draw_clip(inst, index: int, top: float, font: Font) -> void:
 	draw_rect(rect, inst.color.darkened(0.55 if not picked else 0.25))
 	var ink: Color = inst.color.lightened(0.4)
 	var inner := Rect2(rect.position + Vector2(0, 15), Vector2(rect.size.x, rect.size.y - 17))
+	_draw_contents(clip, span, inner, ink)
+	if clip.kind == "audio":
+		_draw_fades(clip, x0, x1, inner, rect, ink)
+	draw_rect(rect, Color.WHITE if picked else Color(0, 0, 0, 0.6), false, 1.0)
+	var takes: int = clip.get("takes", []).size()
+	var takes_text := "%d takes" % takes if takes > 0 else ""
+	var takes_width := font.get_string_size(takes_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 10).x + 8 if takes > 0 else 0.0
+	draw_string(font, rect.position + Vector2(5, 12), str(clip.get("name", "")), HORIZONTAL_ALIGNMENT_LEFT, maxf(rect.size.x - 8 - takes_width, 1.0), 11, ink)
+	if takes > 0 and rect.size.x > takes_width + 30:  # it has takes to choose from (a right-click)
+		draw_string(font, Vector2(rect.end.x - takes_width + 2, rect.position.y + 12), takes_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(ink, 0.75))
+	if clip.kind == "audio" and x0 >= HEADER and x1 - x0 >= 44.0:  # its clip gain: a little fader, and the gain if it has one
+		var knob := _gain_rect(x0, top)
+		draw_line(Vector2(knob.position.x + 5, knob.position.y + 1), Vector2(knob.position.x + 5, knob.end.y - 1), Color(ink, 0.7), 1.0)
+		var db := float(clip.get("gain_db", 0.0))
+		var y := knob.end.y - 3 - (clampf(db, -24.0, 24.0) + 24.0) / 48.0 * (knob.size.y - 6)
+		draw_rect(Rect2(knob.position.x + 2, y - 1.5, 7, 3), ink)
+		if absf(db) >= 0.05:
+			draw_string(font, Vector2(knob.end.x + 1, knob.end.y - 2), "-inf dB" if db <= timeline.MIN_CLIP_GAIN_DB else "%+.1f dB" % db,
+				HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(ink, 0.9))
+
+
+## A track's take lane `n`: each of its loop recordings' take n+1 (they are numbered from 1), the parts of it in the
+## track lit, and what a drag along it would put in.
+func _draw_take_lane(inst, n: int, top: float, font: Font, first_bar: int, last_step: float) -> void:
+	draw_rect(Rect2(HEADER, top, size.x - HEADER, TAKE - 1), Color(0.075, 0.08, 0.095))
+	var step := float(first_bar * 4)
+	while step <= last_step:
+		if x_of(step) >= HEADER:
+			draw_line(Vector2(x_of(step), top), Vector2(x_of(step), top + TAKE - 1), Color(1, 1, 1, 0.08 if int(step) % 16 == 0 else 0.03))
+		step += 4.0
+	var ink: Color = inst.color.lightened(0.3)
+	for group in timeline.take_groups(inst):
+		if n >= group.takes.size():
+			continue
+		var take: Dictionary = group.takes[n]
+		var span: Vector2 = timeline.clip_steps(take)
+		var x0 := x_of(span.x)
+		var x1 := x_of(span.y)
+		if x1 < HEADER or x0 > size.x:
+			continue
+		var rect := Rect2(maxf(x0, HEADER), top + 2, minf(x1, size.x) - maxf(x0, HEADER), TAKE - 5)
+		draw_rect(rect, inst.color.darkened(0.7))
+		for clip in inst.clips:  # the parts of it in the track
+			if timeline.group_of(clip) == group.group and int(clip.get("take", 0)) == int(take.get("take", 0)):
+				var used: Vector2 = timeline.clip_steps(clip)
+				var lit := Rect2(maxf(x_of(used.x), rect.position.x), rect.position.y, 0, rect.size.y)
+				lit.size.x = minf(x_of(used.y), rect.end.x) - lit.position.x
+				if lit.size.x > 0.0:
+					draw_rect(lit, inst.color.darkened(0.35))
+		_draw_contents(take, span, Rect2(rect.position + Vector2(0, 12), Vector2(rect.size.x, rect.size.y - 13)), Color(ink, 0.85))
+		draw_rect(rect, Color(0, 0, 0, 0.6), false, 1.0)
+		draw_string(font, rect.position + Vector2(5, 10), "Take %d" % int(take.get("take", n + 1)), HORIZONTAL_ALIGNMENT_LEFT,
+			maxf(rect.size.x - 8, 1.0), 10, ink)
+	if _drag.get("what", "") == "comp" and _drag.inst == inst and _drag.lane == n and _drag.get("moved", false):
+		var a := x_of(minf(_drag.from, _drag.to))
+		var b := x_of(maxf(_drag.from, _drag.to))
+		draw_rect(Rect2(maxf(a, HEADER), top + 1, maxf(b - maxf(a, HEADER), 0.0), TAKE - 3), Color(1, 1, 1, 0.75), false, 2.0)
+	draw_rect(Rect2(0, top, HEADER, TAKE - 1), Color(0.11, 0.115, 0.13))
+	draw_rect(Rect2(_indent(inst), top, 5, TAKE - 1), Color(inst.color, 0.6))
+	draw_string(font, Vector2(14 + _indent(inst), top + 23), "Take %d" % (n + 1), HORIZONTAL_ALIGNMENT_LEFT, HEADER - 20, 12, DIM)
+
+
+## What a clip holds, drawn in a rectangle: an audio clip's waveform (as its clip gain makes it), a MIDI clip's notes.
+func _draw_contents(clip: Dictionary, span: Vector2, inner: Rect2, ink: Color) -> void:
 	if clip.kind == "audio":  # its waveform, as its clip gain makes it
 		var peaks: PackedFloat32Array = timeline.peaks(clip)
 		var gain: float = timeline.gain_of(clip)
@@ -344,24 +440,6 @@ func _draw_clip(inst, index: int, top: float, font: Font) -> void:
 			var w := maxf(float(n.length) * zoom, 2.0)
 			if nx + w > inner.position.x and nx < inner.end.x:
 				draw_rect(Rect2(maxf(nx, inner.position.x), ny - 1.5, minf(w, inner.end.x - maxf(nx, inner.position.x)), 3), ink)
-	if clip.kind == "audio":
-		_draw_fades(clip, x0, x1, inner, rect, ink)
-	draw_rect(rect, Color.WHITE if picked else Color(0, 0, 0, 0.6), false, 1.0)
-	var takes: int = clip.get("takes", []).size()
-	var takes_text := "%d takes" % (takes + 1) if takes > 0 else ""
-	var takes_width := font.get_string_size(takes_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 10).x + 8 if takes > 0 else 0.0
-	draw_string(font, rect.position + Vector2(5, 12), str(clip.get("name", "")), HORIZONTAL_ALIGNMENT_LEFT, maxf(rect.size.x - 8 - takes_width, 1.0), 11, ink)
-	if takes > 0 and rect.size.x > takes_width + 30:  # it has takes to choose from (a right-click)
-		draw_string(font, Vector2(rect.end.x - takes_width + 2, rect.position.y + 12), takes_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(ink, 0.75))
-	if clip.kind == "audio" and x0 >= HEADER and x1 - x0 >= 44.0:  # its clip gain: a little fader, and the gain if it has one
-		var knob := _gain_rect(x0, top)
-		draw_line(Vector2(knob.position.x + 5, knob.position.y + 1), Vector2(knob.position.x + 5, knob.end.y - 1), Color(ink, 0.7), 1.0)
-		var db := float(clip.get("gain_db", 0.0))
-		var y := knob.end.y - 3 - (clampf(db, -24.0, 24.0) + 24.0) / 48.0 * (knob.size.y - 6)
-		draw_rect(Rect2(knob.position.x + 2, y - 1.5, 7, 3), ink)
-		if absf(db) >= 0.05:
-			draw_string(font, Vector2(knob.end.x + 1, knob.end.y - 2), "-inf dB" if db <= timeline.MIN_CLIP_GAIN_DB else "%+.1f dB" % db,
-				HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(ink, 0.9))
 
 
 ## Where an audio clip's clip-gain fader is, at its foot by its start.
@@ -692,6 +770,9 @@ func zone_at(at: Vector2) -> Dictionary:
 		return {}
 	if at.y < RULER:
 		return {"zone": "ruler"} if at.x >= HEADER else {}
+	var take := take_at(at.y)
+	if not take.is_empty():
+		return _take_zone(tracks()[take[0]], take[0], take[1], at)
 	var lane_row := lane_at(at.y)
 	if lane_row >= 0 and lane_row < tracks().size():
 		return _lane_zone(tracks()[lane_row], lane_row, at)
@@ -747,6 +828,19 @@ func cursor_at(at: Vector2) -> CursorShape:
 		zone_at(at).get("zone", ""), CURSOR_ARROW)
 
 
+## What is at a point in a track's take lane: one of its loop recordings' takes ("take"), its header, or neither.
+func _take_zone(inst, row: int, n: int, at: Vector2) -> Dictionary:
+	if at.x < HEADER:
+		return {"zone": "take_header", "inst": inst, "row": row, "lane": n}
+	var step := step_at(at.x)
+	for group in timeline.take_groups(inst):
+		if n < group.takes.size():
+			var span: Vector2 = timeline.clip_steps(group.takes[n])
+			if step >= span.x and step < span.y:
+				return {"zone": "take", "inst": inst, "row": row, "lane": n, "group": group.group, "take": int(group.takes[n].get("take", n + 1))}
+	return {"zone": "take_lane", "inst": inst, "row": row, "lane": n}
+
+
 ## What is at a point in a track's automation lane: its buttons ("lane_button"), one of its points ("point"), or a
 ## place to add one ("lane").
 func _lane_zone(track, row: int, at: Vector2) -> Dictionary:
@@ -777,6 +871,10 @@ func hint_at(at: Vector2) -> String:
 	match found.get("zone", ""):
 		"ruler":
 			return "Click to put the playhead here; drag along to loop the range  ·  L loop playback on or off, U loops the chosen clip"
+		"take":
+			return "Take %d: drag along it to put that part of it in the track (comping); click it to put it in place of the part of the track over it" % found.take
+		"take_header":
+			return "Take %d of each loop recording on the track: the parts of it in the track are lit (right-click a clip with takes to hide them)" % (found.lane + 1)
 		"lane_button":
 			return {"param": "What this lane shows: volume, mute, an instrument's sustain pedal, an amp's knobs and its pedals', sends, or a plug-in's controls",
 				"mode": "The track's automation mode: Off, Read, Touch (written while a control is held), Latch (from then until it stops) or Write (as it plays)",
@@ -823,7 +921,7 @@ func hint_at(at: Vector2) -> String:
 			var clip: Dictionary = found.inst.clips[found.index]
 			return "Drag to move it (Option as you drop: a copy), Shift-click to choose more  ·  %s splits it at the playhead  ·  , and . nudge it  ·  U loops it%s" % [
 				app.bindings.label("separate"), "  ·  double-click for its notes" if clip.kind == "midi" else
-				("  ·  right-click for its takes" if not clip.get("takes", []).is_empty() else "")]
+				("  ·  right-click for its takes (and to comp from them)" if not clip.get("takes", []).is_empty() else "")]
 		"track":
 			return "Click to put the playhead here"
 	return ""
@@ -846,6 +944,10 @@ func press(at: Vector2, all := false, add := false, command := false) -> void:
 	match found.get("zone", ""):
 		"ruler":
 			_drag = {"what": "ruler", "from_x": at.x, "from": step_at(at.x)}
+		"take":  # comping: a drag along it puts that part in, a click the part the track has over it
+			chosen = []
+			_drag = {"what": "comp", "inst": found.inst, "lane": found.lane, "group": found.group, "take": found.take, "from": step_at(at.x),
+				"to": step_at(at.x), "from_x": at.x, "moved": false}
 		"header":
 			if _folds(found.inst) and at.x < 24.0 + _indent(found.inst):  # its arrow
 				found.inst.open = not found.inst.open
@@ -972,6 +1074,9 @@ func delete_chosen_points() -> bool:
 func _on_drag(at: Vector2) -> void:
 	var what: String = _drag.get("what", "")
 	match what:
+		"comp":
+			_drag.to = step_at(at.x)
+			_drag.moved = _drag.moved or absf(at.x - _drag.from_x) > 4.0
 		"point":  # the chosen points along (the one held to the grid) and up or down, in order still
 			if not _drag.get("moved", false):
 				timeline.remember("Move points")
@@ -1036,6 +1141,8 @@ func release(at: Vector2, copy := false) -> void:
 	var drag := _drag
 	_drag = {}
 	match drag.get("what", ""):
+		"comp":
+			_comp(drag)
 		"point":
 			_lane_changed(drag.track)
 		"ruler":
@@ -1053,6 +1160,35 @@ func release(at: Vector2, copy := false) -> void:
 				timeline._sync_items(drag.items if drag.what == "gain" else [{"inst": drag.inst}])
 
 
+## A take dragged along (that part of it, to the grid, in the track) or clicked: put in place of the part of the track
+## over it, or where the track has none of its recording there, over the gap.
+func _comp(drag: Dictionary) -> void:
+	var inst = drag.inst
+	if drag.moved:
+		var from: float = timeline.snap(minf(drag.from, drag.to))
+		var to: float = timeline.snap(maxf(drag.from, drag.to))
+		if to - from < 0.01:
+			to = from + maxf(float(timeline.grid), 1.0)
+		timeline.comp(inst, drag.group, drag.take, from, to)
+		return
+	var step: float = drag.from
+	var gap := Vector2(-INF, INF)
+	for c in inst.clips.size():
+		var clip: Dictionary = inst.clips[c]
+		if timeline.group_of(clip) != drag.group:
+			continue
+		var span: Vector2 = timeline.clip_steps(clip)
+		if step >= span.x and step < span.y:
+			if int(clip.get("take", 0)) != int(drag.take):
+				timeline.choose_take(inst, c, drag.take)
+			return
+		if span.y <= step:
+			gap.x = maxf(gap.x, span.y)
+		else:
+			gap.y = minf(gap.y, span.x)
+	timeline.comp(inst, drag.group, drag.take, gap.x, gap.y)
+
+
 ## A track's menu (a right-click on its name): rename it, colour it, and its folder.
 func show_track_menu(track, at: Vector2) -> void:
 	if track.get("is_master"):
@@ -1064,20 +1200,21 @@ func show_track_menu(track, at: Vector2) -> void:
 	_track_menu.popup()
 
 
-## A clip's takes, to choose one from (a right-click on it): the one shown ticked.
+## A clip's takes, to choose one from (a right-click on it): the one shown ticked; and the takes shown under the track,
+## to comp from, or not.
 func show_takes(inst, index: int, at: Vector2) -> void:
 	var clip: Dictionary = inst.clips[index]
-	var takes: Array = clip.get("takes", [])
+	var takes: Array = timeline.takes_of(clip)
 	if takes.is_empty():
 		return
 	_takes_for = {"inst": inst, "clip": clip}
 	_takes_menu.clear()
-	var all := takes.map(func(t): return [int(t.get("take", 0)), t]) + [[int(clip.get("take", 0)), clip]]
-	all.sort_custom(func(a, b): return a[0] < b[0])
-	for entry in all:
-		var item := _takes_menu.item_count
-		_takes_menu.add_radio_check_item("Take %d" % entry[0], takes.find(entry[1]) if not is_same(entry[1], clip) else 1000)  # (1000: the one shown)
-		_takes_menu.set_item_checked(item, is_same(entry[1], clip))
+	for take in takes:
+		_takes_menu.add_radio_check_item("Take %d" % int(take.get("take", 0)), int(take.get("take", 0)))
+		_takes_menu.set_item_checked(_takes_menu.item_count - 1, int(take.get("take", 0)) == int(clip.get("take", 0)))
+	_takes_menu.add_separator()
+	_takes_menu.add_check_item("Show the takes under the track, to comp from them", SHOW_TAKES)
+	_takes_menu.set_item_checked(_takes_menu.item_count - 1, inst.takes_open)
 	_takes_menu.position = Vector2i(get_screen_position() + at)
 	_takes_menu.popup()
 

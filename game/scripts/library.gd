@@ -478,7 +478,7 @@ func apply_room_data(data: Dictionary, carry := {}, size = null, mode := "") -> 
 		var problem := apply_instrument_settings(inst, entry.get("settings", {}), include)
 		if problem != "":
 			problems.append(problem)
-		inst.clips = entry.get("clips", []).duplicate(true) if keep.call("patterns") else []
+		inst.clips = app.timeline.with_all_takes(entry.get("clips", []).duplicate(true)) if keep.call("patterns") else []
 		if keep.call("mix"):  # its automation, as the mix's
 			inst.automation = entry.get("automation", {}).duplicate(true)
 			inst.auto_mode = str(entry.get("auto_mode", "read"))
