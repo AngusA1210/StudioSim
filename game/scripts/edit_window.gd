@@ -116,6 +116,8 @@ func _input(event: InputEvent) -> void:
 		duplicate_selected()
 	elif action == "to_start" and not command:  # back to the start, as Return is in Pro Tools
 		timeline.locate(0.0)
+	elif action == "monitor" and not command:  # hear the room or the mix
+		app.toggle_monitor()
 	elif action == "follow" and not command:
 		app.toggle_follow()
 	elif key == KEY_L and event.alt_pressed and not command:  # Loop Record, as Option-L is in Pro Tools

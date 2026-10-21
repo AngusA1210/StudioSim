@@ -188,6 +188,31 @@ func average_level(id: int, duration: float) -> float:
 	return sqrt(total / maxi(count, 1))
 
 
+## What it puts into the room and into the mix, over the same frames: (room, mix).
+func room_and_mix(id: int, duration: float) -> Vector2:
+	var total := Vector2.ZERO
+	var until := Time.get_ticks_msec() + int(duration * 1000.0)
+	while Time.get_ticks_msec() < until:
+		var room: float = main.audio.get_source_room_level(id)
+		var level: float = main.audio.get_source_level(id)
+		total += Vector2(room * room, level * level)
+		await process_frame
+	return Vector2(sqrt(total.x), sqrt(total.y))
+
+
+## The same, of what it puts into the room.
+func average_room_level(id: int, duration: float) -> float:
+	var total := 0.0
+	var count := 0
+	var until := Time.get_ticks_msec() + int(duration * 1000.0)
+	while Time.get_ticks_msec() < until:
+		var level: float = main.audio.get_source_room_level(id)
+		total += level * level
+		count += 1
+		await process_frame
+	return sqrt(total / maxi(count, 1))
+
+
 func frames(n: int) -> void:
 	for i in n:
 		await process_frame
@@ -474,6 +499,7 @@ func _run() -> void:
 	player.place(Vector3(0.0, 0.0, 3.6), 0.0)  # the middle of the room, facing nothing in particular
 	await frames(5)
 	var count_before: int = main.instruments.size()
+	var others: int = audio.get_source_count() - count_before  # (the sources that aren't instruments: the master's inserts')
 	await tap(KEY_BACKSPACE)
 	check(player.target == null and player.remove_pending == null, "Backspace does nothing when you aren't facing an instrument")
 	await tap(KEY_T)
@@ -509,7 +535,7 @@ func _run() -> void:
 		"one Backspace only asks", " / ".join(main.hud.hint_lines()))
 	await tap(KEY_BACKSPACE)
 	await frames(3)
-	check(not main.instruments.has(bass2) and main.instruments.size() == count_before and audio.get_source_count() == count_before
+	check(not main.instruments.has(bass2) and main.instruments.size() == count_before and audio.get_source_count() == count_before + others
 		and player.playing == null and not is_instance_valid(bass2), "a second one removes it")
 
 	await tap(KEY_T)
@@ -555,14 +581,14 @@ func _run() -> void:
 			break
 		extras.append(extra)
 	await tap(KEY_T)
-	check(main.instruments.size() == audio.get_max_sources() and im._cards[0].disabled and im._footer.text.begins_with("The room is full"),
+	check(main.instruments.size() == main.instrument_capacity() and main.instrument_capacity() == audio.get_max_sources() - others and im._cards[0].disabled and im._footer.text.begins_with("The room is full"),
 		"a full room says so and offers nothing more", "%d instruments, the last one is %s" % [main.instruments.size(), extras[-1].display_name])
 	await tap(KEY_T)
 	for extra in extras:
 		main.remove_instrument(extra)
 	await seconds(0.4)
 	var returned = main.add_instrument("pad", Vector3(0.0, 1.6, 0.0))
-	check(not im.is_open() and audio.get_source_count() == count_before + 1 and returned != null and returned.display_name == "Pad 2",
+	check(not im.is_open() and audio.get_source_count() == count_before + others + 1 and returned != null and returned.display_name == "Pad 2",
 		"N closes the menu again, and removing instruments makes space")
 	main.remove_instrument(returned)
 
@@ -816,7 +842,7 @@ func _run() -> void:
 	check(player.target == speaker and speaker_card == ["Speaker", "I input on", "' volume and input", "M mute", "G carry",
 		"V duplicate", "Backspace remove (press twice)"], "the Speaker's card offers input, its panel and mute, but not playing", " / ".join(speaker_card))
 	await tap(KEY_M)
-	check(speaker.muted, "M mutes it")
+	check(speaker.room_muted and not speaker.muted, "M mutes it in the room (you're standing in it; its track plays on in the mix)")
 	await tap(KEY_E)
 	check(player.playing == null and not seq.is_open(), "E does nothing at the Speaker: it isn't played")
 	await tap(KEY_M)
@@ -961,12 +987,13 @@ func _run() -> void:
 	await click(pad_strip.solo.get_global_rect().get_center())
 	await click(mix._strips[0].mute.get_global_rect().get_center())
 	await seconds(0.5)
-	check(not pad.soloed and drums.muted and drums._label.text.contains("muted") and await average_level(drums.source_id, 0.5) < 0.0005,
-		"M on the drums' strip mutes them, and their label says so", drums._label.text)
+	check(not pad.soloed and drums.muted and not drums._label.text.contains("muted") and await average_level(drums.source_id, 0.5) < 0.0005,
+		"M on the drums' strip mutes their track in the mix (in the room they play on: their label doesn't say muted)", drums._label.text)
 	await click(mix._strips[0].mute.get_global_rect().get_center())
 	audio.note_off(pad.source_id, 57)
 	pad.set_loop(true)
 
+	main.set_monitor("mix")  # (the main outputs play the mix, where the faders are)
 	for inst in main.instruments:  # every instrument far too loud
 		mix._on_fader_changed(12.0, inst)
 	await seconds(1.5)
@@ -1004,6 +1031,48 @@ func _run() -> void:
 	await frames(3)
 	check(held_loud > 0.5 and main.master_peak_hold < 0.5 and drums.peak_hold < 0.5 and pad.peak_hold < held_loud,
 		"Alt-clicking a peak readout clears them all, the master's too", "master held %.2f, now %.2f" % [held_loud, main.master_peak_hold])
+	main.set_monitor("room")
+
+	# The room and the mix apart: each instrument's level in the room at the foot of its strip, its pan in the mix,
+	# and the two masters at the right, HEAR on the one the main outputs play.
+	var foot: Dictionary = mix._strip_for(drums).room
+	var room_before: Vector2 = await room_and_mix(drums.source_id, 0.8)  # (the room's level against the mix's, the groove's ups and downs alike in both)
+	foot.level.value_changed.emit(-12.0)
+	await seconds(0.3)
+	var room_down: Vector2 = await room_and_mix(drums.source_id, 0.8)
+	var room_change: float = linear_to_db((room_down.x / maxf(room_down.y, 1e-9)) / maxf(room_before.x / maxf(room_before.y, 1e-9), 1e-9))
+	foot.level.value_changed.emit(0.0)
+	await frames(2)
+	check(foot.level.value == 0.0 and absf(room_change + 12.0) < 1.5 and room_down.y > 0.001 and is_equal_approx(drums.level_db, 0.0),
+		"an instrument's level in the room, at the foot of its strip: 12 dB down there, its fader in the mix as it was", "%.1f dB in the room" % room_change)
+	await click(foot.mute.get_global_rect().get_center())
+	await seconds(0.4)
+	var room_muted_level: float = await average_room_level(drums.source_id, 0.4)
+	var mix_muted_level: float = await average_level(drums.source_id, 0.4)
+	check(drums.room_muted and not drums.muted and room_muted_level < 0.0001 and mix_muted_level > 0.001 and drums._label.text.contains("muted"),
+		"its M there mutes it in the room (its label says so), its direct output playing on in the mix", "%.5f, %.4f" % [room_muted_level, mix_muted_level])
+	await click(foot.mute.get_global_rect().get_center())
+	var drums_pan: Control = mix._strip_for(drums).pan
+	drums_pan.value_changed.emit(-0.5)
+	await frames(2)
+	check(is_equal_approx(drums.pan, -0.5) and drums_pan.value == -0.5 and main.mixer.PanControl.readout(-0.5) == "<50" and
+		main.automation.params_for(drums).has("pan"),
+		"every instrument has a pan pot in the mix (as Pro Tools reads it, <50), and its pan can be automated", main.mixer.PanControl.readout(drums.pan))
+	drums_pan.value_changed.emit(0.0)
+	await click(mix._master.hear.get_global_rect().get_center())
+	var heard_mix: bool = main.settings.monitor == "mix" and mix._master.hear.button_pressed and not mix._room.hear.button_pressed
+	await tap(KEY_H)
+	check(heard_mix and main.settings.monitor == "room" and mix._room.hear.button_pressed,
+		"HEAR on the mix's master has the main outputs play the mix, and H goes back to the room")
+	await click(mix._master.inserts[0].button.get_global_rect().get_center())
+	check(picker.visible and picker._title.text == "Insert A on the Mix Master", "the mix's master has inserts too", picker._title.text)
+	picker._search.text = "audelay"
+	picker._search.text_changed.emit("audelay")
+	picker._search.text_submitted.emit("audelay")
+	await frames(3)
+	check(main.master_track.inserts[0].plugin_name == "AUDelay" and mix._master.inserts[0].button.text == "AUDelay" and
+		main.automation.plugin_params(main.master_track).size() == 1, "a plug-in on it plays on the whole mix, its controls automatable", mix._master.inserts[0].button.text)
+	main.clear_insert(main.master_track, 0)
 	# The meters read before the fader unless a fader's right-click menu says after: the pad turned down 20 dB still reads
 	# as loud before its fader.
 	mix._on_fader_changed(-20.0, pad)
@@ -2033,7 +2102,7 @@ func _run() -> void:
 	main.mixer.open()
 	await frames(3)
 	var mic_strip: Dictionary = main.mixer._strip_for(mic)
-	var mic_card: String = mic_strip.small.text if not mic_strip.is_empty() else ""
+	var mic_card: String = mic_strip.source.text if not mic_strip.is_empty() else ""
 	main.mixer.close()
 	check(mic != null and mic.is_mic and not mic.playable and not mic.is_live() and is_equal_approx(mic.global_position.y, 1.2) and mic_card == "FLAT · OMNI",
 		"a microphone stands in the room on its stand, its capsule 1.2 m up: an audio track, its strip saying what it is", mic_card)
@@ -2106,16 +2175,17 @@ func _run() -> void:
 		main.mic_pattern_of(mic) == "figure8" and mic.display_name.begins_with("Condenser Mic") and mp._graph.model == "condenser",
 		"its panel switches its model (a dynamic is cardioid only; a large condenser cardioid, omni or figure-8), its name following, its response and pattern drawn",
 		mic.display_name)
-	mp._pan.value_changed.emit(-0.5)
 	mp.close()
 	main.mixer.open()
 	await frames(3)
 	var panned_strip: Dictionary = main.mixer._strip_for(mic)
-	check(is_equal_approx(mic.mic_pan, -0.5) and is_equal_approx(panned_strip.source.value, -0.5) and panned_strip.small.text == "LDC · FIG-8" and
-		main.mixer.PanControl.readout(-0.5) == "<50", "its track's pan, in its panel and on its strip (as Pro Tools reads it, <50)", panned_strip.small.text)
+	panned_strip.pan.value_changed.emit(-0.5)
+	await frames(2)
+	check(is_equal_approx(mic.pan, -0.5) and is_equal_approx(panned_strip.pan.value, -0.5) and panned_strip.source.text == "LDC · FIG-8" and
+		panned_strip.room.is_empty(), "its track's pan, on its strip (a microphone has no level in the room: it makes no sound there)", panned_strip.source.text)
 	main.mixer.close()
 	var settings_kept: Dictionary = main.library.instrument_settings(mic)
-	check(settings_kept.get("mic_model") == "condenser" and settings_kept.get("mic_pattern") == "figure8" and is_equal_approx(float(settings_kept.get("mic_pan", 0.0)), -0.5),
+	check(settings_kept.get("mic_model") == "condenser" and settings_kept.get("mic_pattern") == "figure8" and is_equal_approx(float(settings_kept.get("pan", 0.0)), -0.5),
 		"its model, pattern and pan are kept with it")
 	main.remove_instrument(mic)
 	await frames(2)
@@ -2159,7 +2229,7 @@ func _run() -> void:
 	main.mixer.open()
 	await frames(3)
 	var stereo_strip: Dictionary = main.mixer._strip_for(stereo)
-	check(stereo_strip.small.text == "RIBBON · M/S" or stereo_strip.small.text.ends_with("· M/S"), "its strip says what it is", stereo_strip.small.text)
+	check(stereo_strip.small.text == "STEREO MIC" and stereo_strip.source.text.ends_with("· M/S"), "its strip says what it is", stereo_strip.source.text)
 	main.mixer.close()
 	timeline.set_armed(stereo, true)
 	timeline.locate(0.0)
@@ -2188,8 +2258,8 @@ func _run() -> void:
 	timeline.sync(stereo)
 	timeline.locate(12.0)
 	await frames(3)
-	check(main.automation.params_for(stereo).has("pan") and is_equal_approx(stereo.mic_pan, 0.5) and main.automation.value_text(stereo, "pan", 0.5) == "50>",
-		"a mic's pan (a stereo mic's balance) can be automated: stopped, it is where its lane has it", "%.2f" % stereo.mic_pan)
+	check(main.automation.params_for(stereo).has("pan") and is_equal_approx(stereo.pan, 0.5) and main.automation.value_text(stereo, "pan", 0.5) == "50>",
+		"a mic's pan (a stereo mic's balance) can be automated: stopped, it is where its lane has it", "%.2f" % stereo.pan)
 	stereo.automation = {}
 	timeline.locate(0.0)
 	mp.open(stereo)
@@ -2395,8 +2465,8 @@ func _run() -> void:
 	view.press(param_button)
 	var params_offered: int = view._lane_menu.item_count
 	view._lane_menu.hide()
-	check(mode_items == 5 and keys_inst.auto_mode == "touch" and params_offered == 3 and auto.params_for(the_folder).size() == 2,
-		"its buttons choose the track's mode (Off, Read, Touch, Latch, Write) and what the lane shows (an instrument's sustain pedal too)")
+	check(mode_items == 5 and keys_inst.auto_mode == "touch" and params_offered == 4 and auto.params_for(the_folder).size() == 2,
+		"its buttons choose the track's mode (Off, Read, Touch, Latch, Write) and what the lane shows (an instrument's sustain pedal and pan too)")
 	keys_inst.auto_mode = "read"
 
 	var drums_auto = main.find_instrument("drums")

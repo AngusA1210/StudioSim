@@ -46,10 +46,11 @@ to the title, which then offers to go back into the room.
 | MIDI keyboard | plays every instrument whose input is on, with velocity (and the sustain pedal on the Keys); plug in any time |
 | ' (beside Return) | open the pattern editor for the instrument you're next to or playing (at an amp: its knobs and pedals; at a Speaker: its volume and input) |
 | P | at a plug-in instrument, open its plug-in's window above the on-screen keyboard, the letter keys playing it; a click in the room, Esc or Q puts it away |
-| M | switch that instrument's loop off or on (for a Speaker or an amp: mute) |
+| M | switch that instrument's loop off or on (for a Speaker or an amp: mute it in the room; for a microphone: mute its track) |
 | L O U J | at an amp with a loop pedal: L the footswitch (record, close the loop, overdub), O stop or play, U undo or redo the last overdub, J twice to clear. Elsewhere in a Record room, L switches loop playback on and off |
 | 1 to 8 | at an amp, stamp on its pedals: each switches that pedal on or off (the loop pedal: its footswitch) |
 | Tab | the mix window (you can still walk about while it is open) |
+| H | hear the room or the mix on the main outputs (see The room and the mix) |
 | Space | start or stop every instrument's pattern (a Record room: play from the playhead, or stop) |
 | ⌘Space | a Record room: record the armed tracks from the playhead; again (or Space) to stop |
 | R | a Record room: the edit window, from the room or the mix window (⌘= swaps the two) |
@@ -74,7 +75,9 @@ you get up or close it.
 ## Instruments
 
 There are two families of instrument, and microphones; the instrument menu (T) adds any of them to the room, up to
-32 in all:
+32 in all (less one for each folder and aux track, and one for the mix master's inserts). The menu shows each as a
+picture of it, as it stands in the room, with its name; what it is shows in the line at the foot while the mouse is
+over it (and what a family is, over its heading):
 
 - **MIDI instruments** (a drum machine, a garage kit, a studio kit, bass, pad, bells, keys, and plug-in instruments) are played from
   the computer keyboard or a MIDI controller, and each can loop a pattern on the sequencer.
@@ -162,17 +165,22 @@ to another in its panel:
   through the measurement mic at 0 dB of gain, is 120 dB SPL (an instrument heard at its own level is around 90 to
   105 dB SPL), so it is far below the music, but there in a quiet passage with a lot of gain, as with a real mic.
 - **Placing it**: pick one from the menu, carry it (G) and put it down: it points at the instrument nearest it. Then
-  **'** at it (or its name in the mix window) opens its panel: its model and pattern (with its frequency response and
-  its pattern drawn, the lows and highs fainter), where it stands, to the centimetre (across and along the room, from
-  its middle), its capsule's height (where it hears from), which way it points (its bearing, clockwise from north, and
-  how far down) or **Point it at** an instrument, its **gain**, which comes before it records, as a preamp's does,
-  and its **pan**. Beside them, how far each instrument is from it, how late its sound arrives, and how loud it is
-  there.
+  **'** at it (or its name in the mix window) opens its panel, docked down the right of the screen, and the view
+  goes to the mic's capsule, looking the way it points (its own model out of the way), with a cross at the middle and,
+  under it, what it is pointing at, how far off and how far off its axis, as you would check it with your head beside
+  the stand. In that view W A S D (or the arrows) move it along the floor, R and F raise and lower it, dragging aims
+  it, and the scroll wheel moves it along its aim, closer or further (Shift for fine moves, in each). The panel has
+  its model and pattern (with its frequency response and its pattern drawn, the lows and highs fainter), where it
+  stands, to the centimetre (across and along the room, from its middle), its capsule's height (where it hears
+  from), which way it points (its bearing, clockwise from north, and how far down) or **Point it at** an instrument,
+  and its **gain**, which comes before it records, as a preamp's does. Under them, how far each instrument is from it,
+  how late its sound arrives, how loud it is there, and how far off its axis. Closing the panel puts the view back
+  where you stand. Its pan is the mix window's.
 - **Its track** is an audio track: arm it (R) and record, and it records what it hears (32-bit float, so a mic right up
   against a loud amp never clips the file); its input on (I) lets you hear it as it hears, and while it is armed it is
   heard while recording or stopped, its clips otherwise, as Pro Tools' Auto Input has a track. It plays through its
-  inserts, fader and sends to the master (or its folder), where its pan puts it in the stereo (equal-power; its strip
-  has the pan in its input's place, and says its model and pattern over it, as "DYN · CARD"). Its takes are placed
+  inserts, fader and sends to the mix's master (or its folder), where its pan puts it in the stereo (equal-power; its
+  strip says its model and pattern in its input's place, as "DYN · CARD"). Its takes are placed
   where they were heard, with no input latency to take off, since nothing came in through the interface; something
   played live along with it is heard by it as late as you play it, though, as in a real room with headphones that
   are late.
@@ -187,8 +195,8 @@ to another in its panel:
   as its **width** says: 0 is mono, 100 % as the two hear it, more wider still, and it can be changed after recording.
   The pair takes the patterns its setup wants (pencils for the cardioids and omnis, ribbons for Blumlein, a large
   condenser's figure-8 for the side, unless their model has them), and is placed and pointed as one.
-- **Its pan** (a stereo mic's balance) can be automated, as a lane under its track, and written as it plays by moving it
-  on its strip or in its panel.
+- **Its pan** (a stereo mic's balance) can be automated, as a lane under its track, and written as it plays by turning
+  its pot in the mix window.
 - It is kept with the room: where it stands, how high, how it points, its model, pattern, gain and pan, and a pair's
   setup. (A stereo pair kept as two mono mics, as rooms had it for a while, opens as two mics.)
 
@@ -394,9 +402,10 @@ In a Record room:
 - **Automation**, as Pro Tools and Logic have it: **A** (or the edit window's Auto button) shows a lane under each
   track (a folder's, an aux's, and the master's, whose row is at the foot of the edit window). A lane shows one
   thing, chosen with its first button: **Volume**, **Mute**, an instrument's **Sustain pedal**, an amp's knobs
-  (**Gain** to **Master**), a microphone's **Pan**, a send's level (**Send A** to **E**), any of the controls of the plug-ins on the
+  (**Gain** to **Master**), its **Pan**, a send's level (**Send A** to **E**), any of the controls of the plug-ins on the
   track, each plug-in's in a submenu of its own (on its inserts, its Plug-in pedals, a plug-in instrument's own),
-  or the knobs of an amp's stock pedals, each pedal's in a submenu too; the master's lane is its fader. A plug-in's
+  or the knobs of an amp's stock pedals, each pedal's in a submenu too; the master's lanes are its fader and the
+  controls of the plug-ins on its inserts. A plug-in's
   automation goes where the plug-in goes: dragged to another insert slot (on its track or another), its points and
   its lane go with it, and the one it swaps with takes its own the other way; copied (Option-drag), the copy has a
   copy of them; taken away, or replaced by another plug-in, they go with it. A pedal's go with it about the board. **+** adds another lane under the track, for another control, and **×** takes one
@@ -517,12 +526,30 @@ Each instrument is a track, in the mix window and (in a Record room) the edit wi
   edit window, after the tracks (or in its folder).
 - Folders, aux tracks, sends, names and colours are all kept with the room (and in templates).
 
+## The room and the mix
+
+There are two mixes, as a studio has. **The room** is what you hear standing in it: each instrument where it stands,
+at its level there, with the room's reverb, through the room's master. **The mix** is what the tracks put out, as
+a control room hears them: the microphones' tracks, and each instrument's direct output (as a DI's, or a synth's line
+out), through their faders, pans, sends, folders and aux tracks to the mix's master and its inserts. The main outputs
+play one or the other: **H** switches between them (or HEAR on either master in the mix window), and the screen says
+which. So with microphones up you can hear the mix alone, as headphones would, without the room's own sound on top.
+The mix can go to a pair of outputs of its own as well, all the time (the mix master's output menu): headphones of
+their own, say, or a recorder.
+
+An instrument's inserts come before the split, so a plug-in on it shapes its sound in the room too (as an amp's pedals
+do); its fader, pan, mute, solo and sends are the mix's. Its level in the room, and its mute there, are at the foot of
+its strip, apart. A microphone hears the room, so an instrument muted in the room is muted for the mics too, and one
+muted in the mix is still heard by them. Where the room is, the listener is where you stand; the mix doesn't change as
+you walk about.
+
 ## The mix window
 
 Tab opens the mix window, docked along the bottom of the screen so the room stays in view. It is laid out like a
-mixing desk: a channel strip for every instrument, side by side (then the folders' and aux tracks'), and the master
-strip on the right. At the top of each strip are its **inserts**, A to E, and under them its **sends**, A to E (see
-Aux tracks and sends). A fader whose track's automation is read moves with it, and in Touch, Latch or Write, holding one writes it.
+mixing desk: a channel strip for every instrument, side by side (then the folders' and aux tracks'), and on the right
+the Room Reverb, the room's master and the mix's master. At the top of each strip are its **inserts**, A to E, and
+under them its **sends**, A to E (see Aux tracks and sends). A fader whose track's automation is read moves with it, and
+in Touch, Latch or Write, holding one writes it.
 
 - **Names**: click a strip's name to open the instrument's own window (an amp's knobs and pedals, a pattern, a
   Speaker's panel); the mix window comes back when it closes. Right-click the name to **duplicate** the instrument
@@ -539,36 +566,46 @@ Aux tracks and sends). A fader whose track's automation is read moves with it, a
   remove it. Drag one to another slot, on its own strip or another instrument's, to move it there (it swaps places
   with whatever was there); hold Option as you drop it to copy it instead, settings and all. Closing the mix window
   puts the plug-in windows away.
-- **Each strip**: the input (MIDI, or a list of hardware inputs for a Speaker or an amp), buttons for input (I),
-  mute (M) and solo (S), a fader with the strip's meter beside it, and under the fader its level and its peak
-  readout, then the instrument's name in its colour. Faders run from +12 dB down to silence, spaced as on a console.
+- **Each strip**: the input (MIDI, or a list of hardware inputs for a Speaker or an amp; a microphone's model and
+  pattern), its output, its **pan** pot, buttons for input (I), mute (M) and solo (S), a fader with the strip's meter
+  beside it, and under the fader its level and its peak readout; then, apart, **in the room**: the instrument's level
+  there (a small fader across, 0 dB as it was made, with its meter along its foot), and its mute there (M); and the
+  instrument's name in its colour.
+- **Pan**: a pot, as Pro Tools has: drag up or right to turn it right, down or left to turn it left (Shift for fine
+  moves), turn the scroll wheel to nudge it, double-click or Alt-click it for the middle. It reads as Pro Tools reads
+  it: "<50" to the left, "50>" to the right, "C" in the middle. An instrument's pans its direct output in the mix (in the
+  room it is where it stands); a stereo mic's is its balance. Every instrument's pan can be automated. Faders run from +12 dB down to silence, spaced as on a console.
   Drag one to move it (Shift for fine moves), turn the scroll wheel to nudge it, or double-click or Alt-click it for
   0 dB. 0 dB is the level the instrument was made at, heard from right beside it, and the strip's meter reads it at
   that level, as a DAW's track meter reads what the track sends to the master.
 - **Metering**: the channel meters read before the fader (after the inserts), as with Pro Tools' pre-fader
   metering, so a fader pulled down or a mute doesn't hide what the channel is doing. Right-click any fader or meter
-  to have them read after the fader instead; the choice is remembered. The master's meter always reads what goes to
-  the speakers.
+  to have them read after the fader instead; the choice is remembered. The masters' meters read what leaves them.
 - **Peak readouts**: as in Pro Tools, the number beside each fader's level holds the highest peak (in dBFS) until
   you click it, and turns red once anything reaches full scale. Clicking a meter clears it too; Alt-click clears
   every one, the master's included.
 - **Folders**: a routing folder's strip comes before its tracks': its inserts (plug-ins in stereo, on what its tracks
   play into it), mute and solo, and its fader and meter. See Tracks and folders.
-- **Reverb**: the room's reverb return, a fader with a stereo meter of its own just left of the master, as an aux
-  return sits beside the master on a desk. 0 dB is the room's own reverb; down to the bottom there is none, up to
-  +12 dB it is wetter than the room. Its level is kept with the room.
-- **Master**: LIMIT, the master fader with a stereo meter, and the output's peak readout. The master is laid out as
-  a DAW's master track: the limiter is an insert, so it comes before the fader and works just as hard wherever the
-  fader is. With it on, the mix can't reach full scale on its way to the fader, and the window says by how many
-  decibels it is being held back whenever it is: the cue to bring an instrument down. With it off, the mix is the
-  plain sum of the instruments. Either way, whatever leaves the master fader over full scale is cut off and
-  reported as clipping, so a master pushed above 0 dB can clip even with the limiter on.
+- **Room Reverb**: the room's reverb return, a fader with a stereo meter of its own beside the room's master, as an
+  aux return sits beside the master on a desk. 0 dB is the room's own reverb; down to the bottom there is none, up to
+  +12 dB it is wetter than the room. It is the room's: the mix has none unless a track sends to an aux with a reverb on
+  it. Its level is kept with the room.
+- **Room Master**: how loud the room is as you hear it standing there, with its stereo meter and peak readout, and
+  HEAR, lit while the main outputs play the room.
+- **Mix Master**: its inserts, A to E, in stereo on the whole mix (a bus compressor, an EQ; they can be automated,
+  in its lanes at the foot of the edit window), its output (the main outputs only, while it is heard, or a pair of
+  outputs of its own as well), LIMIT, its fader with a stereo meter and peak readout, and HEAR. The master is laid out
+  as a DAW's master track: the limiter is an insert after the others, so it comes before the fader and works just as
+  hard wherever the fader is. With it on, neither the mix nor the room can reach full scale on its way to its fader,
+  and the window says by how many decibels it is being held back whenever it is: the cue to bring an instrument down.
+  With it off, the mix is the plain sum of the tracks. Either way, whatever the main outputs play over full scale is
+  cut off and reported as clipping, so a master pushed above 0 dB can clip even with the limiter on.
 
 Rather than instructions written across it, the line at the foot of the window says what the mouse is over: an
 insert, a button, a fader, the limiter. The amp and Speaker panels work the same way.
 
-The output is set to leave headroom right beside an instrument, so from across the room the mix is fairly quiet:
-raise the master to taste and watch the meter. An instrument is at its own level within 1.5 m of it and gets no
+The output is set to leave headroom right beside an instrument, so from across the room the room is fairly quiet:
+raise the room's master to taste and watch the meter. An instrument is at its own level within 1.5 m of it and gets no
 louder however close you stand; beyond that it falls 6 dB for each doubling of distance, as the inverse square law
 has it. That can be made gentler (down to 0, where distance makes no difference) under Distance falloff in the
 Settings page of the menu.
@@ -641,10 +678,11 @@ game/                      Godot project: the room, player, instruments, HUD, me
   scripts/catalog.gd       every kind of instrument (and the microphone) and the groups the instrument menu shows them in
   scripts/room.gd          the room's floor, ceiling and walls, built to whatever size and layout is set
   scripts/instrument_models.gd   what each instrument looks like, built from simple shapes
-  scripts/mixer.gd         the mix window: channel strips, faders (fader.gd) and meters (level_meter.gd)
+  scripts/mixer.gd         the mix window: channel strips, faders (fader.gd), pan pots (pan_control.gd), levels in the
+                           room (mini_fader.gd) and meters (level_meter.gd)
   scripts/amp_panel.gd     an amp's knobs (knob.gd) and its pedalboard
-  scripts/mic_panel.gd     a microphone's model, place, aim, gain and pan (mic_graph.gd draws its response and pattern; a
-                           track's pan is pan_control.gd), a stereo pair's setup, and how far each instrument is from it
+  scripts/mic_panel.gd     a microphone's model, place, aim and gain, and the view from its capsule (mic_graph.gd draws
+                           its response and pattern), a stereo pair's setup, and how far each instrument is from it
   scripts/plugin_browser.gd  the plug-ins installed, by type or by maker, for an insert or a Plug-in pedal
   scripts/session.gd       the open room: its file, saving, auto-save and backups
   scripts/rooms_page.gd    making a new room (from a template) and opening one
@@ -653,11 +691,11 @@ game/                      Godot project: the room, player, instruments, HUD, me
   scripts/edit_window.gd   the edit window (its tracks and clips drawn by timeline_view.gd, a clip's notes by midi_editor.gd)
   scripts/folder.gd        a routing folder: its bus, fader, inserts and tracks (track_menu.gd: a track's menu)
   scripts/automation.gd    the tracks' automation: what the controls show, Touch, Latch and Write, its points
-  scripts/master_track.gd  the master, as a track for automation
+  scripts/master_track.gd  the mix's master, as a track for automation and its inserts
   scripts/preset_menu.gd   the Presets menu of a plug-in or an instrument
 audio_core/
   src/core/                the audio engine, plain C++ with no Godot dependency
-    engine.*               device, command queue, mixing, the shared clock; microphones hearing the room
+    engine.*               device, command queue, the room and the mix, the shared clock; microphones hearing the room
     microphones.*          the microphone models: their pickup patterns, responses and sensitivities
     instruments.*          synthesized drums, the garage kit, bass, pad, bells and keys (each playable live or by pattern), live input
     plugin_synth.*         a plug-in instrument: an instrument plug-in played by MIDI, live and by pattern, to the sample
@@ -709,14 +747,15 @@ templates, auto-save and backups), presets and copy and paste for plug-ins and i
 timeline, an edit window, recording audio and MIDI to clips (with a count-in, a pre-roll and post-roll, punching in and out, and loop recording
 into takes, comped from them), editing them (trims, fades and crossfades, clip gain, splits, nudges, several at once, a MIDI editor
 for the notes, undo), tracks with names and colours, in routing folders (folders in folders too) with faders, inserts and sends of their own, and
-automation (volume, mute, the sustain pedal, an amp's knobs and its pedals', plug-ins' controls, sends and the master), drawn or
-written as it plays, aux tracks with sends, recordings read from disk as they play, and microphones that record the
+automation (volume, mute, pan, the sustain pedal, an amp's knobs and its pedals', plug-ins' controls, sends and the master), drawn or
+written as it plays, aux tracks with sends, recordings read from disk as they play, microphones that record the
 room from where they stand (dynamics, condensers, ribbons and a measurement mic, with their patterns, proximity
-effect, responses and noise, and stereo pairs on stereo tracks, mid-side among them).
+effect, responses and noise, and stereo pairs on stereo tracks, mid-side among them), and the room and the mix apart,
+each with its master (the mix's with inserts), either one on the main outputs.
 
 To do, roughly in this order:
 
-1. **More plug-ins**: inserts on the master, and perhaps VST3 and Windows.
+1. **More plug-ins**: perhaps VST3, and Windows.
 2. **The room's sound**: wall materials, each absorbing and diffusing sound in its
    own way, which shape how the room's reverb rings.
 3. **You in the room**: an avatar whose height you can set (the ears and eyes go with it; the view is a little tall

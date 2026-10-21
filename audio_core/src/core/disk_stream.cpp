@@ -188,12 +188,14 @@ void DiskStreamer::setBudget(size_t bytes) {
     budget_ = bytes;
 }
 
-void DiskStreamer::prepare(double seconds, double for_seconds) {
+uint32_t DiskStreamer::prepare(double seconds, double for_seconds) {
     std::vector<StreamRegion> regions;
+    uint32_t cue = 0;
     {
         std::lock_guard<std::mutex> lock(regions_lock_);
         cue_from_ = seconds - kBehindSeconds;
         cue_to_ = seconds + kAheadSeconds;
+        cue = cued_.fetch_add(1, std::memory_order_acq_rel) + 1;
         for (const auto& [track, list] : regions_) regions.insert(regions.end(), list.begin(), list.end());
     }
     for (const StreamRegion& r : regions) {
@@ -206,6 +208,7 @@ void DiskStreamer::prepare(double seconds, double for_seconds) {
     std::lock_guard<std::mutex> lock(wake_lock_);
     poke_ = true;
     wake_.notify_all();
+    return cue;
 }
 
 void DiskStreamer::follow(double seconds, bool playing, bool looping, double loop_from, double loop_to) {
@@ -246,12 +249,14 @@ void DiskStreamer::cycle() {
     std::vector<StreamRegion> regions;
     double cue_from, cue_to;
     size_t budget;
+    bool cue_waiting;  // the music sent to the cue, but not there yet
     {
         std::lock_guard<std::mutex> lock(regions_lock_);
         for (const auto& [track, list] : regions_) regions.insert(regions.end(), list.begin(), list.end());
         cue_from = cue_from_;
         cue_to = cue_to_;
         budget = budget_;
+        cue_waiting = reached_.load(std::memory_order_acquire) != cued_.load(std::memory_order_acquire);
     }
     const double now = now_.load(std::memory_order_relaxed);
     const bool playing = playing_.load(std::memory_order_relaxed);
@@ -267,7 +272,7 @@ void DiskStreamer::cycle() {
     } else {
         spans.push_back({now - kBehindSeconds, now + kAheadSeconds, 0.0});
     }
-    if (!playing && cue_to > cue_from) spans.push_back({cue_from, cue_to, 0.0});
+    if ((!playing || cue_waiting) && cue_to > cue_from) spans.push_back({cue_from, cue_to, 0.0});
 
     struct Want {
         std::shared_ptr<StreamedFile> file;

@@ -87,7 +87,7 @@ func instrument_settings(inst) -> Dictionary:
 		out.mic_gain_db = inst.mic_gain_db
 		out.mic_model = inst.mic_model
 		out.mic_pattern = inst.mic_pattern
-		out.mic_pan = inst.mic_pan
+		out.pan = inst.pan
 	var played: Dictionary = audio.get_instrument_plugin(inst.source_id) if inst.plays_plugin else {}
 	if str(played.get("plugin_id", "")) != "":  # a plug-in instrument's plug-in, which is the instrument itself
 		out.instrument_plugin = {"plugin_id": played.plugin_id, "plugin_name": played.plugin_name, "plugin_maker": played.plugin_maker,
@@ -154,8 +154,8 @@ func apply_instrument_settings(inst, settings: Dictionary, include := {}) -> Str
 				app.set_mic_model(inst, str(settings.mic_model), str(settings.get("mic_pattern", "")))
 		if settings.has("mic_gain_db"):
 			inst.set_mic_gain(float(settings.mic_gain_db))
-		if settings.has("mic_pan"):
-			inst.set_mic_pan(float(settings.mic_pan))
+		if settings.has("pan"):
+			inst.set_pan(float(settings.pan))
 	var problem := apply_inserts(inst, settings.get("inserts", []) if with_plugins else [])
 	if problem != "":
 		problems.append(problem)
@@ -323,6 +323,7 @@ func room_data() -> Dictionary:
 	for inst in app.instruments:
 		var entry := {"kind": inst.kind, "position": [inst.global_position.x, inst.global_position.z], "yaw": inst.rotation.y,
 			"level_db": inst.level_db, "muted": inst.muted, "soloed": inst.soloed, "input_channel": inst.input_channel,
+			"room_db": inst.room_db, "room_muted": inst.room_muted, "pan": inst.pan,
 			"settings": instrument_settings(inst), "clips": inst.clips.duplicate(true), "color": _color_data(inst.color),
 			"automation": inst.automation.duplicate(true), "auto_mode": inst.auto_mode, "lanes": inst.lanes.duplicate(),
 			"sends": _sends_data(inst)}
@@ -356,7 +357,8 @@ func room_data() -> Dictionary:
 			"sends": _sends_data(aux)})
 	var master = app.master_track
 	return {"soundroom": "room", "version": VERSION, "mode": app.timeline.mode, "timeline": app.timeline.to_data(),
-		"tempo": app.tempo, "swing": app.swing, "master_db": app.master_volume_db, "reverb_db": app.reverb_db,
+		"tempo": app.tempo, "swing": app.swing, "master_db": app.master_volume_db, "room_master_db": app.room_volume_db, "reverb_db": app.reverb_db,
+		"master_inserts": inserts_data(master),
 		"room": {"size": [size.x, size.y, size.z], "walls": walls},
 		"player": {"position": [stood.x, stood.z], "yaw": app.player.yaw}, "instruments": instruments, "folders": folders, "auxes": auxes,
 		"master_automation": {"automation": master.automation.duplicate(true), "auto_mode": master.auto_mode, "lanes": master.lanes.duplicate()}}
@@ -468,6 +470,8 @@ func apply_room_data(data: Dictionary, carry := {}, size = null, mode := "") -> 
 	app.set_tempo(float(data.get("tempo", app.DEFAULT_TEMPO)) if with_tempo else app.DEFAULT_TEMPO)
 	app.set_swing(float(data.get("swing", app.DEFAULT_SWING)) if with_tempo else app.DEFAULT_SWING)
 	app.set_master_volume_db(float(data.get("master_db", 0.0)) if keep.call("mix") else 0.0)  # unity unless it says otherwise
+	# The room's master (a room from before there was one: the master it had, which was all there was to hear).
+	app.set_room_volume_db(float(data.get("room_master_db", data.get("master_db", 0.0))) if keep.call("mix") else 0.0)
 	app.set_reverb_db(float(data.get("reverb_db", 0.0)) if keep.call("mix") else 0.0)
 	var problems := []
 	var include := {"instrument_settings": keep.call("instrument_settings"), "plugins": keep.call("plugins")}
@@ -496,8 +500,11 @@ func apply_room_data(data: Dictionary, carry := {}, size = null, mode := "") -> 
 				var setup: Dictionary = stereo if stereo is Dictionary else {}
 				inst.set_pair(str(setup.get("technique", "xy")), float(setup.get("spacing", 0.0)), str(setup.get("side_model", "condenser")),
 					float(setup.get("width", 1.0)))
-		if keep.call("mix"):
+		if keep.call("mix"):  # its fader, and its level in the room (a room from before: the fader's, as it was all one)
 			app.set_instrument_level(inst, float(entry.get("level_db", 0.0)))
+			app.set_room_level(inst, float(entry.get("room_db", entry.get("level_db", 0.0))))
+			inst.set_room_muted(bool(entry.get("room_muted", false)))
+			inst.set_pan(float(entry.get("pan", 0.0)))
 			inst.muted = bool(entry.get("muted", false))
 			inst.soloed = bool(entry.get("soloed", false))
 		if inst.playable and keep.call("patterns"):
@@ -580,6 +587,9 @@ func apply_room_data(data: Dictionary, carry := {}, size = null, mode := "") -> 
 		for i in mini(aux_entries.size(), auxes.size()):
 			if auxes[i] != null:
 				_apply_sends(auxes[i], aux_entries[i].get("sends", []), auxes)
+	var master_problem := apply_inserts(app.master_track, data.get("master_inserts", []) if keep.call("plugins") else [])
+	if master_problem != "":
+		problems.append("the master: %s" % master_problem)
 	var master_part: Dictionary = data.get("master_automation", {}) if keep.call("mix") else {}
 	app.master_track.automation = master_part.get("automation", {}).duplicate(true)
 	app.master_track.auto_mode = str(master_part.get("auto_mode", "read"))

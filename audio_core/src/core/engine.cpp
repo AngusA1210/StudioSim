@@ -207,6 +207,12 @@ struct AudioEngine::Source {
                                            // keeps what reaches its fader in out_l and out_r)
     float auto_mute = 1.0f;     // its mute automation's share of it heard, glided
     float solo_target = 1.0f, solo_gain = 1.0f;  // silenced by a solo elsewhere: out of the mix, still in the room
+    // A source in the room: its level there (how loud it sounds where it stands, made up of its normal level and the room
+    // fader), and its room mute, both glided; and this block of its sound there, to be placed for the listener.
+    float room_gain = 1.0f, room_gain_target = 1.0f;
+    float room_mute = 1.0f, room_mute_target = 1.0f;
+    std::vector<float> room;
+    int master_role = 0;  // a bus carrying a master's inserts (1: the mix's), not played as a bus (the audio thread's)
     // A source in the room: its sound there (after its fader and mute), the last kHistory samples, for microphones to
     // hear as late as it reaches them.
     static constexpr size_t kHistory = size_t(1) << 16;  // 1.4 s at 48 kHz: 470 m of air
@@ -302,6 +308,7 @@ AudioEngine::AudioEngine(const EngineConfig& config)
     sequencer_.setSampleRate(sr_);
     for (auto& reverb : reverbs_) buildReverb(reverb, float(sr_), room_rt60_, room_size_);
     limiter_.init(float(sr_));
+    room_limiter_.init(float(sr_));
 }
 
 AudioEngine::~AudioEngine() {
@@ -310,7 +317,9 @@ AudioEngine::~AudioEngine() {
 }
 
 void AudioEngine::allocateBuffers() {
-    for (auto* buf : {&mix_l_, &mix_r_, &send_, &rev_l_, &rev_r_, &rev2_l_, &rev2_r_, &click_}) buf->assign(size_t(block_), 0.0f);
+    for (auto* buf : {&mix_l_, &mix_r_, &send_, &rev_l_, &rev_r_, &rev2_l_, &rev2_r_, &click_, &room_l_, &room_r_, &out_l_, &out_r_,
+                      &mix_tap_l_, &mix_tap_r_})
+        buf->assign(size_t(block_), 0.0f);
     for (auto& ch : input_bus_.channel) ch.assign(size_t(block_), 0.0f);
     block_seconds_.assign(size_t(block_), -1.0);
     take_.assign(size_t(block_), 0.0f);
@@ -393,6 +402,7 @@ bool AudioEngine::configure(int sample_rate, int block_size, std::string* error)
         reverb_changing_.store(false, std::memory_order_release);
     }
     limiter_.init(float(sr_));
+    room_limiter_.init(float(sr_));
     if (!initialized_) return true;
     if (!steam_.init(sr_, block_, error)) {
         initialized_ = false;
@@ -419,7 +429,7 @@ bool AudioEngine::configure(int sample_rate, int block_size, std::string* error)
         for (auto* buffer : {&s->pre, &s->out_l, &s->out_r}) buffer->assign(size_t(block_), 0.0f);
         for (int k = 0; k < s->capsule_count; ++k)  // (its filters at the new rate)
             soundAs(*s, k, s->capsules[size_t(k)].sound.model, s->capsules[size_t(k)].sound.pattern);
-        for (auto* buffer : {&s->mono_r, &s->pre_r, &s->playback_r})
+        for (auto* buffer : {&s->mono_r, &s->pre_r, &s->playback_r, &s->room})
             if (!buffer->empty()) buffer->assign(size_t(block_), 0.0f);
         if (!s->spatializer.init(steam_, error)) return false;
     }
@@ -672,8 +682,8 @@ void AudioEngine::reapPedals() {
 
 // ── The timeline and recording (game thread) ───────────────────────────────────────────────────────────────
 void AudioEngine::playFrom(double step) {
-    streamer_.prepare(std::max(step, 0.0) * 15.0 / transport_.bpm);  // (the first moments read in before it starts)
-    Command c; c.type = Command::TimelinePlay; c.v[0] = float(std::max(step, 0.0)); push(c);
+    const uint32_t cue = streamer_.prepare(std::max(step, 0.0) * 15.0 / transport_.bpm);  // (the first moments read in before it starts)
+    Command c; c.type = Command::TimelinePlay; c.v[0] = float(std::max(step, 0.0)); c.epoch = cue; push(c);
     transport_.running = true;
 }
 
@@ -1314,7 +1324,10 @@ int AudioEngine::addSource(InstrumentKind kind, Vec3 position, float gain, float
     src->bus_r.assign(size_t(block_), 0.0f);
     for (auto* buffer : {&src->pre, &src->out_l, &src->out_r}) buffer->assign(size_t(block_), 0.0f);
     if (!inRoom(kind)) reverb_send = 0.0f;  // (a folder's tracks feed the reverb themselves; a microphone makes no sound)
-    if (inRoom(kind)) src->history.assign(Source::kHistory, 0.0f);
+    if (inRoom(kind)) {
+        src->history.assign(Source::kHistory, 0.0f);
+        src->room.assign(size_t(block_), 0.0f);
+    }
     if (isMic(kind)) {  // a flat omni to begin with, where it stands (a stereo mic's two, there, till they are placed)
         src->capsule_count = kind == InstrumentKind::StereoMic ? 2 : 1;
         for (int k = 0; k < src->capsule_count; ++k) {
@@ -1329,6 +1342,7 @@ int AudioEngine::addSource(InstrumentKind kind, Vec3 position, float gain, float
     }
     src->via = src->via_target = src->position = position;
     src->gain = src->gain_target = gain;
+    src->room_gain = src->room_gain_target = gain;
     src->send = reverb_send;
 
     Command c;
@@ -1594,6 +1608,26 @@ void AudioEngine::setReverbLevel(float gain) {
 void AudioEngine::setMasterVolume(float gain) {
     Command c; c.type = Command::MasterVolume; c.v[0] = std::clamp(gain, 0.0f, 4.0f); push(c);
 }
+void AudioEngine::setRoomVolume(float gain) {
+    Command c; c.type = Command::RoomVolume; c.v[0] = std::clamp(gain, 0.0f, 4.0f); push(c);
+}
+void AudioEngine::setMonitor(Monitor monitor) {
+    Command c; c.type = Command::MonitorSet; c.v[0] = monitor == Monitor::Mix ? 1.0f : 0.0f; push(c);
+}
+void AudioEngine::setMixOutput(int left, int right) {
+    mix_out_left_.store(left, std::memory_order_relaxed);
+    mix_out_right_.store(right, std::memory_order_relaxed);
+}
+void AudioEngine::setMasterInserts(int bus) {
+    const Source* s = bus >= 0 ? owned(bus) : nullptr;
+    Command c; c.type = Command::MasterInserts; c.id = s && isBus(s->kind) ? bus : -1; push(c);
+}
+void AudioEngine::setSourceRoomGain(int id, float gain) {
+    Command c; c.type = Command::SourceRoomGain; c.id = id; c.v[0] = std::clamp(gain, 0.0f, 100.0f); push(c);
+}
+void AudioEngine::setSourceRoomMuted(int id, bool muted) {
+    Command c; c.type = Command::SourceRoomMuted; c.id = id; c.v[0] = muted ? 1.0f : 0.0f; push(c);
+}
 
 // ── The sequencer (game thread) ────────────────────────────────────────────────────────────────────────────
 AudioEngine::Source* AudioEngine::owned(int id) const {
@@ -1684,6 +1718,14 @@ MeterReading AudioEngine::readMeter() {
     m.reverb_peak_r = reverb_peak_r_.exchange(0.0f, std::memory_order_relaxed);
     m.reverb_rms_l = reverb_rms_l_.load(std::memory_order_relaxed);
     m.reverb_rms_r = reverb_rms_r_.load(std::memory_order_relaxed);
+    m.room_peak_l = room_peak_l_.exchange(0.0f, std::memory_order_relaxed);
+    m.room_peak_r = room_peak_r_.exchange(0.0f, std::memory_order_relaxed);
+    m.room_rms_l = room_rms_l_.load(std::memory_order_relaxed);
+    m.room_rms_r = room_rms_r_.load(std::memory_order_relaxed);
+    m.mix_peak_l = mix_peak_l_.exchange(0.0f, std::memory_order_relaxed);
+    m.mix_peak_r = mix_peak_r_.exchange(0.0f, std::memory_order_relaxed);
+    m.mix_rms_l = mix_rms_l_.load(std::memory_order_relaxed);
+    m.mix_rms_r = mix_rms_r_.load(std::memory_order_relaxed);
     return m;
 }
 
@@ -1722,6 +1764,14 @@ float AudioEngine::sourceLevel(int id, bool pre_fader) const {
 float AudioEngine::sourcePeak(int id, bool pre_fader) {
     if (id < 0 || id >= kSourceSlots) return 0.0f;
     return (pre_fader ? pre_peaks_ : peaks_)[size_t(id)].exchange(0.0f, std::memory_order_relaxed);
+}
+
+float AudioEngine::sourceRoomLevel(int id) const {
+    return id < 0 || id >= kSourceSlots ? 0.0f : room_levels_[size_t(id)].load(std::memory_order_relaxed);
+}
+
+float AudioEngine::sourceRoomPeak(int id) {
+    return id < 0 || id >= kSourceSlots ? 0.0f : room_peaks_[size_t(id)].exchange(0.0f, std::memory_order_relaxed);
 }
 
 EngineStats AudioEngine::stats() const {
@@ -1783,6 +1833,7 @@ void AudioEngine::drainCommands() {
             case Command::RemoveSource:
                 if (s) {  // fade it out first, so it doesn't leave with a click
                     s->mute_target = 0.0f;
+                    s->room_mute_target = 0.0f;
                     s->loop = false;
                     s->fade_blocks = int(0.06f * float(sr_) / float(block_)) + 1;
                 }
@@ -1827,6 +1878,7 @@ void AudioEngine::drainCommands() {
                     if (each) each->instrument->stopSequenced();
                 sequencer_.start(clock_, double(c.v[0]));
                 chaseSustain(double(c.v[0]));
+                streamer_.reached(c.epoch);
                 break;
             case Command::TimelineLoop:
                 sequencer_.setLoop(c.v[0] > 0.5f, double(c.v[1]), double(c.v[2]));
@@ -1936,6 +1988,24 @@ void AudioEngine::drainCommands() {
             case Command::MasterVolume:
                 master_target_ = c.v[0];
                 if (clock_ == 0) master_gain_ = master_target_;  // set before anything has played: nothing to glide from
+                break;
+            case Command::RoomVolume:
+                room_target_ = c.v[0];
+                if (clock_ == 0) room_volume_ = room_target_;
+                break;
+            case Command::MonitorSet:
+                monitor_ = c.v[0] > 0.5f ? Monitor::Mix : Monitor::Room;
+                break;
+            case Command::MasterInserts:  // (the last bus marked is no longer the master's: played as a bus again)
+                if (master_bus_ >= 0 && sources_[size_t(master_bus_)]) sources_[size_t(master_bus_)]->master_role = 0;
+                master_bus_ = c.id;
+                if (master_bus_ >= 0 && sources_[size_t(master_bus_)]) sources_[size_t(master_bus_)]->master_role = 1;
+                break;
+            case Command::SourceRoomGain:
+                if (s) s->room_gain_target = c.v[0];
+                break;
+            case Command::SourceRoomMuted:
+                if (s) s->room_mute_target = c.v[0] > 0.5f ? 0.0f : 1.0f;
                 break;
             case Command::SourceInput:
                 if (s) {
@@ -2141,16 +2211,20 @@ void AudioEngine::step(int64_t index, double at, double step_samples) {
 void AudioEngine::renderDevice(const float* input, int input_channels, float* output, int output_channels, int frames) {
     const int left = std::min(out_left_.load(std::memory_order_relaxed), output_channels - 1);
     const int right = std::min(out_right_.load(std::memory_order_relaxed), output_channels - 1);
-    if (output_channels == 2 && left == 0 && right == 1) {
+    // The mix on outputs of its own too, if it has some the device has (and not the main ones).
+    const int mix_left = mix_out_left_.load(std::memory_order_relaxed), mix_right = mix_out_right_.load(std::memory_order_relaxed);
+    const bool mix_too = mix_left >= 0 && mix_right >= 0 && mix_left < output_channels && mix_right < output_channels &&
+                         mix_left != left && mix_left != right && mix_right != left && mix_right != right;
+    if (output_channels == 2 && left == 0 && right == 1 && !mix_too) {
         render(input, input_channels, output, frames);
         return;
     }
     // Any other layout: render stereo in chunks, then place it on the chosen outputs and silence the rest.
-    float stereo[2 * 256];
+    float stereo[2 * 256], mix[2 * 256];
     std::memset(output, 0, sizeof(float) * size_t(frames) * size_t(output_channels));
     for (int done = 0; done < frames;) {
         const int n = std::min(frames - done, 256);
-        render(input ? input + size_t(done) * size_t(input_channels) : nullptr, input_channels, stereo, n);
+        render(input ? input + size_t(done) * size_t(input_channels) : nullptr, input_channels, stereo, n, mix_too ? mix : nullptr);
         for (int i = 0; i < n; ++i) {
             float* frame = output + size_t(done + i) * size_t(output_channels);
             if (left == right) {
@@ -2159,12 +2233,16 @@ void AudioEngine::renderDevice(const float* input, int input_channels, float* ou
                 frame[left] = stereo[2 * i];
                 frame[right] = stereo[2 * i + 1];
             }
+            if (mix_too) {
+                frame[mix_left] = mix[2 * i];
+                frame[mix_right] = mix[2 * i + 1];
+            }
         }
         done += n;
     }
 }
 
-void AudioEngine::render(const float* input, int input_channels, float* out, int frames) {
+void AudioEngine::render(const float* input, int input_channels, float* out, int frames, float* mix_out) {
     const int channels = input ? std::min(input_channels, int(InputBus::kMaxChannels)) : 0;
     if (channels != fifo_channels_) {  // the input layout changed (device reopened): start the queue afresh
         fifo_channels_ = channels;
@@ -2187,8 +2265,12 @@ void AudioEngine::render(const float* input, int input_channels, float* out, int
         }
         const int n = std::min(frames - done, block_ - block_pos_);
         for (int i = 0; i < n; ++i) {
-            out[2 * (done + i)] = mix_l_[size_t(block_pos_ + i)];
-            out[2 * (done + i) + 1] = mix_r_[size_t(block_pos_ + i)];
+            out[2 * (done + i)] = out_l_[size_t(block_pos_ + i)];
+            out[2 * (done + i) + 1] = out_r_[size_t(block_pos_ + i)];
+            if (mix_out) {
+                mix_out[2 * (done + i)] = mix_tap_l_[size_t(block_pos_ + i)];
+                mix_out[2 * (done + i) + 1] = mix_tap_r_[size_t(block_pos_ + i)];
+            }
         }
         block_pos_ += n;
         done += n;
@@ -2525,13 +2607,13 @@ void AudioEngine::playSource(size_t index, float binaural_from, float glide, flo
             static_cast<PluginSynth*>(s->instrument.get())->setBeatSamples(double(bar_timing_[1]) / 4.0);
         s->instrument->render(mono, block_);
     }
-    if (s->insert_board.count > 0) {  // its inserts, before its fader
+    if (s->insert_board.count > 0) {  // its inserts, before its fader (and, an instrument's, before the room too)
         const PedalTiming timing{double(bar_timing_[1]) / 4.0, bar_timing_[0], bar_timing_[1]};
         for (int p = 0; p < s->insert_board.count; ++p) s->insert_board.pedals[size_t(p)]->process(mono, block_, timing);
     }
 
-    double energy = 0.0, pre_energy = 0.0;
-    float peak = 0.0f, pre_peak = 0.0f;
+    double energy = 0.0, pre_energy = 0.0, room_energy = 0.0;
+    float peak = 0.0f, pre_peak = 0.0f, room_peak = 0.0f;
     Automating automating(*this, *s);
     bool sending = false, sending_pre = false;  // its sends: to an aux track's bus, after its fader or before
     for (const auto& send : s->sends)
@@ -2540,6 +2622,7 @@ void AudioEngine::playSource(size_t index, float binaural_from, float glide, flo
             sending_pre = sending_pre || send.pre;
         }
     float* heard = s->history.empty() ? nullptr : s->history.data();
+    float* room = s->room.empty() ? nullptr : s->room.data();
     for (int i = 0; i < block_; ++i) {
         if (!mic) {  // (a microphone's gain came before it was recorded)
             s->volume += (s->volume_target - s->volume) * mute_coef;
@@ -2548,64 +2631,64 @@ void AudioEngine::playSource(size_t index, float binaural_from, float glide, flo
         if (sending_pre) s->pre[size_t(i)] = mono[i];
         pre_energy += double(mono[i]) * mono[i];  // what reaches the fader
         pre_peak = std::max(pre_peak, std::fabs(mono[i]));
+        if (room) {  // its sound in the room: at its level there, unless it is muted there
+            s->room_gain += (s->room_gain_target - s->room_gain) * mute_coef;
+            s->room_mute += (s->room_mute_target - s->room_mute) * mute_coef;
+            const float r = mono[i] * s->room_gain * s->room_mute;
+            room[i] = r;
+            if (heard) heard[size_t(clock_ + i) & (Source::kHistory - 1)] = r;  // (as the microphones hear it)
+            send_[size_t(i)] += r * s->send;  // the room hears the source even when a wall blocks your view of it
+            room_energy += double(r) * r;
+            room_peak = std::max(room_peak, std::fabs(r));
+        }
+        // Its direct output, into the mix (a microphone's track): its fader (or its automation), mute and solo.
         s->mute_gain += (s->mute_target - s->mute_gain) * mute_coef;
         s->solo_gain += (s->solo_target - s->solo_gain) * mute_coef;
-        automating.next(i, mute_coef);  // the fader, or its automation in its place
-        mono[i] *= s->gain * s->mute_gain * s->auto_mute;
-        if (heard) heard[size_t(clock_ + i) & (Source::kHistory - 1)] = mono[i];  // as it sounds in the room
-        mono[i] *= s->solo_gain;  // (a solo elsewhere takes it out of the mix, not out of the room)
+        automating.next(i, mute_coef);
+        mono[i] *= s->gain * s->mute_gain * s->auto_mute * s->solo_gain;
         energy += double(mono[i]) * mono[i];
         peak = std::max(peak, std::fabs(mono[i]));
-        send_[size_t(i)] += mono[i] * s->send;  // the room hears the source even when a wall blocks your view of it
     }
     levels_[size_t(s->id)].store(float(std::sqrt(energy / block_)), std::memory_order_relaxed);
     if (peak > peaks_[size_t(s->id)].load(std::memory_order_relaxed)) peaks_[size_t(s->id)].store(peak, std::memory_order_relaxed);
     pre_levels_[size_t(s->id)].store(float(std::sqrt(pre_energy / block_)), std::memory_order_relaxed);
     if (pre_peak > pre_peaks_[size_t(s->id)].load(std::memory_order_relaxed))
         pre_peaks_[size_t(s->id)].store(pre_peak, std::memory_order_relaxed);
+    room_levels_[size_t(s->id)].store(float(std::sqrt(room_energy / block_)), std::memory_order_relaxed);
+    if (room_peak > room_peaks_[size_t(s->id)].load(std::memory_order_relaxed))
+        room_peaks_[size_t(s->id)].store(room_peak, std::memory_order_relaxed);
 
-    s->via = lerp(s->via, s->via_target, glide);
-    s->extra += (s->extra_target - s->extra) * wall_glide;
-    SpatialParams p;
-    for (int b = 0; b < 3; ++b) {
-        s->band[b] += (s->band_target[b] - s->band[b]) * wall_glide;
-        p.band_gain[b] = s->band[b];
+    if (room) {  // placed in the room, for the listener: the room's own mix
+        s->via = lerp(s->via, s->via_target, glide);
+        s->extra += (s->extra_target - s->extra) * wall_glide;
+        SpatialParams p;
+        for (int b = 0; b < 3; ++b) {
+            s->band[b] += (s->band_target[b] - s->band[b]) * wall_glide;
+            p.band_gain[b] = s->band[b];
+        }
+        p.direction = steam_.relativeDirection(s->via, listener_pos_, listener_ahead_, listener_up_);
+        p.distance = length(sub(s->via, listener_pos_)) + s->extra;
+        p.binaural_from = binaural_from;
+        p.binaural_to = binaural_mix_;
+        p.falloff = falloff_;
+        s->spatializer.process(room, room_l_.data(), room_r_.data(), p);
     }
-    p.direction = steam_.relativeDirection(s->via, listener_pos_, listener_ahead_, listener_up_);
-    p.distance = length(sub(s->via, listener_pos_)) + s->extra;
-    p.binaural_from = binaural_from;
-    p.binaural_to = binaural_mix_;
-    p.falloff = falloff_;
+
+    // Its direct output where its pan puts it in the stereo (equal power), as a mono track's: into its folder, or the mix.
     Source* bus = s->output >= 0 && size_t(s->output) < sources_.size() ? sources_[size_t(s->output)] : nullptr;
-    float* to_l = bus && isBus(bus->kind) ? bus->bus_l.data() : mix_l_.data();  // into its folder, or the master
+    float* to_l = bus && isBus(bus->kind) ? bus->bus_l.data() : mix_l_.data();
     float* to_r = bus && isBus(bus->kind) ? bus->bus_r.data() : mix_r_.data();
-    if (mic) {  // a microphone's track: where its pan puts it in the stereo (equal power), as a mono track is
-        const float pan_from = s->pan;
-        s->pan += (s->pan_target - s->pan) * wall_glide;
-        for (int i = 0; i < block_; ++i) {
-            const float pan = pan_from + (s->pan - pan_from) * float(i + 1) / float(block_);
-            const float angle = (pan + 1.0f) * 0.25f * float(kPi);
-            s->out_l[size_t(i)] = mono[i] * std::cos(angle);
-            s->out_r[size_t(i)] = mono[i] * std::sin(angle);
-        }
+    const float pan_from = s->pan;
+    s->pan += (s->pan_target - s->pan) * wall_glide;
+    for (int i = 0; i < block_; ++i) {
+        const float pan = pan_from + (s->pan - pan_from) * float(i + 1) / float(block_);
+        const float angle = (pan + 1.0f) * 0.25f * float(kPi);
+        s->out_l[size_t(i)] = mono[i] * std::cos(angle);
+        s->out_r[size_t(i)] = mono[i] * std::sin(angle);
+        to_l[i] += s->out_l[size_t(i)];
+        to_r[i] += s->out_r[size_t(i)];
     }
-    if (!sending && !mic) {
-        s->spatializer.process(mono, to_l, to_r, p);
-    } else if (!sending) {
-        for (int i = 0; i < block_; ++i) {
-            to_l[i] += s->out_l[size_t(i)];
-            to_r[i] += s->out_r[size_t(i)];
-        }
-    } else {  // placed in the room on its own first, for its sends to take a copy of
-        if (!mic) {
-            std::fill(s->out_l.begin(), s->out_l.end(), 0.0f);
-            std::fill(s->out_r.begin(), s->out_r.end(), 0.0f);
-            s->spatializer.process(mono, s->out_l.data(), s->out_r.data(), p);
-        }
-        for (int i = 0; i < block_; ++i) {
-            to_l[i] += s->out_l[size_t(i)];
-            to_r[i] += s->out_r[size_t(i)];
-        }
+    if (sending) {
         const float muted = s->mute_gain * s->auto_mute * s->solo_gain;
         for (auto& send : s->sends) {
             Source* aux = send.bus >= 0 && size_t(send.bus) < sources_.size() ? sources_[size_t(send.bus)] : nullptr;
@@ -2613,7 +2696,7 @@ void AudioEngine::playSource(size_t index, float binaural_from, float glide, flo
             const float target = send.on ? send.gain_target : 0.0f;
             for (int i = 0; i < block_; ++i) {
                 send.gain += (target - send.gain) * mute_coef;
-                if (send.pre) {  // its own sound, straight, as at the centre of the stereo
+                if (send.pre) {  // its own sound before its fader, in the middle of the stereo
                     const float v = s->pre[size_t(i)] * kDryPan * muted * send.gain;
                     aux->bus_l[size_t(i)] += v;
                     aux->bus_r[size_t(i)] += v;
@@ -2631,6 +2714,8 @@ void AudioEngine::playSource(size_t index, float binaural_from, float glide, flo
         peaks_[index].store(0.0f, std::memory_order_relaxed);
         pre_levels_[index].store(0.0f, std::memory_order_relaxed);
         pre_peaks_[index].store(0.0f, std::memory_order_relaxed);
+        room_levels_[index].store(0.0f, std::memory_order_relaxed);
+        room_peaks_[index].store(0.0f, std::memory_order_relaxed);
         s->released.store(true, std::memory_order_release);  // must be the last thing this thread does with it
     }
 }
@@ -2747,6 +2832,8 @@ void AudioEngine::renderBlock() {
 
     std::fill(mix_l_.begin(), mix_l_.end(), 0.0f);
     std::fill(mix_r_.begin(), mix_r_.end(), 0.0f);
+    std::fill(room_l_.begin(), room_l_.end(), 0.0f);
+    std::fill(room_r_.begin(), room_r_.end(), 0.0f);
     std::fill(send_.begin(), send_.end(), 0.0f);
     std::fill(click_.begin(), click_.end(), 0.0f);
     sequencer_.process(clock_ + block_, *this);
@@ -2836,13 +2923,13 @@ void AudioEngine::renderBlock() {
     // (The game refuses routing that would go round in a circle; were there one, its buses would still each play once.)
     auto bus_at = [&](int id) -> Source* {
         Source* b = id >= 0 && id < kSourceSlots ? sources_[size_t(id)] : nullptr;
-        return b && isBus(b->kind) ? b : nullptr;
+        return b && isBus(b->kind) && !b->master_role ? b : nullptr;
     };
     std::array<int, kSourceSlots> order{}, waiting{};
     std::array<bool, kSourceSlots> placed{};
     int buses = 0;
     for (const Source* s : sources_) {
-        if (!s || !isBus(s->kind)) continue;
+        if (!s || !isBus(s->kind) || s->master_role) continue;
         if (bus_at(s->output)) ++waiting[size_t(s->output)];
         for (const auto& send : s->sends)
             if (bus_at(send.bus)) ++waiting[size_t(send.bus)];
@@ -2940,7 +3027,7 @@ void AudioEngine::renderBlock() {
     const float slow = 1.0f - std::exp(-1.0f / (0.05f * float(sr_)));
     float reverb_peak_l = 0.0f, reverb_peak_r = 0.0f;
     double reverb_sq_l = 0.0, reverb_sq_r = 0.0;
-    for (int i = 0; i < block_; ++i) {
+    for (int i = 0; i < block_; ++i) {  // the room: its instruments, placed for your ears, and its reverb
         reverb_gain_ += (reverb_target_ - reverb_gain_) * slow;
         const float wet = reverb_level * reverb_gain_;
         const float back_l = rev_l_[size_t(i)] * wet * kMasterGain, back_r = rev_r_[size_t(i)] * wet * kMasterGain;  // its return, metered
@@ -2948,17 +3035,24 @@ void AudioEngine::renderBlock() {
         reverb_peak_r = std::max(reverb_peak_r, std::fabs(back_r));
         reverb_sq_l += double(back_l) * back_l;
         reverb_sq_r += double(back_r) * back_r;
-        // The click goes straight to both ears: it is for the player, not part of the room.
-        mix_l_[size_t(i)] = (mix_l_[size_t(i)] + rev_l_[size_t(i)] * wet + click_[size_t(i)]) * kMasterGain;
-        mix_r_[size_t(i)] = (mix_r_[size_t(i)] + rev_r_[size_t(i)] * wet + click_[size_t(i)]) * kMasterGain;
+        room_l_[size_t(i)] = (room_l_[size_t(i)] + rev_l_[size_t(i)] * wet) * kMasterGain;
+        room_r_[size_t(i)] = (room_r_[size_t(i)] + rev_r_[size_t(i)] * wet) * kMasterGain;
+        mix_l_[size_t(i)] *= kMasterGain;  // the mix: the tracks' outputs
+        mix_r_[size_t(i)] *= kMasterGain;
     }
-    // The master track, laid out as in a DAW: the limiter is an insert, so it comes before the master fader and works
-    // as hard whatever the fader says. Then the fader; and whatever leaves it over full scale is cut off and counted.
+    // The mix's master track, laid out as in a DAW: its inserts, then the limiter (an insert too, so it comes before
+    // the master fader and works as hard whatever the fader says), then the fader. The room's master likewise, with
+    // no inserts and no automation.
+    if (master_bus_ >= 0 && sources_[size_t(master_bus_)]) {
+        Source* master = sources_[size_t(master_bus_)];
+        const PedalTiming timing{double(bar_timing_[1]) / 4.0, bar_timing_[0], bar_timing_[1]};
+        for (int p = 0; p < master->insert_board.count; ++p) master->insert_board.pedals[size_t(p)]->processStereo(mix_l_.data(), mix_r_.data(), block_, timing);
+    }
     if (limiter_on_) {
-        const float lowest = limiter_.process(mix_l_.data(), mix_r_.data(), block_);
+        const float lowest = std::min(limiter_.process(mix_l_.data(), mix_r_.data(), block_),
+                                      room_limiter_.process(room_l_.data(), room_r_.data(), block_));
         if (lowest < meter_gain_.load(std::memory_order_relaxed)) meter_gain_.store(lowest, std::memory_order_relaxed);
     }
-    uint32_t clipped = 0;
     // The master fader: as set, or while the music plays, as its automation has it (glided every 32 samples).
     const bool master_automated = sequencer_.running() && master_read_ && master_auto_rt_ && !master_auto_rt_->empty();
     float master_ramp = 0.0f;
@@ -2969,8 +3063,45 @@ void AudioEngine::renderBlock() {
         }
         if (master_automated) master_gain_ += master_ramp;
         else master_gain_ += (master_target_ - master_gain_) * slow;
-        for (float* v : {&mix_l_[size_t(i)], &mix_r_[size_t(i)]}) {
-            *v *= master_gain_;
+        room_volume_ += (room_target_ - room_volume_) * slow;
+        mix_l_[size_t(i)] *= master_gain_;
+        mix_r_[size_t(i)] *= master_gain_;
+        room_l_[size_t(i)] *= room_volume_;
+        room_r_[size_t(i)] *= room_volume_;
+    }
+    // Each mix metered as it leaves its master; the main outputs play the one monitored (and the click, which is for the
+    // player, not part of either), and whatever they play over full scale is cut off and counted. The mix also goes
+    // to its own outputs, if it has some.
+    auto meter = [&](const std::vector<float>& l, const std::vector<float>& r, std::atomic<float>& peak_l, std::atomic<float>& peak_r,
+                     float& ms_l, float& ms_r, std::atomic<float>& rms_l, std::atomic<float>& rms_r) {
+        float pl = 0.0f, pr = 0.0f;
+        double sl = 0.0, sq = 0.0;
+        for (int i = 0; i < block_; ++i) {
+            pl = std::max(pl, std::fabs(l[size_t(i)]));
+            pr = std::max(pr, std::fabs(r[size_t(i)]));
+            sl += double(l[size_t(i)]) * l[size_t(i)];
+            sq += double(r[size_t(i)]) * r[size_t(i)];
+        }
+        if (pl > peak_l.load(std::memory_order_relaxed)) peak_l.store(pl, std::memory_order_relaxed);
+        if (pr > peak_r.load(std::memory_order_relaxed)) peak_r.store(pr, std::memory_order_relaxed);
+        const float settle = std::exp(-float(block_) / (0.3f * float(sr_)));
+        ms_l = ms_l * settle + float(sl / block_) * (1.0f - settle);
+        ms_r = ms_r * settle + float(sq / block_) * (1.0f - settle);
+        rms_l.store(std::sqrt(ms_l), std::memory_order_relaxed);
+        rms_r.store(std::sqrt(ms_r), std::memory_order_relaxed);
+    };
+    meter(room_l_, room_r_, room_peak_l_, room_peak_r_, room_ms_l_, room_ms_r_, room_rms_l_, room_rms_r_);
+    meter(mix_l_, mix_r_, mix_peak_l_, mix_peak_r_, mix_ms_l_, mix_ms_r_, mix_rms_l_, mix_rms_r_);
+    const std::vector<float>& heard_l = monitor_ == Monitor::Mix ? mix_l_ : room_l_;
+    const std::vector<float>& heard_r = monitor_ == Monitor::Mix ? mix_r_ : room_r_;
+    uint32_t clipped = 0;
+    for (int i = 0; i < block_; ++i) {
+        const float c = click_[size_t(i)] * kMasterGain;
+        out_l_[size_t(i)] = heard_l[size_t(i)] + c;
+        out_r_[size_t(i)] = heard_r[size_t(i)] + c;
+        mix_tap_l_[size_t(i)] = std::clamp(mix_l_[size_t(i)], -1.0f, 1.0f);
+        mix_tap_r_[size_t(i)] = std::clamp(mix_r_[size_t(i)], -1.0f, 1.0f);
+        for (float* v : {&out_l_[size_t(i)], &out_r_[size_t(i)]}) {
             if (std::fabs(*v) > 1.0f) {
                 *v = std::copysign(1.0f, *v);
                 ++clipped;
@@ -2982,10 +3113,10 @@ void AudioEngine::renderBlock() {
     float peak_l = 0.0f, peak_r = 0.0f;
     double square_l = 0.0, square_r = 0.0;
     for (int i = 0; i < block_; ++i) {
-        peak_l = std::max(peak_l, std::fabs(mix_l_[size_t(i)]));
-        peak_r = std::max(peak_r, std::fabs(mix_r_[size_t(i)]));
-        square_l += double(mix_l_[size_t(i)]) * mix_l_[size_t(i)];
-        square_r += double(mix_r_[size_t(i)]) * mix_r_[size_t(i)];
+        peak_l = std::max(peak_l, std::fabs(out_l_[size_t(i)]));
+        peak_r = std::max(peak_r, std::fabs(out_r_[size_t(i)]));
+        square_l += double(out_l_[size_t(i)]) * out_l_[size_t(i)];
+        square_r += double(out_r_[size_t(i)]) * out_r_[size_t(i)];
     }
     if (reverb_peak_l > reverb_peak_l_.load(std::memory_order_relaxed)) reverb_peak_l_.store(reverb_peak_l, std::memory_order_relaxed);
     if (reverb_peak_r > reverb_peak_r_.load(std::memory_order_relaxed)) reverb_peak_r_.store(reverb_peak_r, std::memory_order_relaxed);

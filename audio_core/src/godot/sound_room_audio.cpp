@@ -504,6 +504,16 @@ void SoundRoomAudio::set_binaural(bool on) { if (engine_) engine_->setBinaural(o
 void SoundRoomAudio::set_reverb(bool on) { if (engine_) engine_->setReverb(on); }
 void SoundRoomAudio::set_reverb_level(float gain) { if (engine_) engine_->setReverbLevel(gain); }
 void SoundRoomAudio::set_master_volume(float gain) { if (engine_) engine_->setMasterVolume(gain); }
+void SoundRoomAudio::set_room_volume(float gain) { if (engine_) engine_->setRoomVolume(gain); }
+void SoundRoomAudio::set_monitor(const String& which) {
+    if (engine_) engine_->setMonitor(which == "mix" ? sr::AudioEngine::Monitor::Mix : sr::AudioEngine::Monitor::Room);
+}
+void SoundRoomAudio::set_mix_output(int left, int right) { if (engine_) engine_->setMixOutput(left, right); }
+void SoundRoomAudio::set_master_inserts(int bus) { if (engine_) engine_->setMasterInserts(bus); }
+void SoundRoomAudio::set_source_room_gain(int id, float gain) { if (engine_) engine_->setSourceRoomGain(id, gain); }
+void SoundRoomAudio::set_source_room_muted(int id, bool muted) { if (engine_) engine_->setSourceRoomMuted(id, muted); }
+float SoundRoomAudio::get_source_room_level(int id) const { return engine_ ? engine_->sourceRoomLevel(id) : 0.0f; }
+float SoundRoomAudio::get_source_room_peak(int id) { return engine_ ? engine_->sourceRoomPeak(id) : 0.0f; }
 void SoundRoomAudio::set_distance_falloff(float db_per_doubling) { if (engine_) engine_->setDistanceFalloff(db_per_doubling); }
 void SoundRoomAudio::set_limiter(bool on) { if (engine_) engine_->setLimiter(on); }
 
@@ -521,6 +531,14 @@ Dictionary SoundRoomAudio::read_meter() {
     d["reverb_peak_r"] = m.reverb_peak_r;
     d["reverb_rms_l"] = m.reverb_rms_l;
     d["reverb_rms_r"] = m.reverb_rms_r;
+    d["room_peak_l"] = m.room_peak_l;
+    d["room_peak_r"] = m.room_peak_r;
+    d["room_rms_l"] = m.room_rms_l;
+    d["room_rms_r"] = m.room_rms_r;
+    d["mix_peak_l"] = m.mix_peak_l;
+    d["mix_peak_r"] = m.mix_peak_r;
+    d["mix_rms_l"] = m.mix_rms_l;
+    d["mix_rms_r"] = m.mix_rms_r;
     return d;
 }
 void SoundRoomAudio::set_source_volume(int id, float gain) { if (engine_) engine_->setSourceVolume(id, gain); }
@@ -858,6 +876,14 @@ void SoundRoomAudio::_bind_methods() {
     ClassDB::bind_method(D_METHOD("set_reverb", "on"), &SoundRoomAudio::set_reverb);
     ClassDB::bind_method(D_METHOD("set_reverb_level", "gain"), &SoundRoomAudio::set_reverb_level);
     ClassDB::bind_method(D_METHOD("set_master_volume", "gain"), &SoundRoomAudio::set_master_volume);
+    ClassDB::bind_method(D_METHOD("set_room_volume", "gain"), &SoundRoomAudio::set_room_volume);
+    ClassDB::bind_method(D_METHOD("set_monitor", "which"), &SoundRoomAudio::set_monitor);
+    ClassDB::bind_method(D_METHOD("set_mix_output", "left", "right"), &SoundRoomAudio::set_mix_output);
+    ClassDB::bind_method(D_METHOD("set_master_inserts", "bus"), &SoundRoomAudio::set_master_inserts);
+    ClassDB::bind_method(D_METHOD("set_source_room_gain", "id", "gain"), &SoundRoomAudio::set_source_room_gain);
+    ClassDB::bind_method(D_METHOD("set_source_room_muted", "id", "muted"), &SoundRoomAudio::set_source_room_muted);
+    ClassDB::bind_method(D_METHOD("get_source_room_level", "id"), &SoundRoomAudio::get_source_room_level);
+    ClassDB::bind_method(D_METHOD("get_source_room_peak", "id"), &SoundRoomAudio::get_source_room_peak);
     ClassDB::bind_method(D_METHOD("set_source_gain", "id", "gain"), &SoundRoomAudio::set_source_gain);
     ClassDB::bind_method(D_METHOD("set_distance_falloff", "db_per_doubling"), &SoundRoomAudio::set_distance_falloff);
     ClassDB::bind_method(D_METHOD("set_limiter", "on"), &SoundRoomAudio::set_limiter);

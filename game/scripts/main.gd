@@ -97,7 +97,10 @@ var chosen_tracks: Array = []  # the tracks chosen by their names in the edit an
 var speaker  # the Speaker the room starts with: the one whose input choice is remembered between runs
 # The room's clock. These belong to the room rather than the player's settings, so they start from the defaults.
 var tempo := DEFAULT_TEMPO
-var master_volume_db := 0.0  # the master fader
+var master_volume_db := 0.0  # the master fader: the mix's
+var room_volume_db := 0.0    # the room's master: how loud the room is, as you hear it standing there
+var room_peak_hold := 0.0    # the room's master's and the mix's peak readouts
+var mix_peak_hold := 0.0
 var reverb_db := 0.0  # the room reverb's fader
 var reverb_meter := {}  # its return's level, read with the output meter
 var reverb_peak_hold := 0.0
@@ -164,6 +167,11 @@ func _ready() -> void:
 	automation.setup(self)
 	master_track = preload("res://scripts/master_track.gd").new()
 	master_track.app = self
+	master_track.source_id = audio.add_source("bus", Vector3.ZERO, 1.0, 0.0)  # (a bus to carry the mix master's inserts)
+	audio.set_master_inserts(master_track.source_id)
+	master_track.inserts = audio.get_inserts(master_track.source_id)
+	audio.set_monitor(settings.monitor)
+	_apply_mix_output()
 	load_default_room()  # behind the title screen, until a room is made or opened
 	if options.has("room"):
 		var dims: PackedStringArray = options.room.split(",")
@@ -332,6 +340,8 @@ func _process(delta: float) -> void:
 func _read_meter(delta: float) -> void:
 	meter = audio.read_meter()
 	master_peak_hold = maxf(master_peak_hold, maxf(meter.get("peak_l", 0.0), meter.get("peak_r", 0.0)))
+	room_peak_hold = maxf(room_peak_hold, maxf(meter.get("room_peak_l", 0.0), meter.get("room_peak_r", 0.0)))
+	mix_peak_hold = maxf(mix_peak_hold, maxf(meter.get("mix_peak_l", 0.0), meter.get("mix_peak_r", 0.0)))
 	reverb_peak_hold = maxf(reverb_peak_hold, maxf(meter.get("reverb_peak_l", 0.0), meter.get("reverb_peak_r", 0.0)))
 	# Each channel as it reaches the master: after its fader, before distance and the master's. Or before its fader,
 	# scaled so that the two agree with the fader at 0 dB.
@@ -342,6 +352,8 @@ func _read_meter(delta: float) -> void:
 		inst.meter_peak = peaks[int(pre)] * scale  # so the other doesn't hold an old peak for when it is chosen
 		inst.meter_rms = audio.get_source_level(inst.source_id, pre) * scale
 		inst.peak_hold = maxf(inst.peak_hold, inst.meter_peak)
+		inst.room_meter_peak = audio.get_source_room_peak(inst.source_id) * CHANNEL_TRIM  # (in the room, at its level there)
+		inst.room_meter_rms = audio.get_source_room_level(inst.source_id) * CHANNEL_TRIM
 	for folder in folders + auxes:  # (its bus's meters read dBFS as it reaches the master already)
 		var peaks := [audio.get_source_peak(folder.source_id, false), audio.get_source_peak(folder.source_id, true)]
 		folder.meter_peak = peaks[int(pre)]
@@ -357,9 +369,15 @@ func _read_meter(delta: float) -> void:
 
 
 ## Clears a channel's peak readout (null: the master's), or every one of them.
-func clear_peak(inst) -> void:  # (null: the master's; "reverb": the reverb's)
+func clear_peak(inst) -> void:  # (a master's: "mix", "room", "reverb"; null: the main outputs')
 	if inst is String:
-		reverb_peak_hold = 0.0
+		match inst:
+			"mix":
+				mix_peak_hold = 0.0
+			"room":
+				room_peak_hold = 0.0
+			_:
+				reverb_peak_hold = 0.0
 	elif inst == null:
 		master_peak_hold = 0.0
 	else:
@@ -397,6 +415,8 @@ func set_pedalboard_open(on: bool) -> void:
 func clear_all_peaks() -> void:
 	master_peak_hold = 0.0
 	reverb_peak_hold = 0.0
+	room_peak_hold = 0.0
+	mix_peak_hold = 0.0
 	for inst in instruments + folders + auxes:
 		inst.peak_hold = 0.0
 
@@ -1129,6 +1149,17 @@ func set_input_channel(inst, channel: int) -> void:
 		settings.save_to_disk()
 
 
+## How many instruments the room can hold: the audio core's sources, less those the folders, the aux tracks and the
+## master's inserts take.
+func instrument_capacity() -> int:
+	return audio.get_max_sources() - (audio.get_source_count() - instruments.size())
+
+
+## How many outputs the open device has (0 while none is open).
+func output_channel_count() -> int:
+	return int(audio.get_stats().get("output_channels", 0))
+
+
 ## How many inputs there are to choose from: what is open, or what the chosen input device says it has.
 func input_channel_count() -> int:
 	if live_input:
@@ -1313,6 +1344,9 @@ func duplicate_instrument(inst, at = null):
 	instruments.erase(copy)
 	instruments.insert(instruments.find(inst) + 1, copy)
 	copy.set_color(inst.color)
+	set_room_level(copy, inst.room_db)  # (as loud in the room, as muted there, as panned)
+	set_room_muted(copy, inst.room_muted)
+	set_pan(copy, inst.pan)
 	if folder_of(inst) != null:  # in the same folder, just after it
 		put_in_folder(copy, folder_of(inst), inst)
 	for slot in inst.sends.size():  # its sends, to the same auxes
@@ -1342,7 +1376,7 @@ func duplicate_instrument(inst, at = null):
 			copy.set_pair(inst.pair_technique, inst.pair_spacing, inst.side_model, inst.ms_width)
 		else:
 			copy.set_mic_model(inst.mic_model, inst.mic_pattern)
-		set_mic_pan(copy, inst.mic_pan)
+		set_pan(copy, inst.pan)
 	else:
 		set_input_channel(copy, inst.input_channel)
 		set_speaker_volume(copy, inst.volume_db)
@@ -1432,10 +1466,51 @@ func set_reverb_db(db: float) -> void:
 	audio.set_reverb_level(0.0 if reverb_db <= -79.0 else db_to_linear(reverb_db))
 
 
-## The master fader, in decibels. It belongs to the room (saved with it), as a session's master fader does.
+## The master fader (the mix's), in decibels. It belongs to the room (saved with it), as a session's master fader does.
 func set_master_volume_db(db: float) -> void:
 	master_volume_db = clampf(db, -80.0, 12.0)
 	_apply_master_volume()
+
+
+## The room's master: how loud the room is as you hear it standing there.
+func set_room_volume_db(db: float) -> void:
+	room_volume_db = clampf(db, -80.0, 12.0)
+	_apply_master_volume()
+
+
+## What the main outputs play (H): "room", what you hear standing there; or "mix", what the tracks put out (the
+## microphones, each instrument's direct output), as a control room's monitor switch.
+func set_monitor(which: String) -> void:
+	settings.monitor = "mix" if which == "mix" else "room"
+	audio.set_monitor(settings.monitor)
+	settings.save_to_disk()
+
+
+func toggle_monitor() -> void:
+	set_monitor("room" if settings.monitor == "mix" else "mix")
+	session.notice.emit("Hearing the mix (the tracks' outputs)" if settings.monitor == "mix" else "Hearing the room")
+
+
+## The mix on outputs of its own as well (a pair, by its first, 0-based; -1 for none): to another pair of the
+## interface's outputs, say, for headphones of their own or a recorder.
+func set_mix_output(first: int) -> void:
+	settings.mix_output = first
+	_apply_mix_output()
+	settings.save_to_disk()
+
+
+func _apply_mix_output() -> void:
+	var first: int = settings.mix_output
+	audio.set_mix_output(first, first + 1) if first >= 0 else audio.set_mix_output(-1, -1)
+
+
+## An instrument's level in the room (how loud it sounds where it stands), and its mute there.
+func set_room_level(inst, db: float) -> void:
+	inst.set_room_db(clampf(db, -80.0, 12.0))
+
+
+func set_room_muted(inst, on: bool) -> void:
+	inst.set_room_muted(on)
 
 
 ## A Speaker's own volume (its panel), in decibels: after its inserts, before its fader. -80 is off.
@@ -1508,9 +1583,10 @@ func set_mic_model(mic, model: String, pattern := "") -> void:
 				mic.set_display_name(unique_name(Catalog.KINDS[kind].name, mic))
 
 
-## Where a microphone's track sits in the stereo (-1 left, 1 right); a stereo mic's, its balance.
-func set_mic_pan(mic, pan: float) -> void:
-	mic.set_mic_pan(pan)
+## Where a track sits in the stereo (-1 left, 1 right): an instrument's direct output, a microphone's track; a stereo
+## mic's, its balance.
+func set_pan(track, pan: float) -> void:
+	track.set_pan(pan)
 
 
 ## The models there are, as the audio core has them (asked for once): [{id, name, about, sensitivity_db, noise_db, patterns}].
@@ -1593,6 +1669,7 @@ func set_stage_gain(gain: float) -> void:
 
 func _apply_master_volume() -> void:
 	audio.set_master_volume((0.0 if master_volume_db <= -79.0 else db_to_linear(master_volume_db)) * _stage_gain)
+	audio.set_room_volume((0.0 if room_volume_db <= -79.0 else db_to_linear(room_volume_db)) * _stage_gain)
 
 
 func set_text_scale(scale_factor: float) -> void:

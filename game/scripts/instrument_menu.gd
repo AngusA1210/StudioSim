@@ -1,10 +1,17 @@
 extends CanvasLayer
 ## The instrument menu (T): pick a kind of instrument and it appears in your hands, to be walked to where it
-## should stand and put down. Two families: MIDI instruments, which are played and sequenced, and live inputs,
-## which bring a microphone or a plugged-in instrument into the room. Under them, any instrument presets saved
-## (an amp with its pedals and plug-ins, say), each of which comes in as a new instrument set up that way.
+## should stand and put down. Each is a card with a picture of it (its model, as it stands in the room) and its name;
+## what it is, and what a family is, is said in the line at the foot while the mouse is over it. The families: MIDI
+## instruments, which are played and sequenced, live inputs, which bring a plugged-in instrument into the room, and
+## microphones. Under them, any instrument presets saved (an amp with its pedals and plug-ins, say), each of which
+## comes in as a new instrument set up that way.
 
 const Catalog := preload("res://scripts/catalog.gd")
+const Hints := preload("res://scripts/hints.gd")
+const Models := preload("res://scripts/instrument_models.gd")
+const CARD := Vector2(172, 136)
+const PICTURE := Vector2(160, 98)
+const PICK := "Pick one and it appears in your hands. Walk it to where you want it, then click to put it down."
 const DIM := Color(0.62, 0.65, 0.74)
 const WARN := Color(1.0, 0.61, 0.48)
 
@@ -23,6 +30,9 @@ var _scroll: ScrollContainer
 var _preset_box: VBoxContainer  # "Your presets", shown when there are any
 var _preset_cards: HFlowContainer
 var _preset_buttons: Array = []
+var _hint: Label  # what the mouse is over
+var _pictures := {}  # kind → its card's picture, drawn the first time the menu opens
+var _drawn := false
 
 
 func setup(the_app) -> void:
@@ -42,6 +52,7 @@ func open() -> void:
 	app.player.release_keys()
 	_root.visible = true
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	_draw_pictures()
 	_fill_presets()
 	_refresh()
 	_scroll.scroll_vertical = 0  # from the top each time
@@ -78,7 +89,9 @@ func _input(event: InputEvent) -> void:
 func _process(_delta: float) -> void:
 	if is_open():
 		var vp := get_viewport().get_visible_rect().size
-		_panel.custom_minimum_size = Vector2(minf(900.0, vp.x - 32.0), minf(700.0, vp.y - 32.0))
+		_panel.custom_minimum_size = Vector2(minf(980.0, vp.x - 32.0), minf(720.0, vp.y - 32.0))
+		var hint := Hints.under_mouse(_panel)
+		_hint.text = hint if hint != "" else PICK
 
 
 # ── Building ────────────────────────────────────────────────────────────────────────────────────────────────
@@ -132,14 +145,15 @@ func _build() -> void:
 	box.add_theme_constant_override("separation", 10)
 	scroll.add_child(box)
 
-	_note(box, "Pick one and it appears in your hands. Walk it to where you want it, then click to put it down.")
 	for group in Catalog.GROUPS:
 		box.add_child(HSeparator.new())
 		var heading := Label.new()
 		heading.text = group.title
 		heading.add_theme_font_size_override("font_size", 18)
+		heading.mouse_filter = Control.MOUSE_FILTER_PASS
+		heading.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+		Hints.give(heading, group.about)
 		box.add_child(heading)
-		_note(box, group.about)
 		var cards := HFlowContainer.new()
 		cards.add_theme_constant_override("h_separation", 10)
 		cards.add_theme_constant_override("v_separation", 10)
@@ -175,55 +189,137 @@ func _build() -> void:
 	_preset_cards.add_theme_constant_override("v_separation", 10)
 	_preset_box.add_child(_preset_cards)
 
+	_hint = Hints.line()
+	_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_hint.custom_minimum_size.y = 20
+	_hint.add_theme_font_size_override("font_size", 14)
+	_hint.add_theme_color_override("font_color", Color(0.85, 0.87, 0.92))
+	outer.add_child(_hint)
 	_footer = Label.new()
 	_footer.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_footer.add_theme_font_size_override("font_size", 13)
 	outer.add_child(_footer)
 
 
-## A button for one kind of instrument: a stripe of its colour, its name, and a line about it.
+## A button for one kind of instrument: a picture of it, its name under it in its colour, a stripe of its colour at the
+## foot; what it is, in the line at the foot of the menu while the mouse is over it.
 func _card(kind: String) -> Button:
 	var spec: Dictionary = Catalog.KINDS[kind]
 	var card := Button.new()
-	card.custom_minimum_size = Vector2(272, 76)
+	card.custom_minimum_size = CARD
 	card.focus_mode = Control.FOCUS_NONE
 	for state in ["normal", "hover", "pressed", "disabled"]:
 		var style := StyleBoxFlat.new()
 		style.bg_color = Color(1, 1, 1, {"normal": 0.05, "hover": 0.11, "pressed": 0.16, "disabled": 0.02}[state])
 		style.set_corner_radius_all(8)
-		style.border_width_left = 6
+		style.border_width_bottom = 4
 		style.border_color = spec.color if state != "disabled" else spec.color.darkened(0.6)
 		card.add_theme_stylebox_override(state, style)
 	card.pressed.connect(_on_picked.bind(kind))
+	Hints.give(card, "%s: %s" % [spec.name, spec.about])
 	_card_for[kind] = card
 
-	var margin := MarginContainer.new()
-	margin.set_anchors_preset(Control.PRESET_FULL_RECT)
-	margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	margin.add_theme_constant_override("margin_left", 18)
-	margin.add_theme_constant_override("margin_right", 10)
-	margin.add_theme_constant_override("margin_top", 8)
-	margin.add_theme_constant_override("margin_bottom", 8)
-	card.add_child(margin)
-	var text := VBoxContainer.new()
-	text.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	text.add_theme_constant_override("separation", 2)
-	margin.add_child(text)
+	var column := VBoxContainer.new()
+	column.set_anchors_preset(Control.PRESET_FULL_RECT)
+	column.offset_left = 6
+	column.offset_right = -6
+	column.offset_top = 6
+	column.offset_bottom = -8
+	column.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	column.add_theme_constant_override("separation", 4)
+	card.add_child(column)
+	var picture := TextureRect.new()
+	picture.custom_minimum_size = PICTURE
+	picture.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	picture.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	picture.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	picture.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	column.add_child(picture)
+	_pictures[kind] = picture
 	var name_label := Label.new()
 	name_label.text = spec.name
-	name_label.add_theme_font_size_override("font_size", 17)
+	name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	name_label.clip_text = true
+	name_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	name_label.add_theme_font_size_override("font_size", 15)
 	name_label.add_theme_color_override("font_color", spec.color.lightened(0.35))
 	name_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	text.add_child(name_label)
-	var about := Label.new()
-	about.text = spec.about
-	about.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	about.add_theme_font_size_override("font_size", 13)
-	about.add_theme_color_override("font_color", DIM)
-	about.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	text.add_child(about)
+	column.add_child(name_label)
 	_cards.append(card)
 	return card
+
+
+## Each card's picture: its model as it stands in the room, seen from in front and a little above and to the side, in a
+## little world of its own, drawn once (at twice the card's size, for a sharp picture on a Retina screen).
+func _draw_pictures() -> void:
+	if _drawn:
+		return
+	_drawn = true
+	for kind in _pictures:
+		var spec: Dictionary = Catalog.KINDS[kind]
+		var view := SubViewport.new()
+		view.size = Vector2i(PICTURE * 2.0)
+		view.own_world_3d = true
+		view.transparent_bg = true
+		view.msaa_3d = Viewport.MSAA_4X
+		view.render_target_update_mode = SubViewport.UPDATE_ONCE
+		_root.add_child(view)
+		var mic := {}
+		if spec.get("mic", false):  # (on a short stand, so the mic itself fills the picture)
+			mic = {"height": minf(float(spec.height), 0.45), "tilt": 0.0, "model": spec.get("model", "flat"), "capsules": []}
+			if spec.get("stereo", false):  # an XY pair, as a new one is
+				var pair: Dictionary = Catalog.MIC_PAIRS.xy
+				for k in 2:
+					var turn := deg_to_rad(float(pair.turns[k]))
+					mic.capsules.append({"at": Vector3.ZERO, "aim": Basis(Vector3.UP, turn) * Vector3(0, 0, 1), "turn": turn, "model": mic.model})
+		var built: Dictionary = Models.build("mic" if spec.get("mic", false) else kind, spec.color, "", mic)
+		var model: Node3D = built.node
+		view.add_child(model)
+		var bounds := _bounds(model)
+		var centre := bounds.get_center()
+		var radius := maxf(bounds.size.length() / 2.0, 0.05)
+		var toward := Vector3(0.55, 0.38, 1.0)
+		if not mic.is_empty():  # a mic: its body, from the side, the stand going off behind it
+			centre = Vector3(0.0, mic.height, -0.03)
+			radius = 0.2 if spec.get("stereo", false) else 0.15
+			toward = Vector3(1.0, 0.35, 0.5)
+		var camera := Camera3D.new()
+		camera.fov = 30.0
+		var from := toward.normalized() * radius / sin(deg_to_rad(camera.fov / 2.0)) * 0.8
+		camera.environment = _picture_light()
+		view.add_child(camera)
+		camera.look_at_from_position(centre + from, centre)
+		var sun := DirectionalLight3D.new()
+		sun.light_energy = 1.3
+		view.add_child(sun)
+		sun.look_at_from_position(Vector3(1.0, 2.0, 1.5), Vector3.ZERO)
+		_pictures[kind].texture = view.get_texture()
+
+
+## How a model's parts are lit in its picture: a soft light all round, with the sun from over your shoulder.
+func _picture_light() -> Environment:
+	var environment := Environment.new()
+	environment.background_mode = Environment.BG_CLEAR_COLOR
+	environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	environment.ambient_light_color = Color(0.75, 0.78, 0.85)
+	environment.ambient_light_energy = 0.7
+	return environment
+
+
+## The box round a model's parts, from its own origin.
+static func _bounds(root: Node3D) -> AABB:
+	var box := AABB()
+	var first := true
+	for part in root.find_children("*", "GeometryInstance3D", true, false):
+		var place := Transform3D.IDENTITY
+		var node: Node = part
+		while node != root and node is Node3D:
+			place = (node as Node3D).transform * place
+			node = node.get_parent()
+		var aabb: AABB = place * (part as GeometryInstance3D).get_aabb()
+		box = aabb if first else box.merge(aabb)
+		first = false
+	return box
 
 
 func _note(parent: Control, text: String) -> void:
@@ -238,7 +334,7 @@ func _note(parent: Control, text: String) -> void:
 ## How full the room is, and which hardware inputs there are to choose from.
 func _refresh() -> void:
 	var count: int = app.instruments.size()
-	var limit := audio.get_max_sources()
+	var limit: int = app.instrument_capacity()
 	var full := count >= limit
 	for card in _cards + _preset_buttons:
 		card.disabled = full

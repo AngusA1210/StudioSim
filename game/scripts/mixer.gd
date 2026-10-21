@@ -1,8 +1,15 @@
 extends CanvasLayer
-## The mix window (Tab), laid out like a mixing desk: a channel strip for every instrument side by side, the master
-## strip on the right. A strip has its inserts at the top, then the instrument's input (which hardware input, for a
-## Speaker or an amp), buttons for input, mute and solo, a fader with its meter beside it, the fader's level and the
-## highest peak beneath them, and the instrument's name in its colour at the foot.
+## The mix window (Tab), laid out like a mixing desk: a channel strip for every track side by side, and on the right
+## the room's reverb, the room's master and the mix's master. There are two mixes, as a studio has: the room, what you
+## hear standing in it (each instrument where it stands, at its level there, and the room's reverb), and the mix, what
+## the tracks put out (the microphones, and each instrument's direct output, as a DI's), through faders, pans, sends,
+## folders and aux tracks to the mix's master and its inserts. The main outputs play one or the other (H, or HEAR on a
+## master); the mix can go to outputs of its own as well.
+## A strip is the track's in the mix: its inserts at the top (they come before the split: they shape its sound in the
+## room too), its sends, the instrument's input (which hardware input, for a Speaker or an amp), its output, its pan (a
+## pot, as Pro Tools has: drag it round, double-click for the middle), buttons for input, mute and solo, a fader with its
+## meter beside it, the fader's level and the highest peak beneath them; then, apart at the foot, its level in the room,
+## its mute there and its meter there; and the track's name in its colour.
 ## The inserts work as Pro Tools' do: click an empty one to choose a plug-in (its window opens), click a full one to
 ## open or close its window, Cmd-click (Ctrl-click) to bypass it, and right-click for the rest. A bypassed insert is
 ## blue. Drag one to another slot, on its own strip or another, to move it there (it swaps with what was there);
@@ -30,6 +37,7 @@ const PresetMenu := preload("res://scripts/preset_menu.gd")
 const TrackMenu := preload("res://scripts/track_menu.gd")
 const PanControl := preload("res://scripts/pan_control.gd")
 const Catalog := preload("res://scripts/catalog.gd")
+const MiniFader := preload("res://scripts/mini_fader.gd")
 
 const STRIP_WIDTH := 96.0
 const STRIP_BG := Color(0.16, 0.17, 0.19, 0.98)
@@ -38,6 +46,8 @@ const WARN := Color(1.0, 0.61, 0.48)
 const INPUT_GREEN := Color(0.36, 0.9, 0.5)
 const MUTE_ORANGE := Color(1.0, 0.62, 0.25)
 const SOLO_YELLOW := Color(0.98, 0.86, 0.3)
+const FOOT_HEIGHT := 40.0  # a strip's foot: an instrument's level in the room, a master's HEAR
+const PAN_HEIGHT := 40.0
 
 var app
 var audio: SoundRoomAudio
@@ -66,9 +76,10 @@ var _hint: Label  # the line at the foot: what the mouse is over
 var _to_edit: Button  # over to the edit window, in a Record room
 var _signature := ""
 var _input_channels := -1
-var _master := {}
+var _master := {}  # the mix's master strip
+var _room := {}    # the room's master strip
 var _reverb := {}  # the room reverb's strip
-const REVERB := "reverb"  # what its fader and meter are for (null is the master)
+var _output_count := -1  # how many hardware outputs the mix's own outputs were listed for
 var _status: Label
 var _problem_until := 0  # a plug-in that wouldn't load is reported in the status line for a few seconds
 
@@ -89,7 +100,8 @@ func open() -> void:
 	app.player.release_keys()
 	_root.visible = true
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
-	_input_channels = -1  # the hardware may have changed: list its inputs again
+	_input_channels = -1  # the hardware may have changed: list its inputs, and its outputs, again
+	_output_count = -1
 	_refresh()
 
 
@@ -100,7 +112,7 @@ func close() -> void:
 	_meter_menu.hide()
 	_plugin_menu.hide()
 	app.plugin_browser.hide()
-	for folder in app.folders + app.auxes:
+	for folder in app.folders + app.auxes + [app.master_track]:
 		app.hide_insert_editors(folder)
 	for inst in app.instruments:
 		app.hide_insert_editors(inst)
@@ -124,6 +136,8 @@ func _input(event: InputEvent) -> void:
 		app.edit_window.open()
 	elif action == "to_start" and app.timeline.is_record():  # back to the start
 		app.timeline.locate(0.0)
+	elif action == "monitor":  # hear the room or the mix
+		app.toggle_monitor()
 	elif action == "follow" and app.timeline.is_record():
 		app.toggle_follow()
 	elif event.physical_keycode == KEY_L and event.alt_pressed and app.timeline.is_record():  # Loop Record
@@ -139,7 +153,7 @@ func _process(_delta: float) -> void:
 	if not is_open():
 		return
 	var vp := get_viewport().get_visible_rect().size
-	var height := minf(620.0, vp.y - 60.0)
+	var height := minf(720.0, vp.y - 40.0)
 	_panel.position = Vector2(12, vp.y - height - 12)
 	_panel.size = Vector2(vp.x - 24, height)
 	_refresh()
@@ -149,12 +163,12 @@ func _process(_delta: float) -> void:
 	_hint.text = Hints.under_mouse(_panel)
 
 
-## The reverb's and the master's faders level with the tracks': the space above them grown or shrunk to match.
+## The reverb's and the masters' faders level with the tracks': the space above them grown or shrunk to match.
 func _line_up() -> void:
 	if _strips.is_empty():
 		return
 	var top: float = _strips[0].fader.global_position.y
-	for strip in [_reverb, _master]:
+	for strip in [_reverb, _room, _master]:
 		var off: float = top - strip.fader.global_position.y
 		if absf(off) > 0.5:
 			strip.gap.custom_minimum_size.y = maxf(strip.gap.custom_minimum_size.y + off, 0.0)
@@ -218,6 +232,8 @@ func _build() -> void:
 	scroll.add_child(_strip_row)
 	desk.add_child(VSeparator.new())
 	desk.add_child(_build_reverb())
+	desk.add_child(_build_room())
+	desk.add_child(VSeparator.new())
 	desk.add_child(_build_master())
 
 	_insert_menu = PopupMenu.new()
@@ -266,8 +282,9 @@ func _build() -> void:
 	box.add_child(_hint)
 
 
-## The room reverb's return, as a DAW's effects return: its fader (0 dB is the reverb the room's size calls for, the
-## bottom none at all) with its meter, beside the master's.
+## The room's reverb return, as a DAW's effects return: its fader (0 dB is the reverb the room's size calls for, the
+## bottom none at all) with its meter, beside the room's master. It is the room's: the mix has none unless a track
+## sends to an aux with a reverb on it.
 func _build_reverb() -> PanelContainer:
 	var strip := _strip_panel(STRIP_WIDTH + 14)
 	var box: VBoxContainer = strip.get_child(0)
@@ -278,36 +295,97 @@ func _build_reverb() -> PanelContainer:
 	var gap := Control.new()
 	gap.custom_minimum_size.y = 84
 	box.add_child(gap)
-	var pair := _fader_and_meter(box, 2, REVERB)
+	var pair := _fader_and_meter(box, 2, "reverb")
 	pair.fader.value_changed.connect(func(db: float) -> void: app.set_reverb_db(db))
-	var readouts := _readouts(box, REVERB)
-	box.add_child(_name_plate("Reverb", Color(0.4, 0.86, 0.78), null))
+	var readouts := _readouts(box, "reverb")
+	_foot(box)
+	box.add_child(_name_plate("Room Reverb", Color(0.4, 0.86, 0.78), null))
 	_reverb = {"fader": pair.fader, "meter": pair.meter, "value": readouts.value, "peak": readouts.peak, "gap": gap}
 	return strip
 
 
+## The room's master: how loud the room is as you hear it standing there (the instruments at their levels there, and
+## its reverb), and HEAR, for the main outputs to play it.
+func _build_room() -> PanelContainer:
+	var strip := _strip_panel(STRIP_WIDTH + 14)
+	var box: VBoxContainer = strip.get_child(0)
+	var level_with_inserts := Control.new()
+	level_with_inserts.custom_minimum_size.y = _slots_height()
+	box.add_child(level_with_inserts)
+	_small(box, "ROOM")
+	var gap := Control.new()
+	gap.custom_minimum_size.y = 84
+	box.add_child(gap)
+	var pair := _fader_and_meter(box, 2, "room")
+	pair.fader.value_changed.connect(func(db: float) -> void: app.set_room_volume_db(db))
+	var readouts := _readouts(box, "room")
+	var hear := _hear_button(box, "room")
+	box.add_child(_name_plate("Room Master", Color(0.4, 0.86, 0.78), null))
+	_room = {"fader": pair.fader, "meter": pair.meter, "value": readouts.value, "peak": readouts.peak, "gap": gap, "hear": hear}
+	return strip
+
+
+## The mix's master, as a DAW's master fader: its inserts (in stereo, on the whole mix), where the mix goes besides the
+## main outputs, the limiter, its fader (automated as the master track's, in a Record room), and HEAR.
 func _build_master() -> PanelContainer:
 	var strip := _strip_panel(STRIP_WIDTH + 14)
 	var box: VBoxContainer = strip.get_child(0)
-	var level_with_inserts := Control.new()  # so the faders line up with the instruments'
-	level_with_inserts.custom_minimum_size.y = _slots_height()
-	box.add_child(level_with_inserts)
+	var inserts := _build_inserts(box, app.master_track, STRIP_WIDTH + 2)
+	var level_with_sends := Control.new()  # (it has no sends: the space they take on the tracks')
+	level_with_sends.custom_minimum_size.y = _section_height(audio.get_max_sends())
+	box.add_child(level_with_sends)
 	_small(box, "OUTPUT")
+	var output := OptionButton.new()
+	output.add_theme_font_size_override("font_size", 12)
+	output.fit_to_longest_item = false
+	output.focus_mode = Control.FOCUS_NONE
+	output.custom_minimum_size = Vector2(STRIP_WIDTH - 4, 24)
+	output.item_selected.connect(func(i: int) -> void: app.set_mix_output(int(output.get_meta("choices")[i])))
+	Hints.give(output, "Where the mix goes: the main outputs play it while it's heard (H), and it can go to a pair of outputs of its own as well, all the time (headphones of their own, a recorder)")
+	box.add_child(output)
 	var limiter := _toggle("LIMIT", Color(0.55, 0.78, 1.0))
-	Hints.give(limiter, "Limiter, before the master fader: on, the mix can't go over full scale; off, the plain sum. What leaves the fader over full scale is cut off either way.")
+	Hints.give(limiter, "Limiter, before the master faders: on, neither the mix nor the room can go over full scale; off, the plain sum. What leaves the faders over full scale is cut off either way.")
 	limiter.toggled.connect(_on_limiter_toggled)
 	limiter.custom_minimum_size = Vector2(76, 24)
 	limiter.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	box.add_child(limiter)
 	var gap := Control.new()
-	gap.custom_minimum_size.y = 54
+	gap.custom_minimum_size.y = 24
 	box.add_child(gap)
-	var pair := _fader_and_meter(box, 2, null)
+	var pair := _fader_and_meter(box, 2, "mix")
 	pair.fader.value_changed.connect(_on_master_changed)
-	var readouts := _readouts(box, null)
-	box.add_child(_name_plate("Master", Color(0.75, 0.77, 0.82), null))
-	_master = {"fader": pair.fader, "meter": pair.meter, "value": readouts.value, "peak": readouts.peak, "limiter": limiter, "gap": gap}
+	var readouts := _readouts(box, "mix")
+	var hear := _hear_button(box, "mix")
+	var plate := _name_plate("Mix Master", Color(0.75, 0.77, 0.82), null)
+	box.add_child(plate)
+	_master = {"inst": app.master_track, "fader": pair.fader, "meter": pair.meter, "value": readouts.value, "peak": readouts.peak,
+		"limiter": limiter, "gap": gap, "inserts": inserts, "output": output, "hear": hear, "plate": plate}
 	return strip
+
+
+## A master's foot: HEAR, lit while the main outputs play it ("room" or "mix").
+func _hear_button(box: VBoxContainer, which: String) -> Button:
+	var foot := _foot(box)
+	_small(foot, "MAIN OUTS")
+	var hear := _toggle("HEAR", INPUT_GREEN)
+	hear.custom_minimum_size = Vector2(76, 22)
+	hear.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	hear.toggled.connect(func(_on: bool) -> void: app.set_monitor(which))
+	Hints.give(hear, func() -> String: return "The main outputs play %s (%s switches between the room and the mix)" % [
+		"the room, as you hear it standing there" if which == "room" else "the mix: the microphones and the instruments' direct outputs",
+		app.bindings.label("monitor")])
+	foot.add_child(hear)
+	return hear
+
+
+## The foot of a strip, the same height on every one (so the faders line up): an instrument's level in the room, a
+## master's HEAR, or nothing.
+func _foot(box: VBoxContainer) -> VBoxContainer:
+	var foot := VBoxContainer.new()
+	foot.add_theme_constant_override("separation", 2)
+	foot.custom_minimum_size.y = FOOT_HEIGHT
+	box.add_child(foot)
+	return foot
 
 
 ## A strip for one instrument.
@@ -316,7 +394,7 @@ func _build_strip(inst) -> Dictionary:
 	var box: VBoxContainer = strip.get_child(0)
 	var inserts := _build_inserts(box, inst)
 	var sends := _build_sends(box, inst)
-	var small_label := _small(box, "INSTRUMENT" if inst.plays_plugin else ("MICROPHONE" if inst.is_mic else "INPUT"))
+	var small_label := _small(box, "INSTRUMENT" if inst.plays_plugin else (("STEREO MIC" if inst.is_stereo_mic else "MICROPHONE") if inst.is_mic else "INPUT"))
 	var source: Control
 	if inst.plays_plugin:  # the plug-in it plays, in place of where its input comes from
 		var plug := Button.new()
@@ -330,14 +408,17 @@ func _build_strip(inst) -> Dictionary:
 		Hints.give(plug, func() -> String: return "Its plug-in, %s: click for its window, right-click to replace it or for its presets" % (
 			inst.instrument_plugin.get("plugin_name", "")))
 		source = plug
-	elif inst.is_mic:  # where its track sits in the stereo (its model and pattern over it)
-		var pan := PanControl.new()
-		pan.custom_minimum_size = Vector2(STRIP_WIDTH - 16, 24)
-		pan.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-		pan.value_changed.connect(func(v: float) -> void: app.set_mic_pan(inst, v))
-		Hints.give(pan, func() -> String: return "%s, %s: it hears the room from where it stands. Pan: drag (Shift: fine), double-click for the middle. Its name opens its panel" % [
-			app.mic_model_info(inst.mic_model).get("name", "Microphone"), Catalog.MIC_PATTERNS.get(app.mic_pattern_of(inst), "")])
-		source = pan
+	elif inst.is_mic:  # its model, and its pattern (a stereo mic's: how its pair is set up)
+		var model := Label.new()
+		model.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		model.custom_minimum_size.y = 24
+		model.clip_text = true
+		model.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		model.add_theme_font_size_override("font_size", 12)
+		Hints.give(model, func() -> String: return "%s, %s: it hears the room from where it stands. Its name opens its panel" % [
+			app.mic_model_info(inst.mic_model).get("name", "Microphone"), Catalog.MIC_PAIRS.get(inst.pair_technique, {}).get("name", "")
+			if inst.is_stereo_mic else Catalog.MIC_PATTERNS.get(app.mic_pattern_of(inst), "")])
+		source = model
 	elif inst.playable:
 		var midi := Label.new()
 		midi.text = "MIDI"
@@ -358,6 +439,7 @@ func _build_strip(inst) -> Dictionary:
 	box.add_child(source)
 	var output := _output_button(inst)
 	box.add_child(output)
+	var pan := _pan_pot(box, inst)
 	var buttons := HBoxContainer.new()
 	buttons.add_theme_constant_override("separation", 3)
 	buttons.alignment = BoxContainer.ALIGNMENT_CENTER
@@ -379,12 +461,59 @@ func _build_strip(inst) -> Dictionary:
 	var pair := _fader_and_meter(box, 1, inst)
 	pair.fader.value_changed.connect(_on_fader_changed.bind(inst))
 	var readouts := _readouts(box, inst)
+	var room := _room_section(box, inst)
 	var plate := _name_plate(inst.display_name, inst.color, inst)
 	box.add_child(plate)
 	_strip_row.add_child(strip)
 	return {"inst": inst, "fader": pair.fader, "meter": pair.meter, "value": readouts.value, "peak": readouts.peak, "input": input,
 		"mute": mute, "solo": solo, "source": source, "output": output, "inserts": inserts, "sends": sends, "plate": plate,
-		"frame": strip.get_theme_stylebox("panel"), "panel": strip, "small": small_label}
+		"frame": strip.get_theme_stylebox("panel"), "panel": strip, "small": small_label, "pan": pan, "room": room}
+
+
+## Where a track sits in the mix's stereo, as Pro Tools' pan pot (an instrument's direct output, a microphone's track; a
+## stereo mic's balance between its two sides). A folder's and an aux's strips leave its space empty.
+func _pan_pot(box: VBoxContainer, track) -> Control:
+	if track.is_folder:
+		var space := Control.new()
+		space.custom_minimum_size.y = PAN_HEIGHT
+		box.add_child(space)
+		return null
+	var pan := PanControl.new()
+	pan.custom_minimum_size = Vector2(STRIP_WIDTH - 24, PAN_HEIGHT)
+	pan.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	pan.ink = track.color.lightened(0.2)
+	pan.value_changed.connect(func(v: float) -> void: app.set_pan(track, v))
+	Hints.give(pan, ("Balance: the stereo mic's two sides" if track.is_stereo_mic else ("Pan: where its track sits in the mix" if track.is_mic else
+		"Pan: where its direct output sits in the mix (in the room it is where it stands)")) +
+		".  Drag up or down (Shift: fine), double-click for the middle")
+	box.add_child(pan)
+	return pan
+
+
+## Apart, at the foot of an instrument's strip: the room, not the mix. Its level there (how loud it is where it stands,
+## as you hear it standing there, and as the microphones do), its mute there, and its meter there, along the fader's
+## foot. A microphone's strip, a folder's and an aux's leave it empty: they make no sound in the room.
+func _room_section(box: VBoxContainer, track) -> Dictionary:
+	var foot := _foot(box)
+	if track.is_folder or track.is_mic:
+		return {}
+	_small(foot, "IN THE ROOM")
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 3)
+	foot.add_child(row)
+	var level := MiniFader.new()
+	level.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	level.ink = track.color
+	level.value_changed.connect(func(db: float) -> void: app.set_room_level(track, db))
+	Hints.give(level, "Its level in the room: how loud it is where it stands, as you hear it there and the microphones do (its meter along the foot). Drag (Shift: fine), double-click for 0 dB")
+	row.add_child(level)
+	var mute := _toggle("M", MUTE_ORANGE)
+	mute.custom_minimum_size = Vector2(22, 20)
+	mute.add_theme_font_size_override("font_size", 11)
+	mute.toggled.connect(func(on: bool) -> void: app.set_room_muted(track, on))
+	Hints.give(mute, "Mute it in the room: no one there hears it, nor do the microphones (its direct output plays on in the mix)")
+	row.add_child(mute)
+	return {"level": level, "mute": mute}
 
 
 ## Where a track plays, as a Pro Tools track's output: the master, or a folder's bus (an aux input). Only the folders
@@ -397,12 +526,12 @@ func _output_button(track) -> OptionButton:
 	output.custom_minimum_size = Vector2(STRIP_WIDTH - 16, 24)
 	var choices: Array = [null] + app.folders.filter(func(folder): return app.can_put_in(track, folder))
 	for folder in choices:
-		output.add_item("→ %s" % (folder.display_name if folder != null else "Master"))
+		output.add_item("→ %s" % (folder.display_name if folder != null else "Mix"))
 	output.set_meta("choices", choices)
 	output.item_selected.connect(func(i: int) -> void:
 		if not app.put_in_folder(track, choices[i]):
 			_report("It can't go there: its own sound would come round to it again."))
-	Hints.give(output, "Its output: straight to the master, or into a folder, through the folder's inserts and fader")
+	Hints.give(output, "Its output: straight to the mix's master, or into a folder, through the folder's inserts and fader")
 	return output
 
 
@@ -423,6 +552,7 @@ func _build_folder_strip(folder) -> Dictionary:
 	box.add_child(count)
 	var output := _output_button(folder)
 	box.add_child(output)
+	_pan_pot(box, folder)
 	var buttons := HBoxContainer.new()
 	buttons.add_theme_constant_override("separation", 3)
 	buttons.alignment = BoxContainer.ALIGNMENT_CENTER
@@ -438,25 +568,30 @@ func _build_folder_strip(folder) -> Dictionary:
 	var pair := _fader_and_meter(box, 1, folder)
 	pair.fader.value_changed.connect(func(db: float) -> void: app.set_folder_level(folder, db))
 	var readouts := _readouts(box, folder)
+	_foot(box)
 	var plate := _name_plate(folder.display_name, folder.color, folder)
 	box.add_child(plate)
 	_strip_row.add_child(strip)
 	return {"inst": folder, "fader": pair.fader, "meter": pair.meter, "value": readouts.value, "peak": readouts.peak, "input": null,
 		"mute": mute, "solo": solo, "source": count, "output": output, "inserts": inserts, "sends": sends, "plate": plate,
-		"frame": strip.get_theme_stylebox("panel"), "panel": strip}
+		"frame": strip.get_theme_stylebox("panel"), "panel": strip, "pan": null, "room": {}}
 
 
 const INSERT_HEIGHT := 17.0
 
 
-## How tall a strip's inserts and sends are together (the reverb's and the master's strips leave the room empty).
+## How tall a strip's inserts and sends are together (the room's strips leave the space empty).
 func _slots_height() -> float:
-	var section := func(count: int) -> float: return 14.0 + 3.0 + count * INSERT_HEIGHT + (count - 1) * 1.0
-	return section.call(audio.get_max_inserts()) + 8.0 + section.call(audio.get_max_sends())
+	return _section_height(audio.get_max_inserts()) + 6.0 + _section_height(audio.get_max_sends())
+
+
+## How tall a column of slots is, with its heading.
+func _section_height(count: int) -> float:
+	return 14.0 + 3.0 + count * INSERT_HEIGHT + (count - 1) * 1.0
 
 
 ## A strip's insert slots, A to E as in Pro Tools.
-func _build_inserts(box: VBoxContainer, inst) -> Array:
+func _build_inserts(box: VBoxContainer, inst, width := STRIP_WIDTH - 12) -> Array:
 	var section := VBoxContainer.new()
 	section.add_theme_constant_override("separation", 3)
 	box.add_child(section)
@@ -468,7 +603,7 @@ func _build_inserts(box: VBoxContainer, inst) -> Array:
 	for slot in audio.get_max_inserts():
 		var button := Button.new()
 		button.focus_mode = Control.FOCUS_NONE
-		button.custom_minimum_size = Vector2(STRIP_WIDTH - 12, INSERT_HEIGHT)
+		button.custom_minimum_size = Vector2(width, INSERT_HEIGHT)
 		button.clip_text = true
 		button.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 		button.add_theme_font_size_override("font_size", 11)
@@ -649,7 +784,7 @@ func _strip_panel(width: float) -> PanelContainer:
 
 
 ## The fader with its meter just to the right, filling the strip's height. `inst` is whose peak a click on the
-## meter clears (null: the master's).
+## meter clears (a track, or a master's: "mix", "room" or "reverb").
 func _fader_and_meter(box: VBoxContainer, channels: int, inst) -> Dictionary:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 3)
@@ -659,8 +794,8 @@ func _fader_and_meter(box: VBoxContainer, channels: int, inst) -> Dictionary:
 	var fader := Fader.new()
 	fader.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	fader.gui_input.connect(_on_fader_area_input.bind(fader))
-	var fader_name := "Master fader, after the limiter" if inst == null else ("Room reverb: how much of the room's reverb is heard" \
-		if inst is String else "Fader")
+	var fader_name: String = {"mix": "Mix master fader, after its inserts and the limiter", "room": "Room master: how loud the room is as you hear it standing there",
+		"reverb": "Room Reverb: how much of the room's reverb you hear in it"}.get(inst, "Fader") if inst is String else "Fader"
 	Hints.give(fader, "%s: drag (Shift for fine moves), double-click or Alt-click for 0 dB.  Right-click: pre- or post-fader meters" % fader_name)
 	row.add_child(fader)
 	var meter := LevelMeter.new()
@@ -668,10 +803,9 @@ func _fader_and_meter(box: VBoxContainer, channels: int, inst) -> Dictionary:
 	meter.clickable = true
 	meter.pressed.connect(_on_peak_pressed.bind(inst))
 	meter.gui_input.connect(_on_fader_area_input.bind(meter))
-	if inst == null:
-		Hints.give(meter, "Output meter: what goes to your speakers.  Click to clear its peak (Alt-click: every peak)")
-	elif inst is String:
-		Hints.give(meter, "The room reverb's return, after its fader.  Click to clear its peak (Alt-click: every peak)")
+	if inst is String:
+		Hints.give(meter, "%s.  Click to clear its peak (Alt-click: every peak)" % {"mix": "The mix, as it leaves its master (what the main outputs play while it's heard)",
+			"room": "The room, as you hear it standing there (what the main outputs play while it's heard)", "reverb": "The Room Reverb's return, after its fader"}[inst])
 	else:
 		Hints.give(meter, func() -> String: return "Meter, %s the fader.  Click to clear its peak (Alt-click: every peak).  Right-click: pre or post" % (
 			"before" if app.settings.pre_fader_meters else "after"))
@@ -699,7 +833,7 @@ func _readouts(box: VBoxContainer, inst) -> Dictionary:
 	peak.custom_minimum_size = Vector2(0, 20)
 	peak.add_theme_font_size_override("font_size", 12)
 	Hints.give(peak, func() -> String: return "The highest peak%s since this was clicked.  Click to clear it (Alt-click: every peak)" % (
-		"" if inst == null or inst is String else (" before the fader" if app.settings.pre_fader_meters else " after the fader")))
+		"" if inst is String else (" before the fader" if app.settings.pre_fader_meters else " after the fader")))
 	for state in ["normal", "hover", "pressed", "hover_pressed"]:
 		var style := StyleBoxFlat.new()
 		style.bg_color = Color(0.03, 0.035, 0.04) if not state.begins_with("hover") else Color(0.08, 0.085, 0.1)
@@ -834,15 +968,23 @@ func _refresh() -> void:
 			strip.source.text = "%d track%s" % [inst.members.size(), "" if inst.members.size() == 1 else "s"]
 			continue
 		strip.input.set_pressed_no_signal(inst.input_on)
-		if inst.is_mic:  # its model and pattern, and its pan
-			strip.small.text = "%s · %s" % [Catalog.MIC_MODELS_SHORT.get(inst.mic_model, "MIC"), Catalog.MIC_PAIRS_SHORT.get(inst.pair_technique, "")
+		if inst.is_mic:  # its model and pattern
+			strip.source.text = "%s · %s" % [Catalog.MIC_MODELS_SHORT.get(inst.mic_model, "MIC"), Catalog.MIC_PAIRS_SHORT.get(inst.pair_technique, "")
 				if inst.is_stereo_mic else Catalog.MIC_PATTERNS_SHORT.get(app.mic_pattern_of(inst), "")]
-			var pan_held: bool = strip.source._dragging
-			if pan_held != strip.source.get_meta("held", false):  # (Touch and Latch write it while it is held)
-				strip.source.set_meta("held", pan_held)
-				app.automation.touch(inst, pan_held, "pan")
-			if not pan_held:  # (as its automation has it, while that is read)
-				strip.source.set_value_no_signal(app.automation.shown(inst, "pan"))
+		var pan: Control = strip.pan
+		var pan_held: bool = pan._dragging
+		if pan_held != pan.get_meta("held", false):  # (Touch and Latch write it while it is held)
+			pan.set_meta("held", pan_held)
+			app.automation.touch(inst, pan_held, "pan")
+		if not pan_held:  # (as its automation has it, while that is read)
+			pan.set_value_no_signal(app.automation.shown(inst, "pan"))
+		if not strip.room.is_empty():  # and in the room
+			var room: Dictionary = strip.room
+			if not room.level._dragging:
+				room.level.set_value_no_signal(inst.room_db)
+			room.level.dim = inst.room_muted
+			room.level.feed(inst.room_meter_peak)
+			room.mute.set_pressed_no_signal(inst.room_muted)
 		if inst.plays_plugin:
 			strip.source.text = inst.instrument_plugin.get("plugin_name", "")
 		if strip.source is OptionButton:
@@ -855,7 +997,7 @@ func _refresh() -> void:
 		strip.output.select(strip.output.get_meta("choices").find(app.folder_of(inst)))
 
 	var m: Dictionary = app.meter
-	_master.meter.feed([m.get("peak_l", 0.0), m.get("peak_r", 0.0)], [m.get("rms_l", 0.0), m.get("rms_r", 0.0)])
+	_master.meter.feed([m.get("mix_peak_l", 0.0), m.get("mix_peak_r", 0.0)], [m.get("mix_rms_l", 0.0), m.get("mix_rms_r", 0.0)])
 	var master_held: bool = _master.fader._dragging
 	if master_held != _master.get("held", false):  # (Touch and Latch write while it is held, as a track's)
 		_master.held = master_held
@@ -864,7 +1006,16 @@ func _refresh() -> void:
 	if not master_held:
 		_master.fader.set_value_no_signal(master_level)
 	_master.value.text = _db_text(master_level)
-	_show_peak(_master.peak, app.master_peak_hold)
+	_show_peak(_master.peak, app.mix_peak_hold)
+	_show_inserts(_master.inserts, app.master_track.inserts)
+	_show_mix_outputs()
+	_room.meter.feed([m.get("room_peak_l", 0.0), m.get("room_peak_r", 0.0)], [m.get("room_rms_l", 0.0), m.get("room_rms_r", 0.0)])
+	if not _room.fader._dragging:
+		_room.fader.set_value_no_signal(app.room_volume_db)
+	_room.value.text = _db_text(app.room_volume_db)
+	_show_peak(_room.peak, app.room_peak_hold)
+	_master.hear.set_pressed_no_signal(settings.monitor == "mix")
+	_room.hear.set_pressed_no_signal(settings.monitor != "mix")
 	_reverb.meter.feed([m.get("reverb_peak_l", 0.0), m.get("reverb_peak_r", 0.0)], [m.get("reverb_rms_l", 0.0), m.get("reverb_rms_r", 0.0)])
 	if not _reverb.fader._dragging:
 		_reverb.fader.set_value_no_signal(app.reverb_db)
@@ -876,15 +1027,36 @@ func _refresh() -> void:
 	elif app.meter_clipped:
 		_status.text = "Clipping"
 		_status.add_theme_color_override("font_color", LevelMeter.RED)
-		Hints.give(_status, "The output is going over full scale and being cut off: bring the master or an instrument down")
+		Hints.give(_status, "What the main outputs play is going over full scale and being cut off: bring its master or an instrument down")
 	elif app.meter_reduction_db > 0.1:
 		_status.text = "Limiting %.1f dB" % app.meter_reduction_db
 		_status.add_theme_color_override("font_color", WARN)
-		Hints.give(_status, "The limiter is holding the mix under full scale. It comes before the master fader: bring an instrument down to stop it")
+		Hints.give(_status, "The limiter is holding the mix (or the room) under full scale. It comes before the master faders: bring an instrument down to stop it")
 	else:
 		_status.text = "Limiter idle" if settings.limiter else "Limiter off"
 		_status.add_theme_color_override("font_color", DIM)
 		Hints.give(_status, "")
+
+
+## The mix's own outputs to choose from (listed again when the window opens, the hardware may have changed): none, the
+## main outputs only while it is heard, or a pair of the others.
+func _show_mix_outputs() -> void:
+	var output: OptionButton = _master.output
+	var wanted: int = app.settings.mix_output
+	if _output_count < 0 or (wanted >= 0 and not output.get_meta("choices", []).has(wanted)):
+		_output_count = app.output_channel_count()
+		var mains := [app.settings.output_left, app.settings.output_right]
+		var choices := [-1]
+		for first in range(0, _output_count - 1, 2):
+			if not (mains.has(first) or mains.has(first + 1)):
+				choices.append(first)
+		if wanted >= 0 and not choices.has(wanted):  # (set for outputs this device hasn't: kept, for when it comes back)
+			choices.append(wanted)
+		output.clear()
+		for first in choices:
+			output.add_item("Main outs" if first < 0 else "+ Out %d-%d" % [first + 1, first + 2])
+		output.set_meta("choices", choices)
+	output.select(output.get_meta("choices").find(wanted))
 
 
 func _db_text(db: float) -> String:
@@ -1000,7 +1172,7 @@ func _insert_drag(_at: Vector2, inst, slot: int):
 
 
 func _insert_can_drop(_at: Vector2, data, inst, slot: int) -> bool:
-	return data is Dictionary and data.get("insert", false) and app.has_track(data.inst) and \
+	return data is Dictionary and data.get("insert", false) and _has(data.inst) and \
 		not (data.inst == inst and data.slot == slot)
 
 
@@ -1011,7 +1183,7 @@ func _insert_drop(_at: Vector2, data, inst, slot: int) -> void:
 ## Dropping an insert on a slot: it moves there, swapping with what was there, or with `copy` (Option held) a second of
 ## it goes there instead, with the same settings.
 func drop_insert(data: Dictionary, inst, slot: int, copy: bool) -> void:
-	if not app.has_track(data.inst) or not app.has_track(inst):
+	if not _has(data.inst) or not _has(inst):
 		return
 	if copy:
 		var problem: String = app.copy_insert(data.inst, data.slot, inst, slot)
@@ -1044,7 +1216,7 @@ func _on_insert_input(event: InputEvent, inst, slot: int) -> void:
 
 
 func _on_insert_menu_chosen(id: int) -> void:
-	if _menu_for.is_empty() or not app.has_track(_menu_for[0]):
+	if _menu_for.is_empty() or not _has(_menu_for[0]):
 		return
 	var inst = _menu_for[0]
 	var slot: int = _menu_for[1]
@@ -1064,7 +1236,7 @@ func _on_insert_menu_chosen(id: int) -> void:
 func _choose_insert(inst, slot: int, near: Control) -> void:
 	app.plugin_browser.open_for("Insert %s on the %s" % [char(65 + slot), inst.display_name], app.available_plugins(),
 		near.get_screen_position() + Vector2(near.size.x + 6, 0), func(plugin: Dictionary) -> void:
-			if not app.has_track(inst):
+			if not _has(inst):
 				return
 			var problem: String = app.set_insert(inst, slot, plugin.id)
 			if problem != "":
@@ -1198,7 +1370,14 @@ func _on_remove_confirmed() -> void:
 	_name_menu_for = null
 
 
+## A track still there, or the mix's master (which has inserts too).
+func _has(track) -> bool:
+	return track == app.master_track or app.has_track(track)
+
+
 func _strip_for(inst) -> Dictionary:
+	if inst == app.master_track:
+		return _master
 	for strip in _strips:
 		if strip.inst == inst:
 			return strip
@@ -1214,17 +1393,13 @@ func _on_peak_input(event: InputEvent, inst) -> void:
 func _on_peak_pressed(alt: bool, inst) -> void:
 	if alt:
 		app.clear_all_peaks()
-		_master.meter.clear_hold()
-		_reverb.meter.clear_hold()
-		for strip in _strips:
+		for strip in _strips + [_master, _room, _reverb]:
 			strip.meter.clear_hold()
 		return
 	app.clear_peak(inst)
 	if inst is String:
-		_reverb.meter.clear_hold()
+		{"mix": _master, "room": _room, "reverb": _reverb}[inst].meter.clear_hold()
 		return
-	if inst == null:
-		_master.meter.clear_hold()
 	for strip in _strips:
 		if strip.inst == inst:
 			strip.meter.clear_hold()

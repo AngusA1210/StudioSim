@@ -602,6 +602,7 @@ func sync(inst) -> void:
 	if inst.get("is_master"):  # the master: its fader's automation
 		var trimmed: Array = inst.automation.get("volume", []) if is_record() else []
 		audio.set_master_automation(trimmed.map(func(p): return [float(p[0]), float(p[1])]))
+		audio.set_track(inst.source_id, [], [], {"params": app.automation.param_lanes(inst)} if is_record() else {})  # its inserts'
 		return
 	if inst.is_folder:  # a folder or an aux: its automation only
 		audio.set_track(inst.source_id, [], [], automation_data(inst))

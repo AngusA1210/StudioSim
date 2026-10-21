@@ -16,7 +16,7 @@ extends Node
 ## A track keeps its points as `automation`: {param: [[step, value], ...]}, in steps (they follow the tempo), and the
 ## lanes the edit window shows it in as `lanes`. A param is "volume" (dB), "mute" and "sustain" (1 on, 0 off),
 ## "amp:gain" and the other knobs (0 to 10), a stock pedal's knob "stomp:<place on the board>:<knob>" (0 to 10), a
-## microphone track's "pan" (-1 left to 1 right; a stereo mic's balance),
+## track's "pan" (-1 left to 1 right: an instrument's direct output, a microphone's track; a stereo mic's balance),
 ## "send:0" to "send:4" (dB), or a plug-in's control: "insert:<slot>:<id>", "pedal:<place on the board>:<id>" or
 ## "instrument:<id>", kept from 0 to 1 across the control's range. A plug-in's automation (or a pedal's) goes where it
 ## goes: to another slot, another track, another place on the board. The audio core plays them all to the block
@@ -88,7 +88,8 @@ static func plugin_parts(param: String) -> Array:
 
 
 ## The params a track has besides its plug-ins': volume and mute; an instrument's sustain pedal; an amp's knobs; its
-## sends (those that go somewhere: a folder's and an aux's too). The master has its volume only.
+## sends (those that go somewhere: a folder's and an aux's too); an instrument's pan. The master has its volume (and its
+## inserts' controls).
 func params_for(track) -> Array:
 	if track.get("is_master"):
 		return ["volume"]
@@ -98,7 +99,7 @@ func params_for(track) -> Array:
 	if not track.is_folder and track.is_amp:
 		for control in KNOB_NAMES:
 			out.append("amp:" + control)
-	if not track.is_folder and track.is_mic:
+	if not track.is_folder:  # (its direct output's; a microphone's track's)
 		out.append("pan")
 	for slot in track.sends.size():
 		if not track.sends[slot].is_empty():
@@ -109,8 +110,6 @@ func params_for(track) -> Array:
 ## The plug-ins on a track and their controls, and an amp's stock pedals and their knobs: [{name (the plug-in's or the
 ## pedal's, and where), params: [{param, name}]}].
 func plugin_params(track) -> Array:
-	if track.get("is_master"):
-		return []
 	var out := []
 	var places := []
 	for slot in track.inserts.size():
@@ -277,7 +276,7 @@ func now(track, param: String) -> float:
 	if param == "mute":
 		return 1.0 if track.muted else 0.0
 	if param == "pan":
-		return float(track.get("mic_pan")) if track.get("mic_pan") != null else 0.0
+		return float(track.get("pan")) if track.get("pan") != null else 0.0
 	if param.begins_with("amp:"):
 		return float(track.amp_controls.get(param.substr(4), 5.0))
 	if param.begins_with("stomp:"):
@@ -446,9 +445,10 @@ func _notify_plugins() -> void:
 func _tell(track) -> void:
 	var off: bool = track.auto_mode == "off"
 	if track.get("is_master"):
-		var read_master := [reads(track, "volume")]
+		var read_master := [reads(track, "volume"), not off]
 		if _sent.get(track) != read_master:
 			audio.set_master_automation_read(read_master[0])
+			audio.set_automation_read(track.source_id, false, false, false, read_master[1])  # (its inserts' controls)
 			_sent[track] = read_master
 	else:
 		var read := [reads(track, "volume"), reads(track, "mute"), reads(track, "sustain"), not off]
@@ -482,7 +482,7 @@ func _apply(track, param: String, value: float) -> void:
 		else:
 			audio.set_source_gain(track.source_id, gain * (1.0 if track.is_folder else track.normal_gain()))
 	elif param == "pan":
-		app.set_mic_pan(track, value)
+		app.set_pan(track, value)
 	elif param.begins_with("amp:"):
 		app.set_amp_control(track, param.substr(4), value)
 	elif param.begins_with("stomp:"):

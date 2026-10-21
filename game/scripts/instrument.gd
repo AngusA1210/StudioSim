@@ -35,12 +35,16 @@ var footprint := Vector2.ONE
 var playable := false  # can be played by hand, and has a pattern the sequencer plays
 var default_octave := 0  # where the computer keyboard starts when you sit down at it
 var source_id := -1
-var muted := false     # its mixer channel is muted (for a Speaker, also M in the room)
+var muted := false     # its mixer channel is muted: its direct output (a microphone's track), in the mix
+var room_muted := false  # it is silent in the room (M at it): no one there hears it, nor do the microphones
+var room_db := 0.0     # its level in the room: how loud it sounds where it stands (0 dB: as it was made)
 var soloed := false
 var loop_on := true    # playable instruments: whether the sequencer plays their pattern
 var input_on := false  # it takes input: MIDI controllers play it, or a Speaker plays its hardware input
 var input_channel := -1  # live-input instruments: the hardware input they play (0-based), or -1 for all of them
-var level_db := 0.0    # its fader: how far above or below its normal level it is set
+var level_db := 0.0    # its fader, in the mix (its direct output): how far above or below its normal level it is set
+var room_meter_peak := 0.0  # its meter in the room (the game's, each frame; see main.gd)
+var room_meter_rms := 0.0
 var volume_db := 0.0   # a Speaker's own volume (its panel), before the fader
 # Its channel meter, as linear levels where 1 is full scale: this frame's peak and average, and the highest peak
 # since its peak readout was last cleared (read by the game each frame; see main.gd).
@@ -55,7 +59,7 @@ var mic_tilt := 0.0    # a microphone: how far it points down (degrees; the way 
 var mic_gain_db := 0.0 # a microphone's gain, before it is recorded, as a preamp's
 var mic_model := ""    # which model it is (microphones.h: "flat", "dynamic", "kick", "condenser", "pencil", "ribbon")
 var mic_pattern := ""  # and which of its pickup patterns ("omni", "cardioid", "supercardioid", "figure8")
-var mic_pan := 0.0     # where its track sits in the stereo: -1 left, 1 right
+var pan := 0.0         # where its track sits in the stereo (its direct output; a microphone's track): -1 left, 1 right
 # A stereo mic: how its two are set up (catalog.gd's MIC_PAIRS), how far apart they are, and for a mid-side pair its
 # side mic's model and how wide it is decoded (1: as it hears it).
 var is_stereo_mic := false
@@ -190,6 +194,13 @@ func _build_model() -> void:
 	_pedal_signature = "-"  # the pedals line up again in front of it
 
 
+## Hides it from a camera that leaves out the 3D layer `bit` (1 to 20), or with 0 shows it to every camera again: a
+## microphone's model and name, while you look out from its capsule.
+func set_hidden_layer(bit: int) -> void:
+	for node in find_children("*", "GeometryInstance3D", true, false):
+		node.layers = (1 << (bit - 1)) if bit > 0 else 1
+
+
 func _place_parts() -> void:
 	_light.position = Vector3(0, top - source_height + 0.15, 0.6)  # above and in front, lighting it from the player's side
 	_label.position = Vector3(0, top - source_height + 0.3, 0)
@@ -215,9 +226,10 @@ func set_voice(head: String, use_head: bool, cabinet: String, use_cabinet: bool)
 func _process(delta: float) -> void:
 	if source_id < 0:
 		return
-	var target := minf(1.0, sqrt(_audio.get_source_level(source_id)) * 1.6)
+	var heard: float = _audio.get_source_level(source_id) if is_mic else _audio.get_source_room_level(source_id)  # (as it sounds in the room)
+	var target := minf(1.0, sqrt(heard) * 1.6)
 	glow = lerpf(glow, target, minf(1.0, delta * (40.0 if target > glow else 7.0)))
-	var on := 0.25 if muted else 1.0
+	var on := 0.25 if (room_muted or (is_mic and muted)) else 1.0
 	_accent.emission_energy_multiplier = (0.12 + 1.5 * glow) * on
 	_light.light_energy = (0.1 + 1.6 * glow) * on
 	inserts = _audio.get_inserts(source_id)
@@ -351,9 +363,9 @@ func set_ms_width(width: float) -> void:
 	_audio.set_mic_mid_side(source_id, true, ms_width)
 
 
-func set_mic_pan(pan: float) -> void:
-	mic_pan = clampf(pan, -1.0, 1.0)
-	_audio.set_source_pan(source_id, mic_pan)
+func set_pan(value: float) -> void:
+	self.pan = clampf(value, -1.0, 1.0)
+	_audio.set_source_pan(source_id, self.pan)
 
 
 ## Draws it again (a stereo pair set up another way).
@@ -415,6 +427,18 @@ func set_level_db(db: float) -> void:
 	_audio.set_source_gain(source_id, 0.0 if db <= -79.0 else _normal_gain * db_to_linear(db))
 
 
+## Its level in the room, and its mute there.
+func set_room_db(db: float) -> void:
+	room_db = db
+	_audio.set_source_room_gain(source_id, 0.0 if db <= -79.0 else _normal_gain * db_to_linear(db))
+
+
+func set_room_muted(on: bool) -> void:
+	room_muted = on
+	_audio.set_source_room_muted(source_id, on)
+	_refresh_label()
+
+
 func set_input(on: bool) -> void:
 	input_on = on
 	_audio.set_source_input(source_id, on)
@@ -468,7 +492,7 @@ func set_highlighted(value: bool) -> void:
 
 func _refresh_label() -> void:
 	var notes := []
-	if muted:
+	if room_muted or (is_mic and muted):  # (an instrument: muted in the room; a microphone: its track)
 		notes.append("muted")
 	if playable and not loop_on:
 		notes.append("loop off")

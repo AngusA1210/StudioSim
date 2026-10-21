@@ -8,6 +8,7 @@ const PANEL_BG := Color(0.05, 0.06, 0.09, 0.82)
 const DIM := Color(0.62, 0.65, 0.74)
 const WARN := Color(1.0, 0.61, 0.48)
 const BINAURAL_BLUE := Color(0.55, 0.78, 1.0)
+const MONITOR_GREEN := Color(0.45, 0.9, 0.62)
 const FOLLOW_AMBER := Color(0.98, 0.76, 0.36)
 const WHITE_KEYS := [[KEY_A, "A"], [KEY_S, "S"], [KEY_D, "D"], [KEY_F, "F"], [KEY_G, "G"], [KEY_H, "H"], [KEY_J, "J"],
 	[KEY_K, "K"], [KEY_L, "L"], [KEY_SEMICOLON, ";"]]
@@ -34,6 +35,7 @@ var _beat_panel: PanelContainer
 var _beat: Label
 var _modes_panel: PanelContainer
 var _binaural_chip: Label
+var _monitor_chip: Label  # what you hear: the room, or the mix (H)
 var _follow_chip: Label  # a Record room's insertion following playback, shown while it does
 var _meter_panel: PanelContainer
 var _meter
@@ -109,6 +111,7 @@ func setup(the_app) -> void:
 	modes.add_theme_constant_override("separation", 6)
 	modes.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_modes_panel.add_child(modes)
+	_monitor_chip = _chip(modes)
 	_binaural_chip = _chip(modes)
 	_follow_chip = _chip(modes)
 
@@ -202,6 +205,9 @@ func _process(_delta: float) -> void:
 	_beat_panel.position = Vector2(vp.x - _beat_panel.size.x - 14, 14)
 
 	_light_chip(_binaural_chip, "BINAURAL", app.settings.binaural, BINAURAL_BLUE)
+	var hearing_mix: bool = app.settings.monitor == "mix"
+	_light_chip(_monitor_chip, "HEARING THE MIX  (%s)" % app.bindings.label("monitor") if hearing_mix else "HEARING THE ROOM  (%s)" % app.bindings.label("monitor"),
+		true, MONITOR_GREEN if hearing_mix else Color(0.78, 0.8, 0.86))
 	_follow_chip.visible = timeline.is_record() and app.settings.insertion_follows
 	_light_chip(_follow_chip, "FOLLOWS PLAYBACK", true, FOLLOW_AMBER)
 	_modes_panel.reset_size()

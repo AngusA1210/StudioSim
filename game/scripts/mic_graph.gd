@@ -19,7 +19,7 @@ var _shown := ""
 
 
 func _ready() -> void:
-	custom_minimum_size = Vector2(420, 120)
+	custom_minimum_size = Vector2(340, 110)
 	mouse_filter = Control.MOUSE_FILTER_PASS
 
 

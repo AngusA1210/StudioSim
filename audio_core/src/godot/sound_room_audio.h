@@ -168,6 +168,17 @@ public:
     void set_reverb(bool on);
     void set_reverb_level(float gain);  // the room reverb's return: 1 as the room has it, 0 none, up to 4
     void set_master_volume(float gain);  // the master fader: after the limiter, as on a DAW's master track
+    // The room and the mix (see AudioEngine::setMonitor): the room's master, which the main outputs play ("room" or
+    // "mix"), the mix on outputs of its own too (-1: none), the bus whose inserts are the mix master's; an
+    // instrument's level in the room and its mute there, and its meter there.
+    void set_room_volume(float gain);
+    void set_monitor(const String& which);
+    void set_mix_output(int left, int right);
+    void set_master_inserts(int bus);
+    void set_source_room_gain(int id, float gain);
+    void set_source_room_muted(int id, bool muted);
+    float get_source_room_level(int id) const;
+    float get_source_room_peak(int id);
     // How many decibels quieter a source gets for each doubling of distance beyond 1.5 m (6 by default: inverse square).
     void set_distance_falloff(float db_per_doubling);
     void set_limiter(bool on);  // off = the plain sum of the mix; either way the output is cut off at full scale

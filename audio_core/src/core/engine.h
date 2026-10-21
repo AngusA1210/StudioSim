@@ -93,6 +93,9 @@ struct MeterReading {
     float limiter_gain = 1;        // the lowest gain the limiter applied (1 = it did nothing)
     uint32_t clipped = 0;          // samples that went over full scale and were cut off
     float reverb_peak_l = 0, reverb_peak_r = 0, reverb_rms_l = 0, reverb_rms_r = 0;  // the room reverb's return alone
+    // The two mixes, each after its master: the room (as you hear it standing there) and the mix (the tracks' outputs).
+    float room_peak_l = 0, room_peak_r = 0, room_rms_l = 0, room_rms_r = 0;
+    float mix_peak_l = 0, mix_peak_r = 0, mix_rms_l = 0, mix_rms_r = 0;
 };
 
 // One of the effect pedals in front of an amp, for the game to show.
@@ -368,9 +371,25 @@ public:
     void setBinaural(bool on);
     void setReverb(bool on);              // as setReverbLevel(1) or (0)
     void setReverbLevel(float gain);      // the room reverb's return: 1 is as the room has it, 0 none; up to 4
+    // There are two mixes, as a console's monitor section has them. The ROOM is what you hear standing in it: every
+    // instrument as it sounds where it stands (at its level in the room), placed for your ears, and the room's reverb,
+    // through the room's master. The MIX is what the tracks put out, as a DAW's stereo bus: each instrument's direct
+    // output (its sound as it leaves the instrument, through its inserts, its fader and its pan: as a DI or a line out
+    // would give it), each microphone's track, the folders and aux tracks, through the master's inserts (a bus marked
+    // with setMasterInserts) and the master fader (its automation). The microphones hear the room. What the main
+    // outputs play is one or the other (setMonitor); the mix can also go to outputs of its own (setMixOutput).
     // The master fader, after the limiter as on a DAW's master track: the limiter's inserts come before the fader, so
     // how hard it works doesn't depend on where the fader sits. 1 = normal; above 1 the output can clip again.
     void setMasterVolume(float gain);
+    void setRoomVolume(float gain);  // the room's master
+    enum class Monitor : uint8_t { Room, Mix };
+    void setMonitor(Monitor monitor);
+    void setMixOutput(int left, int right);  // the mix on these outputs too (-1: on none but the main ones, if monitored)
+    void setMasterInserts(int bus);  // a bus (InstrumentKind::Bus) whose inserts are the mix master's, not played as a bus
+    // A source's level in the room (1: as it was made, heard 1.5 m away), and its mute there (the microphones hear
+    // neither, then). setSourceGain, setSourceMuted and setSourceSoloMuted are its direct output's, in the mix.
+    void setSourceRoomGain(int id, float gain);
+    void setSourceRoomMuted(int id, bool muted);
     // How much quieter a source gets for each doubling of its distance beyond the reference distance (1.5 m), in
     // decibels. The default, 6, is the inverse square law; less keeps levels more even as the listener moves about.
     // Within the reference distance a source is at its own level and gets no louder, however close.
@@ -466,13 +485,16 @@ public:
     // its inserts), as a DAW's pre-fader metering shows.
     float sourceLevel(int id, bool pre_fader = false) const;
     float sourcePeak(int id, bool pre_fader = false);
+    float sourceRoomLevel(int id) const;  // its level in the room (at its room level), likewise
+    float sourceRoomPeak(int id);
     EngineStats stats() const;
     int sampleRate() const { return sr_; }
     int blockSize() const { return block_; }
 
     // Renders interleaved stereo. `input` holds the audio captured over the same frames, interleaved with
     // `input_channels` channels (or null). Called through renderDevice, or directly for offline rendering.
-    void render(const float* input, int input_channels, float* stereo, int frames);
+    // `mix_out`, if given, takes the mix as well (interleaved stereo), for outputs of its own.
+    void render(const float* input, int input_channels, float* stereo, int frames, float* mix_out = nullptr);
     void render(const float* mono_input, float* stereo, int frames) { render(mono_input, mono_input ? 1 : 0, stereo, frames); }
     void render(float* stereo, int frames) { render(nullptr, 0, stereo, frames); }
     // What the device callback calls: any channel layout in and out, with the mix placed on the chosen outputs.
@@ -490,6 +512,7 @@ private:
             AmpKnob, AmpHeadSet, AmpCabinetSet, LooperMemory, LooperAct, PedalBoardSet, PedalOn, PedalControl, SynthPlugin,
             TimelinePlay, TimelineLoop, TrackSet, RecordArm, RecordStart, RecordStop, SourceOutput, AutomationRead, SendSet,
             MasterAutomation, MasterRead, SourceSoloMuted, MicPath, MicModelSet, MicAim, SourcePan, MicMidSide,
+            SourceRoomGain, SourceRoomMuted, RoomVolume, MonitorSet, MasterInserts,
         } type = AddSource;
         int id = 0;
         float v[9] = {};
@@ -590,6 +613,10 @@ private:
     float binaural_mix_ = 1.0f;  // the share of the sound rendered binaurally just now: glides to 0 or 1 when it is switched
     float reverb_target_ = 1.0f, reverb_gain_ = 1.0f;
     float master_target_ = 1.0f, master_gain_ = 1.0f;
+    float room_target_ = 1.0f, room_volume_ = 1.0f;  // the room's master
+    Monitor monitor_ = Monitor::Room;
+    int master_bus_ = -1;  // the bus carrying the mix master's inserts
+    float room_ms_l_ = 0.0f, room_ms_r_ = 0.0f, mix_ms_l_ = 0.0f, mix_ms_r_ = 0.0f;
     float falloff_target_, falloff_;
     bool limiter_on_ = true;
     float meter_ms_l_ = 0.0f, meter_ms_r_ = 0.0f;  // running mean squares for the meter
@@ -602,11 +629,14 @@ private:
     std::array<FdnReverb, 2> reverbs_;
     int reverb_active_ = 0, reverb_next_ = 0, reverb_fade_left_ = 0, reverb_fade_len_ = 1;
     float reverb_level_, reverb_next_level_ = 0.0f;
-    Limiter limiter_;
+    Limiter limiter_, room_limiter_;
     // The reverb's feed and the click bypass the binaural rendering, which comes out a little late: these hold them
     // back by as much while binaural is on, so the mix lines up the same way at every block size.
     FadedDelay send_delay_, click_delay_;
     std::vector<float> mix_l_, mix_r_, send_, rev_l_, rev_r_, rev2_l_, rev2_r_, click_;
+    std::vector<float> room_l_, room_r_;  // the room, as you hear it standing there
+    std::vector<float> out_l_, out_r_;    // what the main outputs play (the room or the mix), and the mix, for its outputs
+    std::vector<float> mix_tap_l_, mix_tap_r_;
     InputBus input_bus_;               // this block's captured audio, per hardware input
     std::vector<float> input_fifo_;    // captured frames (interleaved) waiting to be rendered
     int fifo_channels_ = 0;
@@ -616,7 +646,10 @@ private:
     int64_t bar_timing_[2] = {-1, 0};  // for the loop pedals: samples from this block's start to the next bar line, a bar
 
     // Shared between threads
-    std::array<std::atomic<float>, kSourceSlots> levels_{}, peaks_{}, pre_levels_{}, pre_peaks_{};
+    std::array<std::atomic<float>, kSourceSlots> levels_{}, peaks_{}, pre_levels_{}, pre_peaks_{}, room_levels_{}, room_peaks_{};
+    std::atomic<int> mix_out_left_{-1}, mix_out_right_{-1};
+    std::atomic<float> room_peak_l_{0.0f}, room_peak_r_{0.0f}, room_rms_l_{0.0f}, room_rms_r_{0.0f};
+    std::atomic<float> mix_peak_l_{0.0f}, mix_peak_r_{0.0f}, mix_rms_l_{0.0f}, mix_rms_r_{0.0f};
     std::atomic<float> cpu_load_{0.0f};
     std::atomic<uint64_t> blocks_{0};
     std::atomic<int> out_left_{0}, out_right_{1};

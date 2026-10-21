@@ -1,9 +1,11 @@
 extends RefCounted
-## The master, as a track for automation's sake: at the foot of the edit window, its volume's lane under it (A), its
-## automation mode, and its fader as the mix window has it (the master fader). It has nothing else a track has.
+## The mix's master, as a track for automation's sake: at the foot of the edit window, its volume's lane under it (A),
+## its automation mode, and its fader as the mix window has it (the mix's master fader), and its inserts (on a bus of
+## its own in the audio core, played on the whole mix). It has nothing else a track has. (The room's master has no
+## automation.)
 
 var app
-var display_name := "Master"
+var display_name := "Mix Master"
 var color := Color(0.75, 0.77, 0.82)
 var automation := {}
 var auto_mode := "read"

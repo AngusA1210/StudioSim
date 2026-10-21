@@ -92,8 +92,11 @@ public:
     void setRegions(int track, std::vector<StreamRegion> regions);
     void setBudget(size_t bytes);
     // Game thread: reads what plays from `seconds` for the next `for_seconds`, before the music starts there, and keeps
-    // it in while stopped.
-    void prepare(double seconds, double for_seconds = 0.5);
+    // it in while stopped, or (playing, the music sent there) until the music has got there: until then the disk thread,
+    // which still hears where it was, would let it go first. Returns which cue this is, for `reached`.
+    uint32_t prepare(double seconds, double for_seconds = 0.5);
+    // Audio thread: the music has started from a cue.
+    void reached(uint32_t cue) { reached_.store(cue, std::memory_order_release); }
     // Audio thread, each block: where the music is on the timeline (seconds), and the loop it goes round.
     void follow(double seconds, bool playing, bool looping, double loop_from, double loop_to);
     // Audio thread: a block is done (chunks taken out are freed two blocks on); a sample wasn't in memory when wanted.
@@ -122,6 +125,7 @@ private:
     std::atomic<double> now_{0.0}, loop_from_{0.0}, loop_to_{0.0};
     std::atomic<bool> playing_{false}, looping_{false};
     std::atomic<uint64_t> blocks_{0}, misses_{0}, cycles_{0};
+    std::atomic<uint32_t> cued_{0}, reached_{0};  // the latest cue, and the latest the music has started from
     std::atomic<size_t> in_memory_{0};
 
     std::unordered_map<const StreamedFile*, Known> known_;  // the disk thread's

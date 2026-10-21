@@ -265,11 +265,15 @@ func _handle_key(event: InputEventKey) -> void:
 					carry(copy)
 		"remove":
 			_ask_to_remove(carried if carried != null else at)
-		"loop":  # an instrument's loop; a Speaker or an amp has none, so it mutes
+		"loop":  # an instrument's loop; a Speaker or an amp has none, so it mutes in the room (a microphone, its track)
 			if at != null and at.playable:
 				at.set_loop(not at.loop_on)
-			elif at != null:
+			elif at != null and at.is_mic:
 				app.set_muted(at, not at.muted)
+			elif at != null:
+				app.set_room_muted(at, not at.room_muted)
+		"monitor":  # hear the room, or the mix
+			app.toggle_monitor()
 		"transport":
 			app.toggle_transport()
 		"to_start":  # as Return is in Pro Tools

@@ -212,8 +212,12 @@ struct Room {
     void face(float x, float z, float yaw) {
         engine.setListener({x, 1.65f, z}, {-std::sin(yaw), 0, -std::cos(yaw)}, {0, 1, 0});
     }
-    void soloOnly(int id) {
-        for (int s : {drums, bass, pad, bells, keys, speaker}) engine.setSourceMuted(s, s != id);
+    void hearMix() { engine.setMonitor(AudioEngine::Monitor::Mix); }  // the main outputs play the mix, not the room
+    void soloOnly(int id) {  // (muted in the room and in the mix alike)
+        for (int s : {drums, bass, pad, bells, keys, speaker}) {
+            engine.setSourceMuted(s, s != id);
+            engine.setSourceRoomMuted(s, s != id);
+        }
     }
     void quietRoom(int solo) {  // one source, no groove, no reverb
         soloOnly(solo);
@@ -324,6 +328,7 @@ int midiProbe(int seconds) {
 void oldLevels(AudioEngine& engine) {
     engine.setDistanceFalloff(6.0f);
     engine.setMasterVolume(std::sqrt(7.0f / 1.5f));
+    engine.setRoomVolume(std::sqrt(7.0f / 1.5f));  // (the room was all there was to hear)
 }
 
 // Writes what the default room plays to a file of raw 32-bit floats (interleaved stereo): two loops of the full
@@ -955,7 +960,7 @@ int main(int argc, char** argv) {
     {
         std::printf("\nThe metronome\n");
         Room room;
-        for (int s : {room.drums, room.bass, room.pad, room.bells, room.keys, room.speaker}) room.engine.setSourceMuted(s, true);
+        for (int s : {room.drums, room.bass, room.pad, room.bells, room.keys, room.speaker}) room.engine.setSourceRoomMuted(s, true);
         room.engine.setTempo(120.0);
         Render off = renderSeconds(room.engine, 1.0);
         room.engine.setClick(true);
@@ -2408,10 +2413,83 @@ int main(int argc, char** argv) {
     }
 
     {
+        std::printf("\nThe room and the mix\n");
+        // The keys alone, a note held. What you hear in the room follows its level there; the mix, its fader. Neither
+        // touches the other.
+        Room room;
+        room.quietRoom(room.keys);
+        auto heard = [&]() {
+            renderSeconds(room.engine, 0.3);
+            room.engine.noteOn(room.keys, 64, 0.8f);
+            const Render r = renderSeconds(room.engine, 0.3);
+            room.engine.noteOff(room.keys, 64);
+            renderSeconds(room.engine, 1.0);
+            return r;
+        };
+        const Render room_heard = heard();
+        room.engine.setSourceGain(room.keys, 0.1f);  // its mix fader down 20 dB
+        const Render room_after_fader = heard();
+        room.hearMix();
+        const Render mix_quiet = heard();
+        room.engine.setSourceGain(room.keys, 0.2f);
+        room.engine.setSourceRoomGain(room.keys, 0.02f);  // and its level in the room down a long way
+        const Render mix_after_room = heard();
+        check(room_heard.rms_l > 1e-4 && std::fabs(db(room_after_fader.rms_l) - db(room_heard.rms_l)) < 0.3 &&
+                  std::fabs(db(mix_after_room.rms_l) - db(mix_quiet.rms_l) - 6.02) < 0.3,
+              "the room and the mix apart: its fader in the mix leaves the room as it was; its level in the room leaves the mix",
+              fmt("room %+.2f dB after the fader, ", db(room_after_fader.rms_l) - db(room_heard.rms_l)) +
+                  fmt("mix %+.2f dB for +6 on the fader", db(mix_after_room.rms_l) - db(mix_quiet.rms_l)));
+        room.engine.setSourceRoomGain(room.keys, 0.2f);
+        room.engine.setSourcePan(room.keys, 1.0f);  // its direct output hard right
+        const Render panned = heard();
+        room.engine.setSourcePan(room.keys, 0.0f);
+        check(panned.rms_r > 1e-4 && panned.rms_l < 1e-3 * panned.rms_r, "its direct output is where its pan puts it: hard right",
+              fmt("left %.0f dB", db(panned.rms_l) - db(panned.rms_r)));
+        // The mix also on outputs 3 and 4 of a four-output device, the room on 1 and 2.
+        room.engine.setMonitor(AudioEngine::Monitor::Room);
+        room.engine.setMixOutput(2, 3);
+        renderSeconds(room.engine, 0.3);
+        room.engine.noteOn(room.keys, 64, 0.8f);
+        const int block = room.engine.blockSize();
+        std::vector<float> four(size_t(block) * 4);
+        double main_energy = 0.0, mix_energy = 0.0;
+        for (int b = 0; b < int(0.3 * room.engine.sampleRate()) / block; ++b) {
+            room.engine.renderDevice(nullptr, 0, four.data(), 4, block);
+            for (int i = 0; i < block; ++i) {
+                main_energy += double(four[size_t(4 * i)]) * four[size_t(4 * i)];
+                mix_energy += double(four[size_t(4 * i + 2)]) * four[size_t(4 * i + 2)];
+            }
+        }
+        room.engine.noteOff(room.keys, 64);
+        room.engine.setMixOutput(-1, -1);
+        check(main_energy > 0.0 && mix_energy > 0.0, "the room on the main outputs, and the mix on outputs of its own as well",
+              fmt("%.0f dB apart", 10.0 * std::log10(std::max(main_energy, 1e-30) / std::max(mix_energy, 1e-30))));
+        // The master's inserts: AUDelay on the mix's master, its echo in the mix, not in the room.
+        Room masters;
+        masters.quietRoom(masters.drums);
+        const int master_bus = masters.engine.addSource(InstrumentKind::Bus, {0.0f, 0.0f, 0.0f}, 1.0f, 0.0f);
+        std::string insert_error;
+        const bool delay_on = masters.engine.setInsert(master_bus, 0, "AU:61756678:64656c79:6170706c", &insert_error);
+        masters.engine.setMasterInserts(master_bus);
+        renderSeconds(masters.engine, 0.3);
+        auto tail = [&](bool mix) {
+            masters.engine.setMonitor(mix ? AudioEngine::Monitor::Mix : AudioEngine::Monitor::Room);
+            renderSeconds(masters.engine, 1.5);
+            masters.engine.noteOn(masters.drums, 38, 0.9f);
+            renderSeconds(masters.engine, 0.8);
+            return renderSeconds(masters.engine, 0.6);  // (around a second after the snare: AUDelay's echo, if any)
+        };
+        const Render room_tail = tail(false), mix_tail = tail(true);
+        check(delay_on && db(mix_tail.peak) > db(room_tail.peak) + 6.0, "the mix's master has inserts: AUDelay there echoes the mix, not the room",
+              insert_error + fmt("echo %.0f dBFS in the mix, ", db(mix_tail.peak)) + fmt("%.0f in the room", db(room_tail.peak)));
+    }
+
+    {
         std::printf("\nMicrophones\n");
         // A flat omni microphone beside the drums, then three times as far. The drums are taken out of the mix by a
         // solo elsewhere (so what is heard is the microphone's track alone), but they still sound in the room.
         Room room;
+        room.hearMix();  // (what is heard: the mix, its tracks)
         room.quietRoom(room.drums);
         room.engine.setSourceSoloMuted(room.drums, true);
         const Vec3 drums_at{0.5f, 0.9f, -3.6f};
@@ -2440,10 +2518,10 @@ int main(int argc, char** argv) {
         room.engine.setSourceVolume(mic, 2.0f);  // its gain up 6 dB
         renderSeconds(room.engine, 0.2);
         const Render gained = hit();
-        room.engine.setSourceMuted(room.drums, true);
+        room.engine.setSourceRoomMuted(room.drums, true);  // (muted in the room: a mute in the mix leaves it sounding there)
         renderSeconds(room.engine, 0.2);
         const Render muted = hit();
-        room.engine.setSourceMuted(room.drums, false);
+        room.engine.setSourceRoomMuted(room.drums, false);
         room.engine.setSourceInput(mic, false);
         renderSeconds(room.engine, 0.2);
         const Render unmonitored = hit();
@@ -2505,6 +2583,7 @@ int main(int argc, char** argv) {
 
         // A microphone 1.5 m from the drums (they are taken out of the mix by a solo, but play on in the room).
         Room room;
+        room.hearMix();  // (what is heard: the mix, its tracks)
         room.quietRoom(room.drums);
         room.engine.setSourceSoloMuted(room.drums, true);
         const Vec3 drums_at{0.5f, 0.9f, -3.6f};
@@ -2636,6 +2715,7 @@ int main(int argc, char** argv) {
         // A stereo mic, XY: two cardioids at one point, 90 degrees apart, the drums to its left. Its track is in two
         // channels: the left louder.
         Room room;
+        room.hearMix();  // (what is heard: the mix, its tracks)
         room.quietRoom(room.drums);
         room.engine.setSourceSoloMuted(room.drums, true);
         const Vec3 drums_at{0.5f, 0.9f, -3.6f};
@@ -2713,6 +2793,7 @@ int main(int argc, char** argv) {
         std::printf("\nAutomation\n");
         // Volume automation on the pad: 0 dB to step 8, down to silence by step 16; read, it takes the fader's place.
         Room room;
+        room.hearMix();  // (what is heard: the mix, its tracks)
         room.quietRoom(room.pad);
         room.engine.setLimiter(false);
         room.engine.setTempo(120.0);
@@ -2747,6 +2828,7 @@ int main(int argc, char** argv) {
 
         // The sustain pedal automated on the keys: a short note rings on while it is down.
         Room keys_room;
+        keys_room.hearMix();  // (what is heard: the mix, its tracks)
         keys_room.quietRoom(keys_room.keys);
         keys_room.engine.setLimiter(false);
         keys_room.engine.setTempo(120.0);
@@ -2796,6 +2878,7 @@ int main(int argc, char** argv) {
 
         // An amp's knob automated: its Master from 5 down to 0 over a bar, the guitar going with it.
         Room amp_room;
+        amp_room.hearMix();  // (what is heard: the mix, its tracks)
         amp_room.soloOnly(-1);
         amp_room.engine.setReverb(false);
         amp_room.engine.setLimiter(false);
@@ -2893,6 +2976,7 @@ int main(int argc, char** argv) {
         // An aux's bus, sent to from the drums: after their fader, at unity, it carries them as heard in the room; before
         // it, with their fader down, still their own sound; switched off, nothing.
         Room sends;
+        sends.hearMix();  // (what is heard: the mix, its tracks)
         sends.quietRoom(sends.drums);
         sends.engine.setLimiter(false);
         const int aux = sends.engine.addSource(InstrumentKind::Bus, {0.0f, 0.0f, 0.0f}, 1.0f, 0.0f);
@@ -2980,6 +3064,8 @@ int main(int argc, char** argv) {
         // Two rooms alike, the drums in one routed through a bus: at unity it sounds the same; the bus's fader and mute
         // act on it, its meter reads it, and an insert on it plays in its two channels.
         Room plain, routed;
+        plain.hearMix();
+        routed.hearMix();
         plain.quietRoom(plain.drums);
         routed.quietRoom(routed.drums);
         plain.engine.setLimiter(false);  // (it would hold the louder of the two back more)
@@ -3147,11 +3233,11 @@ int main(int argc, char** argv) {
         check(std::fabs((gentle2 - gentle8) - 6.0) < 0.6 && std::fabs(flat2 - flat8) < 0.4, "the falloff can be set gentler: 3 dB a doubling, or none",
               fmt("2 to 8 m: %.1f dB at the 3 dB setting, %.1f dB at 0", gentle2 - gentle8, flat2 - flat8));
         const double before = heard(room, 2.0f);
-        room.engine.setSourceGain(room.pad, 0.5f);  // the pad was added at 1.0
+        room.engine.setSourceRoomGain(room.pad, 0.5f);  // the pad was added at 1.0
         const double halved = heard(room, 2.0f);
-        room.engine.setSourceGain(room.pad, 2.0f);
+        room.engine.setSourceRoomGain(room.pad, 2.0f);
         const double doubled = heard(room, 2.0f);
-        check(std::fabs((before - halved) - 6.02) < 0.2 && std::fabs((doubled - before) - 6.02) < 0.2, "an instrument's own level can be turned down and up",
+        check(std::fabs((before - halved) - 6.02) < 0.2 && std::fabs((doubled - before) - 6.02) < 0.2, "an instrument's level in the room can be turned down and up",
               fmt("half: %.1f dB, double: %+.1f dB", halved - before, doubled - before));
 
         // The output meter and the limiter, with the whole groove.
@@ -3172,7 +3258,8 @@ int main(int argc, char** argv) {
         const MeterReading near_drums = mix.engine.readMeter();
         check(near_drums.limiter_gain == 1.0f && beside.peak < Limiter::kThreshold, "standing next to the drums leaves headroom: the limiter isn't touched",
               fmt("peak %.1f dBFS", db(beside.peak)));
-        // Every instrument turned up 12 dB: far too loud for the mix.
+        // Every instrument's direct output turned up 12 dB: far too loud for the mix (heard on the main outputs now).
+        mix.engine.setMonitor(AudioEngine::Monitor::Mix);
         const std::pair<int, float> levels[] = {{mix.drums, 0.50f}, {mix.bass, 0.38f}, {mix.pad, 1.0f}, {mix.bells, 0.42f}, {mix.keys, 0.20f}};
         for (auto [id, gain] : levels) mix.engine.setSourceGain(id, gain * 4.0f);
         auto cycle = [&](MeterReading& m) {  // one time round the groove, as the meter sees it
@@ -3246,13 +3333,13 @@ int main(int argc, char** argv) {
             steps += fmt(" %.0f frames: %.4f while switching, %.4f while playing;", block, switching, steady);
         }
         check(smooth, "switching binaural off and on makes no click", "biggest step from one sample to the next:" + steps);
-        room.engine.setMasterVolume(0.5f);
+        room.engine.setRoomVolume(0.5f);
         renderSeconds(room.engine, 0.5);
         Render half = renderSeconds(room.engine, 2.0);
-        room.engine.setMasterVolume(1.0f);
+        room.engine.setRoomVolume(1.0f);
         renderSeconds(room.engine, 0.5);
         Render full = renderSeconds(room.engine, 2.0);
-        check(std::fabs((db(full.rms_l) - db(half.rms_l)) - 6.0) < 2.5, "the master volume scales the output",
+        check(std::fabs((db(full.rms_l) - db(half.rms_l)) - 6.0) < 2.5, "the room's master volume scales what is heard of the room",
               fmt("half volume is %.1f dB quieter", db(full.rms_l) - db(half.rms_l)));
     }
 
