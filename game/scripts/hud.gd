@@ -35,7 +35,7 @@ var _beat_panel: PanelContainer
 var _beat: Label
 var _modes_panel: PanelContainer
 var _binaural_chip: Label
-var _monitor_chip: Label  # what you hear: the room, or the mix (H)
+var _monitor_chip: Label  # what you hear (H switches): the room, or the mix (as headphones would have it)
 var _follow_chip: Label  # a Record room's insertion following playback, shown while it does
 var _meter_panel: PanelContainer
 var _meter
@@ -206,8 +206,7 @@ func _process(_delta: float) -> void:
 
 	_light_chip(_binaural_chip, "BINAURAL", app.settings.binaural, BINAURAL_BLUE)
 	var hearing_mix: bool = app.settings.monitor == "mix"
-	_light_chip(_monitor_chip, "HEARING THE MIX  (%s)" % app.bindings.label("monitor") if hearing_mix else "HEARING THE ROOM  (%s)" % app.bindings.label("monitor"),
-		true, MONITOR_GREEN if hearing_mix else Color(0.78, 0.8, 0.86))
+	_light_chip(_monitor_chip, "HEADPHONE MIX" if hearing_mix else "ROOM", true, MONITOR_GREEN if hearing_mix else Color(0.78, 0.8, 0.86))
 	_follow_chip.visible = timeline.is_record() and app.settings.insertion_follows
 	_light_chip(_follow_chip, "FOLLOWS PLAYBACK", true, FOLLOW_AMBER)
 	_modes_panel.reset_size()

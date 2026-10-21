@@ -4,9 +4,12 @@ extends CanvasLayer
 ## reaches it straight through the cabinet (a plug-in amp on a Plug-in pedal can be the head); without its cabinet it
 ## is a flat full-range speaker.
 ##
-## The board runs the way the signal does: from the input through the pedals in order, then the amp. Click a pedal to
-## set it up underneath; drag it along the line to move it (hold Option as you drop it for a second of it instead);
-## "+ Pedal" adds one at the end. The board folds away under its heading. 1 to 8 stamp on the pedals, here and facing
+## The board runs the way the signal does: from the input through the pedals in order, then the amp's preamp, then the
+## pedals in its effects loop (a series loop, after the preamp and its tone stack, before the power amp: a delay or a
+## reverb there repeats the amp's own sound, distortion and all, rather than being distorted by it), then the power amp
+## and the speakers. Click a pedal to set it up underneath; drag it along the line to move it, into the loop or out of it
+## (hold Option as you drop it for a second of it instead); "+ Pedal" adds one in front of the amp, "+" in the loop.
+## The board folds away under its heading. 1 to 8 stamp on the pedals, here and facing
 ## the amp in the room: a pedal switches on or off, and the loop pedal (an amp can have one) presses its footswitch.
 ## The loop pedal works as a loop pedal does: one footswitch records, closes the loop, and lays overdubs on top; there
 ## are Stop, Undo and Clear beside it, a level for the loop, and Sync, which starts and ends recordings on bar lines
@@ -69,6 +72,9 @@ var _board: HBoxContainer
 var _tiles: Array = []  # a pedal's tile: {panel, style, led}
 var _add_button: Button
 var _add_arrow: Label
+var _loop_box: PanelContainer  # the effects loop, between the preamp and the power amp
+var _loop_add: Button          # its own "+"
+var _adding_to_loop := false   # which the add menu is open for
 var _add_menu: PopupMenu
 var _board_signature := "-"  # what the board was built for ("-": nothing yet)
 var _drop_mark: ColorRect  # while a pedal is dragged: the gap it would go in
@@ -249,7 +255,7 @@ func _refresh() -> void:
 func _refresh_board() -> void:
 	var signature := ""
 	for p in inst.pedals:
-		signature += "%s:%s|" % [p.kind, p.plugin_name]
+		signature += "%s:%s:%s|" % [p.kind, p.plugin_name, p.get("in_loop", false)]
 	if signature != _board_signature:
 		_board_signature = signature
 		_build_board()
@@ -266,6 +272,7 @@ func _refresh_board() -> void:
 		_drop_mark.visible = false
 	_add_button.visible = inst.pedals.size() < audio.get_max_pedals()
 	_add_arrow.visible = _add_button.visible
+	_loop_add.visible = _add_button.visible
 	_add_menu.set_item_disabled(Catalog.PEDAL_ORDER.find("looper"), has_looper())
 
 
@@ -274,26 +281,75 @@ func _build_board() -> void:
 		_board.remove_child(child)
 		child.queue_free()
 	_tiles.clear()
+	var front := front_count()
 	_board.add_child(_end_label("INPUT"))
-	for i in inst.pedals.size():
-		var pedal: Dictionary = inst.pedals[i]
-		var spec: Dictionary = Catalog.PEDALS[pedal.kind]
-		var name: String = spec.name if pedal.kind != "plugin" or pedal.plugin_name == "" else pedal.plugin_name
+	for i in front:
 		_board.add_child(_arrow())
-		var tile := _tile(str(i + 1), name, spec.color, i)
-		_board.add_child(tile.panel)
-		_tiles.append(tile)
+		_board.add_child(_pedal_tile(i))
 	_board.add_child(_arrow())
 	_add_button = Button.new()
 	_add_button.text = "+ Pedal"
 	_add_button.custom_minimum_size = Vector2(80, 86)
-	Hints.give(_add_button, "Add a pedal at the end of the line, just before the amp: a tuner, drives, modulation, delay and reverb, a loop pedal, or one of your plug-ins")
-	_add_button.pressed.connect(_on_add_pressed)
+	Hints.give(_add_button, "Add a pedal in front of the amp, at the end of the line: a tuner, drives, modulation, delay and reverb, a loop pedal, or one of your plug-ins")
+	_add_button.pressed.connect(_on_add_pressed.bind(false))
 	_add_button.set_drag_forwarding(Callable(), _pedal_can_drop, _pedal_drop)
 	_board.add_child(_add_button)
 	_add_arrow = _arrow()
 	_board.add_child(_add_arrow)
-	_board.add_child(_end_label("AMP"))
+	var preamp := _end_label("PREAMP")
+	Hints.give(preamp, "The amp's preamp: its gain and tone stack. Pedals before it are in front of the amp; after it, in its effects loop")
+	preamp.mouse_filter = Control.MOUSE_FILTER_PASS
+	_board.add_child(preamp)
+	_board.add_child(_arrow())
+	# The effects loop: its pedals, and its own "+", in a box of their own.
+	_loop_box = PanelContainer.new()
+	var loop_style := StyleBoxFlat.new()
+	loop_style.bg_color = Color(0.15, 0.16, 0.19)
+	loop_style.set_corner_radius_all(6)
+	loop_style.set_border_width_all(1)
+	loop_style.border_color = Color(1, 1, 1, 0.12)
+	loop_style.set_content_margin_all(4)
+	_loop_box.add_theme_stylebox_override("panel", loop_style)
+	_loop_box.set_drag_forwarding(Callable(), _pedal_can_drop, _pedal_drop)
+	Hints.give(_loop_box, "The amp's effects loop: sent out after the preamp, returned before the power amp. A delay or a reverb here repeats the amp's own sound, distortion and all")
+	_board.add_child(_loop_box)
+	var loop_row := HBoxContainer.new()
+	loop_row.add_theme_constant_override("separation", 4)
+	_loop_box.add_child(loop_row)
+	var send := _end_label("FX\nSEND")
+	send.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	loop_row.add_child(send)
+	for i in range(front, inst.pedals.size()):
+		loop_row.add_child(_arrow())
+		loop_row.add_child(_pedal_tile(i))
+	loop_row.add_child(_arrow())
+	_loop_add = Button.new()
+	_loop_add.text = "+"
+	_loop_add.custom_minimum_size = Vector2(36, 78)
+	Hints.give(_loop_add, "Add a pedal to the effects loop, after the preamp")
+	_loop_add.pressed.connect(_on_add_pressed.bind(true))
+	_loop_add.set_drag_forwarding(Callable(), _pedal_can_drop, _pedal_drop)
+	loop_row.add_child(_loop_add)
+	loop_row.add_child(_arrow())
+	var back := _end_label("FX\nRETURN")
+	back.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	loop_row.add_child(back)
+	_board.add_child(_arrow())
+	_board.add_child(_end_label("POWER AMP"))
+
+
+## How many of the amp's pedals are in front of it (the rest are in its effects loop).
+func front_count() -> int:
+	return inst.pedals.filter(func(p): return not p.get("in_loop", false)).size()
+
+
+func _pedal_tile(i: int) -> Control:
+	var pedal: Dictionary = inst.pedals[i]
+	var spec: Dictionary = Catalog.PEDALS[pedal.kind]
+	var name: String = spec.name if pedal.kind != "plugin" or pedal.plugin_name == "" else pedal.plugin_name
+	var tile := _tile(str(i + 1), name, spec.color, i)
+	_tiles.append(tile)
+	return tile.panel
 
 
 ## A pedal on the board: its number (its key), its light, and its name, painted in its colour. `index` is where it
@@ -369,7 +425,8 @@ func _tile_hint(index: int) -> String:
 	var pedal: Dictionary = inst.pedals[index]
 	var spec: Dictionary = Catalog.PEDALS[pedal.kind]
 	var name: String = pedal.plugin_name if pedal.kind == "plugin" and pedal.plugin_name != "" else spec.name
-	return "%s: %s  Click to set it up, %d to stamp on it, drag to move it (Option: a copy)." % [name, spec.about, index + 1]
+	return "%s%s: %s  Click to set it up, %d to stamp on it, drag to move it (Option: a copy)." % [name,
+		" (in the effects loop)" if pedal.get("in_loop", false) else "", spec.about, index + 1]
 
 
 # Dragging pedals along the board: picked up from a tile, dropped in the gap nearest the mouse, anywhere on the board.
@@ -389,14 +446,18 @@ func _pedal_drag(_at: Vector2, index: int):
 func _pedal_can_drop(_at: Vector2, data) -> bool:
 	if not (data is Dictionary and data.get("pedal", false) and data.inst == inst):
 		return false
-	var slot := gap_at(_board.get_global_mouse_position().x)
+	var mouse_x := _board.get_global_mouse_position().x
+	var into_loop := in_loop_at(mouse_x)
+	var slot := _side_gap(gap_at(mouse_x), into_loop)
 	var x: float
-	if slot < _tiles.size():
+	if slot < _tiles.size() and (slot >= front_count()) == into_loop:
 		x = _tiles[slot].panel.get_global_rect().position.x - 6.0
+	elif into_loop:
+		x = _loop_add.get_global_rect().position.x - 6.0
 	elif _add_button.visible:
 		x = _add_button.get_global_rect().position.x - 6.0
 	else:
-		x = _tiles[-1].panel.get_global_rect().end.x + 2.0
+		x = _tiles[slot - 1].panel.get_global_rect().end.x + 2.0
 	var top: Rect2 = _tiles[0].panel.get_global_rect() if not _tiles.is_empty() else _add_button.get_global_rect()
 	_drop_mark.global_position = Vector2(x, top.position.y)
 	_drop_mark.size = Vector2(4, top.size.y)
@@ -406,7 +467,19 @@ func _pedal_can_drop(_at: Vector2, data) -> bool:
 
 func _pedal_drop(_at: Vector2, data) -> void:
 	_drop_mark.visible = false
-	drop_pedal(data, gap_at(_board.get_global_mouse_position().x), Input.is_key_pressed(KEY_ALT))
+	var mouse_x := _board.get_global_mouse_position().x
+	drop_pedal(data, gap_at(mouse_x), Input.is_key_pressed(KEY_ALT), in_loop_at(mouse_x))
+
+
+## Whether a drop at `x` (on screen) is in the effects loop: from its box on.
+func in_loop_at(x: float) -> bool:
+	return x >= _loop_box.get_global_rect().position.x
+
+
+## A gap kept to one side of the preamp: in front of the amp, 0 to the number there; in the loop, from there to the end.
+func _side_gap(gap: int, into_loop: bool) -> int:
+	var front := front_count()
+	return clampi(gap, front, inst.pedals.size()) if into_loop else clampi(gap, 0, front)
 
 
 ## The gap along the board nearest `x` (on screen): 0 before the first pedal, up to the number of pedals after the last.
@@ -417,20 +490,25 @@ func gap_at(x: float) -> int:
 	return _tiles.size()
 
 
-## Dropping a pedal in a gap on the board: it moves there, or with `copy` (Option held as it is dropped) a second of it
-## goes there, its knobs, switch and plug-in settings and all.
-func drop_pedal(data: Dictionary, gap: int, copy: bool) -> void:
+## Dropping a pedal in a gap on the board, in front of the amp or in its effects loop (`into_loop`): it moves there, or
+## with `copy` (Option held as it is dropped) a second of it goes there, its knobs, switch and plug-in settings and all.
+func drop_pedal(data: Dictionary, gap: int, copy: bool, into_loop := false) -> void:
 	if inst == null or data.get("inst") != inst or data.index >= inst.pedals.size():
 		return
+	var count: int = inst.pedals.size()
+	var front := front_count()
+	var loop := count - front
+	gap = _side_gap(gap, into_loop)
 	if copy:
-		var at: int = app.copy_pedal(inst, data.index, inst, gap)
+		var at: int = app.copy_pedal(inst, data.index, inst, gap, loop + (1 if into_loop else 0))
 		if at < 0:
 			_show_notice("It couldn't be copied: %s." % audio.get_error())
 		else:
 			selected = at
 	else:
 		var to: int = gap - 1 if gap > data.index else gap
-		if to != data.index and app.move_pedal(inst, data.index, to):
+		var new_loop := loop - (1 if data.index >= front else 0) + (1 if into_loop else 0)
+		if (to != data.index or new_loop != loop) and app.move_pedal(inst, data.index, to, new_loop):
 			selected = to
 	_shown = ""
 	_refresh()
@@ -1009,13 +1087,15 @@ func _on_tile_input(event: InputEvent, index: int) -> void:
 		_refresh()
 
 
-func _on_add_pressed() -> void:
-	_add_menu.position = Vector2i(_add_button.get_screen_position() + Vector2(0, _add_button.size.y))
+func _on_add_pressed(into_loop: bool) -> void:
+	_adding_to_loop = into_loop
+	var near: Button = _loop_add if into_loop else _add_button
+	_add_menu.position = Vector2i(near.get_screen_position() + Vector2(0, near.size.y))
 	_add_menu.popup()
 
 
 func _on_add_chosen(id: int) -> void:
-	var at: int = app.add_pedal(inst, Catalog.PEDAL_ORDER[id])
+	var at: int = app.add_pedal(inst, Catalog.PEDAL_ORDER[id], -1 if _adding_to_loop else front_count(), _adding_to_loop)
 	if at >= 0:
 		selected = at
 		_refresh()

@@ -88,11 +88,11 @@ func setup(the_app) -> void:
 	_track_menu.id_pressed.connect(func(id: int) -> void: TrackMenu.chosen(app, _track_menu_for, id))
 	add_child(_track_menu)
 	_colors = TrackMenu.colors_menu(app, func(color: Color) -> void:
-		if _track_menu_for != null and app.has_track(_track_menu_for):
+		if _track_menu_for != null and app.is_track(_track_menu_for):
 			app.set_track_color(_track_menu_for, color))
 	_track_menu.add_child(_colors)
 	_modes = TrackMenu.modes_menu(app, func(mode: String) -> void:
-		if _track_menu_for != null and app.has_track(_track_menu_for):
+		if _track_menu_for != null and app.is_track(_track_menu_for):
 			app.automation.set_mode(_track_menu_for, mode))
 	_track_menu.add_child(_modes)
 
@@ -254,7 +254,7 @@ func _most_scroll() -> float:
 ## The rows: every track in order, each folder before its tracks (those of a folder that is closed left out, and of
 ## one inside it), the aux tracks not in a folder after them, and the master at the foot.
 func tracks() -> Array:
-	return app.track_order().filter(func(t): return app.folders_around(t).all(func(f): return f.open)) + [app.master_track]
+	return app.track_order().filter(func(t): return app.folders_around(t).all(func(f): return f.open)) + app.master_tracks()
 
 
 ## How far a track's header is set in: by as many folders as it is in.
@@ -561,7 +561,7 @@ func _show_lane_menu(track, k: int, what: String, at: Vector2) -> void:
 
 func _on_lane_menu(id: int) -> void:
 	var track = _lane_menu_for.get("track")
-	if track == null or not (app.has_track(track) or track == app.master_track):
+	if track == null or not (app.has_track(track) or app.master_tracks().has(track)):
 		return
 	if _lane_menu_for.what == "param":
 		if id >= 0 and id < _lane_choices.size():
@@ -1062,7 +1062,7 @@ func delete_chosen_points() -> bool:
 	timeline.remember("Delete points")
 	var touched := []
 	for c in chosen_points:
-		if app.has_track(c.track) or c.track == app.master_track:
+		if app.has_track(c.track) or app.master_tracks().has(c.track):
 			c.track.automation.get(c.param, []).erase(c.point)
 			if not touched.has(c.track):
 				touched.append(c.track)
@@ -1192,8 +1192,6 @@ func _comp(drag: Dictionary) -> void:
 
 ## A track's menu (a right-click on its name): rename it, colour it, and its folder.
 func show_track_menu(track, at: Vector2) -> void:
-	if track.get("is_master"):
-		return
 	_track_menu_for = track
 	_track_menu.clear()
 	TrackMenu.add_items(_track_menu, app, track, _colors, _modes)

@@ -87,6 +87,7 @@ var _normal_gain := 1.0  # what 0 dB on its fader means to the audio core
 var _sent_position := Vector3.INF  # where the audio core last heard this instrument was
 var _sent_aim := Vector3.INF       # and, a microphone, which way it points
 var _capsules_moved := false       # a stereo mic set up afresh: its capsules sent again
+var _sent_speakers := ""           # an amp: where its cabinet was, and which, when the audio core was last told
 var _labels_shown := true          # (the title screen hides the names)
 var _model: Node3D
 var _accent: StandardMaterial3D  # the parts in its own colour, which light up as it plays
@@ -295,7 +296,9 @@ func _show_looper() -> void:
 
 ## Tells the audio core where this instrument is, if it has moved (and a microphone, which way it points).
 func sync_position() -> void:
-	if not global_position.is_equal_approx(_sent_position):
+	if is_amp:
+		_sync_speakers()
+	elif not global_position.is_equal_approx(_sent_position):
 		_sent_position = global_position
 		_audio.set_source_position(source_id, global_position)
 		_capsules_moved = is_stereo_mic
@@ -311,6 +314,41 @@ func sync_position() -> void:
 				for k in capsules.size():
 					_audio.set_mic_capsule(source_id, k, global_transform * capsules[k].at)
 					_audio.set_mic_aim(source_id, (global_transform.basis * capsules[k].aim).normalized(), k)
+
+
+## An amp's cabinet, as the audio core hears it: from the middle of its grille (as the listener hears it), and each of
+## its cones on its own (as the microphones do: radiation.h), told again whenever it moves, turns or changes cabinet.
+func _sync_speakers() -> void:
+	var signature := "%s|%s|%s" % [global_transform, amp_cabinet, kind]
+	if signature == _sent_speakers:
+		return
+	_sent_speakers = signature
+	_sent_position = global_position
+	var world := speakers_in_room()
+	_audio.set_source_position(source_id, world.baffle)
+	_audio.set_source_radiator(source_id, PackedVector3Array(world.cones), world.facing, world.inches, world.back != null,
+		world.back if world.back != null else Vector3.ZERO, world.width)
+
+
+## An amp's speakers, where they are in the room: {cones (each one's middle, its dust cap), baffle (the middle of its
+## grille), back (its open back's middle, or null), facing, inches, width}.
+func speakers_in_room() -> Dictionary:
+	var local: Dictionary = Models.speakers(amp_cabinet, kind.ends_with("_combo"))
+	var lift := Vector3(0, source_height, 0)  # (the model is drawn from the floor up)
+	var place := func(p: Vector3) -> Vector3: return global_transform * (p - lift)
+	return {"cones": local.cones.map(place), "baffle": place.call(local.baffle), "back": place.call(local.back) if local.back != null else null,
+		"facing": global_transform.basis.z.normalized(), "inches": local.inches, "width": local.width}
+
+
+## Where its sound comes from, as `from` has it: an amp's nearest cone, or anything else's middle.
+func sound_point(from: Vector3) -> Vector3:
+	if not is_amp:
+		return global_position
+	var best := Vector3.INF
+	for cone: Vector3 in speakers_in_room().cones:
+		if best == Vector3.INF or cone.distance_to(from) < best.distance_to(from):
+			best = cone
+	return best
 
 
 ## The way a microphone points, in the room: the way it faces, tilted down by its tilt.

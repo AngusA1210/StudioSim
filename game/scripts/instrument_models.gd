@@ -12,14 +12,42 @@ const KEY_WHITE := 0.0235  # width of a white key, in metres
 
 static var _shared := {}  # finishes every model uses, made once
 # The cabinets an amp can have, as they look: the box, and whether it stands on casters.
+## Each cabinet: its box, and its speakers (as the audio core hears them, radiation.h): where each cone's middle is on
+## the grille (from the grille's middle: across, up), how big they are, and whether its back is open.
 const CABINETS := {
-	"1x12": {"size": Vector3(0.62, 0.48, 0.25), "casters": false},
-	"2x12": {"size": Vector3(0.74, 0.5, 0.27), "casters": false},
-	"4x12": {"size": Vector3(0.76, 0.76, 0.36), "casters": false},
-	"1x15": {"size": Vector3(0.56, 0.7, 0.42), "casters": true},
-	"4x10": {"size": Vector3(0.6, 0.62, 0.42), "casters": true},
-	"8x10": {"size": Vector3(0.6, 1.3, 0.45), "casters": false},
+	"1x12": {"size": Vector3(0.62, 0.48, 0.25), "casters": false, "inches": 12.0, "open_back": true, "cones": [Vector2(0, 0)]},
+	"2x12": {"size": Vector3(0.74, 0.5, 0.27), "casters": false, "inches": 12.0, "open_back": true,
+		"cones": [Vector2(-0.17, 0), Vector2(0.17, 0)]},
+	"4x12": {"size": Vector3(0.76, 0.76, 0.36), "casters": false, "inches": 12.0, "open_back": false,
+		"cones": [Vector2(-0.165, 0.165), Vector2(0.165, 0.165), Vector2(-0.165, -0.165), Vector2(0.165, -0.165)]},
+	"1x15": {"size": Vector3(0.56, 0.7, 0.42), "casters": true, "inches": 15.0, "open_back": false, "cones": [Vector2(0, 0.04)]},
+	"4x10": {"size": Vector3(0.6, 0.62, 0.42), "casters": true, "inches": 10.0, "open_back": false,
+		"cones": [Vector2(-0.135, 0.13), Vector2(0.135, 0.13), Vector2(-0.135, -0.13), Vector2(0.135, -0.13)]},
+	"8x10": {"size": Vector3(0.6, 1.3, 0.45), "casters": false, "inches": 10.0, "open_back": false,
+		"cones": [Vector2(-0.135, 0.45), Vector2(0.135, 0.45), Vector2(-0.135, 0.15), Vector2(0.135, 0.15),
+			Vector2(-0.135, -0.15), Vector2(0.135, -0.15), Vector2(-0.135, -0.45), Vector2(0.135, -0.45)]},
 }
+const CONE_DEPTH := 0.04  # how far behind the grille a cone's dust cap is
+
+
+## A cabinet's speakers, as the audio core hears them: each cone's middle (its dust cap, a little behind the grille), the
+## middle of its grille, the middle of its open back (or null), from the floor under the middle of the cabinet, its
+## front facing +z; the speakers' size, and the baffle's width. `combo`: with an amp's panel across its top.
+static func speakers(cabinet: String, combo: bool) -> Dictionary:
+	var look: Dictionary = CABINETS.get(cabinet, CABINETS["1x12"])
+	var size: Vector3 = look.size
+	var centre := _grille_centre(size, look.casters, combo)
+	var cones := []
+	for spot: Vector2 in look.cones:
+		cones.append(centre + Vector3(spot.x, spot.y, -CONE_DEPTH))
+	return {"cones": cones, "baffle": centre, "back": centre - Vector3(0, 0, size.z) if look.open_back else null,
+		"inches": float(look.inches), "width": size.x}
+
+
+static func _grille_centre(size: Vector3, casters: bool, combo: bool) -> Vector3:
+	var lift := 0.05 if casters else 0.015
+	var face_height := size.y - (0.11 if combo else 0.06)
+	return Vector3(0, lift + 0.03 + (face_height - 0.04) / 2, size.z / 2)
 
 
 ## Returns {node: Node3D, accent: StandardMaterial3D} and, for an amp, how tall it stands and the floor it covers
@@ -42,6 +70,7 @@ static func build(kind: String, color: Color, cabinet := "", mic := {}) -> Dicti
 			var size: Vector3 = look.size
 			var combo := kind.ends_with("_combo")
 			_amp_box(node, accent, size, look.casters, combo)
+			_speaker_cones(node, look, combo)
 			var lift := 0.05 if look.casters else 0.015
 			built.top = lift + size.y
 			if not combo:  # a head standing on its cabinet
@@ -388,6 +417,23 @@ static func _amp_box(node: Node3D, accent: Material, size: Vector3, casters: boo
 		for x in [-1.0, 1.0]:
 			for z in [-1.0, 1.0]:
 				_sphere(node, 0.022, black, Vector3(x * (size.x / 2 - 0.06), 0.022, z * (size.z / 2 - 0.06)))
+
+
+## The speakers seen through the grille cloth, as on a real cabinet in the light: each cone a darker disc, its dust cap
+## a paler dot in its middle (where a close mic is brightest), so that a mic can be placed on one by eye.
+static func _speaker_cones(node: Node3D, look: Dictionary, combo: bool) -> void:
+	var centre := _grille_centre(look.size, look.casters, combo)
+	var frame := 0.0254 * float(look.inches) / 2.0
+	var shade := StandardMaterial3D.new()
+	shade.albedo_color = Color(0.13, 0.13, 0.13)
+	shade.roughness = 0.95
+	var cap := StandardMaterial3D.new()
+	cap.albedo_color = Color(0.36, 0.36, 0.35)
+	cap.roughness = 0.9
+	for spot: Vector2 in look.cones:
+		var at := centre + Vector3(spot.x, spot.y, 0.0078)  # (on the grille cloth's face)
+		_cylinder(node, frame * 0.92, 0.001, shade, at, Vector3(PI / 2, 0, 0))
+		_cylinder(node, 0.022 * float(look.inches) / 12.0, 0.0012, cap, at + Vector3(0, 0, 0.0004), Vector3(PI / 2, 0, 0))
 
 
 ## A head sitting on top of a cabinet `on_top` metres high: a box with its faceplate in the accent colour and a row of

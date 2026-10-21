@@ -354,7 +354,7 @@ func _begin(track, param: String) -> void:
 
 ## Every track, the master too: what the windows show, in order.
 func _tracks() -> Array:
-	return app.track_order() + [app.master_track]
+	return app.track_order() + app.master_tracks()
 
 
 func _process(delta: float) -> void:
@@ -370,7 +370,7 @@ func _process(delta: float) -> void:
 		_watch_plugins()
 		var at: float = timeline.position()
 		for track in _writing.keys():
-			if not (app.has_track(track) or track == app.master_track):
+			if not (app.has_track(track) or app.master_tracks().has(track)):
 				_writing.erase(track)
 				continue
 			for param in _writing[track].keys():
@@ -447,7 +447,7 @@ func _tell(track) -> void:
 	if track.get("is_master"):
 		var read_master := [reads(track, "volume"), not off]
 		if _sent.get(track) != read_master:
-			audio.set_master_automation_read(read_master[0])
+			audio.set_master_automation_read(read_master[0], track.which)
 			audio.set_automation_read(track.source_id, false, false, false, read_master[1])  # (its inserts' controls)
 			_sent[track] = read_master
 	else:
@@ -478,7 +478,7 @@ func _apply(track, param: String, value: float) -> void:
 	if param == "volume":
 		var gain: float = 0.0 if value <= -79.0 else db_to_linear(value)
 		if track.get("is_master"):
-			app.apply_master_gain(gain)
+			app.apply_master_gain(gain, track.which)
 		else:
 			audio.set_source_gain(track.source_id, gain * (1.0 if track.is_folder else track.normal_gain()))
 	elif param == "pan":
@@ -584,6 +584,8 @@ static func _in_place(param: String, place: String, index: int) -> bool:
 	match place:
 		"insert":
 			return param.begins_with("insert:%d:" % index)
+		"send":
+			return param == "send:%d" % index
 		"pedal":
 			return param.begins_with("pedal:%d:" % index) or param.begins_with("stomp:%d:" % index)
 	return param.begins_with("instrument:")
@@ -591,7 +593,7 @@ static func _in_place(param: String, place: String, index: int) -> bool:
 
 static func _placed(param: String, index: int) -> String:
 	var parts := param.split(":")
-	if parts.size() == 3:
+	if parts.size() == 3 or parts[0] == "send":
 		parts[1] = str(index)
 	return ":".join(parts)
 
@@ -637,12 +639,17 @@ func _put(track, index: int, taken: Dictionary) -> void:
 ## A plug-in moved from one insert slot to another (on this track or another): its automation goes with it, and that of
 ## the one it swapped with goes the other way.
 func insert_moved(from_track, from_slot: int, to_track, to_slot: int) -> void:
+	slot_moved("insert", from_track, from_slot, to_track, to_slot)
+
+
+## The same for a send (its level's automation), or for any slot of a kind (`place`: "insert" or "send").
+func slot_moved(place: String, from_track, from_slot: int, to_track, to_slot: int) -> void:
 	if from_track == to_track:
-		_rename(from_track, func(p): return _placed(p, to_slot) if _in_place(p, "insert", from_slot) else (
-			_placed(p, from_slot) if _in_place(p, "insert", to_slot) else p))
+		_rename(from_track, func(p): return _placed(p, to_slot) if _in_place(p, place, from_slot) else (
+			_placed(p, from_slot) if _in_place(p, place, to_slot) else p))
 	else:
-		var moving := _take(from_track, "insert", from_slot)
-		var displaced := _take(to_track, "insert", to_slot)
+		var moving := _take(from_track, place, from_slot)
+		var displaced := _take(to_track, place, to_slot)
 		_put(to_track, to_slot, moving)
 		_put(from_track, from_slot, displaced)
 		timeline.sync(to_track)
@@ -656,7 +663,7 @@ func copied(from_track, place: String, from_index: int, to_track, to_index: int)
 		if _in_place(param, place, from_index):
 			original.points[param] = from_track.automation[param].map(func(p): return p.duplicate())
 	original.lanes = from_track.lanes.filter(func(p): return _in_place(p, place, from_index))
-	if place == "insert":
+	if place in ["insert", "send"]:
 		_take(to_track, place, to_index)
 	_put(to_track, to_index, original)
 	timeline.sync(to_track)

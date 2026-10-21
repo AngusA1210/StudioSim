@@ -189,13 +189,15 @@ float AmpModel::drive(float x) {
     return result;
 }
 
-void AmpModel::process(float* io, int n) {
+void AmpModel::preamp(float* io, int n) {
+    if (!head_on_) return;
+    for (int i = 0; i < n; ++i) io[i] = treble_.process(mid_.process(bass_.process(drive(input_cut_.process(io[i]))))) * v_.out_trim;
+}
+
+void AmpModel::power(float* io, int n) {
     for (int i = 0; i < n; ++i) {
         float x = io[i];
-        if (head_on_) {
-            x = drive(input_cut_.process(x));
-            x = presence_.process(treble_.process(mid_.process(bass_.process(x)))) * v_.out_trim;
-        }
+        if (head_on_) x = presence_.process(x);
         if (cabinet_on_)
             for (int c = 0; c < cabinet_stages_; ++c) x = cabinet_[size_t(c)].process(x);
         master_now_ += (master_ - master_now_) * 0.002f;  // the master is the amp's volume, with or without its head
@@ -224,12 +226,15 @@ void Amp::render(float* out, int n) {
     if (enabled_) readInput(in_.data(), n);
     if (playback_)  // a recording of the guitar, played back through the pedals and the amp again
         for (int i = 0; i < n; ++i) in_[size_t(i)] += playback_[i];
-    if (board_) {  // through the pedals, in order
-        PedalTiming timing;
-        if (timing_) timing = {double(timing_[1]) / 4.0, timing_[0], timing_[1]};
-        for (int p = 0; p < board_->count; ++p) board_->pedals[size_t(p)]->process(in_.data(), n, timing);
-    }
-    model_.process(in_.data(), n);
+    // Through the pedals in front of it, in order, then the preamp; through those in its effects loop, then the power
+    // amp and the cabinet.
+    PedalTiming timing;
+    if (timing_) timing = {double(timing_[1]) / 4.0, timing_[0], timing_[1]};
+    const int count = board_ ? board_->count : 0, front = board_ ? std::min(board_->front, count) : 0;
+    for (int p = 0; p < front; ++p) board_->pedals[size_t(p)]->process(in_.data(), n, timing);
+    model_.preamp(in_.data(), n);
+    for (int p = front; p < count; ++p) board_->pedals[size_t(p)]->process(in_.data(), n, timing);
+    model_.power(in_.data(), n);
     for (int i = 0; i < n; ++i) out[i] += in_[size_t(i)];
 }
 

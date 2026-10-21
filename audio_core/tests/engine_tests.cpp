@@ -29,6 +29,7 @@
 #include "pedals.h"
 #include "plugin_host.h"
 #include "plugin_synth.h"
+#include "radiation.h"
 #include "room_geometry.h"
 
 #ifdef __APPLE__
@@ -237,6 +238,19 @@ void bandEnergy(const std::vector<float>& x, float sr, double& low, double& high
         low += double(a) * a;
         high += double(b) * b;
     }
+}
+
+// The level (dB) of `x` between `low_hz` and `high_hz`, through steep (4th-order) filters either side.
+double bandDb(const std::vector<float>& x, float sr, float low_hz, float high_hz) {
+    Biquad hp[2], lp[2];
+    for (auto& f : hp) f.set(Biquad::Highpass, sr, low_hz, 0.707f);
+    for (auto& f : lp) f.set(Biquad::Lowpass, sr, high_hz, 0.707f);
+    double energy = 0;
+    for (float v : x) {
+        const float y = lp[1].process(lp[0].process(hp[1].process(hp[0].process(v))));
+        energy += double(y) * y;
+    }
+    return db(std::sqrt(energy / double(std::max<size_t>(x.size(), 1))));
 }
 
 #ifdef __APPLE__
@@ -2482,6 +2496,214 @@ int main(int argc, char** argv) {
         const Render room_tail = tail(false), mix_tail = tail(true);
         check(delay_on && db(mix_tail.peak) > db(room_tail.peak) + 6.0, "the mix's master has inserts: AUDelay there echoes the mix, not the room",
               insert_error + fmt("echo %.0f dBFS in the mix, ", db(mix_tail.peak)) + fmt("%.0f in the room", db(room_tail.peak)));
+        // And the room's master: AUDelay there echoes the room, not the mix.
+        masters.engine.setMasterInserts(-1);
+        const int room_bus = masters.engine.addSource(InstrumentKind::Bus, {0.0f, 0.0f, 0.0f}, 1.0f, 0.0f);
+        const bool room_delay = masters.engine.setInsert(room_bus, 0, "AU:61756678:64656c79:6170706c", &insert_error);
+        masters.engine.setMasterInserts(room_bus, AudioEngine::Monitor::Room);
+        const Render room_echo = tail(false), mix_dry = tail(true);
+        check(room_delay && db(room_echo.peak) > db(mix_dry.peak) + 6.0, "the room's master has inserts too: AUDelay there echoes the room, not the mix",
+              insert_error + fmt("echo %.0f dBFS in the room, ", db(room_echo.peak)) + fmt("%.0f in the mix", db(mix_dry.peak)));
+        // Hearing the mix on the main outputs, the room on outputs 3 and 4 of its own.
+        masters.engine.setMonitor(AudioEngine::Monitor::Mix);
+        masters.engine.setMasterOutput(2, 3, AudioEngine::Monitor::Room);
+        masters.engine.setSourceMuted(masters.drums, true);  // (out of the mix, still in the room)
+        renderSeconds(masters.engine, 0.5);
+        masters.engine.noteOn(masters.drums, 38, 0.9f);
+        const int block4 = masters.engine.blockSize();
+        std::vector<float> outs(size_t(block4) * 4);
+        double mains = 0.0, room_outs = 0.0;
+        for (int b = 0; b < int(0.4 * masters.engine.sampleRate()) / block4; ++b) {
+            masters.engine.renderDevice(nullptr, 0, outs.data(), 4, block4);
+            for (int i = 0; i < block4; ++i) {
+                mains += double(outs[size_t(4 * i)]) * outs[size_t(4 * i)];
+                room_outs += double(outs[size_t(4 * i + 2)]) * outs[size_t(4 * i + 2)];
+            }
+        }
+        masters.engine.setMasterOutput(-1, -1, AudioEngine::Monitor::Room);
+        check(room_outs > 1e-6 && mains < 1e-3 * room_outs, "the room can go to outputs of its own as well: the drums there, out of the mix on the main ones",
+              fmt("%.0f dB apart", 10.0 * std::log10(std::max(room_outs, 1e-30) / std::max(mains, 1e-30))));
+    }
+
+    {
+        std::printf("\nAn amp's effects loop\n");
+        // A tremolo, as it comes, on a high-gain stack driven hard by a steady note. In front of the amp the distortion
+        // squashes its throb flat; in the loop, after the preamp, it throbs as deep as it is set.
+        Room room;
+        room.hearMix();
+        room.quietRoom(-1);
+        const int stack = room.engine.addSource(InstrumentKind::GuitarStack, {0.0f, 0.55f, 0.0f}, 1.0f, 0.0f);
+        room.engine.setSourceMuted(stack, false);
+        room.engine.setSourceInput(stack, true);
+        room.engine.setAmpControl(stack, AmpControl::Gain, 10.0f);
+        room.engine.addPedal(stack, PedalKind::Tremolo);
+        auto note = [](int64_t n) { return 0.1f * std::sin(2.0f * 3.14159265f * 110.0f * float(n) / 48000.0f); };
+        auto throb = [&]() {  // how far its level swings, 10 ms at a time: its loud tenth against its quiet tenth (dB)
+            renderSeconds(room.engine, 0.5, note);
+            const Render r = renderSeconds(room.engine, 2.0, note);
+            std::vector<double> windows;
+            for (size_t at = 0; at + 480 <= r.l.size(); at += 480) {
+                double e = 0.0;
+                for (size_t i = at; i < at + 480; ++i) e += double(r.l[i]) * r.l[i];
+                windows.push_back(e);
+            }
+            std::sort(windows.begin(), windows.end());
+            return 10.0 * std::log10(windows[windows.size() * 9 / 10] / std::max(windows[windows.size() / 10], 1e-20));
+        };
+        const bool in_front = !room.engine.pedals(stack).front().in_loop;
+        const double front = throb();
+        const bool moved = room.engine.setPedalLoop(stack, 1);
+        const bool in_loop = room.engine.pedals(stack).front().in_loop && room.engine.pedalLoop(stack) == 1;
+        const double looped = throb();
+        check(in_front && moved && in_loop && looped - front > 6.0,
+              "a tremolo in front of a driven amp is squashed by its distortion; in its effects loop, after the preamp, it throbs "
+              "as deep as it is set",
+              fmt("%.1f dB of throb in front, ", front) + fmt("%.1f in the loop", looped));
+        const int second = room.engine.addPedal(stack, PedalKind::Overdrive, 0);  // (in front: before the loop's first)
+        const int third = room.engine.addPedal(stack, PedalKind::Delay);          // (at the end: in the loop)
+        const auto board = room.engine.pedals(stack);
+        const bool moved_out = room.engine.movePedal(stack, 2, 1, 1);  // the delay to just before the tremolo, out of the loop
+        const auto after = room.engine.pedals(stack);
+        check(second == 0 && third == 2 && !board[0].in_loop && board[1].in_loop && board[2].in_loop && room.engine.pedalLoop(stack) == 1 &&
+                  moved_out && after[1].kind == PedalKind::Delay && !after[1].in_loop && after[2].in_loop,
+              "a pedal put in at the front goes in front of the amp; one put on the end goes in the loop; and one moved from one "
+              "side to the other changes sides in one step", "");
+    }
+
+    {
+        std::printf("\nAmps' speakers: how a cabinet sounds from where you are\n");
+        // A 1x12 open-back combo, its baffle's middle at (0, 0.3, 2), facing +z (the listener's way): its cone's dust cap
+        // 4 cm behind the grille, its open back 25 cm behind that.
+        Radiator combo;
+        combo.cones = 1;
+        combo.cone[0] = {0.0f, 0.3f, 1.96f};
+        combo.facing = {0.0f, 0.0f, 1.0f};
+        combo.inches = 12.0f;
+        combo.open_back = true;
+        combo.back = {0.0f, 0.3f, 1.71f};
+        combo.width = 0.62f;
+        const float a = coneRadius(12.0f), ref = 1.5f;
+        auto at = [&](float x, float y, float d) { return Vec3{x, 0.3f + y, 1.96f + d}; };  // across, up, out from the cone
+        const RadiatedPath far = radiate(combo, 0, at(0.0f, 0.0f, 2.0f), ref);
+        const RadiatedPath off45 = radiate(combo, 0, at(2.0f * 0.7071f, 0.0f, 2.0f * 0.7071f), ref);
+        const RadiatedPath off90 = radiate(combo, 0, at(2.0f, 0.0f, 0.0f), ref);
+        check(std::fabs(far.nearness - ref / 2.0f) < 0.03f * ref / 2.0f && far.cut_hz >= kFullRangeHz && off45.cut_hz > 1000.0f &&
+                  off45.cut_hz < 2200.0f && off90.cut_hz < 1200.0f && std::fabs(off45.nearness - far.nearness) < 0.05f * far.nearness,
+              "a cone beams: 2 m off, on its axis it is full-range and as loud as a point there; 45 degrees off, its highs fall "
+              "away above 1 to 2 kHz; 90 degrees off, above about 1 kHz",
+              fmt("%.0f Hz at 45 degrees, ", off45.cut_hz) + fmt("%.0f at 90", off90.cut_hz));
+        const RadiatedPath close4 = radiate(combo, 0, at(0.0f, 0.0f, 0.04f), ref), at30 = radiate(combo, 0, at(0.0f, 0.0f, 0.3f), ref);
+        const double near_rise = db(close4.nearness / at30.nearness);
+        check(near_rise > 6.0 && near_rise < 14.0 && close4.wave_radius > a,
+              "close up it is in its near field: 4 cm from the cone is louder than 30 cm by far less than the 17.5 dB a point "
+              "would be, and its wave is flatter (less proximity effect for a directional mic)",
+              fmt("%.1f dB louder", near_rise));
+        const RadiatedPath cap = radiate(combo, 0, at(0.0f, 0.0f, 0.03f), ref), halfway = radiate(combo, 0, at(0.5f * a, 0.0f, 0.03f), ref);
+        const RadiatedPath edge = radiate(combo, 0, at(a, 0.0f, 0.03f), ref);
+        check(cap.cut_hz >= 15000.0f && halfway.cut_hz > 1500.0f && halfway.cut_hz < 3500.0f && edge.cut_hz < 1300.0f &&
+                  std::fabs(db(cap.nearness / edge.nearness)) < 1.0 && cap.high_db > 3.0f && edge.high_db < 0.5f && cap.low_db > 4.0f,
+              "3 cm from the grille, across the cone: at the dust cap it is bright and biting, halfway out its highs go from "
+              "about 2 kHz, at the cone's edge from about 1 kHz, all as loud in the lows (and fuller than far off)",
+              fmt("%.0f Hz, ", cap.cut_hz) + fmt("%.0f Hz, ", halfway.cut_hz) + fmt("%.0f Hz", edge.cut_hz));
+        Radiator closed = combo;
+        closed.open_back = false;
+        const Vec3 behind = at(0.0f, 0.0f, -1.25f);  // 1 m behind the cabinet
+        const RadiatedPath shut = radiate(closed, 0, behind, ref), front = radiate(combo, 0, at(0.0f, 0.0f, 1.0f), ref);
+        const RadiatedPath open = radiate(combo, 1, behind, ref);
+        check(radiatedPaths(closed) == 1 && radiatedPaths(combo) == 2 && shut.cut_hz < 400.0f && shut.gain < 0.7f && open.gain < 0.0f &&
+                  open.cut_hz <= 2500.0f && std::fabs(open.gain) * open.nearness > 0.5f * front.gain * front.nearness,
+              "behind a closed back only the lows wrap round the box; behind an open one the cone's back is heard, nearly as loud, "
+              "duller, and in reverse polarity",
+              fmt("closed: from %.0f Hz; ", shut.cut_hz) + fmt("open: %.0f%% as loud", 100.0 * std::fabs(open.gain) * open.nearness / (front.gain * front.nearness)));
+        const Vec3 baffle{0.0f, 0.3f, 2.0f};
+        const Facing in_front = facingFrom(closed, baffle, {0.0f, 0.3f, 4.0f}), standing = facingFrom(closed, baffle, {0.0f, 1.65f, 4.0f});
+        const Facing round_back = facingFrom(closed, baffle, {0.0f, 0.3f, 0.0f});
+        const Facing open_back = facingFrom(combo, baffle, {0.0f, 0.3f, 0.0f});
+        check(in_front.cut_hz >= kFullRangeHz && in_front.gain > 0.99f && round_back.cut_hz < 400.0f && round_back.gain < 0.7f &&
+                  open_back.cut_hz >= 2000.0f && standing.cut_hz < 2500.0f,
+              "the listener hears a cabinet from where they stand: straight in front, full-range; behind a closed one, muffled; "
+              "behind an open one, its back; and standing 2 m in front of a combo on the floor, its beam is at your knees: "
+              "already duller (as guitarists tilt combos back for)",
+              fmt("%.0f Hz behind closed, ", round_back.cut_hz) + fmt("%.0f behind open, ", open_back.cut_hz) +
+                  fmt("%.0f standing", standing.cut_hz));
+
+        // Through the engine: noise played through the combo, heard by a flat omni mic placed about it (its track alone
+        // in the mix), the 2 to 5 kHz band against the lows.
+        Room room;
+        room.hearMix();
+        room.quietRoom(-1);
+        const int amp = room.engine.addSource(InstrumentKind::GuitarCombo, {0.0f, 0.3f, 2.0f}, 1.0f, 0.4f);
+        room.engine.setSourceMuted(amp, true);  // (its direct output out of the mix: only the mic is heard)
+        room.engine.setSourceInput(amp, true);
+        room.engine.setAmpControl(amp, AmpControl::Gain, 1.0f);  // (nearly clean, so it passes the noise as it is)
+        room.engine.setSourceRadiator(amp, combo);
+        const int mic = room.engine.addSource(InstrumentKind::Mic, at(0.0f, 0.0f, 0.03f), 1.0f, 0.0f);
+        room.engine.setSourceInput(mic, true);
+        Rng rng;
+        auto noise = [&](int64_t) { return 0.05f * rng.next(); };
+        double mids = 0.0;  // (the last one heard's, 500 Hz to 1.5 kHz)
+        auto heard = [&](Vec3 where) {
+            room.engine.setSourcePosition(mic, where);
+            renderSeconds(room.engine, 0.4, noise);
+            const Render r = renderSeconds(room.engine, 1.0, noise);
+            mids = bandDb(r.l, 48000.0f, 500.0f, 1500.0f);
+            return std::make_pair(bandDb(r.l, 48000.0f, 60.0f, 300.0f), bandDb(r.l, 48000.0f, 2000.0f, 5000.0f));
+        };
+        const auto at_cap = heard(at(0.0f, 0.0f, 0.03f));
+        const double cap_mids = mids;
+        const auto at_edge = heard(at(a, 0.0f, 0.03f));
+        check(at_cap.second - at_edge.second > 8.0 && std::fabs(at_cap.first - at_edge.first) < 3.0,
+              "a mic 3 cm from the grille: moved from the dust cap to the cone's edge, its 2 to 5 kHz fall away, its lows stay",
+              fmt("%.1f dB less 2-5 kHz, ", at_cap.second - at_edge.second) + fmt("%+.1f dB in the lows", at_edge.first - at_cap.first));
+        const auto on_axis = heard(at(0.0f, 0.0f, 1.0f));
+        const double metre_mids = mids;
+        const auto off_axis = heard(at(0.866f, 0.0f, 0.5f));
+        check(on_axis.second - off_axis.second > 8.0 && std::fabs(on_axis.first - off_axis.first) < 4.0,
+              "1 m off: on the cone's axis it is bright; 60 degrees off it, the same distance, its highs are gone and its lows aren't",
+              fmt("%.1f dB less 2-5 kHz", on_axis.second - off_axis.second));
+        const double closer = cap_mids - metre_mids, lows_closer = at_cap.first - on_axis.first;
+        const double piston_says = db(radiate(combo, 0, at(0.0f, 0.0f, 0.03f), ref).nearness / radiate(combo, 0, at(0.0f, 0.0f, 1.0f), ref).nearness);
+        check(std::fabs(closer - piston_says) < 3.0 && lows_closer > closer,
+              "from 1 m to the grille it gets louder as a cone's near field has it (levelling off, where a point would keep "
+              "rising: 23.4 dB from 7 cm), and fuller: close up, no lows lost to the room behind it, nor to its open back",
+              fmt("%.1f dB in the mids (", closer) + fmt("the near field: %.1f), ", piston_says) + fmt("%.1f in the lows", lows_closer));
+        // The listener, in front of and then behind a closed 4x12, 2 m off: behind, its highs are shadowed by the box.
+        Room stage;
+        stage.quietRoom(-1);
+        const int stack = stage.engine.addSource(InstrumentKind::GuitarStack, {0.0f, 0.55f, 0.0f}, 1.0f, 0.0f);
+        stage.engine.setSourceInput(stack, true);
+        stage.engine.setAmpControl(stack, AmpControl::Gain, 1.0f);
+        Radiator four;
+        four.cones = 4;
+        for (int c = 0; c < 4; ++c) four.cone[size_t(c)] = {c % 2 == 0 ? -0.165f : 0.165f, c < 2 ? 0.72f : 0.38f, -0.04f};
+        four.inches = 12.0f;
+        four.width = 0.76f;
+        stage.engine.setSourceRadiator(stack, four);
+        auto listened = [&](float z, float yaw) {
+            stage.face(0.0f, z, yaw);
+            renderSeconds(stage.engine, 0.4, noise);
+            const Render r = renderSeconds(stage.engine, 1.0, noise);
+            return bandDb(r.l, 48000.0f, 2000.0f, 5000.0f) - bandDb(r.l, 48000.0f, 60.0f, 300.0f);
+        };
+        const double tilt_front = listened(2.0f, 0.0f), tilt_behind = listened(-2.0f, 3.14159f);
+        check(tilt_front - tilt_behind > 10.0, "standing behind a closed 4x12 its highs are shadowed: far duller than in front",
+              fmt("%.1f dB duller", tilt_front - tilt_behind));
+        // A mic close to one of its cones, then as close to the middle between all four.
+        const int mic4 = stage.engine.addSource(InstrumentKind::Mic, {-0.165f, 0.72f, 0.03f}, 1.0f, 0.0f);
+        stage.engine.setSourceInput(mic4, true);
+        stage.engine.setSourceMuted(stack, true);
+        stage.hearMix();
+        Room* staged = &stage;
+        auto heard4 = [&](Vec3 where) {
+            staged->engine.setSourcePosition(mic4, where);
+            renderSeconds(staged->engine, 0.4, noise);
+            const Render r = renderSeconds(staged->engine, 1.0, noise);
+            return std::make_pair(bandDb(r.l, 48000.0f, 60.0f, 300.0f), bandDb(r.l, 48000.0f, 2000.0f, 5000.0f));
+        };
+        const auto on_cone = heard4({-0.165f, 0.72f, 0.03f}), between = heard4({0.0f, 0.55f, 0.03f});
+        check(on_cone.second - between.second > 6.0,
+              "close to a 4x12, in front of one cone it is bright; between the four, off every cone's axis, it is dull",
+              fmt("%.1f dB less 2-5 kHz between them", on_cone.second - between.second));
     }
 
     {

@@ -120,6 +120,7 @@ struct PedalBoard {
     std::array<Pedal*, kMaxPedals> pedals{};
     std::array<int8_t, kMaxPedals> slots{};  // (inserts: the slot each is in)
     int count = 0;
+    int front = 0;  // an amp's: how many come before it; the rest are in its effects loop, after its preamp
 };
 
 // The tuner keeps what it hears where the game thread can look at it.

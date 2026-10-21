@@ -17,7 +17,10 @@
 // response, which is the speaker's to the room. They are filters, rather than recorded impulses, so they cost almost
 // nothing. The drive stages run at twice the sample rate so the distortion doesn't fold harsh tones back down.
 // In front of each amp is a board of effect pedals (pedals.h), the loop pedal among them if it has one: the input
-// goes through them in order, and the amp plays what comes out.
+// goes through them in order, and the amp plays what comes out. The last of them can be in the amp's effects loop
+// instead: a series loop, as most amps have one, sent out after the preamp and its tone stack and returned before the
+// power amp (its presence and master), so a delay or a reverb there repeats the amp's distortion rather than being
+// distorted by it.
 
 #include <array>
 #include <vector>
@@ -44,7 +47,14 @@ public:
     void setHead(AmpHead head, bool on);
     void setCabinet(AmpCabinet cabinet, bool on);
     void setControl(AmpControl control, float value);  // 0 to 10
-    void process(float* io, int n);
+    void process(float* io, int n) {
+        preamp(io, n);
+        power(io, n);
+    }
+    // The two halves either side of the effects loop: the preamp (its drive and tone stack), and the power amp (its
+    // presence and master) and the cabinet.
+    void preamp(float* io, int n);
+    void power(float* io, int n);
 
 private:
     struct Voicing {

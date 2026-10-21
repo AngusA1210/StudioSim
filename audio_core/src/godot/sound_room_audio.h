@@ -75,6 +75,10 @@ public:
     void set_mic_mid_side(int id, bool mid_side, float width = 1.0f);
     float get_mic_noise(const String& model) const;  // its noise and its preamp's, as a sound level (dB SPL)
     void set_source_pan(int id, float pan);
+    // An amp's cabinet in the room (AudioEngine::setSourceRadiator): its cones' middles, the way its baffle faces, the
+    // speakers' size in inches, its open back's middle (if open), the baffle's width. No cones: a point source again.
+    void set_source_radiator(int id, const PackedVector3Array& cones, const Vector3& facing, float inches, bool open_back,
+                             const Vector3& back, float width);
     void set_source_output(int id, int bus);  // a bus's id (a source added as "bus"), or -1 for the master
     void set_source_input_channel(int id, int channel);  // live sources: 0-based hardware input, or -1 for all
     // Whether a source takes input: an instrument plays what MIDI controllers send, a live source plays its
@@ -102,10 +106,12 @@ public:
     // or a second loop pedal).
     int add_pedal(int id, const String& kind, int at);
     bool remove_pedal(int id, int index);
-    bool move_pedal(int id, int from, int to);
+    bool move_pedal(int id, int from, int to, int loop = -1);  // `loop`: how many are in the effects loop after (-1: as left)
+    bool set_pedal_loop(int id, int loop);  // how many of the board's pedals, at its end, are in the amp's effects loop
+    int get_pedal_loop(int id) const;
     // A second of a pedal (a Plug-in pedal's plug-in and its settings too) on this amp's board or another's, at `at`
     // (-1: the end). Where it went, or -1, with the reason in get_error().
-    int copy_pedal(int from_id, int index, int to_id, int at);
+    int copy_pedal(int from_id, int index, int to_id, int at, int loop = -1);
     void set_pedal_on(int id, int index, bool on);
     void set_pedal_control(int id, int index, int control, float value);  // knobs 0 to 10, switches 0 or 1
     // [{kind, on, controls: [5 numbers], plugin_id, plugin_name, plugin_maker, editor_open}]
@@ -153,8 +159,8 @@ public:
     void set_plugin_parameter(int id, const String& place, int index, int param, float value);
     void notify_plugin_parameter(int id, const String& place, int index, int param);
     void set_send(int id, int slot, int bus, float gain, bool pre, bool on);
-    void set_master_automation(const Array& volume);  // [[step, dB]]
-    void set_master_automation_read(bool read);
+    void set_master_automation(const Array& volume, const String& which = "mix");  // [[step, dB]]; "mix" or "room"
+    void set_master_automation_read(bool read, const String& which = "mix");
     int get_max_sends() const { return sr::AudioEngine::kMaxSends; }
     // Preset files as every Audio Unit host shares them (.aupreset): writing a plug-in's settings under a name (false
     // with the reason in get_error()), and reading one back: {plugin_id, name, state}, or {} if it can't be read.
@@ -169,12 +175,13 @@ public:
     void set_reverb_level(float gain);  // the room reverb's return: 1 as the room has it, 0 none, up to 4
     void set_master_volume(float gain);  // the master fader: after the limiter, as on a DAW's master track
     // The room and the mix (see AudioEngine::setMonitor): the room's master, which the main outputs play ("room" or
-    // "mix"), the mix on outputs of its own too (-1: none), the bus whose inserts are the mix master's; an
-    // instrument's level in the room and its mute there, and its meter there.
+    // "mix"), a master on outputs of its own too (-1: none), the bus whose inserts are a master's; an instrument's
+    // level in the room and its mute there, and its meter there.
     void set_room_volume(float gain);
     void set_monitor(const String& which);
     void set_mix_output(int left, int right);
-    void set_master_inserts(int bus);
+    void set_master_output(int left, int right, const String& which);
+    void set_master_inserts(int bus, const String& which = "mix");
     void set_source_room_gain(int id, float gain);
     void set_source_room_muted(int id, bool muted);
     float get_source_room_level(int id) const;
@@ -182,6 +189,7 @@ public:
     // How many decibels quieter a source gets for each doubling of distance beyond 1.5 m (6 by default: inverse square).
     void set_distance_falloff(float db_per_doubling);
     void set_limiter(bool on);  // off = the plain sum of the mix; either way the output is cut off at full scale
+    void set_master_limiter(bool on, const String& which);  // one master's ("mix" or "room")
     // The output meter since it was last read: {peak_l, peak_r, rms_l, rms_r, limiter_gain} as linear levels
     // (1 = full scale; limiter_gain 1 = the limiter did nothing) and {clipped}, a count of samples cut off.
     Dictionary read_meter();

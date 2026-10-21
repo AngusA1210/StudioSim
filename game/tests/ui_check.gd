@@ -763,6 +763,22 @@ func _run() -> void:
 	await frames(3)
 	check(amp.pedals.size() == 3 and amp.pedals[2].kind == "overdrive" and absf(amp.pedals[2].controls[0] - amp.pedals[1].controls[0]) < 0.01 and
 		amp.pedals[2].on == amp.pedals[1].on and panel.selected == 2, "dropped with Option held, a second overdrive goes in, its knobs set the same")
+	# The amp's effects loop, after its PREAMP: a pedal dragged into it goes in it; one dragged back comes out in front.
+	await mouse_drag(panel._tiles[2].panel.get_global_rect().get_center(), panel._loop_add.get_global_rect().get_center())
+	await frames(3)
+	var looped_in: bool = amp.pedals[2].get("in_loop", false) and audio.get_pedal_loop(amp.source_id) == 1 and panel.front_count() == 2 and \
+		panel._loop_box.is_ancestor_of(panel._tiles[2].panel)
+	panel.drop_pedal({"pedal": true, "inst": amp, "index": 2}, 0, false, false)
+	await frames(3)
+	var out_again: bool = amp.pedals[0].kind == "overdrive" and not amp.pedals[0].get("in_loop", false) and audio.get_pedal_loop(amp.source_id) == 0
+	panel._on_add_pressed(true)
+	panel._add_menu.id_pressed.emit(order.find("delay"))
+	panel._add_menu.hide()
+	await frames(3)
+	check(looped_in and out_again and amp.pedals.size() == 4 and amp.pedals[3].kind == "delay" and amp.pedals[3].get("in_loop", false),
+		"a pedal dragged past the PREAMP goes in the amp's effects loop, and dragged back comes out in front; the loop's + adds one in it")
+	main.remove_pedal(amp, 3)
+	panel.selected = 0
 	await click(panel._remove.get_global_rect().get_center())
 	panel.selected = 0
 	await click(panel._board_toggle.get_global_rect().get_center())
@@ -1060,10 +1076,21 @@ func _run() -> void:
 		"every instrument has a pan pot in the mix (as Pro Tools reads it, <50), and its pan can be automated", main.mixer.PanControl.readout(drums.pan))
 	drums_pan.value_changed.emit(0.0)
 	await click(mix._master.hear.get_global_rect().get_center())
+	await frames(2)
 	var heard_mix: bool = main.settings.monitor == "mix" and mix._master.hear.button_pressed and not mix._room.hear.button_pressed
+	mix.close()  # (the screen's own label is under the window while it's open)
+	await frames(2)
+	var mix_chip: String = main.hud._monitor_chip.text
+	mix.open()
 	await tap(KEY_H)
-	check(heard_mix and main.settings.monitor == "room" and mix._room.hear.button_pressed,
-		"HEAR on the mix's master has the main outputs play the mix, and H goes back to the room")
+	mix.close()
+	await frames(2)
+	var room_chip: String = main.hud._monitor_chip.text
+	mix.open()
+	await frames(2)
+	check(heard_mix and main.settings.monitor == "room" and mix._room.hear.button_pressed and mix_chip == "HEADPHONE MIX" and room_chip == "ROOM",
+		"HEAR on the mix's master has the main outputs play the mix (the screen says HEADPHONE MIX), and H goes back to the room (ROOM)",
+		"%s, %s" % [mix_chip, room_chip])
 	await click(mix._master.inserts[0].button.get_global_rect().get_center())
 	check(picker.visible and picker._title.text == "Insert A on the Mix Master", "the mix's master has inserts too", picker._title.text)
 	picker._search.text = "audelay"
@@ -1073,6 +1100,34 @@ func _run() -> void:
 	check(main.master_track.inserts[0].plugin_name == "AUDelay" and mix._master.inserts[0].button.text == "AUDelay" and
 		main.automation.plugin_params(main.master_track).size() == 1, "a plug-in on it plays on the whole mix, its controls automatable", mix._master.inserts[0].button.text)
 	main.clear_insert(main.master_track, 0)
+	# The room's master is a master as the mix's is: inserts, its own outputs, its own limiter; both crimson to begin with,
+	# and renamed and coloured as a track is.
+	await click(mix._room.inserts[0].button.get_global_rect().get_center())
+	var room_insert_title: String = picker._title.text
+	picker._search.text = "audelay"
+	picker._search.text_changed.emit("audelay")
+	picker._search.text_submitted.emit("audelay")
+	await frames(3)
+	var room_insert: String = main.room_master_track.inserts[0].plugin_name
+	main.clear_insert(main.room_master_track, 0)
+	main.set_master_output("room", 2)
+	var room_out: int = main.master_output("room")
+	main.set_master_output("room", -1)
+	await click(mix._room.limiter.get_global_rect().get_center())
+	var room_limit_off: bool = not main.settings.room_limiter and main.settings.limiter
+	await click(mix._room.limiter.get_global_rect().get_center())
+	check(room_insert_title == "Insert A on the Room Master" and room_insert == "AUDelay" and room_out == 2 and room_limit_off and main.settings.room_limiter,
+		"the room's master has inserts, outputs of its own and a limiter of its own, as the mix's has", room_insert_title)
+	var crimson: Color = main.master_track.CRIMSON
+	var both_crimson: bool = main.master_track.color == crimson and main.room_master_track.color == crimson and mix._room.plate.get_meta("color") == crimson
+	main.set_track_color(main.room_master_track, main.TRACK_COLORS[8][1])
+	main.rename_track(main.room_master_track, "Live Room")
+	await frames(2)
+	check(both_crimson and mix._room.plate.text == "Live Room" and mix._room.plate.get_meta("color") == main.TRACK_COLORS[8][1] and
+		main.edit_window.view.tracks().has(main.room_master_track) and main.edit_window.view.tracks().back() == main.master_track,
+		"both masters are crimson to begin with, and can be renamed and coloured; both have rows at the foot of the edit window", mix._room.plate.text)
+	main.set_track_color(main.room_master_track, crimson)
+	main.rename_track(main.room_master_track, "Room Master")
 	# The meters read before the fader unless a fader's right-click menu says after: the pad turned down 20 dB still reads
 	# as loud before its fader.
 	mix._on_fader_changed(-20.0, pad)
@@ -1709,8 +1764,8 @@ func _run() -> void:
 	var view = edit.view
 	check(main.hud.keys_prompt().contains("Tab  mix window  ·  R  edit window"), "the screen says R opens the edit window, beside Tab for the mix window",
 		main.hud.keys_prompt())
-	check(edit.is_open() and view.tracks().size() == 7 and view.tracks().back() == main.master_track and not main.hud._root.visible,
-		"R opens the edit window: a track for each instrument, and the master at the foot")
+	check(edit.is_open() and view.tracks().size() == 8 and view.tracks().back() == main.master_track and view.tracks()[-2] == main.room_master_track and
+		not main.hud._root.visible, "R opens the edit window: a track for each instrument, and the masters at the foot (the room's, then the mix's)")
 	check(edit._panel.get_combined_minimum_size().x <= main.get_viewport().get_visible_rect().size.x - 24.0,
 		"its buttons all fit across the window", "%.0f px wide" % edit._panel.get_combined_minimum_size().x)
 	await tap(KEY_SPACE)
@@ -2666,6 +2721,22 @@ func _run() -> void:
 	check(absf(master_shown + 6.0) < 0.1 and is_equal_approx(main.master_volume_db, 0.0), "the master fader shows its automation where the playhead is (the fader itself left as it was)",
 		"%.1f dB" % master_shown)
 
+	print("Amps' speakers")
+	var stack_amp = main.add_instrument("guitar_stack", Vector3(-2.0, 0.0, 1.0))
+	var amp_mic = main.add_instrument("mic_dynamic", Vector3(-2.3, 0.0, 1.6))
+	await frames(2)
+	var stack_speakers: Dictionary = stack_amp.speakers_in_room()
+	main.aim_mic(amp_mic, stack_amp)
+	await frames(2)
+	var aimed: Dictionary = main.mic_panel.on_axis(amp_mic, main.instruments)
+	var nearest_cone: Vector3 = stack_amp.sound_point(amp_mic.global_position)
+	check(stack_speakers.cones.size() == 4 and stack_speakers.back == null and aimed.get("name", "") == stack_amp.display_name and
+		float(aimed.get("off", 90.0)) < 1.0 and stack_speakers.cones.has(nearest_cone) and stack_speakers.facing.is_equal_approx(stack_amp.global_transform.basis.z),
+		"a 4x12's four speakers are where its grille shows them (its back closed); a mic pointed at it points at the nearest cone's dust cap",
+		"%.1f degrees off its axis" % float(aimed.get("off", 90.0)))
+	main.remove_instrument(amp_mic)
+	main.remove_instrument(stack_amp)
+
 	print("Aux tracks and sends")
 	var aux = main.add_aux()
 	var drums_send = main.find_instrument("drums")
@@ -2694,9 +2765,26 @@ func _run() -> void:
 	check(aux_heard > 0.001 and drums_send.sends[0].pre and is_equal_approx(float(drums_send.sends[0].level_db), -6.0) and
 		auto.params_for(drums_send).has("send:0"), "it plays into the aux (its meter reads it), before the fader or after, at a level that can be automated too",
 		"%.0f dBFS" % linear_to_db(maxf(aux_heard, 1e-9)))
+	# A send dragged sideways onto another track's send moves there, its automation with it; with Option, a copy.
+	var pad_send = main.find_instrument("pad")
+	drums_send.automation["send:0"] = [[0.0, -6.0], [16.0, -12.0]]
+	var send_data = main.mixer._send_drag_data(Vector2.ZERO, drums_send, 0, drums_send_strip.sends[0].button)
+	var send_can: bool = main.mixer._send_can_drop(Vector2.ZERO, send_data, pad_send, 1)
+	main.mixer.drop_send(send_data, pad_send, 1, false)
+	await frames(2)
+	check(send_data != null and send_can and drums_send.sends[0].is_empty() and pad_send.sends[1].get("aux") == aux and pad_send.sends[1].get("pre", false) and
+		pad_send.automation.has("send:1") and not drums_send.automation.has("send:0"),
+		"a send dragged sideways onto another track's send moves there (before the fader still), its automation with it")
+	main.mixer.drop_send({"send": true, "inst": pad_send, "slot": 1}, drums_send, 0, true)  # with Option held
+	await frames(2)
+	check(pad_send.sends[1].get("aux") == aux and drums_send.sends[0].get("aux") == aux and drums_send.automation.has("send:0") and
+		not main.mixer._send_can_drop(Vector2.ZERO, {"send": true, "inst": pad_send, "slot": 1}, aux, 0),
+		"with Option held a second of it goes there instead; and a send can't go to the aux it plays into")
+	main.set_send(pad_send, 1, null)
+	pad_send.automation.erase("send:1")
 
 	main.mixer.close()
-	check(view.tracks().has(aux) and view.tracks().find(aux) == view.tracks().size() - 2, "the aux has a row in the edit window, after the tracks")
+	check(view.tracks().has(aux) and view.tracks().find(aux) == view.tracks().size() - 3, "the aux has a row in the edit window, after the tracks")
 	var aux_row: int = view.tracks().find(aux)
 	view.scroll_y = clampf(view.row_top(aux_row) + view.scroll_y - view.RULER, 0.0, view._most_scroll())
 	var empty_at := Vector2(view.x_of(6.0), view.row_top(aux_row) + view.ROW / 2.0)

@@ -24,6 +24,7 @@
 #include "pedals.h"
 #include "plugin_host.h"
 #include "plugin_synth.h"
+#include "radiation.h"
 #include "recorder.h"
 #include "wav.h"
 #include "room_geometry.h"
@@ -102,6 +103,7 @@ struct MeterReading {
 struct PedalStatus {
     PedalKind kind = PedalKind::Overdrive;
     bool on = true;
+    bool in_loop = false;  // in the amp's effects loop, after its preamp
     PedalControls controls{};
     // The Plug-in pedal: what it holds (empty: nothing yet), and whether its window is open.
     PluginDescription plugin;
@@ -270,6 +272,10 @@ public:
     void setMicCapsule(int id, int capsule, Vec3 position);
     void setMicMidSide(int id, bool mid_side, float width = 1.0f);
     void setSourcePan(int id, float pan);  // (a microphone's track: the instruments are placed by where they stand)
+    // A loudspeaker cabinet's cones (an amp's: radiation.h), in the room: each heard by the microphones on its own way,
+    // beaming, with its near field and its open back; and the cabinet heard by the listener from where they stand
+    // against its baffle (its position should be the middle of the baffle). No cones: a point source again.
+    void setSourceRadiator(int id, const Radiator& radiator);
     static constexpr float kSpeedOfSound = 343.0f;  // metres a second
     static constexpr float kMicNearest = 0.1f;      // metres: no closer than this, for the level
     static constexpr float kProximityNearest = 0.02f;  // and for the proximity effect
@@ -301,17 +307,23 @@ public:
     bool looperAction(int id, Looper::Action action);
     LooperStatus looperStatus(int id) const;
 
-    // The effect pedals in front of an amp (pedals.h), up to kMaxPedals, numbered in the order the signal passes
-    // through them. A new pedal is switched on, with its controls where they start. Each call takes effect at the next
-    // block; pedals taken off the board are freed once the audio thread has let go of them.
-    // Where it went, or -1: not an amp, the board is full, or a second loop pedal.
+    // The effect pedals of an amp (pedals.h), up to kMaxPedals, numbered in the order the signal passes through them:
+    // those in front of the amp, then those in its effects loop (a series loop, as most amps have it: sent out after
+    // the preamp and its tone stack, returned before the power amp, so they work on the amp's own sound, distortion
+    // and all), the last `loop` of the board. A new pedal is switched on, with its controls where they start. Each
+    // call takes effect at the next block; pedals taken off the board are freed once the audio thread has let go of them.
+    // Where it went, or -1: not an amp, the board is full, or a second loop pedal. One put in at the loop's first place
+    // goes in front of the amp; further in, in the loop. `loop` (-1: as that leaves it) says how many are in the loop
+    // after a move or a copy, so that a pedal can go from one side of the amp to the other in one step.
     int addPedal(int id, PedalKind kind, int at = -1);
     bool removePedal(int id, int index);
-    bool movePedal(int id, int from, int to);
+    bool movePedal(int id, int from, int to, int loop = -1);
     // A second of a pedal, as Option-dragging one does: the same kind, switched the same way, with the same controls
     // (a Plug-in pedal holds the same plug-in, with the same settings), put on this amp's board or another's at `at`
     // (-1: the end). A loop pedal comes without its loop. Where it went, or -1 with the reason.
-    int copyPedal(int from_id, int index, int to_id, int at, std::string* error);
+    int copyPedal(int from_id, int index, int to_id, int at, std::string* error, int loop = -1);
+    bool setPedalLoop(int id, int loop);  // how many of the board's pedals, at its end, are in the effects loop
+    int pedalLoop(int id) const;
     void setPedalOn(int id, int index, bool on);
     void setPedalControl(int id, int index, int control, float value);
     std::vector<PedalStatus> pedals(int id) const;
@@ -376,16 +388,20 @@ public:
     // through the room's master. The MIX is what the tracks put out, as a DAW's stereo bus: each instrument's direct
     // output (its sound as it leaves the instrument, through its inserts, its fader and its pan: as a DI or a line out
     // would give it), each microphone's track, the folders and aux tracks, through the master's inserts (a bus marked
-    // with setMasterInserts) and the master fader (its automation). The microphones hear the room. What the main
-    // outputs play is one or the other (setMonitor); the mix can also go to outputs of its own (setMixOutput).
+    // with setMasterInserts) and the master fader (its automation). The microphones hear the room. Each master is a
+    // master as a DAW has one: its inserts, its limiter, its fader and its automation. What the main outputs play is
+    // one or the other (setMonitor); either can also go to outputs of its own (setMasterOutput).
     // The master fader, after the limiter as on a DAW's master track: the limiter's inserts come before the fader, so
     // how hard it works doesn't depend on where the fader sits. 1 = normal; above 1 the output can clip again.
     void setMasterVolume(float gain);
     void setRoomVolume(float gain);  // the room's master
     enum class Monitor : uint8_t { Room, Mix };
     void setMonitor(Monitor monitor);
-    void setMixOutput(int left, int right);  // the mix on these outputs too (-1: on none but the main ones, if monitored)
-    void setMasterInserts(int bus);  // a bus (InstrumentKind::Bus) whose inserts are the mix master's, not played as a bus
+    // A master on these outputs too (-1: on none but the main ones, while monitored).
+    void setMasterOutput(int left, int right, Monitor which = Monitor::Mix);
+    void setMixOutput(int left, int right) { setMasterOutput(left, right, Monitor::Mix); }
+    // A bus (InstrumentKind::Bus) whose inserts are a master's, not played as a bus.
+    void setMasterInserts(int bus, Monitor which = Monitor::Mix);
     // A source's level in the room (1: as it was made, heard 1.5 m away), and its mute there (the microphones hear
     // neither, then). setSourceGain, setSourceMuted and setSourceSoloMuted are its direct output's, in the mix.
     void setSourceRoomGain(int id, float gain);
@@ -394,10 +410,11 @@ public:
     // decibels. The default, 6, is the inverse square law; less keeps levels more even as the listener moves about.
     // Within the reference distance a source is at its own level and gets no louder, however close.
     void setDistanceFalloff(float db_per_doubling);
-    // The limiter keeps the mix from ever reaching full scale on its way into the master fader. With it off the
-    // output is what the mix adds up to. Either way, anything leaving the master fader over full scale is cut off
-    // (and counted by the meter).
+    // A master's limiter keeps its sound from ever reaching full scale on its way into its fader. With it off it is
+    // what the sound adds up to. Either way, anything the main outputs play over full scale is cut off (and counted by
+    // the meter). setLimiter switches both masters'.
     void setLimiter(bool on);
+    void setMasterLimiter(bool on, Monitor which);
     MeterReading readMeter();  // the output meter; reading it starts a new measurement
 
     // ── The sequencer ────────────────────────────────────────────────────────────────────────────────────
@@ -432,9 +449,9 @@ public:
     // output is; before its fader (`pre`), the track's own sound, straight, in both ears. Off, it sends nothing.
     static constexpr int kMaxSends = 5;
     void setSend(int id, int slot, int bus, float gain, bool pre, bool on);
-    // The master fader's automation (dB, as a track's volume), and whether it is read.
-    void setMasterAutomation(const std::vector<AutoPoint>& volume);
-    void setMasterAutomationRead(bool read);
+    // A master fader's automation (dB, as a track's volume), and whether it is read.
+    void setMasterAutomation(const std::vector<AutoPoint>& volume, Monitor which = Monitor::Mix);
+    void setMasterAutomationRead(bool read, Monitor which = Monitor::Mix);
     // An audio file's loudest sample in each `1 / per_second` of a second, for drawing its clips (read once and kept).
     std::vector<float> audioPeaks(const std::string& path, double per_second);
     double audioSeconds(const std::string& path);  // 0 if it can't be read
@@ -493,8 +510,9 @@ public:
 
     // Renders interleaved stereo. `input` holds the audio captured over the same frames, interleaved with
     // `input_channels` channels (or null). Called through renderDevice, or directly for offline rendering.
-    // `mix_out`, if given, takes the mix as well (interleaved stereo), for outputs of its own.
-    void render(const float* input, int input_channels, float* stereo, int frames, float* mix_out = nullptr);
+    // `mix_out` and `room_out`, if given, take the mix and the room as well (interleaved stereo), for outputs of their
+    // own.
+    void render(const float* input, int input_channels, float* stereo, int frames, float* mix_out = nullptr, float* room_out = nullptr);
     void render(const float* mono_input, float* stereo, int frames) { render(mono_input, mono_input ? 1 : 0, stereo, frames); }
     void render(float* stereo, int frames) { render(nullptr, 0, stereo, frames); }
     // What the device callback calls: any channel layout in and out, with the mix placed on the chosen outputs.
@@ -511,7 +529,7 @@ private:
             SequencerRunning, Tempo, Swing, Click, ClickVolume, Reverb2, SourceGain, Falloff, LimiterOn,
             AmpKnob, AmpHeadSet, AmpCabinetSet, LooperMemory, LooperAct, PedalBoardSet, PedalOn, PedalControl, SynthPlugin,
             TimelinePlay, TimelineLoop, TrackSet, RecordArm, RecordStart, RecordStop, SourceOutput, AutomationRead, SendSet,
-            MasterAutomation, MasterRead, SourceSoloMuted, MicPath, MicModelSet, MicAim, SourcePan, MicMidSide,
+            MasterAutomation, MasterRead, SourceSoloMuted, MicPath, MicCone, SourceFacing, MicModelSet, MicAim, SourcePan, MicMidSide,
             SourceRoomGain, SourceRoomMuted, RoomVolume, MonitorSet, MasterInserts,
         } type = AddSource;
         int id = 0;
@@ -551,6 +569,7 @@ private:
     void updatePaths();
     void updateMicPaths(Source& source);  // how its sound reaches each microphone (or, a microphone, how each reaches it)
     void updateMicPath(const Source& mic, const Source& source);
+    void updateFacing(Source& s);  // a loudspeaker as the listener hears it from where they are
     void playSource(size_t index, float binaural_from, float glide, float wall_glide, float mute_coef);
     void playClips(Source& source, int from);  // a track's audio clips this block, into its playback
     void soundAs(Source& mic, int capsule, int model_index, int pattern_index);  // a microphone capsule's model, ready to play
@@ -562,14 +581,14 @@ private:
     void step(int64_t index, double at, double step_samples) override;
     struct Automating;               // a source's fader and mute, as its automation has them while it plays (engine.cpp)
     void applyParams(Source& s, double at);  // its controls' automation, where the music is
-    // The master fader's automation: the game thread's, and the audio thread's copy (replaced, the old one freed once
-    // it has been let go, as tracks' are).
-    std::unique_ptr<std::vector<AutoPoint>> master_auto_;
-    std::vector<AutoPoint>* master_auto_rt_ = nullptr;
-    std::vector<std::pair<std::unique_ptr<std::vector<AutoPoint>>, uint32_t>> retired_master_;
-    uint32_t master_sent_ = 0;
-    std::atomic<uint32_t> master_applied_{0};
-    bool master_read_ = true;
+    // The masters' faders' automation (each indexed by its Monitor): the game thread's, and the audio thread's copy
+    // (replaced, the old one freed once it has been let go, as tracks' are).
+    std::array<std::unique_ptr<std::vector<AutoPoint>>, 2> master_auto_;
+    std::array<std::vector<AutoPoint>*, 2> master_auto_rt_{};
+    std::array<std::vector<std::pair<std::unique_ptr<std::vector<AutoPoint>>, uint32_t>>, 2> retired_master_;
+    std::array<uint32_t, 2> master_sent_{};
+    std::array<std::atomic<uint32_t>, 2> master_applied_{};
+    std::array<bool, 2> master_read_{true, true};
     void chaseSustain(double step);  // the sustain pedals as their automation has them where the music starts
 
     int sr_, block_;
@@ -615,10 +634,10 @@ private:
     float master_target_ = 1.0f, master_gain_ = 1.0f;
     float room_target_ = 1.0f, room_volume_ = 1.0f;  // the room's master
     Monitor monitor_ = Monitor::Room;
-    int master_bus_ = -1;  // the bus carrying the mix master's inserts
+    std::array<int, 2> master_bus_{-1, -1};  // the buses carrying the masters' inserts (by Monitor)
     float room_ms_l_ = 0.0f, room_ms_r_ = 0.0f, mix_ms_l_ = 0.0f, mix_ms_r_ = 0.0f;
     float falloff_target_, falloff_;
-    bool limiter_on_ = true;
+    std::array<bool, 2> limiter_on_{true, true};  // each master's (by Monitor)
     float meter_ms_l_ = 0.0f, meter_ms_r_ = 0.0f;  // running mean squares for the meter
     Sequencer sequencer_;
     Rng rng_{0x6C078965u};  // for notes that only play some of the time
@@ -636,7 +655,7 @@ private:
     std::vector<float> mix_l_, mix_r_, send_, rev_l_, rev_r_, rev2_l_, rev2_r_, click_;
     std::vector<float> room_l_, room_r_;  // the room, as you hear it standing there
     std::vector<float> out_l_, out_r_;    // what the main outputs play (the room or the mix), and the mix, for its outputs
-    std::vector<float> mix_tap_l_, mix_tap_r_;
+    std::vector<float> mix_tap_l_, mix_tap_r_, room_tap_l_, room_tap_r_;
     InputBus input_bus_;               // this block's captured audio, per hardware input
     std::vector<float> input_fifo_;    // captured frames (interleaved) waiting to be rendered
     int fifo_channels_ = 0;
@@ -647,7 +666,7 @@ private:
 
     // Shared between threads
     std::array<std::atomic<float>, kSourceSlots> levels_{}, peaks_{}, pre_levels_{}, pre_peaks_{}, room_levels_{}, room_peaks_{};
-    std::atomic<int> mix_out_left_{-1}, mix_out_right_{-1};
+    std::atomic<int> mix_out_left_{-1}, mix_out_right_{-1}, room_out_left_{-1}, room_out_right_{-1};
     std::atomic<float> room_peak_l_{0.0f}, room_peak_r_{0.0f}, room_rms_l_{0.0f}, room_rms_r_{0.0f};
     std::atomic<float> mix_peak_l_{0.0f}, mix_peak_r_{0.0f}, mix_rms_l_{0.0f}, mix_rms_r_{0.0f};
     std::atomic<float> cpu_load_{0.0f};

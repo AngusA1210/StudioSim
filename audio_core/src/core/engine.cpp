@@ -177,6 +177,7 @@ struct AudioEngine::Source {
         PedalControls controls{};
     };
     std::vector<PedalSlot> pedals;
+    int fx_loop = 0;  // how many of them, at the end, are in the effects loop
     // Any source's inserts: one plug-in, or none, in each slot. The audio thread plays through `insert_board`, the
     // ones there are in slot order. Both boards' orders are numbered from the same count.
     std::array<PedalSlot, kMaxInserts> inserts;
@@ -212,7 +213,17 @@ struct AudioEngine::Source {
     float room_gain = 1.0f, room_gain_target = 1.0f;
     float room_mute = 1.0f, room_mute_target = 1.0f;
     std::vector<float> room;
-    int master_role = 0;  // a bus carrying a master's inserts (1: the mix's), not played as a bus (the audio thread's)
+    // A loudspeaker cabinet (an amp's): its cones, where the game put them (the game thread's: radiation.h). The listener
+    // hears it through a low-pass and a level for where they stand against its baffle (glided), and the room's reverb
+    // hears its power response, duller than on its axis (a one-pole's corner; 0 for none): the audio thread's, as is the
+    // cones' radius, for how flat their waves are close up.
+    Radiator radiator;
+    bool facing_sent = false, mic_cones = false;  // (the game thread's: the listener's and the mics' side told it has cones)
+    float facing_cut = 20000.0f, facing_cut_target = 20000.0f, facing_gain = 1.0f, facing_gain_target = 1.0f;
+    bool facing = false;
+    EqFilter facing_lp;
+    float power_cut = 0.0f, power_state = 0.0f, cone_radius = 0.0f;
+    int master_role = 0;  // a bus carrying a master's inserts (1 + its Monitor), not played as a bus (the audio thread's)
     // A source in the room: its sound there (after its fader and mute), the last kHistory samples, for microphones to
     // hear as late as it reaches them.
     static constexpr size_t kHistory = size_t(1) << 16;  // 1.4 s at 48 kHz: 470 m of air
@@ -225,6 +236,20 @@ struct AudioEngine::Source {
         Vec3 from{0.0f, 0.0f, 1.0f}, from_target{0.0f, 0.0f, 1.0f};  // the way it arrives from (towards where it bends round)
         float low = 0.0f, below_high = 0.0f;
         float near_in = 0.0f, near_out = 0.0f;  // the proximity effect's filter
+        // A loudspeaker cabinet is heard by its cones (and its open back), each its own way (radiation.h): how long,
+        // how near, its level, its filters (the beaming and the place on the cone, the near field's lows, the dust
+        // cap's bite), the way it arrives from, all glided; each with its own filters' and band split's state. The
+        // walls' dulling is the source's (band). None: heard as a point, as above.
+        struct Way {
+            float distance = -1.0f, distance_target = 0.0f, nearness = 1.0f, nearness_target = 1.0f;
+            float gain = 0.0f, gain_target = 0.0f, cut = 20000.0f, cut_target = 20000.0f;
+            float low_db = 0.0f, low_target = 0.0f, high_db = 0.0f, high_target = 0.0f;
+            Vec3 from{0.0f, 0.0f, 1.0f}, from_target{0.0f, 0.0f, 1.0f};
+            float low = 0.0f, below_high = 0.0f, near_in = 0.0f, near_out = 0.0f;
+            std::array<EqFilter, 3> filters{};
+        };
+        int ways = 0;
+        std::array<Way, kMaxRadiatedPaths> way;
     };
     // A microphone's model, as the audio thread plays it: its pattern band by band, what of the reverb it hears band by
     // band, its response on axis, its sensitivity, its noise (its own and its preamp's, as a white noise's amplitude).
@@ -318,7 +343,7 @@ AudioEngine::~AudioEngine() {
 
 void AudioEngine::allocateBuffers() {
     for (auto* buf : {&mix_l_, &mix_r_, &send_, &rev_l_, &rev_r_, &rev2_l_, &rev2_r_, &click_, &room_l_, &room_r_, &out_l_, &out_r_,
-                      &mix_tap_l_, &mix_tap_r_})
+                      &mix_tap_l_, &mix_tap_r_, &room_tap_l_, &room_tap_r_})
         buf->assign(size_t(block_), 0.0f);
     for (auto& ch : input_bus_.channel) ch.assign(size_t(block_), 0.0f);
     block_seconds_.assign(size_t(block_), -1.0);
@@ -658,6 +683,8 @@ bool AudioEngine::sendBoard(Source& s, bool inserts) {
             }
     } else {
         for (const auto& slot : s.pedals) c.pedals[c.count++] = slot.pedal.get();
+        s.fx_loop = std::clamp(s.fx_loop, 0, int(s.pedals.size()));
+        c.v[1] = float(int(s.pedals.size()) - s.fx_loop);
     }
     c.epoch = s.board_sent + 1;
     if (!commands_.push(c)) return false;
@@ -666,9 +693,11 @@ bool AudioEngine::sendBoard(Source& s, bool inserts) {
 }
 
 void AudioEngine::reapPedals() {
-    const uint32_t master_applied = master_applied_.load(std::memory_order_acquire);
-    retired_master_.erase(std::remove_if(retired_master_.begin(), retired_master_.end(), [&](const auto& r) { return r.second <= master_applied; }),
-                          retired_master_.end());
+    for (size_t m = 0; m < 2; ++m) {
+        const uint32_t master_applied = master_applied_[m].load(std::memory_order_acquire);
+        auto& retired = retired_master_[m];
+        retired.erase(std::remove_if(retired.begin(), retired.end(), [&](const auto& r) { return r.second <= master_applied; }), retired.end());
+    }
     for (auto& s : owned_) {
         if (!s || (s->retired.empty() && s->retired_tracks.empty())) continue;
         const uint32_t applied = s->board_applied.load(std::memory_order_acquire);
@@ -783,19 +812,20 @@ void AudioEngine::setSend(int id, int slot, int bus, float gain, bool pre, bool 
     push(c);
 }
 
-void AudioEngine::setMasterAutomation(const std::vector<AutoPoint>& volume) {
+void AudioEngine::setMasterAutomation(const std::vector<AutoPoint>& volume, Monitor which) {
     reapPedals();
+    const size_t m = size_t(which);
     auto lane = std::make_unique<std::vector<AutoPoint>>(volume);
     std::stable_sort(lane->begin(), lane->end(), [](const AutoPoint& a, const AutoPoint& b) { return a.step < b.step; });
-    Command c; c.type = Command::MasterAutomation; c.data = lane.get(); c.epoch = master_sent_ + 1;
+    Command c; c.type = Command::MasterAutomation; c.data = lane.get(); c.epoch = master_sent_[m] + 1; c.v[0] = float(m);
     if (!commands_.push(c)) return;
-    master_sent_ = c.epoch;
-    if (master_auto_) retired_master_.emplace_back(std::move(master_auto_), master_sent_);
-    master_auto_ = std::move(lane);
+    master_sent_[m] = c.epoch;
+    if (master_auto_[m]) retired_master_[m].emplace_back(std::move(master_auto_[m]), master_sent_[m]);
+    master_auto_[m] = std::move(lane);
 }
 
-void AudioEngine::setMasterAutomationRead(bool read) {
-    Command c; c.type = Command::MasterRead; c.v[0] = read ? 1.0f : 0.0f; push(c);
+void AudioEngine::setMasterAutomationRead(bool read, Monitor which) {
+    Command c; c.type = Command::MasterRead; c.v[0] = read ? 1.0f : 0.0f; c.v[1] = float(which); push(c);
 }
 
 void AudioEngine::setRecordArm(int id, bool armed) {
@@ -884,9 +914,12 @@ int AudioEngine::addPedal(int id, PedalKind kind, int at) {
     if (!slot.pedal) return -1;
     slot.controls = defaultPedalControls(kind);
     if (at < 0 || at > int(s->pedals.size())) at = int(s->pedals.size());
+    const int front = int(s->pedals.size()) - s->fx_loop;
     s->pedals.insert(s->pedals.begin() + at, std::move(slot));
+    if (at > front) ++s->fx_loop;  // (into the loop)
     if (!sendBoard(*s)) {
         s->pedals.erase(s->pedals.begin() + at);
+        if (at > front) --s->fx_loop;
         return -1;
     }
     return at;
@@ -896,10 +929,13 @@ bool AudioEngine::removePedal(int id, int index) {
     reapPedals();
     Source* s = owned(id);
     if (!s || index < 0 || index >= int(s->pedals.size())) return false;
+    const bool in_loop = index >= int(s->pedals.size()) - s->fx_loop;
     Source::PedalSlot slot = std::move(s->pedals[size_t(index)]);
     s->pedals.erase(s->pedals.begin() + index);
+    if (in_loop) --s->fx_loop;
     if (!sendBoard(*s)) {
         s->pedals.insert(s->pedals.begin() + index, std::move(slot));
+        if (in_loop) ++s->fx_loop;
         return false;
     }
     if (slot.pedal->kind() == PedalKind::Plugin)
@@ -908,21 +944,44 @@ bool AudioEngine::removePedal(int id, int index) {
     return true;
 }
 
-bool AudioEngine::movePedal(int id, int from, int to) {
+bool AudioEngine::movePedal(int id, int from, int to, int loop) {
     Source* s = owned(id);
     const int count = s ? int(s->pedals.size()) : 0;
     if (!s || from < 0 || from >= count || to < 0 || to >= count) return false;
-    if (from == to) return true;
+    const int loop_was = s->fx_loop;
+    if (loop >= 0) s->fx_loop = std::min(loop, count);
+    if (from == to) {
+        if (s->fx_loop == loop_was || sendBoard(*s)) return true;
+        s->fx_loop = loop_was;
+        return false;
+    }
     auto first = s->pedals.begin();
     if (from < to) std::rotate(first + from, first + from + 1, first + to + 1);
     else std::rotate(first + to, first + from, first + from + 1);
     if (sendBoard(*s)) return true;
     if (from < to) std::rotate(first + from, first + to, first + to + 1);  // put it back
     else std::rotate(first + to, first + to + 1, first + from + 1);
+    s->fx_loop = loop_was;
     return false;
 }
 
-int AudioEngine::copyPedal(int from_id, int index, int to_id, int at, std::string* error) {
+bool AudioEngine::setPedalLoop(int id, int loop) {
+    Source* s = owned(id);
+    if (!s || !isAmp(s->kind)) return false;
+    const int was = s->fx_loop;
+    s->fx_loop = std::clamp(loop, 0, int(s->pedals.size()));
+    if (s->fx_loop == was) return true;
+    if (sendBoard(*s)) return true;
+    s->fx_loop = was;
+    return false;
+}
+
+int AudioEngine::pedalLoop(int id) const {
+    const Source* s = owned(id);
+    return s ? s->fx_loop : 0;
+}
+
+int AudioEngine::copyPedal(int from_id, int index, int to_id, int at, std::string* error, int loop) {
     reapPedals();
     const Source* a = owned(from_id);
     Source* b = owned(to_id);
@@ -959,9 +1018,13 @@ int AudioEngine::copyPedal(int from_id, int index, int to_id, int at, std::strin
     slot.pedal->setOn(slot.on);  // the audio thread doesn't have it yet
     for (int i = 0; i < kPedalControls; ++i) slot.pedal->setControl(i, slot.controls[size_t(i)]);
     if (at < 0 || at > int(b->pedals.size())) at = int(b->pedals.size());
+    const int loop_was = b->fx_loop;
+    if (at > int(b->pedals.size()) - b->fx_loop) ++b->fx_loop;  // (into the loop)
     b->pedals.insert(b->pedals.begin() + at, std::move(slot));
+    if (loop >= 0) b->fx_loop = std::min(loop, int(b->pedals.size()));
     if (!sendBoard(*b)) {
         b->pedals.erase(b->pedals.begin() + at);
+        b->fx_loop = loop_was;
         if (error) *error = "the audio engine is busy: try again";
         return -1;
     }
@@ -994,6 +1057,7 @@ std::vector<PedalStatus> AudioEngine::pedals(int id) const {
         PedalStatus p;
         p.kind = slot.pedal->kind();
         p.on = slot.on;
+        p.in_loop = int(out.size()) >= int(s->pedals.size()) - s->fx_loop;
         p.controls = slot.controls;
         if (p.kind == PedalKind::Plugin)
             if (const PluginInstance* plugin = static_cast<const PluginPedal*>(slot.pedal.get())->plugin()) {
@@ -1405,6 +1469,7 @@ bool AudioEngine::sourceBlocked(int id) const {
 // ── The room (game thread) ─────────────────────────────────────────────────────────────────────────────────
 void AudioEngine::updatePath(Source& s) {
     if (!inRoom(s.kind)) return;  // not heard in the room
+    updateFacing(s);
     if (geometry_.empty()) {  // no walls: straight from where it stands
         s.blocked = false;
         Command c; c.type = Command::SourcePosition; c.id = s.id;
@@ -1484,6 +1549,31 @@ void AudioEngine::setSourcePan(int id, float pan) {
     Command c; c.type = Command::SourcePan; c.id = id; c.v[0] = std::clamp(pan, -1.0f, 1.0f); push(c);
 }
 
+void AudioEngine::updateFacing(Source& s) {
+    if (s.radiator.cones <= 0 && !s.facing_sent) return;
+    Command c; c.type = Command::SourceFacing; c.id = s.id;
+    if (s.radiator.cones > 0) {
+        const Facing f = facingFrom(s.radiator, s.position, ear_);
+        c.v[0] = f.cut_hz;
+        c.v[1] = f.gain;
+        c.v[2] = powerCutHz(s.radiator);
+        c.v[3] = coneRadius(s.radiator.inches);
+    }  // (else all 0: no longer a loudspeaker)
+    push(c);
+    s.facing_sent = s.radiator.cones > 0;
+}
+
+void AudioEngine::setSourceRadiator(int id, const Radiator& radiator) {
+    Source* s = owned(id);
+    if (!s || !inRoom(s->kind)) return;
+    s->radiator = radiator;
+    s->radiator.cones = std::clamp(radiator.cones, 0, kMaxCones);
+    updateFacing(*s);
+    s->mic_cones = true;  // (so that, with no cones now, the microphones hear it as a point again)
+    updateMicPaths(*s);
+    s->mic_cones = s->radiator.cones > 0;
+}
+
 void AudioEngine::updateMicPaths(Source& s) {
     if (isBus(s.kind)) return;
     for (auto& other : owned_) {
@@ -1516,6 +1606,30 @@ void AudioEngine::updateMicPath(const Source& mic, const Source& source) {
         c.v[6] = n > 1e-6f ? way.y / n : 0.0f;
         c.v[7] = n > 1e-6f ? way.z / n : 1.0f;
         push(c);
+        // A loudspeaker cabinet: each of its cones (and its open back) its own way, round a wall as much further as
+        // the cabinet's middle is.
+        const int ways = radiatedPaths(source.radiator);
+        if (ways == 0 && !source.mic_cones) continue;
+        const float detour = std::max(c.v[1] - length(sub(source.position, at)), 0.0f);
+        const auto pack = [&](int w) { return uint32_t(source.id) | uint32_t(k) << 8 | uint32_t(w) << 12 | uint32_t(ways) << 16; };
+        if (ways == 0) {  // (no longer a loudspeaker: heard as a point again)
+            Command none; none.type = Command::MicCone; none.id = mic.id; none.epoch = pack(0);
+            push(none);
+        }
+        for (int w = 0; w < ways; ++w) {
+            const RadiatedPath p = radiate(source.radiator, w, at, SourceSpatializer::kRefDistance);
+            Command cone; cone.type = Command::MicCone; cone.id = mic.id; cone.epoch = pack(w);
+            cone.v[0] = p.distance + detour;
+            cone.v[1] = p.nearness;
+            cone.v[2] = p.gain;
+            cone.v[3] = p.cut_hz;
+            cone.v[4] = p.low_db;
+            cone.v[5] = p.high_db;
+            cone.v[6] = p.from.x;
+            cone.v[7] = p.from.y;
+            cone.v[8] = p.from.z;
+            push(cone);
+        }
     }
 }
 
@@ -1614,13 +1728,13 @@ void AudioEngine::setRoomVolume(float gain) {
 void AudioEngine::setMonitor(Monitor monitor) {
     Command c; c.type = Command::MonitorSet; c.v[0] = monitor == Monitor::Mix ? 1.0f : 0.0f; push(c);
 }
-void AudioEngine::setMixOutput(int left, int right) {
-    mix_out_left_.store(left, std::memory_order_relaxed);
-    mix_out_right_.store(right, std::memory_order_relaxed);
+void AudioEngine::setMasterOutput(int left, int right, Monitor which) {
+    (which == Monitor::Mix ? mix_out_left_ : room_out_left_).store(left, std::memory_order_relaxed);
+    (which == Monitor::Mix ? mix_out_right_ : room_out_right_).store(right, std::memory_order_relaxed);
 }
-void AudioEngine::setMasterInserts(int bus) {
+void AudioEngine::setMasterInserts(int bus, Monitor which) {
     const Source* s = bus >= 0 ? owned(bus) : nullptr;
-    Command c; c.type = Command::MasterInserts; c.id = s && isBus(s->kind) ? bus : -1; push(c);
+    Command c; c.type = Command::MasterInserts; c.id = s && isBus(s->kind) ? bus : -1; c.v[0] = float(which); push(c);
 }
 void AudioEngine::setSourceRoomGain(int id, float gain) {
     Command c; c.type = Command::SourceRoomGain; c.id = id; c.v[0] = std::clamp(gain, 0.0f, 100.0f); push(c);
@@ -1703,7 +1817,11 @@ void AudioEngine::setDistanceFalloff(float db_per_doubling) {
     Command c; c.type = Command::Falloff; c.v[0] = std::clamp(db_per_doubling, 0.0f, 12.0f) / 6.0f; push(c);
 }
 void AudioEngine::setLimiter(bool on) {
-    Command c; c.type = Command::LimiterOn; c.v[0] = on ? 1.0f : 0.0f; push(c);
+    setMasterLimiter(on, Monitor::Mix);
+    setMasterLimiter(on, Monitor::Room);
+}
+void AudioEngine::setMasterLimiter(bool on, Monitor which) {
+    Command c; c.type = Command::LimiterOn; c.v[0] = on ? 1.0f : 0.0f; c.v[1] = float(which); push(c);
 }
 
 MeterReading AudioEngine::readMeter() {
@@ -1813,6 +1931,43 @@ void AudioEngine::drainCommands() {
                     k.from_target = {c.v[5], c.v[6], c.v[7]};
                 }
                 break;
+            case Command::MicCone: {  // (epoch: the source, the capsule, which way, and how many ways it has)
+                const int source = int(c.epoch & 0xFF), capsule = int((c.epoch >> 8) & 0xF);
+                const int at = int((c.epoch >> 12) & 0xF), ways = int((c.epoch >> 16) & 0xF);
+                if (!s || capsule >= s->capsule_count || source >= kSourceSlots) break;
+                Source::Pickup& k = (*s->capsules[size_t(capsule)].pickups)[size_t(source)];
+                if (k.ways != std::min(ways, kMaxRadiatedPaths))  // a cabinet set up afresh: each way heard anew
+                    for (auto& w : k.way) w = {};
+                k.ways = std::min(ways, kMaxRadiatedPaths);
+                if (at >= k.ways) break;
+                Source::Pickup::Way& w = k.way[size_t(at)];
+                w.distance_target = c.v[0];
+                w.nearness_target = c.v[1];
+                w.gain_target = c.v[2];
+                w.cut_target = c.v[3];
+                w.low_target = c.v[4];
+                w.high_target = c.v[5];
+                w.from_target = {c.v[6], c.v[7], c.v[8]};
+                if (w.distance < 0.0f) {  // new: from where it is
+                    w.distance = w.distance_target;
+                    w.nearness = w.nearness_target;
+                    w.gain = w.gain_target;
+                    w.cut = w.cut_target;
+                    w.low_db = w.low_target;
+                    w.high_db = w.high_target;
+                    w.from = w.from_target;
+                }
+                break;
+            }
+            case Command::SourceFacing:
+                if (s) {
+                    s->facing = c.v[0] > 0.0f;
+                    s->facing_cut_target = std::max(c.v[0], 20.0f);
+                    s->facing_gain_target = c.v[1];
+                    s->power_cut = c.v[2];
+                    s->cone_radius = c.v[3];
+                }
+                break;
             case Command::MicModelSet:
                 if (s && isMic(s->kind))
                     for (int k = 0; k < s->capsule_count; ++k)
@@ -1902,11 +2057,11 @@ void AudioEngine::drainCommands() {
                 }
                 break;
             case Command::MasterAutomation:
-                master_auto_rt_ = static_cast<std::vector<AutoPoint>*>(c.data);
-                master_applied_.store(c.epoch, std::memory_order_release);
+                master_auto_rt_[size_t(c.v[0])] = static_cast<std::vector<AutoPoint>*>(c.data);
+                master_applied_[size_t(c.v[0])].store(c.epoch, std::memory_order_release);
                 break;
             case Command::MasterRead:
-                master_read_ = c.v[0] > 0.5f;
+                master_read_[size_t(c.v[1])] = c.v[0] > 0.5f;
                 break;
             case Command::AutomationRead:
                 if (s) {
@@ -1996,11 +2151,13 @@ void AudioEngine::drainCommands() {
             case Command::MonitorSet:
                 monitor_ = c.v[0] > 0.5f ? Monitor::Mix : Monitor::Room;
                 break;
-            case Command::MasterInserts:  // (the last bus marked is no longer the master's: played as a bus again)
-                if (master_bus_ >= 0 && sources_[size_t(master_bus_)]) sources_[size_t(master_bus_)]->master_role = 0;
-                master_bus_ = c.id;
-                if (master_bus_ >= 0 && sources_[size_t(master_bus_)]) sources_[size_t(master_bus_)]->master_role = 1;
+            case Command::MasterInserts: {  // (the last bus marked is no longer the master's: played as a bus again)
+                int& bus = master_bus_[size_t(c.v[0])];
+                if (bus >= 0 && sources_[size_t(bus)]) sources_[size_t(bus)]->master_role = 0;
+                bus = c.id;
+                if (bus >= 0 && sources_[size_t(bus)]) sources_[size_t(bus)]->master_role = 1 + int(c.v[0]);
                 break;
+            }
             case Command::SourceRoomGain:
                 if (s) s->room_gain_target = c.v[0];
                 break;
@@ -2099,6 +2256,7 @@ void AudioEngine::drainCommands() {
                         board.slots[size_t(i)] = c.slots[i];
                     }
                     board.count = int(c.count);
+                    board.front = c.v[0] > 0.5f ? board.count : int(c.v[1]);
                     s->board_applied.store(c.epoch, std::memory_order_release);  // the pedals it left out may now be freed
                 }
                 break;
@@ -2126,7 +2284,7 @@ void AudioEngine::drainCommands() {
                 if (clock_ == 0) falloff_ = falloff_target_;  // set before anything has played: nothing to glide from
                 break;
             case Command::LimiterOn:
-                limiter_on_ = c.v[0] > 0.5f;
+                limiter_on_[size_t(c.v[1])] = c.v[0] > 0.5f;
                 break;
             case Command::Reverb2:  // the spare reverb has been rebuilt for a new room: fade over to it
                 reverb_next_ = c.id;
@@ -2211,20 +2369,26 @@ void AudioEngine::step(int64_t index, double at, double step_samples) {
 void AudioEngine::renderDevice(const float* input, int input_channels, float* output, int output_channels, int frames) {
     const int left = std::min(out_left_.load(std::memory_order_relaxed), output_channels - 1);
     const int right = std::min(out_right_.load(std::memory_order_relaxed), output_channels - 1);
-    // The mix on outputs of its own too, if it has some the device has (and not the main ones).
+    // Each master on outputs of its own too, if it has some the device has (and not the main ones).
+    const auto own = [&](int a, int b) {
+        return a >= 0 && b >= 0 && a < output_channels && b < output_channels && a != left && a != right && b != left && b != right;
+    };
     const int mix_left = mix_out_left_.load(std::memory_order_relaxed), mix_right = mix_out_right_.load(std::memory_order_relaxed);
-    const bool mix_too = mix_left >= 0 && mix_right >= 0 && mix_left < output_channels && mix_right < output_channels &&
-                         mix_left != left && mix_left != right && mix_right != left && mix_right != right;
-    if (output_channels == 2 && left == 0 && right == 1 && !mix_too) {
+    const int room_left = room_out_left_.load(std::memory_order_relaxed), room_right = room_out_right_.load(std::memory_order_relaxed);
+    const bool mix_too = own(mix_left, mix_right);
+    const bool room_too = own(room_left, room_right) && !(mix_too && (room_left == mix_left || room_left == mix_right ||
+                                                                       room_right == mix_left || room_right == mix_right));
+    if (output_channels == 2 && left == 0 && right == 1 && !mix_too && !room_too) {
         render(input, input_channels, output, frames);
         return;
     }
     // Any other layout: render stereo in chunks, then place it on the chosen outputs and silence the rest.
-    float stereo[2 * 256], mix[2 * 256];
+    float stereo[2 * 256], mix[2 * 256], room[2 * 256];
     std::memset(output, 0, sizeof(float) * size_t(frames) * size_t(output_channels));
     for (int done = 0; done < frames;) {
         const int n = std::min(frames - done, 256);
-        render(input ? input + size_t(done) * size_t(input_channels) : nullptr, input_channels, stereo, n, mix_too ? mix : nullptr);
+        render(input ? input + size_t(done) * size_t(input_channels) : nullptr, input_channels, stereo, n, mix_too ? mix : nullptr,
+               room_too ? room : nullptr);
         for (int i = 0; i < n; ++i) {
             float* frame = output + size_t(done + i) * size_t(output_channels);
             if (left == right) {
@@ -2237,12 +2401,16 @@ void AudioEngine::renderDevice(const float* input, int input_channels, float* ou
                 frame[mix_left] = mix[2 * i];
                 frame[mix_right] = mix[2 * i + 1];
             }
+            if (room_too) {
+                frame[room_left] = room[2 * i];
+                frame[room_right] = room[2 * i + 1];
+            }
         }
         done += n;
     }
 }
 
-void AudioEngine::render(const float* input, int input_channels, float* out, int frames, float* mix_out) {
+void AudioEngine::render(const float* input, int input_channels, float* out, int frames, float* mix_out, float* room_out) {
     const int channels = input ? std::min(input_channels, int(InputBus::kMaxChannels)) : 0;
     if (channels != fifo_channels_) {  // the input layout changed (device reopened): start the queue afresh
         fifo_channels_ = channels;
@@ -2270,6 +2438,10 @@ void AudioEngine::render(const float* input, int input_channels, float* out, int
             if (mix_out) {
                 mix_out[2 * (done + i)] = mix_tap_l_[size_t(block_pos_ + i)];
                 mix_out[2 * (done + i) + 1] = mix_tap_r_[size_t(block_pos_ + i)];
+            }
+            if (room_out) {
+                room_out[2 * (done + i)] = room_tap_l_[size_t(block_pos_ + i)];
+                room_out[2 * (done + i) + 1] = room_tap_r_[size_t(block_pos_ + i)];
             }
         }
         block_pos_ += n;
@@ -2520,6 +2692,46 @@ void AudioEngine::hearCapsule(Source& mic, int capsule_index, float* out, float 
     const float* gradient = sound.polar.gradient.data();
     const float k2 = 2.0f * float(sr_);  // (the bilinear transform's)
     const float most = std::pow(10.0f, kProximityMaxDb / 20.0f);
+    // One way a sound reaches it: read from the source's history as late as the way is long (gliding from `from_m`
+    // metres to `to_m`), through `filters` (a loudspeaker's cone's, or none), split into the three bands (each dulled by
+    // the air and the walls: `air_from` to `air_to`), heard by the pattern from the way it arrives (the cosine off its
+    // axis gliding from `off_from` to `off_to`), the gradient part with its proximity effect for a wave `wave` metres
+    // round, at a level gliding from `gain_from` to `gain_to`; `state` is the band split's and the proximity filter's
+    // (low, below_high, near_in, near_out).
+    const auto hear = [&](const float* heard, float from_m, float to_m, const float* air_from, const float* air_to, float off_from,
+                          float off_to, float wave, float gain_from, float gain_to, float* state, EqFilter* filters, int filter_count) {
+        const float near_corner = kSpeedOfSound / std::max(wave, kProximityNearest);  // radians a second
+        const float wide = near_corner / most, n0 = k2 + wide;
+        const float pb0 = (k2 + near_corner) / n0, pb1 = (near_corner - k2) / n0, pa1 = (wide - k2) / n0;
+        float& low_s = state[0];
+        float& below_high_s = state[1];
+        float& near_in = state[2];
+        float& near_out = state[3];
+        for (int i = 0; i < block_; ++i) {
+            const float a = float(i + 1) / float(block_);
+            const double late = std::clamp(double(from_m + (to_m - from_m) * a) / kSpeedOfSound * rate, 1.0, furthest);
+            const double at = double(clock_ + i) - late;
+            const int64_t n = int64_t(std::floor(at));
+            const float frac = float(at - double(n));
+            const float x0 = heard[size_t(n) & (Source::kHistory - 1)], x1 = heard[size_t(n + 1) & (Source::kHistory - 1)];
+            float x = x0 + (x1 - x0) * frac;
+            for (int f = 0; f < filter_count; ++f) x = filters[f].process(x);
+            low_s += (x - low_s) * lows;
+            below_high_s += (x - below_high_s) * highs;
+            const float low = low_s * (air_from[0] + (air_to[0] - air_from[0]) * a);
+            const float mid = (below_high_s - low_s) * (air_from[1] + (air_to[1] - air_from[1]) * a);
+            const float high = (x - below_high_s) * (air_from[2] + (air_to[2] - air_from[2]) * a);
+            float y = pressure[0] * low + pressure[1] * mid + pressure[2] * high;
+            if (sound.gradient) {
+                const float g = gradient[0] * low + gradient[1] * mid + gradient[2] * high;
+                const float near = pb0 * g + pb1 * near_in - pa1 * near_out;
+                near_in = g;
+                near_out = near;
+                y += (off_from + (off_to - off_from) * a) * near;
+            }
+            out[i] += y * (gain_from + (gain_to - gain_from) * a);
+        }
+    };
     for (size_t j = 0; j < sources_.size(); ++j) {
         const Source* s = sources_[j];
         if (!s || !inRoom(s->kind) || s->history.empty()) continue;
@@ -2531,46 +2743,59 @@ void AudioEngine::hearCapsule(Source& mic, int capsule_index, float* out, float 
             k.from = k.from_target;
         }
         const float from = k.distance;
-        float band_from[3], air_from[3], air_to[3];
+        float band_from[3];
         k.distance += (k.target - k.distance) * glide;
         for (int b = 0; b < 3; ++b) {
             band_from[b] = k.band[b];
             k.band[b] += (k.band_target[b] - k.band[b]) * glide;
-            air_from[b] = std::exp(-SourceSpatializer::kAirAbsorption[b] * from) * band_from[b];
-            air_to[b] = std::exp(-SourceSpatializer::kAirAbsorption[b] * k.distance) * k.band[b];
         }
-        // How far off its axis the sound arrives: the gradient part of its pattern hears cos of that.
-        const float off_from = dot(k.from, aim_from);
+        // The air dulls each band the further it goes; the walls (band) as the way round them has it.
+        const auto air = [&](float metres, const float* band, float* gains) {
+            for (int b = 0; b < 3; ++b) gains[b] = std::exp(-SourceSpatializer::kAirAbsorption[b] * metres) * band[b];
+        };
+        const Vec3 way_from = k.from;
         k.from = turnToward(k.from, k.from_target, glide);
-        const float off_to = dot(k.from, capsule.aim);
-        // The proximity effect: the gradient part's lows rise 6 dB an octave below c / 2 pi r, up to a point.
-        const float near_corner = kSpeedOfSound / std::max(k.distance, kProximityNearest);  // radians a second
-        const float wide = near_corner / most, n0 = k2 + wide;
-        const float pb0 = (k2 + near_corner) / n0, pb1 = (near_corner - k2) / n0, pa1 = (wide - k2) / n0;
-        const float gain_from = loudness(from), gain_to = loudness(k.distance);
-        const float* heard = s->history.data();
-        for (int i = 0; i < block_; ++i) {
-            const float a = float(i + 1) / float(block_);
-            const double late = std::clamp(double(from + (k.distance - from) * a) / kSpeedOfSound * rate, 1.0, furthest);
-            const double at = double(clock_ + i) - late;
-            const int64_t n = int64_t(std::floor(at));
-            const float frac = float(at - double(n));
-            const float x0 = heard[size_t(n) & (Source::kHistory - 1)], x1 = heard[size_t(n + 1) & (Source::kHistory - 1)];
-            const float x = x0 + (x1 - x0) * frac;
-            k.low += (x - k.low) * lows;
-            k.below_high += (x - k.below_high) * highs;
-            const float low = k.low * (air_from[0] + (air_to[0] - air_from[0]) * a);
-            const float mid = (k.below_high - k.low) * (air_from[1] + (air_to[1] - air_from[1]) * a);
-            const float high = (x - k.below_high) * (air_from[2] + (air_to[2] - air_from[2]) * a);
-            float y = pressure[0] * low + pressure[1] * mid + pressure[2] * high;
-            if (sound.gradient) {
-                const float g = gradient[0] * low + gradient[1] * mid + gradient[2] * high;
-                const float near = pb0 * g + pb1 * k.near_in - pa1 * k.near_out;
-                k.near_in = g;
-                k.near_out = near;
-                y += (off_from + (off_to - off_from) * a) * near;
-            }
-            out[i] += y * (gain_from + (gain_to - gain_from) * a);
+        if (k.ways == 0) {  // a point, from where it stands
+            float air_from[3], air_to[3];
+            air(from, band_from, air_from);
+            air(k.distance, k.band, air_to);
+            float state[4] = {k.low, k.below_high, k.near_in, k.near_out};
+            hear(s->history.data(), from, k.distance, air_from, air_to, dot(way_from, aim_from), dot(k.from, capsule.aim), k.distance,
+                 loudness(from), loudness(k.distance), state, nullptr, 0);
+            k.low = state[0];
+            k.below_high = state[1];
+            k.near_in = state[2];
+            k.near_out = state[3];
+            continue;
+        }
+        // A loudspeaker cabinet: each cone its own way (radiation.h), its level levelling off close up as its near
+        // field has it, raised to the room's distance law as a point's is.
+        for (int w = 0; w < k.ways; ++w) {
+            Source::Pickup::Way& way = k.way[size_t(w)];
+            if (way.distance < 0.0f) continue;  // (not told yet)
+            const float d_from = way.distance, g_from = way.gain * std::pow(way.nearness, falloff_);
+            const Vec3 arrive_from = way.from;
+            way.distance += (way.distance_target - way.distance) * glide;
+            way.nearness += (way.nearness_target - way.nearness) * glide;
+            way.gain += (way.gain_target - way.gain) * glide;
+            way.cut = std::exp(std::log(way.cut) + (std::log(way.cut_target) - std::log(way.cut)) * glide);
+            way.low_db += (way.low_target - way.low_db) * glide;
+            way.high_db += (way.high_target - way.high_db) * glide;
+            way.from = turnToward(way.from, way.from_target, glide);
+            way.filters[0].design({MicFilter::LowPass, std::min(way.cut, 0.45f * float(sr_)), 0.0f, 0.6f}, float(sr_));
+            way.filters[1].design({MicFilter::LowShelf, kNearLowHz, way.low_db, 0.707f}, float(sr_));
+            way.filters[2].design({MicFilter::HighShelf, kCapHighHz, way.high_db, 0.707f}, float(sr_));
+            float air_from[3], air_to[3];
+            air(d_from, band_from, air_from);
+            air(way.distance, k.band, air_to);
+            float state[4] = {way.low, way.below_high, way.near_in, way.near_out};
+            const float wave = std::sqrt(way.distance * way.distance + s->cone_radius * s->cone_radius);
+            hear(s->history.data(), d_from, way.distance, air_from, air_to, dot(arrive_from, aim_from), dot(way.from, capsule.aim), wave,
+                 g_from, way.gain * std::pow(way.nearness, falloff_), state, way.filters.data(), 3);
+            way.low = state[0];
+            way.below_high = state[1];
+            way.near_in = state[2];
+            way.near_out = state[3];
         }
     }
     // The room's reverb, as diffuse there as anywhere (whatever its fader says): what of it the pattern hears, band by
@@ -2623,6 +2848,8 @@ void AudioEngine::playSource(size_t index, float binaural_from, float glide, flo
         }
     float* heard = s->history.empty() ? nullptr : s->history.data();
     float* room = s->room.empty() ? nullptr : s->room.data();
+    // A loudspeaker's sound all round, as the reverb hears it: duller than on its axis (its beaming).
+    const float power = s->facing && s->power_cut > 0.0f ? 1.0f - std::exp(-2.0f * float(kPi) * s->power_cut / float(sr_)) : 0.0f;
     for (int i = 0; i < block_; ++i) {
         if (!mic) {  // (a microphone's gain came before it was recorded)
             s->volume += (s->volume_target - s->volume) * mute_coef;
@@ -2637,7 +2864,12 @@ void AudioEngine::playSource(size_t index, float binaural_from, float glide, flo
             const float r = mono[i] * s->room_gain * s->room_mute;
             room[i] = r;
             if (heard) heard[size_t(clock_ + i) & (Source::kHistory - 1)] = r;  // (as the microphones hear it)
-            send_[size_t(i)] += r * s->send;  // the room hears the source even when a wall blocks your view of it
+            if (power > 0.0f) {  // the room hears the source even when a wall blocks your view of it
+                s->power_state += (r - s->power_state) * power;
+                send_[size_t(i)] += s->power_state * s->send;
+            } else {
+                send_[size_t(i)] += r * s->send;
+            }
             room_energy += double(r) * r;
             room_peak = std::max(room_peak, std::fabs(r));
         }
@@ -2658,6 +2890,14 @@ void AudioEngine::playSource(size_t index, float binaural_from, float glide, flo
     if (room_peak > room_peaks_[size_t(s->id)].load(std::memory_order_relaxed))
         room_peaks_[size_t(s->id)].store(room_peak, std::memory_order_relaxed);
 
+    if (room && s->facing) {  // a loudspeaker, from where you stand against its baffle: its beaming, and its shadow behind
+        const float gain_from = s->facing_gain;
+        s->facing_cut = std::exp(std::log(s->facing_cut) + (std::log(s->facing_cut_target) - std::log(s->facing_cut)) * glide);
+        s->facing_gain += (s->facing_gain_target - s->facing_gain) * glide;
+        s->facing_lp.design({MicFilter::LowPass, std::min(s->facing_cut, 0.45f * float(sr_)), 0.0f, 0.6f}, float(sr_));
+        for (int i = 0; i < block_; ++i)
+            room[i] = s->facing_lp.process(room[i]) * (gain_from + (s->facing_gain - gain_from) * float(i + 1) / float(block_));
+    }
     if (room) {  // placed in the room, for the listener: the room's own mix
         s->via = lerp(s->via, s->via_target, glide);
         s->extra += (s->extra_target - s->extra) * wall_glide;
@@ -3040,38 +3280,47 @@ void AudioEngine::renderBlock() {
         mix_l_[size_t(i)] *= kMasterGain;  // the mix: the tracks' outputs
         mix_r_[size_t(i)] *= kMasterGain;
     }
-    // The mix's master track, laid out as in a DAW: its inserts, then the limiter (an insert too, so it comes before
-    // the master fader and works as hard whatever the fader says), then the fader. The room's master likewise, with
-    // no inserts and no automation.
-    if (master_bus_ >= 0 && sources_[size_t(master_bus_)]) {
-        Source* master = sources_[size_t(master_bus_)];
+    // Each master, laid out as a DAW's master track: its inserts, then the limiter (an insert too, so it comes before
+    // the master fader and works as hard whatever the fader says), then the fader.
+    for (const Monitor which : {Monitor::Mix, Monitor::Room}) {
+        const int bus = master_bus_[size_t(which)];
+        if (bus < 0 || !sources_[size_t(bus)]) continue;
+        Source* master = sources_[size_t(bus)];
+        float* l = which == Monitor::Mix ? mix_l_.data() : room_l_.data();
+        float* r = which == Monitor::Mix ? mix_r_.data() : room_r_.data();
         const PedalTiming timing{double(bar_timing_[1]) / 4.0, bar_timing_[0], bar_timing_[1]};
-        for (int p = 0; p < master->insert_board.count; ++p) master->insert_board.pedals[size_t(p)]->processStereo(mix_l_.data(), mix_r_.data(), block_, timing);
+        for (int p = 0; p < master->insert_board.count; ++p) master->insert_board.pedals[size_t(p)]->processStereo(l, r, block_, timing);
     }
-    if (limiter_on_) {
-        const float lowest = std::min(limiter_.process(mix_l_.data(), mix_r_.data(), block_),
-                                      room_limiter_.process(room_l_.data(), room_r_.data(), block_));
-        if (lowest < meter_gain_.load(std::memory_order_relaxed)) meter_gain_.store(lowest, std::memory_order_relaxed);
-    }
-    // The master fader: as set, or while the music plays, as its automation has it (glided every 32 samples).
-    const bool master_automated = sequencer_.running() && master_read_ && master_auto_rt_ && !master_auto_rt_->empty();
-    float master_ramp = 0.0f;
+    float lowest = 1.0f;
+    if (limiter_on_[size_t(Monitor::Mix)]) lowest = std::min(lowest, limiter_.process(mix_l_.data(), mix_r_.data(), block_));
+    if (limiter_on_[size_t(Monitor::Room)]) lowest = std::min(lowest, room_limiter_.process(room_l_.data(), room_r_.data(), block_));
+    if (lowest < meter_gain_.load(std::memory_order_relaxed)) meter_gain_.store(lowest, std::memory_order_relaxed);
+    // The master faders: as set, or while the music plays, as their automation has them (glided every 32 samples).
+    const auto automated = [&](Monitor which) {
+        const size_t m = size_t(which);
+        return sequencer_.running() && master_read_[m] && master_auto_rt_[m] && !master_auto_rt_[m]->empty();
+    };
+    const bool mix_automated = automated(Monitor::Mix), room_automated = automated(Monitor::Room);
+    float mix_ramp = 0.0f, room_ramp = 0.0f;
     for (int i = 0; i < block_; ++i) {
-        if (master_automated && i % Automating::kEvery == 0) {
+        if (i % Automating::kEvery == 0) {
             const int chunk = std::min(Automating::kEvery, block_ - i);
-            master_ramp = (gainOf(rampAt(*master_auto_rt_, sequencer_.position(clock_ + i + chunk))) - master_gain_) / float(chunk);
+            const double ahead = sequencer_.position(clock_ + i + chunk);
+            if (mix_automated) mix_ramp = (gainOf(rampAt(*master_auto_rt_[size_t(Monitor::Mix)], ahead)) - master_gain_) / float(chunk);
+            if (room_automated) room_ramp = (gainOf(rampAt(*master_auto_rt_[size_t(Monitor::Room)], ahead)) - room_volume_) / float(chunk);
         }
-        if (master_automated) master_gain_ += master_ramp;
+        if (mix_automated) master_gain_ += mix_ramp;
         else master_gain_ += (master_target_ - master_gain_) * slow;
-        room_volume_ += (room_target_ - room_volume_) * slow;
+        if (room_automated) room_volume_ += room_ramp;
+        else room_volume_ += (room_target_ - room_volume_) * slow;
         mix_l_[size_t(i)] *= master_gain_;
         mix_r_[size_t(i)] *= master_gain_;
         room_l_[size_t(i)] *= room_volume_;
         room_r_[size_t(i)] *= room_volume_;
     }
     // Each mix metered as it leaves its master; the main outputs play the one monitored (and the click, which is for the
-    // player, not part of either), and whatever they play over full scale is cut off and counted. The mix also goes
-    // to its own outputs, if it has some.
+    // player, not part of either), and whatever they play over full scale is cut off and counted. Each also goes to
+    // its own outputs, if it has some.
     auto meter = [&](const std::vector<float>& l, const std::vector<float>& r, std::atomic<float>& peak_l, std::atomic<float>& peak_r,
                      float& ms_l, float& ms_r, std::atomic<float>& rms_l, std::atomic<float>& rms_r) {
         float pl = 0.0f, pr = 0.0f;
@@ -3101,6 +3350,8 @@ void AudioEngine::renderBlock() {
         out_r_[size_t(i)] = heard_r[size_t(i)] + c;
         mix_tap_l_[size_t(i)] = std::clamp(mix_l_[size_t(i)], -1.0f, 1.0f);
         mix_tap_r_[size_t(i)] = std::clamp(mix_r_[size_t(i)], -1.0f, 1.0f);
+        room_tap_l_[size_t(i)] = std::clamp(room_l_[size_t(i)], -1.0f, 1.0f);
+        room_tap_r_[size_t(i)] = std::clamp(room_r_[size_t(i)], -1.0f, 1.0f);
         for (float* v : {&out_l_[size_t(i)], &out_r_[size_t(i)]}) {
             if (std::fabs(*v) > 1.0f) {
                 *v = std::copysign(1.0f, *v);

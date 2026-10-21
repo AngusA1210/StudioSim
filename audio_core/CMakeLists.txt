@@ -49,6 +49,7 @@ add_library(sr_core STATIC
     src/core/wav.cpp
     src/core/disk_stream.cpp
     src/core/microphones.cpp
+    src/core/radiation.cpp
     src/core/plugin_category.cpp
     src/core/sequencer.cpp
     src/core/spatializer.cpp

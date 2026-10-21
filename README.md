@@ -50,7 +50,7 @@ to the title, which then offers to go back into the room.
 | L O U J | at an amp with a loop pedal: L the footswitch (record, close the loop, overdub), O stop or play, U undo or redo the last overdub, J twice to clear. Elsewhere in a Record room, L switches loop playback on and off |
 | 1 to 8 | at an amp, stamp on its pedals: each switches that pedal on or off (the loop pedal: its footswitch) |
 | Tab | the mix window (you can still walk about while it is open) |
-| H | hear the room or the mix on the main outputs (see The room and the mix) |
+| H | hear the room or the headphone mix on the main outputs; the screen says ROOM or HEADPHONE MIX (see The room and the mix) |
 | Space | start or stop every instrument's pattern (a Record room: play from the playhead, or stop) |
 | ⌘Space | a Record room: record the armed tracks from the playhead; again (or Space) to stop |
 | R | a Record room: the edit window, from the room or the mix window (⌘= swaps the two) |
@@ -212,6 +212,16 @@ at. Switch an input on yourself (I, or the I button in the mix window) and it st
 computer keyboard plays the instrument you are sitting at, along with any others whose input is on. Every input
 starts switched off, so an open microphone never meets a pair of speakers by surprise.
 
+### Amps' speakers
+
+A cabinet sounds as real ones do from where you are: each speaker is a cone in the baffle (seen through the grille),
+heard on its own way. A cone beams: on its axis it is full-range; off it the highs fall away, the further and higher the
+more. Close up it is in its near field: the level levels off rather than rising as 1/distance, the lows are fuller,
+and where across the cone a mic sits matters: bright and biting at the dust cap, darker halfway out, darker still at the
+edge. A 4x12's cones comb-filter between them; an open back is heard behind (reverse polarity, duller) and costs some
+lows in front; behind a closed back only the lows wrap round. The listener hears the beaming too (a combo on the floor
+beams at your knees). **Point it at** aims a mic at an amp's nearest dust cap. (radiation.h has the physics.)
+
 ### Amps, pedals and the loop pedal
 
 An amp is a **head** and a **cabinet**, and any head goes with any cabinet. The four in the instrument menu start as a
@@ -240,6 +250,10 @@ The head has the knobs of a real amp, 0 to 10: **Gain** (how hard the preamp is 
 open its panel: drag a knob up or down (Shift for fine moves), turn the scroll wheel over it, or double-click it for
 5. The panel also has the amp's input switch and which hardware input it plays. Plug a guitar or bass straight into
 the interface's instrument input; the amp is the only processing it needs. Wear headphones.
+
+An amp has an **effects loop**: on the board, pedals after PREAMP are sent out after the preamp and its tone stack and
+returned before the power amp, so a delay or reverb there repeats the amp's own distorted sound. Drag a pedal across to
+move it in or out; the loop's own **+** adds one in it.
 
 #### Effect pedals
 
@@ -517,7 +531,8 @@ Each instrument is a track, in the mix window and (in a Record room) the edit wi
   track, a bus with its own inserts (a reverb or a delay, say), mute, solo and fader, playing to the master. A
   track's **sends**, A to E, play a copy of it into an aux: after the track's fader, the track as heard in the room
   (it follows the fader and mute), or **before the fader**, its own sound straight (it doesn't), at a level of its
-  own. In the mix window each strip's sends are under its inserts, as in Pro Tools: click
+  own. A send dragged sideways onto another send (on its strip or another) moves there with its automation (Option:
+  a copy). In the mix window each strip's sends are under its inserts, as in Pro Tools: click
   an empty send to send to an aux (or a new one); drag a send up or down for its level (Shift for fine moves; the
   scroll wheel nudges it), double-click it for 0 dB, Cmd-click it off and on, right-click it for before or after the
   fader, another aux, or none. Folders and aux tracks have sends of their own (after their fader, what leaves it;
@@ -534,8 +549,10 @@ a control room hears them: the microphones' tracks, and each instrument's direct
 out), through their faders, pans, sends, folders and aux tracks to the mix's master and its inserts. The main outputs
 play one or the other: **H** switches between them (or HEAR on either master in the mix window), and the screen says
 which. So with microphones up you can hear the mix alone, as headphones would, without the room's own sound on top.
-The mix can go to a pair of outputs of its own as well, all the time (the mix master's output menu): headphones of
-their own, say, or a recorder.
+Each master can go to a pair of outputs of its own as well, all the time (its output menu): headphones of their own,
+say, or a recorder. Both masters are masters as a DAW has them: inserts A to E, a limiter, a fader that can be
+automated (a row each at the foot of the edit window), a name and a colour (crimson to begin with; right-click the name
+to rename or recolour it).
 
 An instrument's inserts come before the split, so a plug-in on it shapes its sound in the room too (as an amp's pedals
 do); its fader, pan, mute, solo and sends are the mix's. Its level in the room, and its mute there, are at the foot of
@@ -696,6 +713,7 @@ game/                      Godot project: the room, player, instruments, HUD, me
 audio_core/
   src/core/                the audio engine, plain C++ with no Godot dependency
     engine.*               device, command queue, the room and the mix, the shared clock; microphones hearing the room
+    radiation.*            how a cabinet's cones radiate: beaming, the near field, open and closed backs
     microphones.*          the microphone models: their pickup patterns, responses and sensitivities
     instruments.*          synthesized drums, the garage kit, bass, pad, bells and keys (each playable live or by pattern), live input
     plugin_synth.*         a plug-in instrument: an instrument plug-in played by MIDI, live and by pattern, to the sample

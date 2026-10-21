@@ -223,6 +223,20 @@ float SoundRoomAudio::get_mic_noise(const String& model) const {
     return index < 0 ? 0.0f : sr::micNoiseSpl(sr::micModels()[size_t(index)]);
 }
 void SoundRoomAudio::set_source_pan(int id, float pan) { if (engine_) engine_->setSourcePan(id, pan); }
+void SoundRoomAudio::set_source_radiator(int id, const PackedVector3Array& cones, const Vector3& facing, float inches, bool open_back,
+                                         const Vector3& back, float width) {
+    if (!engine_) return;
+    sr::Radiator r;
+    r.cones = int(std::min<int64_t>(cones.size(), sr::kMaxCones));
+    for (int i = 0; i < r.cones; ++i) r.cone[size_t(i)] = vec(cones[i]);
+    const Vector3 n = facing.length() > 1e-6f ? facing.normalized() : Vector3(0, 0, 1);
+    r.facing = vec(n);
+    r.inches = inches;
+    r.open_back = open_back;
+    r.back = vec(back);
+    r.width = width;
+    engine_->setSourceRadiator(id, r);
+}
 void SoundRoomAudio::set_source_output(int id, int bus) { if (engine_) engine_->setSourceOutput(id, bus); }
 void SoundRoomAudio::set_source_input_channel(int id, int channel) { if (engine_) engine_->setSourceInputChannel(id, channel); }
 void SoundRoomAudio::set_source_input(int id, bool on) { if (engine_) engine_->setSourceInput(id, on); }
@@ -273,10 +287,12 @@ int SoundRoomAudio::add_pedal(int id, const String& kind, int at) {
     return -1;
 }
 bool SoundRoomAudio::remove_pedal(int id, int index) { return engine_ && engine_->removePedal(id, index); }
-bool SoundRoomAudio::move_pedal(int id, int from, int to) { return engine_ && engine_->movePedal(id, from, to); }
-int SoundRoomAudio::copy_pedal(int from_id, int index, int to_id, int at) {
+bool SoundRoomAudio::move_pedal(int id, int from, int to, int loop) { return engine_ && engine_->movePedal(id, from, to, loop); }
+bool SoundRoomAudio::set_pedal_loop(int id, int loop) { return engine_ && engine_->setPedalLoop(id, loop); }
+int SoundRoomAudio::get_pedal_loop(int id) const { return engine_ ? engine_->pedalLoop(id) : 0; }
+int SoundRoomAudio::copy_pedal(int from_id, int index, int to_id, int at, int loop) {
     std::string err;
-    const int placed = engine_ ? engine_->copyPedal(from_id, index, to_id, at, &err) : -1;
+    const int placed = engine_ ? engine_->copyPedal(from_id, index, to_id, at, &err, loop) : -1;
     if (placed < 0) error_ = str(err.empty() ? std::string("the audio engine isn't running") : err);
     return placed;
 }
@@ -293,6 +309,7 @@ Array SoundRoomAudio::get_pedals(int id) const {
         Dictionary d;
         d["kind"] = String(kPedalNames[int(p.kind)]);
         d["on"] = p.on;
+        d["in_loop"] = p.in_loop;
         Array controls;
         for (float v : p.controls) controls.push_back(v);
         d["controls"] = controls;
@@ -446,16 +463,23 @@ void SoundRoomAudio::notify_plugin_parameter(int id, const String& place, int in
 void SoundRoomAudio::set_send(int id, int slot, int bus, float gain, bool pre, bool on) {
     if (engine_) engine_->setSend(id, slot, bus, gain, pre, on);
 }
-void SoundRoomAudio::set_master_automation(const Array& volume) {
+namespace {
+sr::AudioEngine::Monitor monitorOf(const String& which) {
+    return which == "room" ? sr::AudioEngine::Monitor::Room : sr::AudioEngine::Monitor::Mix;
+}
+}  // namespace
+void SoundRoomAudio::set_master_automation(const Array& volume, const String& which) {
     if (!engine_) return;
     std::vector<sr::AutoPoint> points;
     for (int64_t i = 0; i < volume.size(); ++i) {
         const Array p = volume[i];
         if (p.size() >= 2) points.push_back({double(p[0]), float(p[1])});
     }
-    engine_->setMasterAutomation(points);
+    engine_->setMasterAutomation(points, monitorOf(which));
 }
-void SoundRoomAudio::set_master_automation_read(bool read) { if (engine_) engine_->setMasterAutomationRead(read); }
+void SoundRoomAudio::set_master_automation_read(bool read, const String& which) {
+    if (engine_) engine_->setMasterAutomationRead(read, monitorOf(which));
+}
 bool SoundRoomAudio::write_plugin_preset(const String& path, const String& name, const PackedByteArray& state) {
     std::string err;
     if (sr::writePluginPreset(str(path), str(name), bytes(state), &err)) return true;
@@ -509,13 +533,17 @@ void SoundRoomAudio::set_monitor(const String& which) {
     if (engine_) engine_->setMonitor(which == "mix" ? sr::AudioEngine::Monitor::Mix : sr::AudioEngine::Monitor::Room);
 }
 void SoundRoomAudio::set_mix_output(int left, int right) { if (engine_) engine_->setMixOutput(left, right); }
-void SoundRoomAudio::set_master_inserts(int bus) { if (engine_) engine_->setMasterInserts(bus); }
+void SoundRoomAudio::set_master_output(int left, int right, const String& which) {
+    if (engine_) engine_->setMasterOutput(left, right, monitorOf(which));
+}
+void SoundRoomAudio::set_master_inserts(int bus, const String& which) { if (engine_) engine_->setMasterInserts(bus, monitorOf(which)); }
 void SoundRoomAudio::set_source_room_gain(int id, float gain) { if (engine_) engine_->setSourceRoomGain(id, gain); }
 void SoundRoomAudio::set_source_room_muted(int id, bool muted) { if (engine_) engine_->setSourceRoomMuted(id, muted); }
 float SoundRoomAudio::get_source_room_level(int id) const { return engine_ ? engine_->sourceRoomLevel(id) : 0.0f; }
 float SoundRoomAudio::get_source_room_peak(int id) { return engine_ ? engine_->sourceRoomPeak(id) : 0.0f; }
 void SoundRoomAudio::set_distance_falloff(float db_per_doubling) { if (engine_) engine_->setDistanceFalloff(db_per_doubling); }
 void SoundRoomAudio::set_limiter(bool on) { if (engine_) engine_->setLimiter(on); }
+void SoundRoomAudio::set_master_limiter(bool on, const String& which) { if (engine_) engine_->setMasterLimiter(on, monitorOf(which)); }
 
 Dictionary SoundRoomAudio::read_meter() {
     Dictionary d;
@@ -827,6 +855,8 @@ void SoundRoomAudio::_bind_methods() {
     ClassDB::bind_method(D_METHOD("set_mic_mid_side", "id", "mid_side", "width"), &SoundRoomAudio::set_mic_mid_side, DEFVAL(1.0f));
     ClassDB::bind_method(D_METHOD("get_mic_noise", "model"), &SoundRoomAudio::get_mic_noise);
     ClassDB::bind_method(D_METHOD("set_source_pan", "id", "pan"), &SoundRoomAudio::set_source_pan);
+    ClassDB::bind_method(D_METHOD("set_source_radiator", "id", "cones", "facing", "inches", "open_back", "back", "width"),
+                         &SoundRoomAudio::set_source_radiator);
     ClassDB::bind_method(D_METHOD("set_source_output", "id", "bus"), &SoundRoomAudio::set_source_output);
     ClassDB::bind_method(D_METHOD("set_source_input_channel", "id", "channel"), &SoundRoomAudio::set_source_input_channel);
     ClassDB::bind_method(D_METHOD("set_source_input", "id", "on"), &SoundRoomAudio::set_source_input);
@@ -837,8 +867,10 @@ void SoundRoomAudio::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_looper", "id"), &SoundRoomAudio::get_looper);
     ClassDB::bind_method(D_METHOD("add_pedal", "id", "kind", "at"), &SoundRoomAudio::add_pedal);
     ClassDB::bind_method(D_METHOD("remove_pedal", "id", "index"), &SoundRoomAudio::remove_pedal);
-    ClassDB::bind_method(D_METHOD("move_pedal", "id", "from", "to"), &SoundRoomAudio::move_pedal);
-    ClassDB::bind_method(D_METHOD("copy_pedal", "from_id", "index", "to_id", "at"), &SoundRoomAudio::copy_pedal, DEFVAL(-1));
+    ClassDB::bind_method(D_METHOD("move_pedal", "id", "from", "to", "loop"), &SoundRoomAudio::move_pedal, DEFVAL(-1));
+    ClassDB::bind_method(D_METHOD("set_pedal_loop", "id", "loop"), &SoundRoomAudio::set_pedal_loop);
+    ClassDB::bind_method(D_METHOD("get_pedal_loop", "id"), &SoundRoomAudio::get_pedal_loop);
+    ClassDB::bind_method(D_METHOD("copy_pedal", "from_id", "index", "to_id", "at", "loop"), &SoundRoomAudio::copy_pedal, DEFVAL(-1), DEFVAL(-1));
     ClassDB::bind_method(D_METHOD("set_pedal_on", "id", "index", "on"), &SoundRoomAudio::set_pedal_on);
     ClassDB::bind_method(D_METHOD("set_pedal_control", "id", "index", "control", "value"), &SoundRoomAudio::set_pedal_control);
     ClassDB::bind_method(D_METHOD("get_pedals", "id"), &SoundRoomAudio::get_pedals);
@@ -879,7 +911,8 @@ void SoundRoomAudio::_bind_methods() {
     ClassDB::bind_method(D_METHOD("set_room_volume", "gain"), &SoundRoomAudio::set_room_volume);
     ClassDB::bind_method(D_METHOD("set_monitor", "which"), &SoundRoomAudio::set_monitor);
     ClassDB::bind_method(D_METHOD("set_mix_output", "left", "right"), &SoundRoomAudio::set_mix_output);
-    ClassDB::bind_method(D_METHOD("set_master_inserts", "bus"), &SoundRoomAudio::set_master_inserts);
+    ClassDB::bind_method(D_METHOD("set_master_output", "left", "right", "which"), &SoundRoomAudio::set_master_output);
+    ClassDB::bind_method(D_METHOD("set_master_inserts", "bus", "which"), &SoundRoomAudio::set_master_inserts, DEFVAL("mix"));
     ClassDB::bind_method(D_METHOD("set_source_room_gain", "id", "gain"), &SoundRoomAudio::set_source_room_gain);
     ClassDB::bind_method(D_METHOD("set_source_room_muted", "id", "muted"), &SoundRoomAudio::set_source_room_muted);
     ClassDB::bind_method(D_METHOD("get_source_room_level", "id"), &SoundRoomAudio::get_source_room_level);
@@ -887,6 +920,7 @@ void SoundRoomAudio::_bind_methods() {
     ClassDB::bind_method(D_METHOD("set_source_gain", "id", "gain"), &SoundRoomAudio::set_source_gain);
     ClassDB::bind_method(D_METHOD("set_distance_falloff", "db_per_doubling"), &SoundRoomAudio::set_distance_falloff);
     ClassDB::bind_method(D_METHOD("set_limiter", "on"), &SoundRoomAudio::set_limiter);
+    ClassDB::bind_method(D_METHOD("set_master_limiter", "on", "which"), &SoundRoomAudio::set_master_limiter);
     ClassDB::bind_method(D_METHOD("read_meter"), &SoundRoomAudio::read_meter);
     ClassDB::bind_method(D_METHOD("get_source_level", "id", "pre_fader"), &SoundRoomAudio::get_source_level, DEFVAL(false));
     ClassDB::bind_method(D_METHOD("get_source_peak", "id", "pre_fader"), &SoundRoomAudio::get_source_peak, DEFVAL(false));
@@ -913,8 +947,8 @@ void SoundRoomAudio::_bind_methods() {
     ClassDB::bind_method(D_METHOD("set_plugin_parameter", "id", "place", "index", "param", "value"), &SoundRoomAudio::set_plugin_parameter);
     ClassDB::bind_method(D_METHOD("notify_plugin_parameter", "id", "place", "index", "param"), &SoundRoomAudio::notify_plugin_parameter);
     ClassDB::bind_method(D_METHOD("set_send", "id", "slot", "bus", "gain", "pre", "on"), &SoundRoomAudio::set_send);
-    ClassDB::bind_method(D_METHOD("set_master_automation", "volume"), &SoundRoomAudio::set_master_automation);
-    ClassDB::bind_method(D_METHOD("set_master_automation_read", "read"), &SoundRoomAudio::set_master_automation_read);
+    ClassDB::bind_method(D_METHOD("set_master_automation", "volume", "which"), &SoundRoomAudio::set_master_automation, DEFVAL("mix"));
+    ClassDB::bind_method(D_METHOD("set_master_automation_read", "read", "which"), &SoundRoomAudio::set_master_automation_read, DEFVAL("mix"));
     ClassDB::bind_method(D_METHOD("get_max_sends"), &SoundRoomAudio::get_max_sends);
     ClassDB::bind_method(D_METHOD("get_audio_peaks", "path", "per_second"), &SoundRoomAudio::get_audio_peaks);
     ClassDB::bind_method(D_METHOD("get_audio_seconds", "path"), &SoundRoomAudio::get_audio_seconds);

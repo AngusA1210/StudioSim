@@ -17,9 +17,11 @@ var binaural := true
 var click := false        # the metronome click (the tempo itself belongs to the room, not to these settings)
 var click_volume_db := 0.0
 var distance_falloff_db := 6.0  # how much quieter an instrument gets for each doubling of distance beyond 1.5 m
-var limiter := true             # hold the output under full scale; off = hear and meter exactly what the mix adds up to
+var limiter := true             # hold the mix under full scale; off = hear and meter exactly what it adds up to
+var room_limiter := true        # and the room
 var monitor := "room"           # what the main outputs play (H): "room", what you hear standing there, or "mix"
 var mix_output := -1            # the mix on a pair of outputs of its own too (its first, 0-based), or -1 for none
+var room_output := -1           # and the room
 
 # Display and controls
 var text_scale := 1.0
@@ -73,8 +75,10 @@ func load_from_disk() -> void:
 	click_volume_db = clampf(file.get_value("sound", "click_volume_db", click_volume_db), -24.0, 6.0)
 	distance_falloff_db = clampf(file.get_value("sound", "falloff_db_per_doubling", distance_falloff_db), 0.0, 6.0)
 	limiter = file.get_value("sound", "limiter", limiter)
+	room_limiter = file.get_value("sound", "room_limiter", room_limiter)
 	monitor = file.get_value("sound", "monitor", monitor)
 	mix_output = file.get_value("engine", "mix_output", mix_output)
+	room_output = file.get_value("engine", "room_output", room_output)
 	text_scale = clampf(file.get_value("display", "text_scale", text_scale), 0.75, 2.0)
 	fov = clampf(file.get_value("display", "fov", fov), 50.0, 110.0)
 	mouse_sensitivity = clampf(file.get_value("display", "mouse_sensitivity", mouse_sensitivity), 0.2, 3.0)
@@ -117,8 +121,10 @@ func save_to_disk() -> void:
 	file.set_value("sound", "click_volume_db", click_volume_db)
 	file.set_value("sound", "falloff_db_per_doubling", distance_falloff_db)
 	file.set_value("sound", "limiter", limiter)
+	file.set_value("sound", "room_limiter", room_limiter)
 	file.set_value("sound", "monitor", monitor)
 	file.set_value("engine", "mix_output", mix_output)
+	file.set_value("engine", "room_output", room_output)
 	file.set_value("display", "text_scale", text_scale)
 	file.set_value("display", "fov", fov)
 	file.set_value("display", "mouse_sensitivity", mouse_sensitivity)

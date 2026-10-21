@@ -79,7 +79,6 @@ var _input_channels := -1
 var _master := {}  # the mix's master strip
 var _room := {}    # the room's master strip
 var _reverb := {}  # the room reverb's strip
-var _output_count := -1  # how many hardware outputs the mix's own outputs were listed for
 var _status: Label
 var _problem_until := 0  # a plug-in that wouldn't load is reported in the status line for a few seconds
 
@@ -101,7 +100,8 @@ func open() -> void:
 	_root.visible = true
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	_input_channels = -1  # the hardware may have changed: list its inputs, and its outputs, again
-	_output_count = -1
+	for master in [_master, _room]:
+		master.outputs = -1
 	_refresh()
 
 
@@ -112,7 +112,7 @@ func close() -> void:
 	_meter_menu.hide()
 	_plugin_menu.hide()
 	app.plugin_browser.hide()
-	for folder in app.folders + app.auxes + [app.master_track]:
+	for folder in app.folders + app.auxes + app.master_tracks():
 		app.hide_insert_editors(folder)
 	for inst in app.instruments:
 		app.hide_insert_editors(inst)
@@ -232,9 +232,9 @@ func _build() -> void:
 	scroll.add_child(_strip_row)
 	desk.add_child(VSeparator.new())
 	desk.add_child(_build_reverb())
-	desk.add_child(_build_room())
+	desk.add_child(_build_master_strip(app.room_master_track))
 	desk.add_child(VSeparator.new())
-	desk.add_child(_build_master())
+	desk.add_child(_build_master_strip(app.master_track))
 
 	_insert_menu = PopupMenu.new()
 	_insert_menu.id_pressed.connect(_on_insert_menu_chosen)
@@ -251,14 +251,14 @@ func _build() -> void:
 	_name_presets.reported.connect(_report)
 	_name_menu.add_child(_name_presets)
 	_colors = TrackMenu.colors_menu(app, func(color: Color) -> void:
-		if _name_menu_for != null and app.has_track(_name_menu_for):
+		if _name_menu_for != null and app.is_track(_name_menu_for):
 			app.set_track_color(_name_menu_for, color))
 	_name_menu.add_child(_colors)
 	_send_menu = PopupMenu.new()
 	_send_menu.id_pressed.connect(_on_send_menu_chosen)
 	_root.add_child(_send_menu)
 	_modes = TrackMenu.modes_menu(app, func(mode: String) -> void:
-		if _name_menu_for != null and app.has_track(_name_menu_for):
+		if _name_menu_for != null and app.is_track(_name_menu_for):
 			app.automation.set_mode(_name_menu_for, mode))
 	_name_menu.add_child(_modes)
 	_plugin_menu = PopupMenu.new()
@@ -304,33 +304,16 @@ func _build_reverb() -> PanelContainer:
 	return strip
 
 
-## The room's master: how loud the room is as you hear it standing there (the instruments at their levels there, and
-## its reverb), and HEAR, for the main outputs to play it.
-func _build_room() -> PanelContainer:
+## A master, the room's or the mix's, as a DAW's master fader: its inserts (in stereo, on the whole of its sound), where
+## it goes besides the main outputs, its limiter, its fader (automated as its master track's, in a Record room), and
+## HEAR, for the main outputs to play it. The room's is how loud the room is as you hear it standing there (the
+## instruments at their levels there, and its reverb); the mix's, what the tracks put out. Its name is in its colour
+## (crimson, to begin with): right-click it to rename it, colour it, or for its automation.
+func _build_master_strip(master) -> PanelContainer:
+	var which: String = master.which
 	var strip := _strip_panel(STRIP_WIDTH + 14)
 	var box: VBoxContainer = strip.get_child(0)
-	var level_with_inserts := Control.new()
-	level_with_inserts.custom_minimum_size.y = _slots_height()
-	box.add_child(level_with_inserts)
-	_small(box, "ROOM")
-	var gap := Control.new()
-	gap.custom_minimum_size.y = 84
-	box.add_child(gap)
-	var pair := _fader_and_meter(box, 2, "room")
-	pair.fader.value_changed.connect(func(db: float) -> void: app.set_room_volume_db(db))
-	var readouts := _readouts(box, "room")
-	var hear := _hear_button(box, "room")
-	box.add_child(_name_plate("Room Master", Color(0.4, 0.86, 0.78), null))
-	_room = {"fader": pair.fader, "meter": pair.meter, "value": readouts.value, "peak": readouts.peak, "gap": gap, "hear": hear}
-	return strip
-
-
-## The mix's master, as a DAW's master fader: its inserts (in stereo, on the whole mix), where the mix goes besides the
-## main outputs, the limiter, its fader (automated as the master track's, in a Record room), and HEAR.
-func _build_master() -> PanelContainer:
-	var strip := _strip_panel(STRIP_WIDTH + 14)
-	var box: VBoxContainer = strip.get_child(0)
-	var inserts := _build_inserts(box, app.master_track, STRIP_WIDTH + 2)
+	var inserts := _build_inserts(box, master, STRIP_WIDTH + 2)
 	var level_with_sends := Control.new()  # (it has no sends: the space they take on the tracks')
 	level_with_sends.custom_minimum_size.y = _section_height(audio.get_max_sends())
 	box.add_child(level_with_sends)
@@ -340,26 +323,32 @@ func _build_master() -> PanelContainer:
 	output.fit_to_longest_item = false
 	output.focus_mode = Control.FOCUS_NONE
 	output.custom_minimum_size = Vector2(STRIP_WIDTH - 4, 24)
-	output.item_selected.connect(func(i: int) -> void: app.set_mix_output(int(output.get_meta("choices")[i])))
-	Hints.give(output, "Where the mix goes: the main outputs play it while it's heard (H), and it can go to a pair of outputs of its own as well, all the time (headphones of their own, a recorder)")
+	output.item_selected.connect(func(i: int) -> void: app.set_master_output(which, int(output.get_meta("choices")[i])))
+	Hints.give(output, "Where %s goes: the main outputs play it while it's heard (%s), and it can go to a pair of outputs of its own as well, all the time (headphones of their own, a recorder)" % [
+		"the room" if which == "room" else "the mix", app.bindings.label("monitor")])
 	box.add_child(output)
 	var limiter := _toggle("LIMIT", Color(0.55, 0.78, 1.0))
-	Hints.give(limiter, "Limiter, before the master faders: on, neither the mix nor the room can go over full scale; off, the plain sum. What leaves the faders over full scale is cut off either way.")
-	limiter.toggled.connect(_on_limiter_toggled)
+	Hints.give(limiter, "Limiter, before the fader: on, %s can't go over full scale; off, the plain sum. What the main outputs play over full scale is cut off either way." % (
+		"the room" if which == "room" else "the mix"))
+	limiter.toggled.connect(func(on: bool) -> void: app.set_limiter(on, which))
 	limiter.custom_minimum_size = Vector2(76, 24)
 	limiter.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	box.add_child(limiter)
 	var gap := Control.new()
 	gap.custom_minimum_size.y = 24
 	box.add_child(gap)
-	var pair := _fader_and_meter(box, 2, "mix")
-	pair.fader.value_changed.connect(_on_master_changed)
-	var readouts := _readouts(box, "mix")
-	var hear := _hear_button(box, "mix")
-	var plate := _name_plate("Mix Master", Color(0.75, 0.77, 0.82), null)
+	var pair := _fader_and_meter(box, 2, which)
+	pair.fader.value_changed.connect(func(db: float) -> void: master.level_db = db)
+	var readouts := _readouts(box, which)
+	var hear := _hear_button(box, which)
+	var plate := _name_plate(master.display_name, master.color, master)
 	box.add_child(plate)
-	_master = {"inst": app.master_track, "fader": pair.fader, "meter": pair.meter, "value": readouts.value, "peak": readouts.peak,
-		"limiter": limiter, "gap": gap, "inserts": inserts, "output": output, "hear": hear, "plate": plate}
+	var made := {"inst": master, "fader": pair.fader, "meter": pair.meter, "value": readouts.value, "peak": readouts.peak,
+		"limiter": limiter, "gap": gap, "inserts": inserts, "output": output, "hear": hear, "plate": plate, "outputs": -1}
+	if which == "room":
+		_room = made
+	else:
+		_master = made
 	return strip
 
 
@@ -649,6 +638,7 @@ func _build_sends(box: VBoxContainer, inst) -> Array:
 		for state in ["normal", "hover", "pressed", "hover_pressed"]:
 			button.add_theme_stylebox_override(state, style)
 		button.gui_input.connect(_on_send_input.bind(inst, slot, button))
+		button.set_drag_forwarding(_send_drag_data.bind(inst, slot, button), _send_can_drop.bind(inst, slot), _send_drop.bind(inst, slot))
 		Hints.give(button, _send_hint.bind(inst, slot))
 		column.add_child(button)
 		slots.append({"button": button, "style": style})
@@ -681,7 +671,7 @@ func _send_hint(inst, slot: int) -> String:
 	var send: Dictionary = inst.sends[slot]
 	if send.is_empty():
 		return "Send %s: click to send a copy of the track to an aux track (or a new one)" % char(65 + slot)
-	return "Send %s to %s, %s the fader%s: drag up or down for its level (Shift: fine), double-click for 0 dB, Cmd-click: %s, right-click for more" % [
+	return "Send %s to %s, %s the fader%s: drag up or down for its level (Shift: fine), sideways to move it (Option: copy), double-click for 0 dB, Cmd-click: %s, right-click for more" % [
 		char(65 + slot), send.aux.display_name, "before" if send.pre else "after", "" if send.on else ", off", "on" if not send.on else "off"]
 
 
@@ -701,7 +691,7 @@ func _on_send_input(event: InputEvent, inst, slot: int, button: Button) -> void:
 			elif e.double_click:
 				app.set_send_level(inst, slot, 0.0)
 			else:
-				_send_drag = {"inst": inst, "slot": slot, "from_y": e.global_position.y, "from_db": float(send.level_db)}
+				_send_drag = {"inst": inst, "slot": slot, "from": e.global_position, "from_y": e.global_position.y, "from_db": float(send.level_db)}
 				app.automation.touch(inst, true, "send:%d" % slot)
 		elif e.button_index == MOUSE_BUTTON_LEFT and not e.pressed and not _send_drag.is_empty():
 			app.automation.touch(_send_drag.inst, false, "send:%d" % _send_drag.slot)
@@ -714,6 +704,54 @@ func _on_send_input(event: InputEvent, inst, slot: int, button: Button) -> void:
 		var travel: float = Fader.position_of(_send_drag.from_db) + (_send_drag.from_y - event.global_position.y) / (80.0 if not fine else 400.0)
 		app.set_send_level(_send_drag.inst, _send_drag.slot, snappedf(Fader.level_at(travel), 0.1))
 		button.accept_event()
+
+
+## Picking a send up to move it, as an insert is: when it is dragged more sideways than up or down (up and down set its
+## level), it comes away, its level as it was, to drop on another send, on its strip or another.
+func _send_drag_data(_at: Vector2, inst, slot: int, button: Button):
+	var send: Dictionary = inst.sends[slot]
+	if send.is_empty():
+		return null
+	if not _send_drag.is_empty():
+		var moved: Vector2 = button.get_global_mouse_position() - _send_drag.from
+		if absf(moved.x) <= absf(moved.y):  # (setting its level)
+			return null
+		app.set_send_level(inst, slot, _send_drag.from_db)
+		app.automation.touch(inst, false, "send:%d" % slot)
+		_send_drag = {}
+	var tag := Label.new()
+	tag.text = "  %s  %s  " % [send.aux.display_name, _db_text(float(send.level_db))]
+	var style := StyleBoxFlat.new()
+	style.bg_color = send.aux.color.darkened(0.45)
+	style.set_corner_radius_all(3)
+	tag.add_theme_stylebox_override("normal", style)
+	tag.add_theme_font_size_override("font_size", 11)
+	if get_viewport().gui_is_dragging():
+		button.set_drag_preview(tag)
+	else:  # asked for outside a drag (the automated checks)
+		tag.free()
+	return {"send": true, "inst": inst, "slot": slot}
+
+
+## A send can go to a slot on any track that can send to its aux (not the aux itself, nor one its sound comes back to).
+func _send_can_drop(_at: Vector2, data, inst, slot: int) -> bool:
+	if not (data is Dictionary and data.get("send", false) and app.has_track(data.inst) and app.has_track(inst)):
+		return false
+	var send: Dictionary = data.inst.sends[data.slot]
+	return not send.is_empty() and not (data.inst == inst and data.slot == slot) and app.can_send(inst, send.aux)
+
+
+func _send_drop(_at: Vector2, data, inst, slot: int) -> void:
+	drop_send(data, inst, slot, Input.is_key_pressed(KEY_ALT))
+
+
+## Dropping a send on a slot: it moves there, swapping with what was there, or with `copy` (Option held) a second of it
+## goes there instead.
+func drop_send(data: Dictionary, inst, slot: int, copy: bool) -> void:
+	if not app.has_track(data.inst) or not app.has_track(inst):
+		return
+	if not app.move_send(data.inst, data.slot, inst, slot, copy):
+		_report("It can't go there: its aux's sound would come round to it again.")
 
 
 ## The send menu: for an empty send, the aux tracks (and a new one); for a full one, before or after the fader, on or
@@ -854,17 +892,14 @@ func _name_plate(text: String, color: Color, inst) -> Button:
 	plate.clip_text = true
 	plate.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	plate.add_theme_font_size_override("font_size", 13)
-	for state in ["normal", "hover", "pressed", "hover_pressed", "disabled"]:
-		var style := StyleBoxFlat.new()
-		style.bg_color = color.darkened(0.45 if not state.begins_with("hover") else 0.3)
-		style.set_corner_radius_all(3)
-		style.set_content_margin_all(3)
-		plate.add_theme_stylebox_override(state, style)
-	for state in ["font_color", "font_hover_color", "font_pressed_color", "font_disabled_color"]:
-		plate.add_theme_color_override(state, color.lightened(0.6))
+	_paint_plate(plate, color)
+	plate.set_meta("color", color)
 	if inst == null:
 		plate.disabled = true
 		plate.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	elif inst.get("is_master"):
+		Hints.give(plate, "Right-click to rename it, colour it, or for its automation")
+		plate.gui_input.connect(_on_name_input.bind(inst, plate))
 	elif inst.is_folder:
 		Hints.give(plate, "Click to choose it (Shift or Cmd-click for more).  Right-click to rename it, colour it, its automation, or take it away")
 		plate.gui_input.connect(_on_name_input.bind(inst, plate))
@@ -873,6 +908,19 @@ func _name_plate(text: String, color: Color, inst) -> Button:
 			_editor_name(inst), app.bindings.label("group")])
 		plate.gui_input.connect(_on_name_input.bind(inst, plate))
 	return plate
+
+
+## A name plate in a colour.
+func _paint_plate(plate: Button, color: Color) -> void:
+	for state in ["normal", "hover", "pressed", "hover_pressed", "disabled"]:
+		var style := StyleBoxFlat.new()
+		style.bg_color = color.darkened(0.45 if not state.begins_with("hover") else 0.3)
+		style.set_corner_radius_all(3)
+		style.set_content_margin_all(3)
+		plate.add_theme_stylebox_override(state, style)
+	for state in ["font_color", "font_hover_color", "font_pressed_color", "font_disabled_color"]:
+		plate.add_theme_color_override(state, color.lightened(0.6))
+	plate.set_meta("color", color)
 
 
 ## What clicking an instrument's name opens.
@@ -997,31 +1045,31 @@ func _refresh() -> void:
 		strip.output.select(strip.output.get_meta("choices").find(app.folder_of(inst)))
 
 	var m: Dictionary = app.meter
-	_master.meter.feed([m.get("mix_peak_l", 0.0), m.get("mix_peak_r", 0.0)], [m.get("mix_rms_l", 0.0), m.get("mix_rms_r", 0.0)])
-	var master_held: bool = _master.fader._dragging
-	if master_held != _master.get("held", false):  # (Touch and Latch write while it is held, as a track's)
-		_master.held = master_held
-		app.automation.touch(app.master_track, master_held)
-	var master_level: float = app.master_volume_db if master_held else app.automation.shown_level(app.master_track)
-	if not master_held:
-		_master.fader.set_value_no_signal(master_level)
-	_master.value.text = _db_text(master_level)
-	_show_peak(_master.peak, app.mix_peak_hold)
-	_show_inserts(_master.inserts, app.master_track.inserts)
-	_show_mix_outputs()
-	_room.meter.feed([m.get("room_peak_l", 0.0), m.get("room_peak_r", 0.0)], [m.get("room_rms_l", 0.0), m.get("room_rms_r", 0.0)])
-	if not _room.fader._dragging:
-		_room.fader.set_value_no_signal(app.room_volume_db)
-	_room.value.text = _db_text(app.room_volume_db)
-	_show_peak(_room.peak, app.room_peak_hold)
-	_master.hear.set_pressed_no_signal(settings.monitor == "mix")
-	_room.hear.set_pressed_no_signal(settings.monitor != "mix")
+	for strip in [_master, _room]:  # each master: its meter, its fader (as its automation has it), its inserts and outputs
+		var master = strip.inst
+		var which: String = master.which
+		strip.meter.feed([m.get(which + "_peak_l", 0.0), m.get(which + "_peak_r", 0.0)], [m.get(which + "_rms_l", 0.0), m.get(which + "_rms_r", 0.0)])
+		var master_held: bool = strip.fader._dragging
+		if master_held != strip.get("held", false):  # (Touch and Latch write while it is held, as a track's)
+			strip.held = master_held
+			app.automation.touch(master, master_held)
+		var master_level: float = master.level_db if master_held else app.automation.shown_level(master)
+		if not master_held:
+			strip.fader.set_value_no_signal(master_level)
+		strip.value.text = _db_text(master_level)
+		_show_peak(strip.peak, app.room_peak_hold if which == "room" else app.mix_peak_hold)
+		_show_inserts(strip.inserts, master.inserts)
+		_show_master_outputs(strip)
+		strip.limiter.set_pressed_no_signal(app.limiter_on(which))
+		strip.hear.set_pressed_no_signal(settings.monitor == which)
+		strip.plate.text = master.display_name
+		if strip.plate.get_meta("color") != master.color:
+			_paint_plate(strip.plate, master.color)
 	_reverb.meter.feed([m.get("reverb_peak_l", 0.0), m.get("reverb_peak_r", 0.0)], [m.get("reverb_rms_l", 0.0), m.get("reverb_rms_r", 0.0)])
 	if not _reverb.fader._dragging:
 		_reverb.fader.set_value_no_signal(app.reverb_db)
 	_reverb.value.text = _db_text(app.reverb_db)
 	_show_peak(_reverb.peak, app.reverb_peak_hold)
-	_master.limiter.set_pressed_no_signal(settings.limiter)
 	if Time.get_ticks_msec() < _problem_until:
 		pass
 	elif app.meter_clipped:
@@ -1033,21 +1081,21 @@ func _refresh() -> void:
 		_status.add_theme_color_override("font_color", WARN)
 		Hints.give(_status, "The limiter is holding the mix (or the room) under full scale. It comes before the master faders: bring an instrument down to stop it")
 	else:
-		_status.text = "Limiter idle" if settings.limiter else "Limiter off"
+		_status.text = "Limiter idle" if app.limiter_on(settings.monitor) else "Limiter off"
 		_status.add_theme_color_override("font_color", DIM)
 		Hints.give(_status, "")
 
 
-## The mix's own outputs to choose from (listed again when the window opens, the hardware may have changed): none, the
+## A master's own outputs to choose from (listed again when the window opens, the hardware may have changed): none, the
 ## main outputs only while it is heard, or a pair of the others.
-func _show_mix_outputs() -> void:
-	var output: OptionButton = _master.output
-	var wanted: int = app.settings.mix_output
-	if _output_count < 0 or (wanted >= 0 and not output.get_meta("choices", []).has(wanted)):
-		_output_count = app.output_channel_count()
+func _show_master_outputs(strip: Dictionary) -> void:
+	var output: OptionButton = strip.output
+	var wanted: int = app.master_output(strip.inst.which)
+	if strip.outputs < 0 or (wanted >= 0 and not output.get_meta("choices", []).has(wanted)):
+		strip.outputs = app.output_channel_count()
 		var mains := [app.settings.output_left, app.settings.output_right]
 		var choices := [-1]
-		for first in range(0, _output_count - 1, 2):
+		for first in range(0, strip.outputs - 1, 2):
 			if not (mains.has(first) or mains.has(first + 1)):
 				choices.append(first)
 		if wanted >= 0 and not choices.has(wanted):  # (set for outputs this device hasn't: kept, for when it comes back)
@@ -1126,10 +1174,6 @@ func _on_solo_toggled(on: bool, inst) -> void:
 
 func _on_source_selected(index: int, inst) -> void:
 	app.set_input_channel(inst, index - 1)
-
-
-func _on_limiter_toggled(on: bool) -> void:
-	app.set_limiter(on)
 
 
 ## A click on an insert (on letting go, so that a drag doesn't count): an empty one offers the plug-ins, a full one opens
@@ -1281,6 +1325,9 @@ func _on_plugin_menu_chosen(id: int) -> void:
 func _on_name_input(event: InputEvent, inst, plate: Button) -> void:
 	if not (event is InputEventMouseButton) or not event.pressed:
 		return
+	if inst.get("is_master") and event.button_index == MOUSE_BUTTON_LEFT:  # (a master is only renamed and coloured)
+		plate.accept_event()
+		return
 	if event.button_index == MOUSE_BUTTON_LEFT:
 		if event.shift_pressed:  # choosing tracks, as Pro Tools does by their names
 			app.choose_track(inst, "range")
@@ -1370,14 +1417,16 @@ func _on_remove_confirmed() -> void:
 	_name_menu_for = null
 
 
-## A track still there, or the mix's master (which has inserts too).
+## A track still there, or a master (which have inserts too).
 func _has(track) -> bool:
-	return track == app.master_track or app.has_track(track)
+	return app.is_track(track)
 
 
 func _strip_for(inst) -> Dictionary:
 	if inst == app.master_track:
 		return _master
+	if inst == app.room_master_track:
+		return _room
 	for strip in _strips:
 		if strip.inst == inst:
 			return strip

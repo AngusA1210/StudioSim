@@ -97,7 +97,7 @@ func instrument_settings(inst) -> Dictionary:
 		var board: Array = audio.get_pedals(inst.source_id)
 		for i in board.size():
 			var p: Dictionary = board[i]
-			var pedal := {"kind": p.kind, "on": p.on, "controls": Array(p.controls)}
+			var pedal := {"kind": p.kind, "on": p.on, "controls": Array(p.controls), "in_loop": p.get("in_loop", false)}
 			if p.kind == "plugin" and p.plugin_id != "":
 				pedal.merge({"plugin_id": p.plugin_id, "plugin_name": p.plugin_name, "plugin_maker": p.plugin_maker,
 					"state": Marshalls.raw_to_base64(audio.get_plugin_state(inst.source_id, "pedal", i))})
@@ -131,8 +131,8 @@ func apply_instrument_settings(inst, settings: Dictionary, include := {}) -> Str
 		app.hide_plugin_editors(inst)
 		for i in range(audio.get_pedals(inst.source_id).size() - 1, -1, -1):
 			app.remove_pedal(inst, i)
-		for pedal in amp.get("pedals", []):
-			var at: int = app.add_pedal(inst, str(pedal.get("kind", "")))
+		for pedal in amp.get("pedals", []):  # (in order: those in front of the amp, then those in its effects loop)
+			var at: int = app.add_pedal(inst, str(pedal.get("kind", "")), -1, bool(pedal.get("in_loop", false)))
 			if at < 0:
 				problems.append("a %s pedal" % str(pedal.get("kind", "")))
 				continue
@@ -355,13 +355,15 @@ func room_data() -> Dictionary:
 		auxes.append({"name": aux.display_name, "color": _color_data(aux.color), "level_db": aux.level_db, "muted": aux.muted, "soloed": aux.soloed,
 			"inserts": inserts_data(aux), "automation": aux.automation.duplicate(true), "auto_mode": aux.auto_mode, "lanes": aux.lanes.duplicate(),
 			"sends": _sends_data(aux)})
-	var master = app.master_track
+	var masters := {}
+	for master in app.master_tracks():  # (each master's name, colour, inserts and automation)
+		masters[master.which] = {"name": master.display_name, "color": _color_data(master.color), "inserts": inserts_data(master),
+			"automation": master.automation.duplicate(true), "auto_mode": master.auto_mode, "lanes": master.lanes.duplicate()}
 	return {"soundroom": "room", "version": VERSION, "mode": app.timeline.mode, "timeline": app.timeline.to_data(),
 		"tempo": app.tempo, "swing": app.swing, "master_db": app.master_volume_db, "room_master_db": app.room_volume_db, "reverb_db": app.reverb_db,
-		"master_inserts": inserts_data(master),
 		"room": {"size": [size.x, size.y, size.z], "walls": walls},
 		"player": {"position": [stood.x, stood.z], "yaw": app.player.yaw}, "instruments": instruments, "folders": folders, "auxes": auxes,
-		"master_automation": {"automation": master.automation.duplicate(true), "auto_mode": master.auto_mode, "lanes": master.lanes.duplicate()}}
+		"masters": masters}
 
 
 func _track_ref(track):
@@ -587,13 +589,21 @@ func apply_room_data(data: Dictionary, carry := {}, size = null, mode := "") -> 
 		for i in mini(aux_entries.size(), auxes.size()):
 			if auxes[i] != null:
 				_apply_sends(auxes[i], aux_entries[i].get("sends", []), auxes)
-	var master_problem := apply_inserts(app.master_track, data.get("master_inserts", []) if keep.call("plugins") else [])
-	if master_problem != "":
-		problems.append("the master: %s" % master_problem)
-	var master_part: Dictionary = data.get("master_automation", {}) if keep.call("mix") else {}
-	app.master_track.automation = master_part.get("automation", {}).duplicate(true)
-	app.master_track.auto_mode = str(master_part.get("auto_mode", "read"))
-	app.master_track.lanes = master_part.get("lanes", ["volume"]).duplicate()
+	for master in app.master_tracks():  # (a room from before the room's master had any: the mix's as it was kept then)
+		var kept: Dictionary = data.get("masters", {}).get(master.which, {})
+		if kept.is_empty() and master.which == "mix":
+			kept = data.get("master_automation", {}).duplicate()
+			kept["inserts"] = data.get("master_inserts", [])
+		var master_problem := apply_inserts(master, kept.get("inserts", []) if keep.call("plugins") else [])
+		if master_problem != "":
+			problems.append("the %s: %s" % [master.display_name, master_problem])
+		var mixed: Dictionary = kept if keep.call("mix") else {}
+		master.automation = mixed.get("automation", {}).duplicate(true)
+		master.auto_mode = str(mixed.get("auto_mode", "read"))
+		master.lanes = mixed.get("lanes", ["volume"]).duplicate()
+		master.display_name = str(kept.get("name", master.display_name))
+		if kept.has("color"):
+			master.color = _color_from(kept.color, master.CRIMSON)
 	app.settle_new_room()
 	var player: Dictionary = data.get("player", {})
 	var stood: Array = player.get("position", [])

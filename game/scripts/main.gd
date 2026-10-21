@@ -91,7 +91,8 @@ var room  # its size and the walls inside it
 var instruments: Array = []
 var folders: Array = []        # the routing folders (folder.gd)
 var auxes: Array = []          # the aux tracks (folder.gd, is_aux): buses the tracks' sends play into
-var master_track               # the master, as a track for automation (master_track.gd)
+var master_track               # the mix's master, as a track (master_track.gd): its automation, its inserts
+var room_master_track          # and the room's
 var silenced := {}             # the tracks a mute or a solo elsewhere keeps from being heard (track → true), as last set
 var chosen_tracks: Array = []  # the tracks chosen by their names in the edit and mix windows: instruments and folders
 var speaker  # the Speaker the room starts with: the one whose input choice is remembered between runs
@@ -165,13 +166,10 @@ func _ready() -> void:
 	automation.name = "Automation"
 	add_child(automation)
 	automation.setup(self)
-	master_track = preload("res://scripts/master_track.gd").new()
-	master_track.app = self
-	master_track.source_id = audio.add_source("bus", Vector3.ZERO, 1.0, 0.0)  # (a bus to carry the mix master's inserts)
-	audio.set_master_inserts(master_track.source_id)
-	master_track.inserts = audio.get_inserts(master_track.source_id)
+	master_track = _master("mix", "Mix Master")
+	room_master_track = _master("room", "Room Master")
 	audio.set_monitor(settings.monitor)
-	_apply_mix_output()
+	_apply_master_outputs()
 	load_default_room()  # behind the title screen, until a room is made or opened
 	if options.has("room"):
 		var dims: PackedStringArray = options.room.split(",")
@@ -185,7 +183,8 @@ func _ready() -> void:
 	audio.set_binaural(settings.binaural)
 	_apply_master_volume()
 	audio.set_distance_falloff(settings.distance_falloff_db)
-	audio.set_limiter(settings.limiter)
+	audio.set_master_limiter(settings.limiter, "mix")
+	audio.set_master_limiter(settings.room_limiter, "room")
 	audio.set_click(settings.click)
 	audio.set_click_volume(db_to_linear(settings.click_volume_db))
 	if options.has("tempo"):
@@ -577,9 +576,13 @@ func stomp(inst, index: int) -> void:
 ## An amp's effect pedals (the amp panel sets them up; 1-8 in the room switch them). The instrument's `pedals` is
 ## brought up to date at once, rather than waiting for its next frame.
 ## The pedals' automation follows them about the board (see automation.pedals_moved).
-func add_pedal(inst, kind: String, at := -1) -> int:
+## A pedal on an amp's board, at `at` (-1: the end); `into_loop`, in its effects loop (put at its end, the loop's).
+func add_pedal(inst, kind: String, at := -1, into_loop := false) -> int:
 	var count: int = inst.pedals.size()
-	var index := audio.add_pedal(inst.source_id, kind, at)
+	var loop := audio.get_pedal_loop(inst.source_id)
+	var index := audio.add_pedal(inst.source_id, kind, -1 if into_loop else at)
+	if into_loop and index >= 0 and audio.get_pedal_loop(inst.source_id) == loop:  # (the first in an empty loop)
+		audio.set_pedal_loop(inst.source_id, loop + 1)
 	inst.pedals = audio.get_pedals(inst.source_id)
 	inst.looper = audio.get_looper(inst.source_id)
 	if index >= 0 and index < count:
@@ -595,9 +598,11 @@ func remove_pedal(inst, index: int) -> void:
 	inst.looper = audio.get_looper(inst.source_id)
 
 
-func move_pedal(inst, from: int, to: int) -> bool:
+## A pedal moved along the board; `loop` (-1: as it was) how many are in the effects loop after, so that a pedal can
+## go into the loop or out of it as it moves.
+func move_pedal(inst, from: int, to: int, loop := -1) -> bool:
 	var count: int = inst.pedals.size()
-	var moved := audio.move_pedal(inst.source_id, from, to)
+	var moved := audio.move_pedal(inst.source_id, from, to, loop)
 	inst.pedals = audio.get_pedals(inst.source_id)
 	if moved and from != to:
 		automation.pedals_moved(inst, range(count).map(func(i):
@@ -613,9 +618,9 @@ func move_pedal(inst, from: int, to: int) -> bool:
 
 ## A second of a pedal (Option-drag on the board, or duplicating the amp), switch, knobs and plug-in settings and all,
 ## on `to_inst`'s board at `at` (-1: the end). Where it went, or -1, with the reason in `audio.get_error()`.
-func copy_pedal(inst, index: int, to_inst, at := -1) -> int:
+func copy_pedal(inst, index: int, to_inst, at := -1, loop := -1) -> int:
 	var count: int = to_inst.pedals.size()
-	var placed := audio.copy_pedal(inst.source_id, index, to_inst.source_id, at)
+	var placed := audio.copy_pedal(inst.source_id, index, to_inst.source_id, at, loop)
 	to_inst.pedals = audio.get_pedals(to_inst.source_id)
 	to_inst.looper = audio.get_looper(to_inst.source_id)
 	if placed >= 0:  # its automation copied with it (the others on that board moved along first)
@@ -859,6 +864,11 @@ func has_track(track) -> bool:
 	return instruments.has(track) or folders.has(track) or auxes.has(track)
 
 
+## A track still there, or one of the masters.
+func is_track(track) -> bool:
+	return has_track(track) or master_tracks().has(track)
+
+
 ## Every track in order, as the edit and mix windows show them: each folder just before what is in it (in its order,
 ## folders in it with theirs), the aux tracks not in a folder at the end.
 func track_order() -> Array:
@@ -1057,6 +1067,28 @@ func set_send(inst, slot: int, aux, level_db := 0.0, pre := false, on := true) -
 	return true
 
 
+## A send dragged to another slot, on its track or another's: it moves there, and whatever was there takes its place,
+## if each can go where the other was (never to an aux whose sound would come round to it again). Its level's
+## automation goes with it. With `copy`, a second of it goes there instead. Returns whether it could.
+func move_send(from_track, from_slot: int, to_track, to_slot: int, copy := false) -> bool:
+	var moving: Dictionary = from_track.sends[from_slot].duplicate()
+	var displaced: Dictionary = to_track.sends[to_slot].duplicate()
+	if moving.is_empty() or (from_track == to_track and from_slot == to_slot) or not can_send(to_track, moving.aux):
+		return false
+	if not copy and not displaced.is_empty() and not can_send(from_track, displaced.aux):
+		return false
+	to_track.sends[to_slot] = moving
+	_send_send(to_track, to_slot)
+	if copy:
+		automation.copied(from_track, "send", from_slot, to_track, to_slot)
+	else:
+		from_track.sends[from_slot] = displaced
+		_send_send(from_track, from_slot)
+		automation.slot_moved("send", from_track, from_slot, to_track, to_slot)
+	_apply_channels()
+	return true
+
+
 func set_send_level(inst, slot: int, db: float) -> void:
 	if not inst.sends[slot].is_empty():
 		inst.sends[slot].level_db = clampf(db, -80.0, 12.0)
@@ -1074,8 +1106,11 @@ func _send_send(inst, slot: int) -> void:
 
 
 ## The master fader at a gain, as its automation has it (stopped, at the playhead), without moving the fader.
-func apply_master_gain(gain: float) -> void:
-	audio.set_master_volume(gain * _stage_gain)
+func apply_master_gain(gain: float, which := "mix") -> void:
+	if which == "room":
+		audio.set_room_volume(gain * _stage_gain)
+	else:
+		audio.set_master_volume(gain * _stage_gain)
 
 
 ## Cmd-G: the tracks chosen, in a new folder: instruments' tracks, aux tracks and folders (with all that is in them),
@@ -1137,7 +1172,7 @@ func set_track_color(track, color: Color) -> void:
 
 ## Renaming a track, in the name prompt.
 func ask_track_name(track) -> void:
-	name_prompt.ask("Rename the %s" % ("folder" if track.is_folder else "track"), track.display_name,
+	name_prompt.ask("Rename the %s" % ("master" if track.get("is_master") else ("folder" if track.is_folder else "track")), track.display_name,
 		func(new_name: String) -> void: rename_track(track, new_name))
 
 
@@ -1311,9 +1346,12 @@ func clear_room() -> void:
 		remove_folder(folder)
 	for aux in auxes.duplicate():
 		remove_aux(aux)
-	master_track.automation = {}
-	master_track.auto_mode = "read"
-	master_track.lanes = ["volume"]
+	for master in master_tracks():
+		master.automation = {}
+		master.auto_mode = "read"
+		master.lanes = ["volume"]
+		master.color = master.CRIMSON
+		master.display_name = "Room Master" if master.which == "room" else "Mix Master"
 
 
 ## A room has just been filled (the default one, or a template's): mute and solo take effect, the Speaker whose input
@@ -1387,6 +1425,8 @@ func duplicate_instrument(inst, at = null):
 		for i in audio.get_pedals(inst.source_id).size():
 			if copy_pedal(inst, i, copy) < 0:
 				problems.append("pedal %d: %s" % [i + 1, audio.get_error()])
+		audio.set_pedal_loop(copy.source_id, audio.get_pedal_loop(inst.source_id))  # (its effects loop the same)
+		copy.pedals = audio.get_pedals(copy.source_id)
 	var inserts: Array = audio.get_inserts(inst.source_id)
 	for slot in inserts.size():
 		if inserts[slot].plugin_name != "":
@@ -1488,20 +1528,49 @@ func set_monitor(which: String) -> void:
 
 func toggle_monitor() -> void:
 	set_monitor("room" if settings.monitor == "mix" else "mix")
-	session.notice.emit("Hearing the mix (the tracks' outputs)" if settings.monitor == "mix" else "Hearing the room")
+	session.notice.emit("Headphone mix" if settings.monitor == "mix" else "Room")
 
 
-## The mix on outputs of its own as well (a pair, by its first, 0-based; -1 for none): to another pair of the
+## A master on outputs of its own as well (a pair, by its first, 0-based; -1 for none): to another pair of the
 ## interface's outputs, say, for headphones of their own or a recorder.
-func set_mix_output(first: int) -> void:
-	settings.mix_output = first
-	_apply_mix_output()
+func set_master_output(which: String, first: int) -> void:
+	if which == "room":
+		settings.room_output = first
+	else:
+		settings.mix_output = first
+	_apply_master_outputs()
 	settings.save_to_disk()
 
 
-func _apply_mix_output() -> void:
-	var first: int = settings.mix_output
-	audio.set_mix_output(first, first + 1) if first >= 0 else audio.set_mix_output(-1, -1)
+func set_mix_output(first: int) -> void:
+	set_master_output("mix", first)
+
+
+func master_output(which: String) -> int:
+	return settings.room_output if which == "room" else settings.mix_output
+
+
+func _apply_master_outputs() -> void:
+	for which in ["mix", "room"]:
+		var first := master_output(which)
+		audio.set_master_output(first, first + 1, which) if first >= 0 else audio.set_master_output(-1, -1, which)
+
+
+## The masters, as tracks: the room's, then the mix's (as the edit window has them at its foot).
+func master_tracks() -> Array:
+	return [room_master_track, master_track]
+
+
+## A master (the mix's or the room's), as a track: a bus of its own in the audio core to carry its inserts.
+func _master(which: String, the_name: String):
+	var master = preload("res://scripts/master_track.gd").new()
+	master.app = self
+	master.which = which
+	master.display_name = the_name
+	master.source_id = audio.add_source("bus", Vector3.ZERO, 1.0, 0.0)
+	audio.set_master_inserts(master.source_id, which)
+	master.inserts = audio.get_inserts(master.source_id)
+	return master
 
 
 ## An instrument's level in the room (how loud it sounds where it stands), and its mute there.
@@ -1546,9 +1615,10 @@ func set_mic_gain(mic, db: float) -> void:
 	mic.set_mic_gain(db)
 
 
-## Points a microphone (a stereo mic, between its two) at an instrument: at where its sound comes from.
+## Points a microphone (a stereo mic, between its two) at an instrument: at where its sound comes from (an amp's nearest
+## cone's dust cap).
 func aim_mic(mic, at) -> void:
-	var to: Vector3 = at.global_position - mic.global_position
+	var to: Vector3 = at.sound_point(mic.global_position) - mic.global_position
 	if Vector2(to.x, to.z).length() > 0.001:
 		mic.rotation.y = atan2(to.x, to.z)
 	mic.set_mic_tilt(rad_to_deg(atan2(-to.y, Vector2(to.x, to.z).length())))
@@ -1655,10 +1725,17 @@ func set_distance_falloff(db: float) -> void:
 	settings.save_to_disk()
 
 
-func set_limiter(on: bool) -> void:
-	settings.limiter = on
-	audio.set_limiter(on)
+func set_limiter(on: bool, which := "mix") -> void:
+	if which == "room":
+		settings.room_limiter = on
+	else:
+		settings.limiter = on
+	audio.set_master_limiter(on, which)
 	settings.save_to_disk()
+
+
+func limiter_on(which: String) -> bool:
+	return settings.room_limiter if which == "room" else settings.limiter
 
 
 ## A level on top of the master volume, for the title screen to hold the music back and bring it up on entering.

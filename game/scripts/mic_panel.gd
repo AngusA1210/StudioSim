@@ -281,10 +281,10 @@ func _refresh() -> void:
 static func distances(mic, instruments: Array) -> Array:
 	var out := []
 	var aim: Vector3 = mic.mic_aim()
-	for other in instruments:
+	for other in instruments:  # (an amp from its nearest cone)
 		if other == mic or other.is_mic:
 			continue
-		var to: Vector3 = other.global_position - mic.global_position
+		var to: Vector3 = other.sound_point(mic.global_position) - mic.global_position
 		var metres: float = to.length()
 		out.append({"name": other.display_name, "metres": metres, "ms": 1000.0 * metres / SPEED_OF_SOUND,
 			"db": 20.0 * log(REF_DISTANCE / maxf(metres, NEAREST)) / log(10.0), "off": rad_to_deg(aim.angle_to(to)) if metres > 0.001 else 0.0})

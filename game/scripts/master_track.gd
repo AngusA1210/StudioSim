@@ -1,12 +1,15 @@
 extends RefCounted
-## The mix's master, as a track for automation's sake: at the foot of the edit window, its volume's lane under it (A),
-## its automation mode, and its fader as the mix window has it (the mix's master fader), and its inserts (on a bus of
-## its own in the audio core, played on the whole mix). It has nothing else a track has. (The room's master has no
-## automation.)
+## A master (the mix's, or the room's: `which`), as a track: at the foot of the edit window, its volume's lane under it
+## (A), its automation mode, its fader as the mix window has it (a master fader), and its inserts (on a bus of its own in
+## the audio core, played on the whole of that master's sound). It has a name and a colour, crimson to begin with, and
+## nothing else a track has.
+
+const CRIMSON := Color(0.78, 0.11, 0.24)
 
 var app
+var which := "mix"  # "mix" or "room"
 var display_name := "Mix Master"
-var color := Color(0.75, 0.77, 0.82)
+var color := CRIMSON
 var automation := {}
 var auto_mode := "read"
 var lanes := ["volume"]
@@ -28,7 +31,12 @@ func normal_gain() -> float:
 	return 1.0
 var level_db: float:  # the master fader
 	get:
-		return app.master_volume_db if app != null else 0.0
+		if app == null:
+			return 0.0
+		return app.room_volume_db if which == "room" else app.master_volume_db
 	set(value):
 		if app != null:
-			app.set_master_volume_db(value)
+			if which == "room":
+				app.set_room_volume_db(value)
+			else:
+				app.set_master_volume_db(value)

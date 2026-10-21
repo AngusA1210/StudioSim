@@ -104,7 +104,7 @@ func restart(play := true) -> void:
 		inst.armed = false
 		audio.set_record_arm(inst.source_id, false)
 		sync(inst)
-	for folder in app.folders + app.auxes + [app.master_track]:
+	for folder in app.folders + app.auxes + app.master_tracks():
 		sync(folder)
 	app.follow_live_inputs()
 	if is_record():
@@ -599,9 +599,9 @@ func _trimmed(clip: Dictionary) -> Dictionary:
 
 ## Sends a track's clips to the audio core (in a Jam room, none: its timeline isn't played).
 func sync(inst) -> void:
-	if inst.get("is_master"):  # the master: its fader's automation
+	if inst.get("is_master"):  # a master: its fader's automation
 		var trimmed: Array = inst.automation.get("volume", []) if is_record() else []
-		audio.set_master_automation(trimmed.map(func(p): return [float(p[0]), float(p[1])]))
+		audio.set_master_automation(trimmed.map(func(p): return [float(p[0]), float(p[1])]), inst.which)
 		audio.set_track(inst.source_id, [], [], {"params": app.automation.param_lanes(inst)} if is_record() else {})  # its inserts'
 		return
 	if inst.is_folder:  # a folder or an aux: its automation only
@@ -993,14 +993,14 @@ func _snapshot() -> Dictionary:
 	var shot := {}
 	for inst in app.instruments:
 		shot[inst] = {"clips": inst.clips.duplicate(true), "automation": inst.automation.duplicate(true)}
-	for folder in app.folders + app.auxes + [app.master_track]:
+	for folder in app.folders + app.auxes + app.master_tracks():
 		shot[folder] = {"automation": folder.automation.duplicate(true)}
 	return shot
 
 
 func _restore(shot: Dictionary) -> void:
 	for track in shot:
-		if (track is Object and not is_instance_valid(track)) or not (app.has_track(track) or track == app.master_track):
+		if (track is Object and not is_instance_valid(track)) or not (app.has_track(track) or app.master_tracks().has(track)):
 			continue
 		if shot[track].has("clips"):
 			track.clips = shot[track].clips.duplicate(true)

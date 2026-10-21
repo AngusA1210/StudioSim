@@ -61,7 +61,9 @@ static func add_items(menu: PopupMenu, app, track, colors: PopupMenu, modes: Pop
 
 ## Acts on one of the track's items. Returns whether `id` was one of them.
 static func chosen(app, track, id: int) -> bool:
-	if not app.has_track(track):
+	if not app.has_track(track):  # (a master: renamed, nothing else)
+		if id == RENAME and app.is_track(track):
+			app.ask_track_name(track)
 		return id >= RENAME
 	# The tracks it acts on: every one chosen, if this is one of them (a folder's tracks going with it), or else just this one.
 	var outermost_chosen := func(t): return app.chosen_tracks.has(t) and not app.folders_around(t).any(func(f): return app.chosen_tracks.has(f))
