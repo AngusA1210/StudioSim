@@ -431,6 +431,7 @@ func _physics_process(_delta: float) -> void:
 ## The room's size or walls changed: tell the audio core, and bring in anything left outside or inside a wall.
 func _on_room_changed() -> void:
 	audio.set_room(room.size, room.audio_walls())
+	audio.set_floor_reflection(room.floor_reflection())
 	for inst in instruments:
 		var at: Vector3 = inst.global_position
 		at.y = inst.source_height
@@ -541,8 +542,8 @@ func follow_live_inputs() -> void:
 
 ## An amp's head and cabinet (catalog.gd lists them), and whether each is in use: bypassed, a head passes the signal
 ## straight to the cabinet, so that a plug-in amp on a pedal can be the head, and a cabinet is a flat full-range speaker.
-func set_amp_voice(inst, head: String, use_head: bool, cabinet: String, use_cabinet: bool) -> void:
-	inst.set_voice(head, use_head, cabinet, use_cabinet)
+func set_amp_voice(inst, head: String, use_head: bool, cabinet: String, use_cabinet: bool, speaker := "") -> void:
+	inst.set_voice(head, use_head, cabinet, use_cabinet, speaker)
 
 
 ## One of an amp's knobs ("gain", "bass", "mid", "treble", "presence", "master"), 0 to 10.
@@ -1419,7 +1420,7 @@ func duplicate_instrument(inst, at = null):
 		set_input_channel(copy, inst.input_channel)
 		set_speaker_volume(copy, inst.volume_db)
 	if inst.is_amp:
-		set_amp_voice(copy, inst.amp_head, inst.head_on, inst.amp_cabinet, inst.cabinet_on)
+		set_amp_voice(copy, inst.amp_head, inst.head_on, inst.amp_cabinet, inst.cabinet_on, inst.amp_speaker)
 		for control in inst.amp_controls:
 			set_amp_control(copy, control, inst.amp_controls[control])
 		for i in audio.get_pedals(inst.source_id).size():

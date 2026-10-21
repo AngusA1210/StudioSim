@@ -73,6 +73,8 @@ var _click_value: Label
 # Room
 var _size_sliders := {}  # "x", "y", "z" → HSlider
 var _size_values := {}
+var _floor_choice: OptionButton  # what the floor is (as the microphones hear its bounce)
+var _floor_note: Label
 var _decay_label: Label
 var _plan
 var _wall_title: Label
@@ -411,6 +413,19 @@ func _build_room_page(page: VBoxContainer) -> void:
 	_decay_label.add_theme_font_size_override("font_size", 13)
 	_decay_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	side.add_child(_decay_label)
+	_heading(side, "Floor")
+	_floor_choice = OptionButton.new()
+	for kind in Room.FLOOR_ORDER:
+		_floor_choice.add_item(Room.FLOORS[kind][0])
+	_floor_choice.item_selected.connect(func(i: int) -> void:
+		app.room.set_floor(Room.FLOOR_ORDER[i])
+		_refresh_live())
+	side.add_child(_floor_choice)
+	_floor_note = Label.new()
+	_floor_note.add_theme_color_override("font_color", DIM)
+	_floor_note.add_theme_font_size_override("font_size", 13)
+	_floor_note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	side.add_child(_floor_note)
 
 	side.add_child(HSeparator.new())
 	_heading(side, "Walls")
@@ -617,6 +632,8 @@ func _refresh_live() -> void:
 		_size_sliders[axis].set_value_no_signal(room.size[axis])
 		_size_values[axis].text = "%.1f m" % room.size[axis]
 	_decay_label.text = "Rings for about %.1f s. Bigger rooms ring longer but more quietly." % audio.get_room_decay()
+	_floor_choice.select(Room.FLOOR_ORDER.find(room.floor_kind))
+	_floor_note.text = Room.FLOORS[room.floor_kind][2]
 	var chosen: int = _plan.selected
 	var has_wall: bool = chosen >= 0 and chosen < room.walls.size()
 	_wall_height.editable = has_wall

@@ -55,6 +55,8 @@ var _head_choice: OptionButton
 var _head_on: CheckButton
 var _cabinet_choice: OptionButton
 var _cabinet_on: CheckButton
+var _speaker_choice: OptionButton  # the speakers in the cabinet, of its size
+var _speakers_shown := ""          # which cabinet's size they were listed for
 var _input_switch: CheckButton
 var _source: OptionButton
 var _hint: Label  # the line at the foot: what the mouse is over, or for a few seconds what just happened
@@ -221,6 +223,13 @@ func _refresh() -> void:
 		_knobs[control].modulate.a = 1.0 if inst.head_on or control == "master" else 0.35  # the head's knobs, bypassed with it
 	_head_choice.select(_index_of(Catalog.AMP_HEADS, inst.amp_head))
 	_cabinet_choice.select(_index_of(Catalog.AMP_CABINETS, inst.amp_cabinet))
+	var fits: Array = Catalog.speakers_for(inst.amp_cabinet)
+	if _speakers_shown != inst.amp_cabinet:  # (the speakers of its cabinet's size)
+		_speakers_shown = inst.amp_cabinet
+		_speaker_choice.clear()
+		for entry in fits:
+			_speaker_choice.add_item(entry[1])
+	_speaker_choice.select(_index_of(fits, inst.amp_speaker))
 	_head_on.set_pressed_no_signal(inst.head_on)
 	_head_on.text = "In use" if inst.head_on else "Bypassed"
 	_cabinet_on.set_pressed_no_signal(inst.cabinet_on)
@@ -737,6 +746,17 @@ func _build() -> void:
 	_cabinet_on = CheckButton.new()
 	Hints.give(_cabinet_on, "Bypassed, the cabinet is a flat, full-range speaker: for a plug-in amp that brings its own cabinet")
 	voice.add_child(_cabinet_on)
+	var speaker_gap := Control.new()
+	speaker_gap.custom_minimum_size.x = 18
+	voice.add_child(speaker_gap)
+	_speaker_choice = _voice_row(voice, "SPEAKERS", [])
+	Hints.give(_speaker_choice, func() -> String:
+		var fits: Array = Catalog.speakers_for(inst.amp_cabinet) if inst != null else []
+		return "Speakers: %s" % fits[_speaker_choice.selected][3] if _speaker_choice.selected >= 0 and _speaker_choice.selected < fits.size() else "")
+	_speaker_choice.item_selected.connect(func(i: int) -> void:
+		var fits: Array = Catalog.speakers_for(inst.amp_cabinet)
+		if i >= 0 and i < fits.size():
+			_set_voice(fits[i][0]))
 	_head_choice.item_selected.connect(func(_i: int) -> void: _set_voice())
 	_cabinet_choice.item_selected.connect(func(_i: int) -> void: _set_voice())
 	_head_on.toggled.connect(func(_on: bool) -> void: _set_voice())
@@ -1053,9 +1073,13 @@ func _index_of(choices: Array, name: String) -> int:
 	return 0
 
 
-func _set_voice() -> void:
-	app.set_amp_voice(inst, Catalog.AMP_HEADS[_head_choice.selected][0], _head_on.button_pressed,
-		Catalog.AMP_CABINETS[_cabinet_choice.selected][0], _cabinet_on.button_pressed)
+## The head, the cabinet and the speakers as chosen: `speaker` if one was, or the ones it has (a new cabinet, its usual
+## ones).
+func _set_voice(speaker := "") -> void:
+	var cabinet: String = Catalog.AMP_CABINETS[_cabinet_choice.selected][0]
+	if speaker == "" and cabinet == inst.amp_cabinet:
+		speaker = inst.amp_speaker
+	app.set_amp_voice(inst, Catalog.AMP_HEADS[_head_choice.selected][0], _head_on.button_pressed, cabinet, _cabinet_on.button_pressed, speaker)
 
 
 func _button(parent: Control, on_pressed: Callable) -> Button:

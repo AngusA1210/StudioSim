@@ -689,6 +689,23 @@ func _run() -> void:
 	await frames(3)
 	check(amp.amp_cabinet == "4x12" and amp.amp_head == "high_gain" and amp.top > combo_top + 0.2 and amp.footprint.x > 0.7,
 		"a High Gain head and a 4x12 can be swapped in, and the amp is drawn with the bigger cabinet", "%.2f m tall" % amp.top)
+	var speakers_listed: int = panel._speaker_choice.item_count
+	var usual: String = panel._speaker_choice.get_item_text(panel._speaker_choice.selected)
+	panel._speaker_choice.select(0)
+	panel._speaker_choice.item_selected.emit(0)
+	await frames(2)
+	var chose: String = amp.amp_speaker
+	var kept_settings: Dictionary = main.library.instrument_settings(amp)
+	panel._cabinet_choice.select(3)  # a 1x15: its own speaker
+	panel._cabinet_choice.item_selected.emit(3)
+	await frames(3)
+	check(speakers_listed == 4 and usual == "British 60 W" and chose == "british_25" and kept_settings.amp.get("speaker", "") == "british_25" and
+		amp.amp_speaker == "bass_15" and panel._speaker_choice.item_count == 1,
+		"the 4x12 comes with its usual speakers and offers the four 12s; another can be put in (and is kept with it); a 1x15 takes its 15",
+		"%s, then %s" % [usual, amp.amp_speaker])
+	panel._cabinet_choice.select(2)
+	panel._cabinet_choice.item_selected.emit(2)
+	await frames(2)
 	panel._head_on.button_pressed = false
 	panel._cabinet_on.button_pressed = false
 	await frames(3)
@@ -1309,6 +1326,12 @@ func _run() -> void:
 		"the sliders resize the room, and a bigger room rings longer", "%.2f s, then %.2f s" % [rang, audio.get_room_decay()])
 	await seconds(1.2)
 	check(audio.is_room_settled(), "the reverb has changed over within about a second")
+	menu._floor_choice.select(2)
+	menu._floor_choice.item_selected.emit(2)
+	await frames(2)
+	check(room.floor_kind == "carpet" and menu._floor_note.text.begins_with("Thick carpet") and main.library.room_data().room.get("floor", "") == "carpet",
+		"the floor can be carpeted (the mics hear hardly any bounce off it), and is kept with the room", menu._floor_note.text)
+	room.set_floor("hard")
 
 	var had: int = room.walls.size()
 	await drag(plan, Vector2(2.1, 3.05), Vector2(6.05, 2.9))
@@ -2734,6 +2757,10 @@ func _run() -> void:
 		float(aimed.get("off", 90.0)) < 1.0 and stack_speakers.cones.has(nearest_cone) and stack_speakers.facing.is_equal_approx(stack_amp.global_transform.basis.z),
 		"a 4x12's four speakers are where its grille shows them (its back closed); a mic pointed at it points at the nearest cone's dust cap",
 		"%.1f degrees off its axis" % float(aimed.get("off", 90.0)))
+	var pa = main.find_instrument("live")
+	var pa_speakers: Dictionary = pa.speakers_in_room() if pa != null else {}
+	check(pa != null and pa.radiates() and pa_speakers.cones.size() == 1 and is_equal_approx(float(pa_speakers.coverage), 45.0),
+		"the PA Speaker is heard as a speaker too: its woofer, and the horn over it covering 45 degrees either side")
 	main.remove_instrument(amp_mic)
 	main.remove_instrument(stack_amp)
 

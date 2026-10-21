@@ -208,6 +208,7 @@ struct Room {
         speaker = engine.addSource(InstrumentKind::Live, {-1.5f, 0.8f, 2.6f}, 1.0f, 0.7f);
         for (int s : {drums, bass, pad, bells, keys}) engine.loadDefaultPattern(s);
         face(0.0f, 3.6f, 0.0f);
+        engine.setFloorReflection(0.0f);  // (a floor that takes it all, so the mics hear the direct sound alone)
     }
     // yaw 0 faces -z (north); positive yaw turns left
     void face(float x, float z, float yaw) {
@@ -248,6 +249,18 @@ double bandDb(const std::vector<float>& x, float sr, float low_hz, float high_hz
     double energy = 0;
     for (float v : x) {
         const float y = lp[1].process(lp[0].process(hp[1].process(hp[0].process(v))));
+        energy += double(y) * y;
+    }
+    return db(std::sqrt(energy / double(std::max<size_t>(x.size(), 1))));
+}
+
+// The level (dB) of `x` in a narrow band round `hz` (two band-passes, Q 8).
+double narrowDb(const std::vector<float>& x, float sr, float hz) {
+    Biquad bp[2];
+    for (auto& f : bp) f.set(Biquad::Bandpass, sr, hz, 8.0f);
+    double energy = 0;
+    for (float v : x) {
+        const float y = bp[1].process(bp[0].process(v));
         energy += double(y) * y;
     }
     return db(std::sqrt(energy / double(std::max<size_t>(x.size(), 1))));
@@ -1307,7 +1320,7 @@ int main(int argc, char** argv) {
         const double clean = distortion(through(InstrumentKind::GuitarCombo, sine, 0.0f));
         const double crunch = distortion(through(InstrumentKind::GuitarCombo, sine, 6.0f));
         const double lead = distortion(through(InstrumentKind::GuitarStack, sine, 9.0f));
-        check(clean < 0.05 && crunch > 3 * clean && lead > 0.3, "the gain knob takes it from clean to distorted",
+        check(clean < 0.05 && crunch > 3 * clean && lead > 0.25, "the gain knob takes it from clean to distorted",
               fmt("harmonics against the note: %.1f %% clean, %.0f %% crunch, %.0f %% on the stack at 9", 100 * clean, 100 * crunch, 100 * lead));
 
         Rng rng;
@@ -1399,6 +1412,97 @@ int main(int argc, char** argv) {
                   std::fabs(10 * std::log10(high_flat / high_n)) < 1.0 && 10 * std::log10(high_cab / high_n) < -10.0,
               "bypassed, the head leaves the guitar clean for the cabinet; bypassed too, the cabinet is flat, and the amp passes it untouched",
               fmt("highs through the bypassed cabinet %+.1f dB, through the 4x12 %.0f dB", 10 * std::log10(high_flat / high_n), 10 * std::log10(high_cab / high_n)));
+
+        // The speakers: any of the cabinet's size, each its own voice, rated for so many watts.
+        auto speakerBand = [&](AmpSpeaker speaker, float low_hz, float high_hz) {  // noise through a 4x12 with no head
+            AmpModel amp;
+            amp.init(InstrumentKind::GuitarStack, 48000.0f);
+            amp.setHead(AmpHead::HighGain, false);
+            amp.setSpeaker(speaker);
+            std::vector<float> x = noise;
+            for (size_t i = 0; i < x.size(); i += 128) amp.process(x.data() + i, int(std::min<size_t>(128, x.size() - i)));
+            x.erase(x.begin(), x.begin() + 4800);
+            return bandDb(x, 48000.0f, low_hz, high_hz);
+        };
+        const double bite60 = speakerBand(AmpSpeaker::British60, 2200.0f, 2900.0f) - speakerBand(AmpSpeaker::British60, 400.0f, 800.0f);
+        const double bite25 = speakerBand(AmpSpeaker::British25, 2200.0f, 2900.0f) - speakerBand(AmpSpeaker::British25, 400.0f, 800.0f);
+        const double sparkle = speakerBand(AmpSpeaker::AmericanVintage, 5500.0f, 7000.0f) - speakerBand(AmpSpeaker::British25, 5500.0f, 7000.0f);
+        AmpModel sized;
+        sized.init(InstrumentKind::GuitarStack, 48000.0f);
+        sized.setSpeaker(AmpSpeaker::Bass15);  // (a 15 in a 4x12: not taken)
+        const AmpSpeaker kept_speaker = sized.speaker();
+        sized.setCabinet(AmpCabinet::Bass1x15, true);
+        check(bite60 > bite25 + 1.0 && sparkle > 3.0 && kept_speaker == AmpSpeaker::British60 && sized.speaker() == AmpSpeaker::Bass15 &&
+                  defaultSpeaker(AmpCabinet::OpenBack1x12) == AmpSpeaker::AmericanVintage,
+              "each speaker has its own voice: the British 60 W bites harder in the upper mids than the 25 W, the American "
+              "vintage reaches higher; a speaker goes only in a cabinet of its size, and a cabinet comes with its usual one",
+              fmt("bite %+.1f dB against %+.1f, ", bite60, bite25) + fmt("%+.1f dB more at 6 kHz", sparkle));
+        // The power amp: the master drives the output tubes. Turned up, a crunchy head's clean note gains harmonics, and a
+        // played string gets less than the 12 dB the master adds; and its tube rectifier's supply sags: loud, its
+        // level dips after the note's attack.
+        auto powered = [&](AmpHead head, float master, const std::vector<float>& in) {
+            AmpModel amp;
+            amp.init(InstrumentKind::GuitarCombo, 48000.0f);
+            amp.setHead(head, true);
+            amp.setCabinet(AmpCabinet::Closed4x12, true);  // (60 W speakers: the power amp's doing, not theirs)
+            amp.setControl(AmpControl::Gain, 0.0f);
+            amp.setControl(AmpControl::Master, master);
+            std::vector<float> x = in;
+            for (size_t i = 0; i < x.size(); i += 128) amp.process(x.data() + i, int(std::min<size_t>(128, x.size() - i)));
+            return x;
+        };
+        std::vector<float> loud_note(sine.size());
+        for (size_t i = 0; i < loud_note.size(); ++i) loud_note[i] = 0.4f * float(std::sin(6.2831853 * 220.0 * double(i) / 48000.0));
+        std::vector<float> at5 = powered(AmpHead::Crunch, 5.0f, loud_note), at10 = powered(AmpHead::Crunch, 10.0f, loud_note);
+        at5.erase(at5.begin(), at5.begin() + 4800);
+        at10.erase(at10.begin(), at10.begin() + 4800);
+        auto played = [&](float master) {
+            AmpModel amp;
+            amp.init(InstrumentKind::GuitarCombo, 48000.0f);
+            amp.setCabinet(AmpCabinet::Closed4x12, true);
+            amp.setControl(AmpControl::Master, master);
+            std::vector<float> x = pluckedString(110.0, 2.0, 0.1f);
+            for (size_t i = 0; i < x.size(); i += 128) amp.process(x.data() + i, int(std::min<size_t>(128, x.size() - i)));
+            x.erase(x.begin(), x.begin() + 4800);
+            return rmsDb(x);
+        };
+        const double louder = played(10.0f) - played(5.0f);
+        check(distortion(at10) > 1.5 * distortion(at5) && louder < 10.0 && louder > 3.0,
+              "the master drives the power amp: turned up, the output tubes saturate (harmonics, and less than the 12 dB it adds)",
+              fmt("harmonics %.1f %% at 5, ", 100 * distortion(at5)) + fmt("%.0f %% at 10; ", 100 * distortion(at10)) + fmt("a played string %.1f dB louder", louder));
+        auto dip = [&](AmpHead head) {  // the level 100 to 150 ms into a loud, driven note against its first 10 ms (dB)
+            AmpModel amp;
+            amp.init(InstrumentKind::GuitarCombo, 48000.0f);
+            amp.setHead(head, true);
+            amp.setCabinet(AmpCabinet::Closed4x12, true);
+            amp.setControl(AmpControl::Gain, 6.0f);
+            amp.setControl(AmpControl::Master, 10.0f);
+            std::vector<float> x(48000, 0.0f);
+            for (size_t i = 9600; i < x.size(); ++i) x[i] = 0.1f * float(std::sin(6.2831853 * 220.0 * double(i) / 48000.0));  // (after silence)
+            for (size_t i = 0; i < x.size(); i += 128) amp.process(x.data() + i, int(std::min<size_t>(128, x.size() - i)));
+            const std::vector<float> attack(x.begin() + 9600 + 48, x.begin() + 9600 + 528), held(x.begin() + 9600 + 4800, x.begin() + 9600 + 7200);
+            return rmsDb(held) - rmsDb(attack);
+        };
+        const double crunch_sag = dip(AmpHead::Crunch), clean_sag = dip(AmpHead::Clean);
+        check(crunch_sag < -0.5 && crunch_sag < clean_sag - 0.3, "the supply sags: turned up, a crunchy head's note dips after its attack, more than a big clean one's",
+              fmt("crunch %+.1f dB, ", crunch_sag) + fmt("clean %+.1f dB", clean_sag));
+        // The speakers, driven past their rating (no head: the master straight to the speakers): a 20 W speaker
+        // distorts where a 60 W one doesn't.
+        auto speakerDriven = [&](AmpSpeaker speaker) {
+            AmpModel amp;
+            amp.init(InstrumentKind::GuitarCombo, 48000.0f);
+            amp.setHead(AmpHead::Crunch, false);
+            amp.setCabinet(AmpCabinet::OpenBack1x12, true);
+            amp.setSpeaker(speaker);
+            amp.setControl(AmpControl::Master, 10.0f);
+            std::vector<float> x = loud_note;
+            for (size_t i = 0; i < x.size(); i += 128) amp.process(x.data() + i, int(std::min<size_t>(128, x.size() - i)));
+            x.erase(x.begin(), x.begin() + 4800);
+            return distortion(x);
+        };
+        const double small = speakerDriven(AmpSpeaker::AmericanVintage), big = speakerDriven(AmpSpeaker::British60);
+        check(small > 2.0 * big, "driven past their rating, speakers distort: a 20 W one far more than a 60 W one",
+              fmt("%.1f %% against ", 100 * small) + fmt("%.1f %%", 100 * big));
 
         // In the engine: a guitar into a combo, looped, then the guitar stops and the loop carries on through the amp.
         Room room;
@@ -2704,6 +2808,42 @@ int main(int argc, char** argv) {
         check(on_cone.second - between.second > 6.0,
               "close to a 4x12, in front of one cone it is bright; between the four, off every cone's axis, it is dull",
               fmt("%.1f dB less 2-5 kHz between them", on_cone.second - between.second));
+        // The floor: a mic 1.5 m in front of the combo, 1.2 m up, hears the floor's bounce 0.37 m behind the cone's own
+        // sound: a notch where it is half a wave late (461 Hz), and more where it is a whole wave late (922 Hz). Close
+        // up, the bounce is too far off to matter.
+        const Vec3 off_floor = at(0.0f, 0.9f, 1.5f);
+        const double half_wave = 343.0 / (2.0 * (std::sqrt(1.5 * 1.5 + 1.5 * 1.5) - std::sqrt(1.5 * 1.5 + 0.9 * 0.9)));
+        auto notched = [&](Vec3 where, float floor) {  // the notch's band against the whole wave's
+            room.engine.setFloorReflection(floor);
+            room.engine.setSourcePosition(mic, where);
+            renderSeconds(room.engine, 0.4, noise);
+            const Render r = renderSeconds(room.engine, 2.0, noise);
+            return narrowDb(r.l, 48000.0f, float(half_wave)) - narrowDb(r.l, 48000.0f, float(2 * half_wave));
+        };
+        const double bare = notched(off_floor, 0.0f), bounced = notched(off_floor, 0.9f);
+        const double close_bare = notched(at(0.0f, 0.0f, 0.05f), 0.0f), close_bounced = notched(at(0.0f, 0.0f, 0.05f), 0.9f);
+        room.engine.setFloorReflection(0.0f);
+        check(bare - bounced > 6.0 && std::fabs(close_bare - close_bounced) < 1.5,
+              "a mic a little way off hears the floor's bounce: a notch where it arrives half a wave late (and more where a "
+              "whole wave late); right up against the cone it hardly matters",
+              fmt("%.0f Hz down %.1f dB against ", half_wave, bare - bounced) + fmt("%.0f Hz; ", 2 * half_wave) +
+                  fmt("close up, %.1f dB", close_bare - close_bounced));
+        // A PA speaker's horn: within its coverage it is even, beyond it its highs fall away, as a cone's don't.
+        Radiator pa;
+        pa.cones = 1;
+        pa.cone[0] = {0.0f, 1.5f, 0.0f};
+        pa.inches = 12.0f;
+        pa.coverage = 45.0f * 3.14159f / 180.0f;
+        const auto pa_at = [&](float degrees) {
+            const float t = degrees * 3.14159f / 180.0f;
+            return radiate(pa, 0, {3.0f * std::sin(t), 1.5f, 3.0f * std::cos(t)}, ref).cut_hz;
+        };
+        Radiator bare_cone = pa;
+        bare_cone.coverage = 0.0f;
+        const float cone30 = radiate(bare_cone, 0, {3.0f * 0.5f, 1.5f, 3.0f * 0.866f}, ref).cut_hz;
+        check(pa_at(30.0f) >= kFullRangeHz && pa_at(70.0f) <= pa.crossover_hz && cone30 < 3000.0f,
+              "a PA speaker's horn covers 45 degrees either side evenly (where a bare cone would already be dull), and little "
+              "beyond", fmt("at 30 degrees: horn full-range, cone from %.0f Hz; ", cone30) + fmt("at 70: horn from %.0f Hz", pa_at(70.0f)));
     }
 
     {

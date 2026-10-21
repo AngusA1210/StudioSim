@@ -223,8 +223,9 @@ float SoundRoomAudio::get_mic_noise(const String& model) const {
     return index < 0 ? 0.0f : sr::micNoiseSpl(sr::micModels()[size_t(index)]);
 }
 void SoundRoomAudio::set_source_pan(int id, float pan) { if (engine_) engine_->setSourcePan(id, pan); }
+void SoundRoomAudio::set_floor_reflection(float amount) { if (engine_) engine_->setFloorReflection(amount); }
 void SoundRoomAudio::set_source_radiator(int id, const PackedVector3Array& cones, const Vector3& facing, float inches, bool open_back,
-                                         const Vector3& back, float width) {
+                                         const Vector3& back, float width, float coverage_deg, float crossover_hz) {
     if (!engine_) return;
     sr::Radiator r;
     r.cones = int(std::min<int64_t>(cones.size(), sr::kMaxCones));
@@ -235,6 +236,8 @@ void SoundRoomAudio::set_source_radiator(int id, const PackedVector3Array& cones
     r.open_back = open_back;
     r.back = vec(back);
     r.width = width;
+    r.coverage = coverage_deg * 3.14159265f / 180.0f;
+    r.crossover_hz = crossover_hz;
     engine_->setSourceRadiator(id, r);
 }
 void SoundRoomAudio::set_source_output(int id, int bus) { if (engine_) engine_->setSourceOutput(id, bus); }
@@ -251,6 +254,13 @@ void SoundRoomAudio::set_amp_head(int id, const String& head, bool on) {
     static const char* const kNames[sr::kAmpHeads] = {"clean", "crunch", "high_gain", "bass_round", "bass_punch"};
     for (int h = 0; h < sr::kAmpHeads; ++h)
         if (head == kNames[h] && engine_) engine_->setAmpHead(id, sr::AmpHead(h), on);
+}
+
+void SoundRoomAudio::set_amp_speaker(int id, const String& speaker) {
+    static const char* const kNames[sr::kAmpSpeakers] = {"british_25", "british_60", "american_vintage", "british_alnico",
+                                                         "american_10", "bass_10", "bass_15"};
+    for (int k = 0; k < sr::kAmpSpeakers; ++k)
+        if (speaker == kNames[k] && engine_) engine_->setAmpSpeaker(id, sr::AmpSpeaker(k));
 }
 
 void SoundRoomAudio::set_amp_cabinet(int id, const String& cabinet, bool on) {
@@ -855,8 +865,10 @@ void SoundRoomAudio::_bind_methods() {
     ClassDB::bind_method(D_METHOD("set_mic_mid_side", "id", "mid_side", "width"), &SoundRoomAudio::set_mic_mid_side, DEFVAL(1.0f));
     ClassDB::bind_method(D_METHOD("get_mic_noise", "model"), &SoundRoomAudio::get_mic_noise);
     ClassDB::bind_method(D_METHOD("set_source_pan", "id", "pan"), &SoundRoomAudio::set_source_pan);
-    ClassDB::bind_method(D_METHOD("set_source_radiator", "id", "cones", "facing", "inches", "open_back", "back", "width"),
-                         &SoundRoomAudio::set_source_radiator);
+    ClassDB::bind_method(D_METHOD("set_source_radiator", "id", "cones", "facing", "inches", "open_back", "back", "width", "coverage_deg",
+                                  "crossover_hz"), &SoundRoomAudio::set_source_radiator, DEFVAL(0.0f), DEFVAL(1800.0f));
+    ClassDB::bind_method(D_METHOD("set_floor_reflection", "amount"), &SoundRoomAudio::set_floor_reflection);
+    ClassDB::bind_method(D_METHOD("set_amp_speaker", "id", "speaker"), &SoundRoomAudio::set_amp_speaker);
     ClassDB::bind_method(D_METHOD("set_source_output", "id", "bus"), &SoundRoomAudio::set_source_output);
     ClassDB::bind_method(D_METHOD("set_source_input_channel", "id", "channel"), &SoundRoomAudio::set_source_input_channel);
     ClassDB::bind_method(D_METHOD("set_source_input", "id", "on"), &SoundRoomAudio::set_source_input);

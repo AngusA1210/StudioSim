@@ -116,6 +116,29 @@ const AMP_CABINETS := [
 	["4x10", "4x10 bass", "Four 10s: tight, punchy lows and more top end."],
 	["8x10", "8x10 bass", "Eight 10s: big lows and a growl in the mids."],
 ]
+# The speakers a cabinet can hold, of its size (audio_core/src/core/amp.h has how each sounds): [id, name, size in
+# inches, about]. Each is rated for so many watts: a head of more turned up drives them into compression and breakup.
+const AMP_SPEAKERS := [
+	["british_25", "British 25 W", 12, "Warm and mid-forward, with a soft top. 25 W each: a small combo turned up pushes them into breakup."],
+	["british_60", "British 60 W", 12, "The low mids pulled back and an aggressive upper-mid bite. 60 W each: hard to push."],
+	["american_vintage", "American vintage", 12, "Scooped, with a sparkly top and loose lows. 20 W each: they break up early."],
+	["british_alnico", "British alnico", 12, "Chiming and bright, sweet on top. 15 W each: the first to compress and break up."],
+	["american_10", "American 10", 10, "Bright and tight. 25 W each."],
+	["bass_10", "Bass 10", 10, "Punchy, a growl in the mids, an extended top. 250 W each."],
+	["bass_15", "Bass 15", 15, "Deep, and soft on top. 400 W."],
+]
+const CABINET_INCHES := {"1x12": 12, "2x12": 12, "4x12": 12, "1x15": 15, "4x10": 10, "8x10": 10}
+const CABINET_SPEAKERS := {"1x12": "american_vintage", "2x12": "british_alnico", "4x12": "british_60", "1x15": "bass_15",
+	"4x10": "bass_10", "8x10": "bass_10"}  # each cabinet's usual speakers
+
+
+## The speakers a cabinet can hold: those of its size.
+static func speakers_for(cabinet: String) -> Array:
+	return AMP_SPEAKERS.filter(func(s): return s[2] == CABINET_INCHES.get(cabinet, 12))
+
+
+static func speaker_fits(speaker: String, cabinet: String) -> bool:
+	return speakers_for(cabinet).any(func(s): return s[0] == speaker)
 
 # The effect pedals an amp's board can hold, in the order the pedal menu lists them (audio_core/src/core/pedals.h has
 # what each does). Each control is [name, readout, where it starts]: the readout says how its setting reads in real

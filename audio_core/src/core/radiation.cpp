@@ -11,7 +11,6 @@ constexpr float kPiF = 3.14159265f;
 constexpr float kBackLevel = 0.7f;    // an open back lets out a little less than the front (the panel it has, the chassis)
 constexpr float kBackCutHz = 2500.0f; // and duller: the back of a cone is behind its basket and magnet
 constexpr float kNearLowDb = 5.0f;    // the lows close up that far off are lost to the room behind (the baffle step)
-constexpr float kCapHighDb = 4.0f;    // the dust cap's bite, right in front of it
 
 Vec3 minus(Vec3 a, Vec3 b) { return {a.x - b.x, a.y - b.y, a.z - b.z}; }
 float dotOf(Vec3 a, Vec3 b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
@@ -31,8 +30,17 @@ float shadow(float angle) {
     return angle <= 0.5f * kPiF ? 1.0f : 1.0f - 0.35f * (angle - 0.5f * kPiF) / (0.5f * kPiF);
 }
 
+// How a cone (or a horn over it) beams far off, `angle` off its axis.
+float farCut(const Radiator& r, float a, float angle) {
+    if (r.coverage <= 0.0f || angle > 0.5f * kPiF) return beamCut(a, angle);
+    if (angle <= r.coverage) return 2.0f * kFullRangeHz;  // (within the horn's coverage: even)
+    const float past = std::clamp((angle - r.coverage) / 0.26f, 0.0f, 1.0f);  // its highs gone within 15 degrees past it
+    const float horn = std::exp(std::log(2.0f * kFullRangeHz) + (std::log(r.crossover_hz) - std::log(2.0f * kFullRangeHz)) * past);
+    return std::min(horn, std::max(beamCut(a, angle), r.crossover_hz));
+}
+
 // A piston of radius `a` heard at `at`, from its middle `centre`, facing `facing`.
-RadiatedPath piston(Vec3 centre, Vec3 facing, float a, float breakup, Vec3 at, float ref_distance) {
+RadiatedPath piston(const Radiator& cab, Vec3 centre, Vec3 facing, float a, float breakup, Vec3 at, float ref_distance) {
     RadiatedPath p;
     const Vec3 to = minus(at, centre);
     const float r = lengthOf(to);
@@ -48,13 +56,13 @@ RadiatedPath piston(Vec3 centre, Vec3 facing, float a, float breakup, Vec3 at, f
     p.nearness = ref_distance * level;
     p.gain = shadow(angle);
     // Far off, the beaming; close up, where across the cone (above its breakup only its middle moves).
-    const float far_cut = beamCut(a, angle);
+    const float far_cut = farCut(cab, a, angle);
     const float near_cut = std::max(breakup * a / std::max(x, 2e-3f), 0.8f * breakup);
     const float cut = std::exp(near * std::log(std::min(near_cut, 2.0f * kFullRangeHz)) +
                                (1.0f - near) * std::log(std::min(far_cut, 2.0f * kFullRangeHz)));
     p.cut_hz = std::clamp(cut, 120.0f, 20000.0f);
     p.low_db = kNearLowDb * near;
-    p.high_db = kCapHighDb * near * std::max(0.0f, 1.0f - x / (0.35f * a));
+    p.high_db = cab.cap_db * near * std::max(0.0f, 1.0f - x / (0.35f * a));
     p.distance = r;
     p.wave_radius = std::sqrt(r * r + a * a);
     p.from = r > 1e-6f ? Vec3{-to.x / r, -to.y / r, -to.z / r} : Vec3{facing.x, facing.y, facing.z};
@@ -73,15 +81,15 @@ int radiatedPaths(const Radiator& r) {
 
 RadiatedPath radiate(const Radiator& r, int path, Vec3 at, float ref_distance) {
     const int cones = std::clamp(r.cones, 0, kMaxCones);
-    const float a = coneRadius(r.inches), breakup = breakupHz(r.inches);
+    const float a = coneRadius(r.inches), breakup = r.breakup_hz > 0.0f ? r.breakup_hz : breakupHz(r.inches);
     if (path < cones) {  // a cone: its share of the cabinet's sound
-        RadiatedPath p = piston(r.cone[size_t(path)], r.facing, a, breakup, at, ref_distance);
+        RadiatedPath p = piston(r, r.cone[size_t(path)], r.facing, a, breakup, at, ref_distance);
         p.gain /= float(cones);
         return p;
     }
     // The open back: every cone's back at once, from the opening, facing the other way, in reverse polarity.
     const Vec3 behind{-r.facing.x, -r.facing.y, -r.facing.z};
-    RadiatedPath p = piston(r.back, behind, std::min(a * std::sqrt(float(cones)), 0.3f), breakup, at, ref_distance);
+    RadiatedPath p = piston(r, r.back, behind, std::min(a * std::sqrt(float(cones)), 0.3f), breakup, at, ref_distance);
     p.gain *= -kBackLevel;
     p.cut_hz = std::min(p.cut_hz, kBackCutHz);
     p.high_db = 0.0f;
@@ -96,7 +104,7 @@ Facing facingFrom(const Radiator& r, Vec3 centre, Vec3 at) {
     if (n < 1e-6f) return f;
     const float a = coneRadius(r.inches);
     const float angle = std::acos(std::clamp(dotOf(to, r.facing) / n, -1.0f, 1.0f));
-    f.cut_hz = std::min(beamCut(a, angle), 20000.0f);
+    f.cut_hz = std::min(farCut(r, a, angle), 20000.0f);
     f.gain = shadow(angle);
     if (r.open_back) {  // its back, heard from behind
         const float back = kPiF - angle;

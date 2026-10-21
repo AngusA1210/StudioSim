@@ -44,6 +44,15 @@ void fragment() {
 var size := DEFAULT_SIZE
 var walls: Array = []
 var brightness := 1.0  # of the room's own lights
+## What the floor is, as the microphones hear it: how much of a sound it sends back up to them (an amplitude), as a mic a
+## little way off a floor-standing amp hears its bounce. [name, reflection, about]
+const FLOORS := {
+	"hard": ["Hard floor", 0.9, "Wood or concrete: a mic a little way off an amp hears a strong bounce off it (notches, where it arrives half a wave late)."],
+	"rug": ["A rug", 0.6, "A rug under the band: a softer bounce, without its highs."],
+	"carpet": ["Carpet", 0.3, "Thick carpet: hardly any bounce."],
+}
+const FLOOR_ORDER := ["hard", "rug", "carpet"]
+var floor_kind := "hard"
 
 var _shell: Node3D
 var _wall_nodes: Node3D
@@ -70,9 +79,21 @@ static func default_walls() -> Array:
 func reset() -> void:
 	size = DEFAULT_SIZE
 	walls = default_walls()
+	floor_kind = "hard"
 	_build_shell()
 	_build_walls()
 	changed.emit()
+
+
+func set_floor(kind: String) -> void:
+	if FLOORS.has(kind) and kind != floor_kind:
+		floor_kind = kind
+		changed.emit()
+
+
+## How much of a sound its floor sends back up.
+func floor_reflection() -> float:
+	return float(FLOORS[floor_kind][1])
 
 
 func set_size(new_size: Vector3) -> void:

@@ -220,7 +220,12 @@ more. Close up it is in its near field: the level levels off rather than rising 
 and where across the cone a mic sits matters: bright and biting at the dust cap, darker halfway out, darker still at the
 edge. A 4x12's cones comb-filter between them; an open back is heard behind (reverse polarity, duller) and costs some
 lows in front; behind a closed back only the lows wrap round. The listener hears the beaming too (a combo on the floor
-beams at your knees). **Point it at** aims a mic at an amp's nearest dust cap. (radiation.h has the physics.)
+beams at your knees). **Point it at** aims a mic at an amp's nearest dust cap. A mic a little way off also hears the
+**floor's bounce**: each cone again from its image under the floor, a little late, so the sound has notches where the
+bounce arrives half a wave late (and more where a whole wave late), as a real one does; up against the grille it hardly
+matters. The Room page sets what the floor is: hard (a strong bounce), a rug, or thick carpet (hardly any). The PA
+**Speaker** is heard the same way: its 10-inch woofer, and the horn over it covering 45 degrees either side evenly
+and little beyond. (radiation.h has the physics.)
 
 ### Amps, pedals and the loop pedal
 
@@ -238,15 +243,33 @@ drawn with the cabinet it has.
 | Bass: Punch | punchy, more top end and drive | 4x10 bass | tight lows, more top |
 | | | 8x10 bass | big lows, a growl in the mids |
 
-The cabinets are how the speakers sound in the room, as you hear them standing in front of the amp, rather than how a
-microphone pressed against the cone hears them: no close-miking's boomy lows or bright peak, only the speakers' own
-response. Either part can be **bypassed**. Without its head, the amp plays whatever reaches it straight through the
+Each cabinet holds **speakers** of its size, its usual ones to begin with; the amp panel's SPEAKERS changes them:
+
+| Speakers | | Rated |
+| --- | --- | --- |
+| British 25 W (12") | warm and mid-forward, a soft top | 25 W each |
+| British 60 W (12", the 4x12's) | the low mids pulled back, an aggressive upper-mid bite | 60 W each |
+| American vintage (12", the 1x12's) | scooped, a sparkly top, loose lows | 20 W each |
+| British alnico (12", the 2x12's) | chiming, bright and sweet | 15 W each |
+| American 10 (10") | bright and tight | 25 W each |
+| Bass 10 (10", the 4x10's and 8x10's) | punchy, a growl in the mids, an extended top | 250 W each |
+| Bass 15 (15", the 1x15's) | deep, soft on top | 400 W |
+
+A cabinet and its speakers are how they sound on the speakers' axis, far enough off to be past their near field, as a
+maker measures a speaker; how they sound anywhere else, close up or off axis, the room works out from where the cones
+are (see Amps' speakers), each speaker's cone breaking up where its own does. Either part can be **bypassed**. Without its head, the amp plays whatever reaches it straight through the
 cabinet, so an amp plug-in on a Plug-in pedal can be the head; without its cabinet, it is a flat, full-range speaker,
 for a plug-in that brings its own cabinet.
 
 The head has the knobs of a real amp, 0 to 10: **Gain** (how hard the preamp is driven, from clean into distortion),
 **Bass**, **Middle** and **Treble** (flat at 5), **Presence** (the top end the power amp lets through) and **Master**
-(the amp's volume: 5 is unity, 10 is +12 dB, and it works with the head bypassed too). Press ' facing an amp to
+(the amp's volume: 5 is unity, 10 is +12 dB, and it works with the head bypassed too). The master drives the
+**power amp**: a push-pull pair of output tubes, which give out softly as they reach full power (a played string at 10
+is some 7 dB louder than at 5, not 12, and grittier), and whose supply **sags** under a sustained load, so a loud
+note dips just after its attack and blooms (most in the small Crunch head, with its tube rectifier; hardly at all in
+the big Clean one). Each head has its wattage (Clean 85 W, Crunch 30, High Gain 100, Bass Round 300, Bass Punch 500), and
+the speakers theirs: a head that can give more than its speakers take drives them, turned up, into compression (their
+voice coils heating) and breakup, as a small combo cranked does. Press ' facing an amp to
 open its panel: drag a knob up or down (Shift for fine moves), turn the scroll wheel over it, or double-click it for
 5. The panel also has the amp's input switch and which hardware input it plays. Plug a guitar or bass straight into
 the interface's instrument input; the amp is the only processing it needs. Wear headphones.
@@ -638,6 +661,8 @@ The Room page of the menu changes the room itself, while the music plays:
 - **Size**: width and length from 4 to 40 m, height from 2.4 to 12 m. The reverb follows: a bigger room rings for
   longer but more quietly, a small one is short and close. Instruments, walls and you are brought inside if the room
   shrinks past them.
+- **Floor**: hard (wood or concrete), a rug, or thick carpet: how much of a sound it sends back up to the microphones
+  (see Amps' speakers). Kept with the room.
 - **Walls**: a floor plan of the room, seen from above with the instruments and yourself marked on it. Drag on the
   floor to draw a wall, drag a wall to move it, drag the dot at either end to turn and stretch it. Walls can stand at
   any angle and there can be up to 16. Each has its own height.

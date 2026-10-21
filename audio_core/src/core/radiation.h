@@ -40,6 +40,12 @@ struct Radiator {
     std::array<Vec3, kMaxCones> cone{};  // each cone's acoustic centre (its dust cap, a little behind the grille)
     Vec3 facing{0.0f, 0.0f, 1.0f};       // the way the baffle faces (a unit vector)
     float inches = 12.0f;                // the speakers' size, as speakers are sold
+    float breakup_hz = 0.0f;             // where a cone starts to break up (0: as its size has it)
+    float cap_db = 4.0f;                 // how much brighter it is right in front of a dust cap
+    // A horn above a cone (a PA speaker's): above `crossover_hz` it covers `coverage` either side of its axis
+    // (radians) evenly, and little beyond it; below, the cone beams as ever. No coverage: a plain cone.
+    float coverage = 0.0f;
+    float crossover_hz = 1800.0f;
     bool open_back = false;
     Vec3 back{};                         // the middle of an open back
     float width = 0.6f;                  // the baffle's width (metres)

@@ -71,6 +71,7 @@ var instrument_plugin := {}  # what that plug-in is, from the audio core: {plugi
 var amp_controls := {"gain": 5.0, "bass": 5.0, "mid": 5.0, "treble": 5.0, "presence": 5.0, "master": 5.0}
 var amp_head := ""      # an amp's head and cabinet (catalog.gd lists them), and whether each is in use
 var amp_cabinet := ""
+var amp_speaker := ""   # the speakers in its cabinet (catalog.gd: AMP_SPEAKERS), of the cabinet's size
 var head_on := true
 var cabinet_on := true
 var looper := {}       # what its loop pedal is doing, from the audio core: state "none" if it has none (amps only)
@@ -121,6 +122,7 @@ func setup(spec: Dictionary, audio: SoundRoomAudio) -> void:
 	plays_plugin = spec.get("plugin", false)
 	amp_head = spec.get("head", "")
 	amp_cabinet = spec.get("cabinet", "")
+	amp_speaker = Catalog.CABINET_SPEAKERS.get(amp_cabinet, "")
 	name = display_name
 	position = Vector3(spec.position.x, source_height, spec.position.z)
 
@@ -211,13 +213,18 @@ func _place_parts() -> void:
 	_collider.position.y = top / 2 - source_height
 
 
-## An amp's head and cabinet, and whether each is in use. A new cabinet is drawn as well as heard.
-func set_voice(head: String, use_head: bool, cabinet: String, use_cabinet: bool) -> void:
+## An amp's head and cabinet, and whether each is in use, and the speakers in the cabinet (none given, or of another
+## size: the ones it has, if they fit, or else the cabinet's usual ones). A new cabinet is drawn as well as heard.
+func set_voice(head: String, use_head: bool, cabinet: String, use_cabinet: bool, speaker := "") -> void:
 	amp_head = head
 	head_on = use_head
 	_audio.set_amp_head(source_id, head, use_head)
 	_audio.set_amp_cabinet(source_id, cabinet, use_cabinet)
 	cabinet_on = use_cabinet
+	if speaker == "" or not Catalog.speaker_fits(speaker, cabinet):
+		speaker = amp_speaker if cabinet == amp_cabinet and Catalog.speaker_fits(amp_speaker, cabinet) else Catalog.CABINET_SPEAKERS.get(cabinet, "")
+	amp_speaker = speaker
+	_audio.set_amp_speaker(source_id, speaker)
 	if cabinet != amp_cabinet:
 		amp_cabinet = cabinet
 		_build_model()
@@ -296,7 +303,7 @@ func _show_looper() -> void:
 
 ## Tells the audio core where this instrument is, if it has moved (and a microphone, which way it points).
 func sync_position() -> void:
-	if is_amp:
+	if radiates():
 		_sync_speakers()
 	elif not global_position.is_equal_approx(_sent_position):
 		_sent_position = global_position
@@ -316,8 +323,13 @@ func sync_position() -> void:
 					_audio.set_mic_aim(source_id, (global_transform.basis * capsules[k].aim).normalized(), k)
 
 
-## An amp's cabinet, as the audio core hears it: from the middle of its grille (as the listener hears it), and each of
-## its cones on its own (as the microphones do: radiation.h), told again whenever it moves, turns or changes cabinet.
+## Whether it is a loudspeaker the audio core hears cone by cone (radiation.h): an amp's cabinet, the PA Speaker.
+func radiates() -> bool:
+	return is_amp or kind == "live"
+
+
+## An amp's cabinet (or the Speaker), as the audio core hears it: from the middle of its grille (as the listener hears
+## it), and each of its cones on its own (as the microphones do), told again whenever it moves, turns or changes cabinet.
 func _sync_speakers() -> void:
 	var signature := "%s|%s|%s" % [global_transform, amp_cabinet, kind]
 	if signature == _sent_speakers:
@@ -327,22 +339,22 @@ func _sync_speakers() -> void:
 	var world := speakers_in_room()
 	_audio.set_source_position(source_id, world.baffle)
 	_audio.set_source_radiator(source_id, PackedVector3Array(world.cones), world.facing, world.inches, world.back != null,
-		world.back if world.back != null else Vector3.ZERO, world.width)
+		world.back if world.back != null else Vector3.ZERO, world.width, world.coverage)
 
 
-## An amp's speakers, where they are in the room: {cones (each one's middle, its dust cap), baffle (the middle of its
-## grille), back (its open back's middle, or null), facing, inches, width}.
+## An amp's speakers (or the Speaker's), where they are in the room: {cones (each one's middle, its dust cap), baffle (the
+## middle of its grille), back (its open back's middle, or null), facing, inches, width, coverage (a horn's)}.
 func speakers_in_room() -> Dictionary:
-	var local: Dictionary = Models.speakers(amp_cabinet, kind.ends_with("_combo"))
+	var local: Dictionary = Models.speakers(amp_cabinet, kind.ends_with("_combo")) if is_amp else Models.pa_speakers()
 	var lift := Vector3(0, source_height, 0)  # (the model is drawn from the floor up)
 	var place := func(p: Vector3) -> Vector3: return global_transform * (p - lift)
 	return {"cones": local.cones.map(place), "baffle": place.call(local.baffle), "back": place.call(local.back) if local.back != null else null,
-		"facing": global_transform.basis.z.normalized(), "inches": local.inches, "width": local.width}
+		"facing": global_transform.basis.z.normalized(), "inches": local.inches, "width": local.width, "coverage": local.coverage}
 
 
-## Where its sound comes from, as `from` has it: an amp's nearest cone, or anything else's middle.
+## Where its sound comes from, as `from` has it: a loudspeaker's nearest cone, or anything else's middle.
 func sound_point(from: Vector3) -> Vector3:
-	if not is_amp:
+	if not radiates():
 		return global_position
 	var best := Vector3.INF
 	for cone: Vector3 in speakers_in_room().cones:

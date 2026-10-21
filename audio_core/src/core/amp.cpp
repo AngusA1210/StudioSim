@@ -66,97 +66,201 @@ AmpCabinet defaultCabinet(InstrumentKind kind) {
     }
 }
 
+AmpSpeaker defaultSpeaker(AmpCabinet cabinet) {
+    switch (cabinet) {
+        case AmpCabinet::OpenBack2x12: return AmpSpeaker::BritishAlnico;
+        case AmpCabinet::Closed4x12: return AmpSpeaker::British60;
+        case AmpCabinet::Bass1x15: return AmpSpeaker::Bass15;
+        case AmpCabinet::Bass4x10:
+        case AmpCabinet::Bass8x10: return AmpSpeaker::Bass10;
+        default: return AmpSpeaker::AmericanVintage;
+    }
+}
+
+int cabinetSpeakers(AmpCabinet cabinet) {
+    switch (cabinet) {
+        case AmpCabinet::OpenBack2x12: return 2;
+        case AmpCabinet::Closed4x12:
+        case AmpCabinet::Bass4x10: return 4;
+        case AmpCabinet::Bass8x10: return 8;
+        default: return 1;
+    }
+}
+
+float cabinetInches(AmpCabinet cabinet) {
+    switch (cabinet) {
+        case AmpCabinet::Bass1x15: return 15.0f;
+        case AmpCabinet::Bass4x10:
+        case AmpCabinet::Bass8x10: return 10.0f;
+        default: return 12.0f;
+    }
+}
+
+float headWatts(AmpHead head) {
+    switch (head) {
+        case AmpHead::Clean: return 85.0f;      // a big clean combo's
+        case AmpHead::HighGain: return 100.0f;
+        case AmpHead::BassRound: return 300.0f;
+        case AmpHead::BassPunch: return 500.0f;
+        default: return 30.0f;                  // a small crunchy combo's
+    }
+}
+
+// {inches, watts, breakup, dust cap's bite}, as a speaker's maker would give them (of the kinds, not of any one maker).
+SpeakerInfo speakerInfo(AmpSpeaker speaker) {
+    switch (speaker) {
+        case AmpSpeaker::British25: return {12.0f, 25.0f, 1000.0f, 3.0f};
+        case AmpSpeaker::British60: return {12.0f, 60.0f, 1200.0f, 5.0f};
+        case AmpSpeaker::BritishAlnico: return {12.0f, 15.0f, 1300.0f, 4.0f};
+        case AmpSpeaker::American10: return {10.0f, 25.0f, 1400.0f, 4.0f};
+        case AmpSpeaker::Bass10: return {10.0f, 250.0f, 1100.0f, 3.0f};
+        case AmpSpeaker::Bass15: return {15.0f, 400.0f, 700.0f, 2.0f};
+        default: return {12.0f, 20.0f, 1100.0f, 4.0f};  // American vintage
+    }
+}
+
 void AmpModel::init(InstrumentKind kind, float sample_rate) {
     sr_ = sample_rate;
     for (auto* f : {&input_cut_, &tight_cut_, &interstage_, &up_[0], &up_[1], &down_[0], &down_[1], &bass_, &mid_, &treble_, &presence_})
         f->reset();
     for (int i = 0; i < 2; ++i) {  // fourth-order low-passes just under the original Nyquist frequency
-        up_[i].set(Biquad::Lowpass, sr_ * 2, sr_ * 0.45f, i == 0 ? 0.54f : 1.31f);
-        down_[i].set(Biquad::Lowpass, sr_ * 2, sr_ * 0.45f, i == 0 ? 0.54f : 1.31f);
+        for (Biquad* f : {&up_[i], &down_[i], &power_up_[i], &power_down_[i]}) {
+            f->reset();
+            f->set(Biquad::Lowpass, sr_ * 2, sr_ * 0.45f, i == 0 ? 0.54f : 1.31f);
+        }
     }
     for (auto& f : cabinet_) f.reset();
+    for (auto& f : speaker_eq_) f.reset();
+    sag_ = heat_ = 0.0f;
+    sag_attack_ = 1.0f - std::exp(-1.0f / (0.03f * sr_));    // the supply droops over a few tens of milliseconds
+    sag_release_ = 1.0f - std::exp(-1.0f / (0.15f * sr_));   // and recovers over a tenth of a second or so
+    heat_coef_ = 1.0f - std::exp(-1.0f / (1.5f * sr_));     // voice coils heat and cool over a second or two
     setHead(defaultHead(kind), true);
     setCabinet(defaultCabinet(kind), true);
+    setSpeaker(defaultSpeaker(defaultCabinet(kind)));
     master_now_ = master_;
 }
 
 void AmpModel::setHead(AmpHead head, bool on) {
     head_ = head;
     head_on_ = on;
-    // {input cut, tight, drive at 10, stages, bass, mid, treble, presence, trim}: the trims leave a plucked string at
-    // -20 dBFS coming out at about -18 dBFS with the knobs at 5, through the head's usual cabinet.
+    // {input cut, tight, drive at 10, stages, bass, mid, treble, presence, trim, headroom, sag}: the trims leave a
+    // plucked string at -20 dBFS coming out at about -18 dBFS with the knobs at 5, through the head's usual cabinet. A
+    // big clean amp has headroom to spare and a solid supply; a small crunchy one little, and a tube rectifier's sag.
     switch (head) {
-        case AmpHead::Clean:     v_ = {70.0f, 0.15f, 22.0f, 1, 140.0f, 550.0f, 3200.0f, 5000.0f, 0.444f}; break;
-        case AmpHead::HighGain:  v_ = {90.0f, 0.75f, 52.0f, 2, 180.0f, 700.0f, 2800.0f, 4500.0f, 0.139f}; break;
-        case AmpHead::BassRound: v_ = {30.0f, 0.0f, 24.0f, 1, 70.0f, 450.0f, 2200.0f, 3500.0f, 0.582f}; break;
-        case AmpHead::BassPunch: v_ = {35.0f, 0.2f, 32.0f, 1, 80.0f, 500.0f, 2500.0f, 4000.0f, 0.327f}; break;
-        default:                 v_ = {80.0f, 0.4f, 36.0f, 1, 200.0f, 650.0f, 3000.0f, 5000.0f, 0.254f}; break;
+        case AmpHead::Clean:     v_ = {70.0f, 0.15f, 22.0f, 1, 140.0f, 550.0f, 3200.0f, 5000.0f, 0.444f, 1.2f, 0.05f}; break;
+        case AmpHead::HighGain:  v_ = {90.0f, 0.75f, 52.0f, 2, 180.0f, 700.0f, 2800.0f, 4500.0f, 0.139f, 0.7f, 0.1f}; break;
+        case AmpHead::BassRound: v_ = {30.0f, 0.0f, 24.0f, 1, 70.0f, 450.0f, 2200.0f, 3500.0f, 0.582f, 0.9f, 0.25f}; break;
+        case AmpHead::BassPunch: v_ = {35.0f, 0.2f, 32.0f, 1, 80.0f, 500.0f, 2500.0f, 4000.0f, 0.327f, 1.0f, 0.1f}; break;
+        default:                 v_ = {80.0f, 0.4f, 36.0f, 1, 200.0f, 650.0f, 3000.0f, 5000.0f, 0.254f, 0.5f, 0.3f}; break;
     }
     input_cut_.set(Biquad::Highpass, sr_, v_.input_cut, 0.707f);
     tight_cut_.set(Biquad::Highpass, sr_ * 2, 650.0f, 0.6f);
     interstage_.set(Biquad::Lowpass, sr_ * 2, 7000.0f, 0.6f);
     updateFilters();
+    voiceSpeaker();  // (how hard it can drive them)
 }
 
 void AmpModel::setCabinet(AmpCabinet cabinet, bool on) {
     cabinet_kind_ = cabinet;
     cabinet_on_ = on;
+    if (speakerInfo(speaker_).inches != cabinetInches(cabinet)) speaker_ = defaultSpeaker(cabinet);
     voiceCabinet();
+    voiceSpeaker();
 }
 
-// What each cabinet's speakers let through, as heard in front of them: the low end the box gives (a closed back
-// holds more of it, an open back less), the speakers' breakup peak in the upper mids, and how fast they fall away above
-// it. Peaks are kept to the few decibels a speaker really has, without a close microphone's exaggeration.
+void AmpModel::setSpeaker(AmpSpeaker speaker) {
+    if (speakerInfo(speaker).inches != cabinetInches(cabinet_kind_)) return;
+    speaker_ = speaker;
+    voiceSpeaker();
+}
+
+// The box: the low end it gives its speakers (a closed back holds more of it; an open back less, its back cancelling
+// some of the front's lows far off, which the room works out), and its resonance.
 void AmpModel::voiceCabinet() {
     switch (cabinet_kind_) {
         case AmpCabinet::Closed4x12:
             cabinet_[0].set(Biquad::Highpass, sr_, 75.0f, 0.9f);
             peak(cabinet_[1], sr_, 110.0f, 1.2f, 3.0f);
-            peak(cabinet_[2], sr_, 2400.0f, 1.0f, 2.5f);
-            cabinet_[3].set(Biquad::Lowpass, sr_, 4800.0f, 0.75f);
-            cabinet_[4].set(Biquad::Lowpass, sr_, 5200.0f, 0.6f);
-            cabinet_stages_ = 5;
             break;
         case AmpCabinet::OpenBack2x12:
-            cabinet_[0].set(Biquad::Highpass, sr_, 85.0f, 0.75f);
+            cabinet_[0].set(Biquad::Highpass, sr_, 80.0f, 0.75f);
             peak(cabinet_[1], sr_, 130.0f, 1.0f, 2.0f);
-            peak(cabinet_[2], sr_, 2500.0f, 1.0f, 2.5f);
-            cabinet_[3].set(Biquad::Lowpass, sr_, 5200.0f, 0.75f);
-            cabinet_[4].set(Biquad::Lowpass, sr_, 5800.0f, 0.6f);
-            cabinet_stages_ = 5;
             break;
         case AmpCabinet::Bass1x15:
             cabinet_[0].set(Biquad::Highpass, sr_, 38.0f, 0.8f);
             peak(cabinet_[1], sr_, 80.0f, 1.0f, 2.0f);
-            cabinet_[2].set(Biquad::Lowpass, sr_, 3200.0f, 0.7f);
-            cabinet_[3].set(Biquad::Lowpass, sr_, 3600.0f, 0.6f);
-            cabinet_stages_ = 4;
             break;
         case AmpCabinet::Bass4x10:
             cabinet_[0].set(Biquad::Highpass, sr_, 50.0f, 0.8f);
             peak(cabinet_[1], sr_, 110.0f, 1.0f, 2.0f);
-            peak(cabinet_[2], sr_, 1800.0f, 1.0f, 2.0f);
-            cabinet_[3].set(Biquad::Lowpass, sr_, 5500.0f, 0.7f);
-            cabinet_[4].set(Biquad::Lowpass, sr_, 7000.0f, 0.6f);
-            cabinet_stages_ = 5;
             break;
         case AmpCabinet::Bass8x10:
             cabinet_[0].set(Biquad::Highpass, sr_, 45.0f, 0.8f);
             peak(cabinet_[1], sr_, 100.0f, 1.0f, 3.0f);
-            peak(cabinet_[2], sr_, 1500.0f, 1.0f, 2.0f);
-            cabinet_[3].set(Biquad::Lowpass, sr_, 5000.0f, 0.7f);
-            cabinet_[4].set(Biquad::Lowpass, sr_, 6500.0f, 0.6f);
-            cabinet_stages_ = 5;
             break;
-        default:  // a 1x12 open back: lighter lows, a sweeter top
-            cabinet_[0].set(Biquad::Highpass, sr_, 95.0f, 0.7f);
+        default:  // a 1x12 open back: lighter lows
+            cabinet_[0].set(Biquad::Highpass, sr_, 88.0f, 0.7f);
             peak(cabinet_[1], sr_, 150.0f, 1.0f, 2.0f);
-            peak(cabinet_[2], sr_, 2500.0f, 1.0f, 3.0f);
-            cabinet_[3].set(Biquad::Lowpass, sr_, 5500.0f, 0.75f);
-            cabinet_[4].set(Biquad::Lowpass, sr_, 6000.0f, 0.6f);
-            cabinet_stages_ = 5;
             break;
     }
+}
+
+// The speaker, on its axis: its mids (a dip, a bump), its breakup peaks in the upper mids, and how fast it falls away
+// above them (two low-passes). Peaks are kept to the few decibels a speaker really has, without a close microphone's
+// exaggeration (that is the room's to add, from where the mic is). And how hard the head can drive them.
+void AmpModel::voiceSpeaker() {
+    int n = 0;
+    auto bump = [&](float hz, float q, float db) { peak(speaker_eq_[size_t(n++)], sr_, hz, q, db); };
+    auto top = [&](float hz, float q) { speaker_eq_[size_t(n++)].set(Biquad::Lowpass, sr_, hz, q); };
+    switch (speaker_) {
+        case AmpSpeaker::British25:  // warm and mid-forward, a soft top
+            bump(1800.0f, 0.8f, 1.5f);
+            bump(2700.0f, 1.4f, 3.0f);
+            top(4700.0f, 0.75f);
+            top(5200.0f, 0.6f);
+            break;
+        case AmpSpeaker::British60:  // the low mids pulled back, an aggressive upper-mid bite
+            bump(1100.0f, 1.0f, -2.0f);
+            bump(2500.0f, 1.2f, 4.0f);
+            bump(4000.0f, 2.5f, 2.0f);
+            top(5200.0f, 0.8f);
+            top(5600.0f, 0.6f);
+            break;
+        case AmpSpeaker::BritishAlnico:  // chiming, bright, sweet
+            bump(1200.0f, 1.0f, 1.0f);
+            bump(3000.0f, 1.0f, 3.0f);
+            bump(5000.0f, 2.0f, 1.5f);
+            top(6500.0f, 0.8f);
+            top(7000.0f, 0.6f);
+            break;
+        case AmpSpeaker::American10:  // bright and tight
+            bump(1000.0f, 1.0f, -1.0f);
+            bump(3500.0f, 1.0f, 3.0f);
+            top(6000.0f, 0.75f);
+            top(7000.0f, 0.6f);
+            break;
+        case AmpSpeaker::Bass10:  // punchy, a growl in the mids, extended
+            bump(1800.0f, 1.0f, 2.0f);
+            top(5000.0f, 0.7f);
+            top(6500.0f, 0.6f);
+            break;
+        case AmpSpeaker::Bass15:  // deep, soft on top
+            bump(800.0f, 1.0f, 1.0f);
+            top(3000.0f, 0.7f);
+            top(3500.0f, 0.6f);
+            break;
+        default:  // American vintage: scooped, a sparkly top
+            bump(700.0f, 0.8f, -1.5f);
+            bump(3200.0f, 1.0f, 3.5f);
+            top(6000.0f, 0.75f);
+            top(6500.0f, 0.6f);
+            break;
+    }
+    speaker_stages_ = n;
+    // Where the speakers reach their rating, as a share of the power amp's full power: the power goes as the square.
+    const SpeakerInfo info = speakerInfo(speaker_);
+    speaker_full_ = std::sqrt(float(cabinetSpeakers(cabinet_kind_)) * info.watts / (head_on_ ? headWatts(head_) : 50.0f));
 }
 
 void AmpModel::setControl(AmpControl control, float value) {
@@ -189,6 +293,36 @@ float AmpModel::drive(float x) {
     return result;
 }
 
+// The output tubes, at twice the sample rate as the preamp is: driven by the master, they give out softly as they reach
+// full power (a push-pull pair not quite matched: a touch of the even harmonics too), and the full power they can give
+// falls as the supply sags under a sustained load. Below full power they pass what they are given, unchanged.
+float AmpModel::powerAmp(float x) {
+    constexpr float kBias = 0.06f;
+    const float full = v_.headroom * (1.0f - v_.sag * std::min(sag_ / v_.headroom, 1.0f));
+    const float rest = kBias / std::sqrt(1.0f + kBias * kBias);
+    float result = 0.0f;
+    for (int phase = 0; phase < 2; ++phase) {
+        float y = power_up_[1].process(power_up_[0].process(phase == 0 ? 2.0f * x : 0.0f));
+        const float u = y / full + kBias;
+        y = full * (u / std::sqrt(1.0f + u * u) - rest);
+        y = power_down_[1].process(power_down_[0].process(y));
+        if (phase == 0) result = y;
+    }
+    const float load = std::fabs(result);
+    sag_ += (load - sag_) * (load > sag_ ? sag_attack_ : sag_release_);
+    return result;
+}
+
+// The speakers, driven past their rating: their voice coils heat and they give less (slowly, up to a few decibels),
+// and their cones distort as they reach the end of their travel. Within their rating they barely do either.
+float AmpModel::speakers(float x) {
+    const float rated = std::max(speaker_full_ * (head_on_ ? v_.headroom : 1.0f), 1e-3f);
+    const float driven = x / rated;
+    heat_ += (driven * driven - heat_) * heat_coef_;
+    const float u = driven / (1.0f + 0.3f * heat_) / 1.4f;
+    return 1.4f * rated * u / std::sqrt(std::sqrt(1.0f + u * u * u * u));
+}
+
 void AmpModel::preamp(float* io, int n) {
     if (!head_on_) return;
     for (int i = 0; i < n; ++i) io[i] = treble_.process(mid_.process(bass_.process(drive(input_cut_.process(io[i]))))) * v_.out_trim;
@@ -196,12 +330,16 @@ void AmpModel::preamp(float* io, int n) {
 
 void AmpModel::power(float* io, int n) {
     for (int i = 0; i < n; ++i) {
-        float x = io[i];
-        if (head_on_) x = presence_.process(x);
-        if (cabinet_on_)
-            for (int c = 0; c < cabinet_stages_; ++c) x = cabinet_[size_t(c)].process(x);
         master_now_ += (master_ - master_now_) * 0.002f;  // the master is the amp's volume, with or without its head
-        io[i] = x * master_now_;
+        float x = io[i];
+        if (head_on_) x = powerAmp(presence_.process(x) * master_now_);
+        else x *= master_now_;
+        if (cabinet_on_) {
+            x = speakers(x);
+            for (auto& f : cabinet_) x = f.process(x);
+            for (int c = 0; c < speaker_stages_; ++c) x = speaker_eq_[size_t(c)].process(x);
+        }
+        io[i] = x;
     }
 }
 

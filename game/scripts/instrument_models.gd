@@ -41,7 +41,14 @@ static func speakers(cabinet: String, combo: bool) -> Dictionary:
 	for spot: Vector2 in look.cones:
 		cones.append(centre + Vector3(spot.x, spot.y, -CONE_DEPTH))
 	return {"cones": cones, "baffle": centre, "back": centre - Vector3(0, 0, size.z) if look.open_back else null,
-		"inches": float(look.inches), "width": size.x}
+		"inches": float(look.inches), "width": size.x, "coverage": 0.0}
+
+
+## The Speaker's (a PA speaker's) as speakers() has a cabinet's: its 10-inch woofer, and the horn over it covering 45
+## degrees either side of its axis above the crossover.
+static func pa_speakers() -> Dictionary:
+	return {"cones": [Vector3(0, 1.38, 0.15 - CONE_DEPTH)], "baffle": Vector3(0, 1.45, 0.15), "back": null, "inches": 10.0,
+		"width": 0.36, "coverage": 45.0}
 
 
 static func _grille_centre(size: Vector3, casters: bool, combo: bool) -> Vector3:

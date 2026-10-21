@@ -77,8 +77,11 @@ public:
     void set_source_pan(int id, float pan);
     // An amp's cabinet in the room (AudioEngine::setSourceRadiator): its cones' middles, the way its baffle faces, the
     // speakers' size in inches, its open back's middle (if open), the baffle's width. No cones: a point source again.
+    // A PA speaker's horn covers `coverage_deg` either side of its axis above `crossover_hz` (0: a plain cone).
     void set_source_radiator(int id, const PackedVector3Array& cones, const Vector3& facing, float inches, bool open_back,
-                             const Vector3& back, float width);
+                             const Vector3& back, float width, float coverage_deg = 0.0f, float crossover_hz = 1800.0f);
+    // How much of a sound the floor sends back up to the microphones (0 none, 1 all of it).
+    void set_floor_reflection(float amount);
     void set_source_output(int id, int bus);  // a bus's id (a source added as "bus"), or -1 for the master
     void set_source_input_channel(int id, int channel);  // live sources: 0-based hardware input, or -1 for all
     // Whether a source takes input: an instrument plays what MIDI controllers send, a live source plays its
@@ -93,6 +96,9 @@ public:
     // cabinet: "1x12", "2x12", "4x12", "1x15", "4x10" or "8x10".
     void set_amp_head(int id, const String& head, bool on);
     void set_amp_cabinet(int id, const String& cabinet, bool on);
+    // The speakers in its cabinet, of the cabinet's size: "british_25", "british_60", "american_vintage", "british_alnico"
+    // (12"), "american_10", "bass_10" (10"), "bass_15" (15"). A cabinet comes with its usual ones.
+    void set_amp_speaker(int id, const String& speaker);
     // The loop pedal on an amp's board (a "looper" pedal; its controls are its level, Sync, and Overdub after
     // recording). action: "press" (the footswitch: record, play, overdub), "stop", "play", "undo", "redo" or "clear".
     // False if the amp has no loop pedal.

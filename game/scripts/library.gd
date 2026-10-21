@@ -102,7 +102,7 @@ func instrument_settings(inst) -> Dictionary:
 				pedal.merge({"plugin_id": p.plugin_id, "plugin_name": p.plugin_name, "plugin_maker": p.plugin_maker,
 					"state": Marshalls.raw_to_base64(audio.get_plugin_state(inst.source_id, "pedal", i))})
 			pedals.append(pedal)
-		out.amp = {"head": inst.amp_head, "head_on": inst.head_on, "cabinet": inst.amp_cabinet, "cabinet_on": inst.cabinet_on,
+		out.amp = {"head": inst.amp_head, "head_on": inst.head_on, "cabinet": inst.amp_cabinet, "cabinet_on": inst.cabinet_on, "speaker": inst.amp_speaker,
 			"controls": inst.amp_controls.duplicate(), "pedals": pedals}
 	return out
 
@@ -123,7 +123,7 @@ func apply_instrument_settings(inst, settings: Dictionary, include := {}) -> Str
 	if inst.is_amp and settings.get("amp") is Dictionary and include.get("instrument_settings", true):
 		var amp: Dictionary = settings.amp
 		app.set_amp_voice(inst, str(amp.get("head", inst.amp_head)), bool(amp.get("head_on", true)),
-			str(amp.get("cabinet", inst.amp_cabinet)), bool(amp.get("cabinet_on", true)))
+			str(amp.get("cabinet", inst.amp_cabinet)), bool(amp.get("cabinet_on", true)), str(amp.get("speaker", "")))
 		var controls: Dictionary = amp.get("controls", {})
 		for control in controls:
 			if inst.amp_controls.has(control):
@@ -361,7 +361,7 @@ func room_data() -> Dictionary:
 			"automation": master.automation.duplicate(true), "auto_mode": master.auto_mode, "lanes": master.lanes.duplicate()}
 	return {"soundroom": "room", "version": VERSION, "mode": app.timeline.mode, "timeline": app.timeline.to_data(),
 		"tempo": app.tempo, "swing": app.swing, "master_db": app.master_volume_db, "room_master_db": app.room_volume_db, "reverb_db": app.reverb_db,
-		"room": {"size": [size.x, size.y, size.z], "walls": walls},
+		"room": {"size": [size.x, size.y, size.z], "walls": walls, "floor": app.room.floor_kind},
 		"player": {"position": [stood.x, stood.z], "yaw": app.player.yaw}, "instruments": instruments, "folders": folders, "auxes": auxes,
 		"masters": masters}
 
@@ -464,6 +464,7 @@ func apply_room_data(data: Dictionary, carry := {}, size = null, mode := "") -> 
 	while not room.walls.is_empty():
 		room.remove_wall(0)
 	room.set_size(size if size is Vector3 else size_of(data))
+	room.set_floor(str(room_part.get("floor", "hard")))
 	if keep.call("walls"):
 		for wall in room_part.get("walls", []):
 			if wall is Array and wall.size() >= 5:

@@ -276,6 +276,13 @@ public:
     // beaming, with its near field and its open back; and the cabinet heard by the listener from where they stand
     // against its baffle (its position should be the middle of the baffle). No cones: a point source again.
     void setSourceRadiator(int id, const Radiator& radiator);
+    // How much of a sound the floor sends back up (an amplitude: 0, none, as a thick carpet; 1, all of it): each mic
+    // hears each source again off the floor, from its image under it, a little duller, as a mic a little way off a
+    // floor-standing amp hears its floor bounce (a comb filter: notches where the bounce arrives half a wave late).
+    // The microphones only: the listener has the room's reverb. A hard floor, to begin with.
+    void setFloorReflection(float amount);
+    static constexpr float kFloorCutHz = 8000.0f;  // (what the floor takes of the highs)
+    static constexpr int kMaxWays = 2 * kMaxRadiatedPaths;
     static constexpr float kSpeedOfSound = 343.0f;  // metres a second
     static constexpr float kMicNearest = 0.1f;      // metres: no closer than this, for the level
     static constexpr float kProximityNearest = 0.02f;  // and for the proximity effect
@@ -299,7 +306,11 @@ public:
     // Which head and cabinet an amp has, and whether each is in use (bypassed, a head passes the signal straight to the
     // cabinet, and a cabinet becomes a flat full-range speaker). An amp starts with its kind's own.
     void setAmpHead(int id, AmpHead head, bool on);
-    void setAmpCabinet(int id, AmpCabinet cabinet, bool on);
+    void setAmpCabinet(int id, AmpCabinet cabinet, bool on);  // (with its usual speaker, if the one it had is another size)
+    // The speakers in an amp's cabinet (amp.h), of the cabinet's size: how they sound, how much power they take, and
+    // (radiation.h) where their cones break up and how bright their dust caps are close up.
+    void setAmpSpeaker(int id, AmpSpeaker speaker);
+    AmpSpeaker ampSpeaker(int id) const;
     // The loop pedal on an amp's board (a PedalKind::Looper; see addPedal), whose controls are its level (5 = as
     // recorded), Sync (recordings start and end on bar lines while the patterns run) and whether finishing the first
     // recording goes straight into overdubbing. The first Press gives it its memory (two buffers of kLoopSeconds),
@@ -527,7 +538,7 @@ private:
             NoteOn, NoteOff, AllNotesOff, Binaural, Reverb, MasterVolume, SourceInput,
             PatternNoteSet, PatternNoteRemove, PatternClear, PatternSteps, SourceLoop, SourceVolume,
             SequencerRunning, Tempo, Swing, Click, ClickVolume, Reverb2, SourceGain, Falloff, LimiterOn,
-            AmpKnob, AmpHeadSet, AmpCabinetSet, LooperMemory, LooperAct, PedalBoardSet, PedalOn, PedalControl, SynthPlugin,
+            AmpKnob, AmpHeadSet, AmpCabinetSet, AmpSpeakerSet, LooperMemory, LooperAct, PedalBoardSet, PedalOn, PedalControl, SynthPlugin,
             TimelinePlay, TimelineLoop, TrackSet, RecordArm, RecordStart, RecordStop, SourceOutput, AutomationRead, SendSet,
             MasterAutomation, MasterRead, SourceSoloMuted, MicPath, MicCone, SourceFacing, MicModelSet, MicAim, SourcePan, MicMidSide,
             SourceRoomGain, SourceRoomMuted, RoomVolume, MonitorSet, MasterInserts,
@@ -570,6 +581,8 @@ private:
     void updateMicPaths(Source& source);  // how its sound reaches each microphone (or, a microphone, how each reaches it)
     void updateMicPath(const Source& mic, const Source& source);
     void updateFacing(Source& s);  // a loudspeaker as the listener hears it from where they are
+    static Radiator mirrored(const Radiator& r);  // its image under the floor
+    float floor_reflection_ = 0.9f;  // (the game thread's)
     void playSource(size_t index, float binaural_from, float glide, float wall_glide, float mute_coef);
     void playClips(Source& source, int from);  // a track's audio clips this block, into its playback
     void soundAs(Source& mic, int capsule, int model_index, int pattern_index);  // a microphone capsule's model, ready to play
