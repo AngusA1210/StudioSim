@@ -297,7 +297,8 @@ public:
     // floor-standing amp hears its floor bounce (a comb filter: notches where the bounce arrives half a wave late).
     // The microphones only: the listener has the room's reverb. All of it, to begin with.
     void setFloorReflection(float amount);
-    static constexpr int kMaxWays = 2 * kMaxRadiatedPaths + 5;  // its own, off the floor, and off the walls and the ceiling
+    // Its own ways, each again off the floor, and its reflections off the rest of the room (Reflections below).
+    static constexpr int kMaxWays = 2 * kMaxRadiatedPaths + 5 + 18 + 2 * RoomGeometry::kMaxWalls;
     static constexpr float kSpeedOfSound = 343.0f;  // metres a second
     static constexpr float kMicNearest = 0.1f;      // metres: no closer than this, for the level
     static constexpr float kProximityNearest = 0.02f;  // and for the proximity effect
@@ -585,7 +586,7 @@ private:
             TimelinePlay, TimelineLoop, TrackSet, RecordArm, RecordStart, RecordStop, SourceOutput, AutomationRead, SendSet,
             MasterAutomation, MasterRead, SourceSoloMuted, MicPath, MicCone, SourceFacing, MicModelSet, MicAim, SourcePan, MicMidSide,
             SourceRoomGain, SourceRoomMuted, RoomVolume, MonitorSet, MasterInserts, AmpLoopMix, LimiterCeiling, BusMono,
-            Compensation, CompensationTotal, AmpLoopDelay, Echo,
+            Compensation, CompensationTotal, AmpLoopDelay, Echo, ScatterWall,
         } type = AddSource;
         int id = 0;
         float v[9] = {};
@@ -635,13 +636,34 @@ private:
         Material material;
     };
     std::array<Face, kFaces> faces() const;
-    void updateEchoes(Source& source);  // its first reflections, as the listener hears them
+    // Every reflection a source's sound makes on its way to one place: off each of the room's surfaces once (slots 0
+    // to 5, as faces()), off two of them in turn (the next 18: every pair, each order of two facing each other, either
+    // order of two that meet being the same image), and off each face of each wall standing in the room (the last,
+    // two to a wall). Each with its image, what it keeps of each band as a mirror and what it scatters, a loudspeaker's
+    // beaming as seen from there, and which surface's scattered sound it adds to (the last it comes off: the room's
+    // six, then each wall standing in it).
+    static constexpr int kSecondOrder = 18;
+    static constexpr int kEchoes = kFaces + kSecondOrder + 2 * RoomGeometry::kMaxWalls;
+    static constexpr int kScatterBuses = kFaces + RoomGeometry::kMaxWalls;
+    struct Bounce {
+        bool on = false;
+        Vec3 image{};
+        float gain = 0.0f, cut_hz = 0.0f;  // (no cut: not a loudspeaker)
+        std::array<float, 3> mirror{}, scatter{};
+        int bus = 0;
+    };
+    void bounces(const Source& source, Vec3 at, std::array<Bounce, kEchoes>& out) const;
+    void updateEchoes(Source& source);  // its reflections, as the listener hears them
     void playReflections(float binaural_from);  // and heard (audio thread)
+    void readReflection(const Source& source, float late_from, float late_to, const float* from, const float* to, float* out,
+                        const float* spread_from = nullptr, const float* spread_to = nullptr, float* spread_out = nullptr) const;
+    float split_lows_ = 0.0f, split_highs_ = 0.0f;  // the history's band split, at the engine's rate
     void updatePaths();
     void updateMicPaths(Source& source);  // how its sound reaches each microphone (or, a microphone, how each reaches it)
     void updateMicPath(const Source& mic, const Source& source);
     void updateFacing(Source& s);  // a loudspeaker as the listener hears it from where they are
     static Radiator mirrored(const Radiator& r, int axis = 1, float plane = 0.0f);  // its image beyond a surface (the floor: y = 0)
+    static Radiator mirroredAcross(const Radiator& r, Vec3 point, Vec3 normal);   // and beyond any upright face
     float floor_reflection_ = 1.0f;  // (the game thread's)
     void playSource(size_t index, float binaural_from, float glide, float wall_glide, float mute_coef);
     void playClips(Source& source, int from);  // a track's audio clips this block, into its playback
@@ -740,9 +762,13 @@ private:
     // The listener's early reflections: the field they are heard in, and what each surface scatters (spread out in
     // time, and heard from all over it); a block of one reflection on its way.
     ReflectionField reflections_;
-    std::array<Smear, kFaces> echo_smear_;
-    std::array<std::vector<float>, kFaces> echo_scatter_;
-    std::array<int, kFaces> echo_quiet_{};  // blocks since each last scattered anything
+    std::array<Smear, kScatterBuses> echo_smear_;
+    std::array<std::vector<float>, kScatterBuses> echo_scatter_;
+    std::array<int, kScatterBuses> echo_quiet_{};  // blocks since each last scattered anything
+    // The walls standing in the room, as the audio thread knows them for what they scatter: each one's line on the floor
+    // plan (from x, z to x, z) and its top, if it is there.
+    std::array<std::array<float, 5>, RoomGeometry::kMaxWalls> scatter_walls_{};
+    std::array<bool, RoomGeometry::kMaxWalls> scatter_wall_on_{};
     std::vector<float> echo_;
     int click_compensation_ = 0;
     std::vector<float> comp_l_, comp_r_;  // a block held back on its way somewhere (delay compensation)

@@ -48,12 +48,22 @@ public:
     // What of each band passes through the walls on the straight line from `a` to `b` (1: none in the way).
     std::array<float, 3> transmission(Vec3 a, Vec3 b) const;
 
+    // A face of a wall standing in the room, as a mirror: a point in the middle of it and the way it faces (both at
+    // floor level), the way its length runs, how far it reaches either side of its middle, how high, and what it is.
+    struct Mirror {
+        Vec3 centre, normal, along;
+        float half_length = 0.0f, top = 0.0f;
+        Material material = Material::Drywall;
+    };
+    std::vector<Mirror> mirrors() const;  // two to each wall, its own two long faces
+
 private:
     struct Flat { float x = 0, z = 0; };
     struct Box {
         Flat centre, along;  // `along` is a unit vector down the wall's length
         float half_length = 0, half_thickness = 0, top = 0;
         std::array<float, 3> through{1.0f, 1.0f, 1.0f};  // what of each band passes through it
+        Material material = Material::Drywall;
     };
     struct Route { float length = 0; Vec3 via; };
 

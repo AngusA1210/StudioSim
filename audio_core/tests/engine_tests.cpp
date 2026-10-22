@@ -1337,6 +1337,21 @@ int main(int argc, char** argv) {
             for (int i = std::max(from, 0); i < to && i < int(r.l.size()); ++i) e += double(r.l[size_t(i)]) * r.l[size_t(i)] + double(r.r[size_t(i)]) * r.r[size_t(i)];
             return e;
         };
+        // (Levels judged between 1.5 and 5 kHz, as the microphone's are above: a click a sample long, read at a fraction
+        // of a sample's delay as every reflection is, loses some of its very top; below 5 kHz, almost nothing.)
+        auto mid_energy = [](const Render& r, int from, int to) {
+            double e = 0.0;
+            for (const std::vector<float>* side : {&r.l, &r.r}) {
+                Biquad hp[2], lp[2];
+                for (auto& f : hp) f.set(Biquad::Highpass, 48000.0f, 1500.0f, 0.707f);
+                for (auto& f : lp) f.set(Biquad::Lowpass, 48000.0f, 5000.0f, 0.707f);
+                for (int i = 0; i < to && i < int(side->size()); ++i) {
+                    const float y = lp[1].process(lp[0].process(hp[1].process(hp[0].process((*side)[size_t(i)]))));
+                    if (i >= from) e += double(y) * y;
+                }
+            }
+            return e;
+        };
         RoomSurfaces concrete_east;
         concrete_east.floor = Material::Tile;
         concrete_east.east = Material::Concrete;
@@ -1402,6 +1417,96 @@ int main(int argc, char** argv) {
         check(10.0 * std::log10(mic_peak) > 5.0 && std::fabs(10.0 * std::log10(mic_whole)) < 2.5,
               "a microphone by a diffuser hears its reflection scattered likewise: weaker as a mirror's, spread out, not lost",
               fmt("its peak %.1f dB down, ", 10.0 * std::log10(mic_peak)) + fmt("all it sends back %+.1f dB", 10.0 * std::log10(mic_whole)));
+
+        // Off two walls: standing as before, 2 m from the east wall with the sound 2 m ahead, the reflection off the east
+        // wall and then the north one (3 m beyond the sound) comes from the image of its image, 8.94 m away ahead and to
+        // the right: 6.94 m of air after the sound itself (972 samples), 13 dB down on it by its distance, and a little
+        // more for what the concrete takes twice. Nothing else arrives within 130 samples of it.
+        RoomSurfaces corner = concrete_east;
+        corner.north = Material::Concrete;
+        const Render twice = listen(ear, ahead, corner);
+        const int twice_sound = first(twice.l, 2000, 2700), twice_at = first(twice.r, size_t(twice_sound + 900), size_t(twice_sound + 1100));
+        const double twice_db = 10.0 * std::log10(mid_energy(twice, twice_at - 10, twice_at + 60) / mid_energy(twice, twice_sound - 10, twice_sound + 60));
+        const double twice_expected = 20.0 * std::log10(2.0 / std::sqrt(4.0 * 4.0 + 8.0 * 8.0)) + 2.0 * db(specular(Material::Concrete)[1]);
+        double twice_l = 0.0, twice_r = 0.0;
+        for (int i = twice_at - 10; i < twice_at + 60; ++i) {
+            twice_l += double(twice.l[size_t(i)]) * twice.l[size_t(i)];
+            twice_r += double(twice.r[size_t(i)]) * twice.r[size_t(i)];
+        }
+        check(std::abs((twice_at - twice_sound) - 972) <= 3 && std::fabs(twice_db - twice_expected) < 2.0 && twice_r > 1.5 * twice_l,
+              "the listener hears a reflection off two walls in turn: from the image of its image, as late and as loud as that is far",
+              fmt("%.0f samples later, ", twice_at - twice_sound) + fmt("%.1f dB on the sound itself ", twice_db) +
+                  fmt("(%.1f expected), ", twice_expected) + fmt("%.1f dB more on the right", 10.0 * std::log10(twice_r / std::max(twice_l, 1e-30))));
+
+        // Off a wall standing in the room: the sound 2 m ahead, a concrete wall 30 cm thick down the right-hand side with
+        // its face 1.35 m to their right. Its reflection comes from the sound's image behind that face, 3.36 m away: 1.36 m
+        // of air after the sound (190 samples), 4.5 dB down on it, from the right; it would strike the wall 1 m ahead.
+        // Off a foam wall, far quieter; and where it would strike the wall's very end, half as loud (sound bends round
+        // an edge rather than stopping at it), and nothing a little past it. (A wall reaches half its thickness past
+        // the ends it is drawn between, so that two walls meet at a corner: ending at 0.85 m, it reaches 1 m.)
+        auto listen_by = [&](Material material, float wall_end) {
+            Wall wall;
+            wall.ax = 1.5f;
+            wall.az = -3.0f;
+            wall.bx = 1.5f;
+            wall.bz = wall_end;
+            wall.material = material;
+            walled.engine.setRoom(14.0f, 10.0f, 10.0f, {wall}, RoomSurfaces{});
+            walled.engine.setSourcePosition(walled.speaker, {0.0f, 1.6f, 0.0f});
+            walled.engine.setListener({0.0f, 1.6f, 2.0f}, {0.0f, 0.0f, -1.0f}, {0.0f, 1.0f, 0.0f});
+            renderSeconds(walled.engine, 0.5);
+            return renderSeconds(walled.engine, 0.3, [](int64_t n) { return n == 2400 ? 0.5f : 0.0f; });
+        };
+        const Render by_concrete = listen_by(Material::Concrete, 3.0f);
+        const int by_sound = first(by_concrete.l, 2000, 2700), by_at = first(by_concrete.r, size_t(by_sound + 120), size_t(by_sound + 260));
+        const auto off_wall = [&](const Render& r) {  // its reflection's energy against the sound's, dB
+            return 10.0 * std::log10(std::max(mid_energy(r, by_at - 10, by_at + 60), 1e-30) / mid_energy(r, by_sound - 10, by_sound + 60));
+        };
+        double by_l = 0.0, by_r = 0.0;
+        for (int i = by_at - 10; i < by_at + 60; ++i) {
+            by_l += double(by_concrete.l[size_t(i)]) * by_concrete.l[size_t(i)];
+            by_r += double(by_concrete.r[size_t(i)]) * by_concrete.r[size_t(i)];
+        }
+        const double by_db = off_wall(by_concrete), by_expected = 20.0 * std::log10(2.0 / std::sqrt(2.7 * 2.7 + 2.0 * 2.0));
+        const double by_foam = off_wall(listen_by(Material::Foam, 3.0f));
+        const double at_end = off_wall(listen_by(Material::Concrete, 0.85f)), past_end = off_wall(listen_by(Material::Concrete, 0.55f));
+        check(std::abs((by_at - by_sound) - 190) <= 3 && std::fabs(by_db - by_expected) < 2.0 && by_r > 2.0 * by_l && by_db - by_foam > 8.0,
+              "the listener hears a wall standing in the room: from the sound's image behind its face, as late and as loud as that is far, "
+              "from its side; off foam far quieter",
+              fmt("%.0f samples later, ", by_at - by_sound) + fmt("%.1f dB on the sound itself ", by_db) + fmt("(%.1f by its distance), ", by_expected) +
+                  fmt("%.1f dB more on the right; ", 10.0 * std::log10(by_r / std::max(by_l, 1e-30))) + fmt("foam %.1f dB", by_foam));
+        check(std::fabs((by_db - at_end) - 6.0) < 1.5 && by_db - past_end > 20.0,
+              "where the reflection would strike a standing wall's end, half as loud (it bends round the edge); a little past it, nothing",
+              fmt("%.1f dB down at the end, ", by_db - at_end) + fmt("%.1f dB 30 cm past it", by_db - past_end));
+
+        // And a microphone hears it likewise: the mic 2 m from the source, a concrete wall standing 1.35 m in front of both
+        // (its face): its reflection 190 samples after the sound, 4.5 dB down; off foam, far quieter.
+        auto miked_by = [&](Material material) {
+            Wall wall;
+            wall.ax = 1.0f;
+            wall.az = -1.5f;
+            wall.bx = 7.0f;
+            wall.bz = -1.5f;
+            wall.material = material;
+            heard.engine.setRoom(14.0f, 10.0f, 10.0f, {wall}, RoomSurfaces{});
+            renderSeconds(heard.engine, 0.3);
+            return renderSeconds(heard.engine, 0.3, [](int64_t n) { return n == 2400 ? 0.5f : 0.0f; });
+        };
+        const Render mic_by = miked_by(Material::Concrete), mic_by_foam = miked_by(Material::Foam);
+        size_t mic_by_direct = 0;
+        for (size_t i = 1; i < mic_by.l.size(); ++i)
+            if (std::fabs(mic_by.l[i]) > std::fabs(mic_by.l[mic_by_direct])) mic_by_direct = i;
+        size_t mic_by_echo = mic_by_direct + 120;
+        for (size_t i = mic_by_direct + 120; i < mic_by_direct + 260; ++i)
+            if (std::fabs(mic_by.l[i]) > std::fabs(mic_by.l[mic_by_echo])) mic_by_echo = i;
+        const double mic_by_db = 10.0 * std::log10(mid_energy(mic_by, int(mic_by_echo) - 10, int(mic_by_echo) + 60) /
+                                                   mid_energy(mic_by, int(mic_by_direct) - 10, int(mic_by_direct) + 60));
+        const double mic_by_foam_db = 10.0 * std::log10(mid_energy(mic_by_foam, int(mic_by_echo) - 10, int(mic_by_echo) + 60) /
+                                                        mid_energy(mic_by_foam, int(mic_by_direct) - 10, int(mic_by_direct) + 60));
+        check(std::fabs(double(mic_by_echo - mic_by_direct) - 190.3) < 6.0 && std::fabs(mic_by_db - by_expected) < 2.5 && mic_by_db - mic_by_foam_db > 8.0,
+              "a microphone hears a wall standing in the room as the listener does: as late, as loud, and off foam far quieter",
+              fmt("%.0f samples later, ", double(mic_by_echo - mic_by_direct)) + fmt("%.1f dB on the sound itself, ", mic_by_db) +
+                  fmt("foam %.1f dB", mic_by_foam_db));
     }
 
     {

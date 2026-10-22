@@ -140,7 +140,7 @@ bool ReflectionField::init(const SteamAudio& steam, std::string* error) {
     IPLBinauralEffect direct = nullptr;
     if (iplBinauralEffectCreate(steam.context(), &settings, &bs, &direct) != IPL_STATUS_SUCCESS) return true;  // (as it is)
     const Vec3 ways[] = {{0, 0, -1}, {1, 0, 0}, {-1, 0, 0}, {0, 0, 1}, {0, 1, 0}, {0.6f, 0.0f, -0.8f}};
-    double field_energy = 0.0, own_energy = 0.0, panned_energy = 0.0;
+    double field_energy = 0.0, own_energy = 0.0, panned_energy = 0.0, first_field = 0.0, first_panned = 0.0;
     const size_t frame = size_t(frame_);
     std::vector<float> in(frame), l(frame), r(frame);
     for (const Vec3& way : ways) {
@@ -177,6 +177,19 @@ bool ReflectionField::init(const SteamAudio& steam, std::string* error) {
                 heard_own.push_back(l[size_t(i)]);
             }
         }
+        // And at the first order alone (its first four channels): it comes out quieter, by as much as its other five
+        // channels carried.
+        iplAmbisonicsDecodeEffectReset(binaural_);
+        iplAmbisonicsDecodeEffectReset(panning_);
+        for (int f = 0; f * frame_ < 8192 + frame_; ++f) {
+            clear();
+            if (f == 0)
+                for (int c = 0; c < 4; ++c) field_[size_t(c)][0] = gains[size_t(c)];
+            decode(binaural_, true, l.data(), r.data());
+            for (int i = 0; i < frame_; ++i) first_field += double(l[size_t(i)]) * l[size_t(i)] + double(r[size_t(i)]) * r[size_t(i)];
+            decode(panning_, false, l.data(), r.data());
+            for (int i = 0; i < frame_; ++i) first_panned += double(l[size_t(i)]) * l[size_t(i)] + double(r[size_t(i)]) * r[size_t(i)];
+        }
         if (&way == &ways[0]) {  // straight ahead: where each first reaches a quarter of its peak
             const auto onset = [](const std::vector<float>& x) {
                 float peak = 0.0f;
@@ -192,6 +205,9 @@ bool ReflectionField::init(const SteamAudio& steam, std::string* error) {
     const double count = double(sizeof(ways) / sizeof(ways[0]));  // (plain panning: each way's energy 1)
     binaural_gain_ = field_energy > 0.0 ? float(std::sqrt(own_energy / field_energy)) : 1.0f;
     panning_gain_ = panned_energy > 0.0 ? float(std::sqrt(count / panned_energy)) : 1.0f;
+    // (One gain for the first order serves both renderings, as both decode the one field: the mean of what each needs.)
+    if (first_field > 0.0 && first_panned > 0.0)
+        first_order_gain_ = float(std::sqrt(0.5 * (field_energy / first_field + panned_energy / first_panned)));
     iplAmbisonicsDecodeEffectReset(binaural_);
     iplAmbisonicsDecodeEffectReset(panning_);
     clear();
@@ -203,7 +219,7 @@ void ReflectionField::clear() {
     added_ = false;
 }
 
-void ReflectionField::add(const float* mono, Vec3 from, Vec3 to, float focus) {
+void ReflectionField::add(const float* mono, Vec3 from, Vec3 to, float focus, int order) {
     added_ = true;
     std::array<float, 9> a = ambisonicGains(from), b = ambisonicGains(to);
     for (int c = 1; c < kChannels; ++c) {  // (spread: the first order's channels down by `focus`, the second's by its square)
@@ -211,7 +227,12 @@ void ReflectionField::add(const float* mono, Vec3 from, Vec3 to, float focus) {
         a[size_t(c)] *= keep;
         b[size_t(c)] *= keep;
     }
-    for (int c = 0; c < kChannels; ++c) {
+    if (order < 2)
+        for (int c = 0; c < 4; ++c) {
+            a[size_t(c)] *= first_order_gain_;
+            b[size_t(c)] *= first_order_gain_;
+        }
+    for (int c = 0; c < (order >= 2 ? kChannels : 4); ++c) {
         float* channel = field_[size_t(c)].data();
         const float step = (b[size_t(c)] - a[size_t(c)]) / float(frame_);
         for (int i = 0; i < frame_; ++i) channel[i] += mono[i] * (a[size_t(c)] + step * float(i + 1));

@@ -91,8 +91,9 @@ public:
     void release();
     void clear();  // (a new block)
     // A block of sound arriving from `from` at its start and `to` at its end. `focus` 1 is from a point; less, spread
-    // wider (a scattered reflection, from all over a surface: its directional part turned down).
-    void add(const float* mono, Vec3 from, Vec3 to, float focus = 1.0f);
+    // wider (a scattered reflection, from all over a surface: its directional part turned down). `order` 1 places it
+    // less precisely, for less (a reflection off two surfaces, among many).
+    void add(const float* mono, Vec3 from, Vec3 to, float focus = 1.0f, int order = 2);
     // Renders the field into out_l and out_r (adding), `binaural_from` to `binaural_to` of it binaurally.
     void render(float* out_l, float* out_r, float binaural_from, float binaural_to);
     // How many samples later the binaural rendering of the field comes out than a source's own binaural rendering.
@@ -107,6 +108,7 @@ private:
     std::vector<float> bl_, br_, pl_, pr_;
     int frame_ = 0, late_ = 0;
     float binaural_gain_ = 1.0f, panning_gain_ = 1.0f;
+    float first_order_gain_ = 1.0f;  // what the first order alone needs to come out as loud as the second does
     bool added_ = false;  // anything put in the field this block
     int quiet_ = 0;       // blocks since anything was (its renderings' tails die away in a few)
 };

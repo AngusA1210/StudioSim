@@ -39,9 +39,8 @@ recording, mixing, room acoustics, and how the code is put together.
 ## Roadmap
 
 1. Windows played and listened to on a real machine, with ASIO.
-2. More of the room's sound: reflections off the walls standing in it, and second reflections.
-3. An avatar of adjustable height, and a free camera.
-4. Multiplayer: a session server, a shared clock, and low-latency audio between players.
+2. An avatar of adjustable height, and a free camera.
+3. Multiplayer: a session server, a shared clock, and low-latency audio between players.
 
 The full list is in [docs/roadmap.md](docs/roadmap.md).
 

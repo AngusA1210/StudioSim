@@ -22,13 +22,24 @@ the air takes as well): a room of bare concrete and tile rings on for seconds, b
 nearly dead; curtains and carpet take the highs and leave the lows ringing. The more a room absorbs, the quieter its
 ring, too.
 
-Before the reverb, the **first reflections**: every instrument off the floor, the ceiling and each wall, from its image
+Before the reverb, the **reflections**: every instrument off the floor, the ceiling and each wall, from its image
 beyond the surface, as much later than its own sound as that way round is longer, as loud as the image is far, coloured
 by the surface's material, the air, and a loudspeaker's beaming as seen from there (and by any wall standing in the
 way). You hear them from where they come: walk up to a concrete wall and it is there beside you; line it with foam and
-it goes. They are rendered together as one second-order Ambisonic field, binaurally with the HRTF (lined up with the
-direct sound, whatever the buffer) or in plain stereo, so they cost little however many instruments there are. Each
-microphone hears its own reflections the same way, by its pattern.
+it goes.
+
+- **Off the walls standing in the room**: each face of a wall you have drawn is a mirror too, for an instrument and a
+  listener (or microphone) both in front of it. Near its ends and its top the reflection fades, half as loud where it
+  would strike the very edge and gone a little past it, as sound bends round an edge rather than stopping dead at it.
+  A gobo of concrete beside a guitar amp sends it back; one of acoustic panels hardly at all.
+- **Second reflections**: off one of the room's surfaces and then another (the ceiling then the floor, the east wall
+  then the north one, between two parallel walls and back), from the image of the image, coloured by both materials.
+  They fill in what follows the first reflections, before the reverb takes over. What either surface scatters is
+  heard scattered off the second.
+
+They are rendered together as one Ambisonic field (the second reflections at its first order, among so many), binaurally
+with the HRTF (lined up with the direct sound, whatever the buffer) or in plain stereo, so they cost little however
+many instruments there are. Each microphone hears its own reflections the same way, by its pattern.
 
 A material also **scatters** a share of what it sends back rather than mirroring it: a flat wall little, brick and a
 curtain's folds more as the waves get shorter, bookshelves much of it, and **diffuser panels** (wooden wells of

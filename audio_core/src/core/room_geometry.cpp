@@ -29,6 +29,7 @@ void RoomGeometry::setRoom(float width, float depth, float ceiling, const std::v
         box.half_length = run * 0.5f + box.half_thickness;
         box.top = std::min(w.height, ceiling);
         box.through = materialInfo(w.material).transmission;
+        box.material = w.material;
         boxes_.push_back(box);
         for (int c = 0; c < 4; ++c) {  // in order round the wall, so neighbours in the list share a face
             const float u = (c == 0 || c == 3 ? -1.0f : 1.0f) * (box.half_length + kNudge);
@@ -209,6 +210,23 @@ bool RoomGeometry::routeOver(Vec3 ear, Vec3 source, Route& out) const {
     const float t = run > 1e-6f ? hull[1].along / run : 0.0f;
     out.via = {a.x + (b.x - a.x) * t, hull[1].height, a.z + (b.z - a.z) * t};
     return true;
+}
+
+std::vector<RoomGeometry::Mirror> RoomGeometry::mirrors() const {
+    std::vector<Mirror> out;
+    for (const Box& box : boxes_) {
+        for (float side : {-1.0f, 1.0f}) {
+            Mirror m;
+            m.normal = {-box.along.z * side, 0.0f, box.along.x * side};
+            m.centre = {box.centre.x + m.normal.x * box.half_thickness, 0.0f, box.centre.z + m.normal.z * box.half_thickness};
+            m.along = {box.along.x, 0.0f, box.along.z};
+            m.half_length = box.half_length;
+            m.top = box.top;
+            m.material = box.material;
+            out.push_back(m);
+        }
+    }
+    return out;
 }
 
 std::array<float, 3> RoomGeometry::transmission(Vec3 a, Vec3 b) const {
