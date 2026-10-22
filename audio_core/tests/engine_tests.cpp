@@ -2025,7 +2025,11 @@ int main(int argc, char** argv) {
         std::filesystem::remove_all(std::filesystem::temp_directory_path() / "soundroom-engine-tests");
         mix.engine.clearInsert(mix.pad, 0);
 #else
-        check(plugins.empty(), "no plug-ins on this platform yet", "");
+        // Off a Mac, VST3s alone; an Audio Unit (from a session made on a Mac) is turned away, saying why.
+        std::string au_error;
+        const bool vst3_only = !plugins.empty() && std::all_of(plugins.begin(), plugins.end(), [](const PluginDescription& p) { return p.format == "VST3"; });
+        const bool au_refused = !PluginInstance::load("AU:61756678:64656c79:6170706c", &au_error) && au_error.find("Mac") != std::string::npos;
+        check(vst3_only && au_refused, "off a Mac the plug-ins are VST3s, and an Audio Unit is turned away", au_error);
 #endif
     }
 
@@ -2335,7 +2339,9 @@ int main(int argc, char** argv) {
         check(dls_level.finite && std::fabs(apart) < 4.0, "a plug-in instrument starts about as loud as the keys (Apple's General MIDI piano, that is)",
               fmt("%+.1f dB", apart));
 #else
-        check(AudioEngine::instrumentPlugins().empty(), "no plug-in instruments on this platform yet", "");
+        const std::vector<PluginDescription> instruments = AudioEngine::instrumentPlugins();
+        check(!instruments.empty() && std::all_of(instruments.begin(), instruments.end(), [](const PluginDescription& p) { return p.format == "VST3" && p.instrument; }),
+              "off a Mac the plug-in instruments are VST3s", fmt("%.0f found", double(instruments.size())));
 #endif
     }
 
