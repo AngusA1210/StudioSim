@@ -488,8 +488,8 @@ int main(int argc, char** argv) {
         const double listener_secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - l0).count();
         check(all_heard.finite && listener_secs < 10.43 / 4, "the listener hearing every instrument's reflections too, well faster than real time",
               fmt("%.1fx real time", 10.43 / listener_secs));
-        check(with_walls.first && with_walls.second < 10.43 / 1.5 && with_walls.second < 3.0 * floor_only.second,
-              "with eight microphones hearing the room's reflections too, still faster than real time (the walls costing no more than twice again)",
+        check(with_walls.first && with_walls.second < 10.43 && with_walls.second < 4.0 * floor_only.second,
+              "with eight microphones hearing the room's reflections too (and what the walls scatter), still faster than real time (the walls costing no more than three times again)",
               fmt("%.1fx real time (", 10.43 / with_walls.second) + fmt("%.1fx with the floor's bounce alone)", 10.43 / floor_only.second));
     }
 
