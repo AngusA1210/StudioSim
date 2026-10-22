@@ -969,6 +969,16 @@ func _run() -> void:
 	mix._insert_menu.hide()
 	await frames(2)
 	check(drums.inserts[0].plugin_name == "" and drums_strip.inserts[0].button.text == "", "and Remove takes it out")
+	var test_gain: Dictionary = {}
+	for p in main.available_plugins():
+		if p.name == "SR Test Gain":
+			test_gain = p
+	var vst3_problem: String = main.set_insert(drums, 4, str(test_gain.get("id", "")))
+	await frames(2)
+	check(test_gain.get("format", "") == "VST3" and vst3_problem == "" and drums.inserts[4].plugin_name == "SR Test Gain" and
+		main.automation.value_text(drums, "insert:4:0", 1.0) == "+6.0 dB",
+		"a VST3 plug-in goes on an insert as well (the checks' own), its control's values as it writes them", vst3_problem)
+	main.clear_insert(drums, 4)
 	var pad_strip: Dictionary = mix._strips[main.instruments.find(pad)]
 	pad.set_loop(false)
 	await seconds(1.5)

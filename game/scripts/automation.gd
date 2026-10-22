@@ -194,6 +194,10 @@ func value_text(track, param: String, value: float) -> String:
 	if control.is_empty():
 		return "%.0f%%" % (value * 100.0)
 	var native: float = lerpf(control.min, control.max, value)
+	var parts := plugin_parts(param)  # (as the plug-in writes it, where it says: a VST3's are 0 to 1 otherwise)
+	var written: String = audio.get_plugin_parameter_text(track.source_id, parts[0], parts[1], parts[2], native)
+	if written != "":
+		return written
 	return ("%.2f" % native if absf(control.max - control.min) <= 2.0 else "%.1f" % native) + (" " + control.unit if control.unit != "" else "")
 
 

@@ -1256,6 +1256,11 @@ std::vector<PluginParameter> AudioEngine::pluginParameters(int id, PluginPlace p
     return plugin ? plugin->parameters() : std::vector<PluginParameter>{};
 }
 
+std::string AudioEngine::pluginParameterText(int id, PluginPlace place, int index, uint32_t param, float value) const {
+    const PluginInstance* plugin = pluginAt(id, place, index);
+    return plugin ? plugin->parameterText(param, value) : "";
+}
+
 float AudioEngine::pluginParameter(int id, PluginPlace place, int index, uint32_t param) const {
     const PluginInstance* plugin = pluginAt(id, place, index);
     return plugin ? plugin->parameter(param) : 0.0f;

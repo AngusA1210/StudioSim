@@ -7,19 +7,33 @@ So far it is one player in one room with the full audio pipeline: instruments yo
 sequencer that loops a pattern on each of them, and live input from a microphone or audio interface. Saving rooms,
 recording, amplifiers and multiplayer come later (see the roadmap below).
 
-## Build and run (macOS)
+## Build and run
 
-Needs Xcode command-line tools, CMake, git, and Godot 4.5 or newer (`brew install --cask godot`).
+**macOS** needs Xcode command-line tools, CMake, git, and Godot 4.5 or newer (`brew install --cask godot`).
 
 ```bash
 tools/build.sh
 godot --path game
 ```
 
-`tools/build.sh` fetches the libraries that aren't kept in git (Steam Audio, miniaudio), builds the audio core and
-the Godot extension, runs the offline audio checks, registers the extension with the Godot project, and then runs
-the game silently with pretend key presses and clicks to check the controls and menus (`game/tests/ui_check.gd`).
-Open `game/project.godot` in the Godot editor to work on the scene and scripts.
+**Windows** needs Visual Studio 2022 (its C++ workload), CMake, Python, Git for Windows (whose Git Bash runs the
+build script), and Godot 4.5 or newer. In Git Bash:
+
+```bash
+tools/build.sh
+```
+
+then open `game/project.godot` in Godot (or run it with `godot --path game`).
+
+`tools/build.sh` fetches the libraries that aren't kept in git (Steam Audio, miniaudio, the VST 3 SDK), builds the
+audio core and the Godot extension, runs the offline audio checks, registers the extension with the Godot project,
+and then runs the game silently with pretend key presses and clicks to check the controls and menus
+(`game/tests/ui_check.gd`). Open `game/project.godot` in the Godot editor to work on the scene and scripts. Every
+change to the audio core is also built and checked on Windows by GitHub Actions (`.github/workflows/windows.yml`).
+
+On Windows the keys are as on a Mac with Ctrl for Cmd and Alt for Option, and the screen names them that way. The
+sound goes through Windows' own audio (WASAPI); MIDI keyboards are found as Windows lists them (plugged in while
+SoundRoom runs, they turn up within a few seconds). Plug-ins are VST3s (below).
 
 Use **wired** headphones. Bluetooth headphones add 150–250 ms of delay that no software can remove; the
 "Output latency" readout shows what your current device adds.
@@ -331,15 +345,23 @@ with a loop recorded that takes a second press.
 
 ## Plug-ins
 
-SoundRoom hosts the effect plug-ins installed on your Mac as Audio Units: the format plug-in makers install alongside
-their Pro Tools (AAX) and VST3 versions. They go on a channel's **inserts** in the mix window (on any instrument) or
-on an amp's **Plug-in pedal** (before the amp). Either way the plug-in browser opens: your plug-ins grouped **by type**
-(EQ, dynamics, delay, reverb, amps and cabinets...) or **by maker**, with a search box. Choose one and its own window
-opens, floating over the room. Plug-ins get the room's tempo, for those that keep time.
+SoundRoom hosts the plug-ins installed on your computer in the formats their makers install besides Pro Tools' AAX:
+**VST3** on macOS and Windows (with Steinberg's VST 3 SDK, MIT-licensed), and on a Mac **Audio Units** as well. They go
+on a channel's **inserts** in the mix window (on any instrument or master) or on an amp's **Plug-in pedal**. Either way
+the plug-in browser opens: your plug-ins grouped **by type** (EQ, dynamics, delay, reverb, amps and cabinets...) or **by
+maker**, with a search box; a plug-in installed in both formats is listed twice, each marked AU or VST3. Choose one and
+its own window opens, floating over the room. Plug-ins get the room's tempo, for those that keep time.
 
-Most plug-ins don't say what kind of effect they are, so the types are worked out from their names: a good guess, not
-a certainty (`audio_core/build/engine_tests --plugins` lists what each was taken for). By maker is always exact. A
-plug-in that only comes as AAX can't be used, since only Pro Tools can host those. Plug-ins run inside SoundRoom as
+A VST3 is known by its class id, which is the same on a Mac and on Windows, so a room whose plug-ins are VST3s opens
+on either with its plug-ins and their settings. A room made with Audio Units, opened on Windows, gets the VST3 version
+of each where it is installed (its settings start fresh, as the two formats keep them differently), and says so.
+SoundRoom finds VST3s by reading the description in each plug-in's bundle, without loading it; one without loads once
+to be asked, and is remembered. A VST3's controls show their values as the plug-in writes them in automation lanes.
+
+Most plug-ins don't say what kind of effect they are (VST3s mostly do, and are grouped by what they say), so the types
+of the rest are worked out from their names: a good guess, not a certainty (`audio_core/build/engine_tests --plugins`
+lists what each was taken for). By maker is always exact. A plug-in that only comes as AAX can't be used, since only
+Pro Tools can host those. Plug-ins run inside SoundRoom as
 they would inside a DAW, so one that crashes takes SoundRoom with it. Their settings are kept with the room and in
 presets (below). Each instrument is a single point of sound in the room, so a plug-in's stereo output is heard as
 one channel, from where the instrument stands.
@@ -511,9 +533,10 @@ In a Record room:
 ## Presets
 
 **Plug-in presets**: right-click an insert and open **Presets**, or press **Presets** under a Plug-in pedal. It lists
-the presets the plug-in comes with, then yours. **Save preset…** saves the plug-in's settings under a name as an
-`.aupreset` file in `~/Library/Audio/Presets/Maker/Plug-in`, the folder every Audio Unit host uses, so presets saved
-in Logic show up in SoundRoom and the other way round.
+the presets the plug-in comes with, then yours. **Save preset…** saves the plug-in's settings under a name in the file
+every host of its format uses: an Audio Unit's `.aupreset` or a VST3's `.vstpreset`, in `Maker/Plug-in` under
+`~/Library/Audio/Presets` on a Mac or `Documents/VST3 Presets` on Windows, so presets saved in another DAW show up in
+SoundRoom and the other way round.
 
 **Instrument presets** hold an instrument's sound, without where it stands or what it plays: the plug-ins on its
 inserts, an amp's head, cabinet, knobs and pedals (the plug-ins on its pedals too), a Speaker's volume, and a plug-in
@@ -739,6 +762,9 @@ audio_core/
   src/core/                the audio engine, plain C++ with no Godot dependency
     engine.*               device, command queue, the room and the mix, the shared clock; microphones hearing the room
     radiation.*            how a cabinet's cones radiate: beaming, the near field, open and closed backs
+    plugin_host*           plug-ins: which format a plug-in is in, Audio Units (macOS), VST3 (everywhere)
+    plugin_window_*        a plug-in's own window, on each platform
+    midi_input_*           MIDI keyboards, on each platform (CoreMIDI, WinMM)
     microphones.*          the microphone models: their pickup patterns, responses and sensitivities
     instruments.*          synthesized drums, the garage kit, bass, pad, bells and keys (each playable live or by pattern), live input
     plugin_synth.*         a plug-in instrument: an instrument plug-in played by MIDI, live and by pattern, to the sample
@@ -798,7 +824,8 @@ each with its master (the mix's with inserts), either one on the main outputs.
 
 To do, roughly in this order:
 
-1. **More plug-ins**: perhaps VST3, and Windows.
+1. **Windows, played**: built and checked on every change; next, played and listened to on a Windows machine, and
+   ASIO for interfaces whose Windows drivers want it.
 2. **The room's sound**: wall materials, each absorbing and diffusing sound in its
    own way, which shape how the room's reverb rings.
 3. **You in the room**: an avatar whose height you can set (the ears and eyes go with it; the view is a little tall
@@ -814,3 +841,4 @@ only, Record rooms coming with the full one.
 - [Godot Engine](https://godotengine.org) and [godot-cpp](https://github.com/godotengine/godot-cpp) (MIT)
 - [Steam Audio](https://github.com/ValveSoftware/steam-audio) (Apache 2.0)
 - [miniaudio](https://github.com/mackron/miniaudio) (public domain / MIT-0)
+- [VST 3 SDK](https://github.com/steinbergmedia/vst3sdk) (MIT; VST is a registered trademark of Steinberg Media Technologies GmbH)

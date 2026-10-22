@@ -6,6 +6,8 @@
 #include <cstring>
 #include <filesystem>
 
+#include "file_util.h"
+
 namespace sr {
 namespace {
 
@@ -22,7 +24,7 @@ int seekTo(std::FILE* f, int64_t at) {
 
 int64_t writtenAt(const std::string& path) {
     std::error_code ec;
-    const auto when = std::filesystem::last_write_time(path, ec);
+    const auto when = std::filesystem::last_write_time(pathOf(path), ec);
     return ec ? 0 : int64_t(when.time_since_epoch().count());
 }
 
@@ -31,13 +33,13 @@ int64_t writtenAt(const std::string& path) {
 // ── A file ──────────────────────────────────────────────────────────────────────────────────────────────────
 
 std::shared_ptr<StreamedFile> StreamedFile::open(const std::string& path, std::string* error) {
-    std::FILE* f = std::fopen(path.c_str(), "rb");
+    std::FILE* f = openFile(path, "rb");
     if (!f) {
         if (error) *error = "it couldn't be opened: " + path;
         return nullptr;
     }
     std::error_code ec;
-    const uintmax_t size = std::filesystem::file_size(path, ec);
+    const uintmax_t size = std::filesystem::file_size(pathOf(path), ec);
     uint8_t head[12];
     if (ec || std::fread(head, 1, 12, f) != 12 || std::memcmp(head, "RIFF", 4) != 0 || std::memcmp(head + 8, "WAVE", 4) != 0) {
         std::fclose(f);
@@ -98,7 +100,7 @@ StreamedFile::~StreamedFile() {
 
 bool StreamedFile::unchanged() const {
     std::error_code ec;
-    const uintmax_t size = std::filesystem::file_size(path_, ec);
+    const uintmax_t size = std::filesystem::file_size(pathOf(path_), ec);
     return !ec && size == size_on_disk_ && writtenAt(path_) == written_at_;
 }
 
@@ -128,7 +130,7 @@ size_t StreamedFile::read(int64_t from, size_t count, float* out) {
 size_t StreamedFile::readLocked(int64_t from, size_t count, float* out, bool keep_channels) {
     if (from < 0 || from >= frames_ || count == 0) return 0;
     count = size_t(std::min<int64_t>(int64_t(count), frames_ - from));
-    std::FILE* f = std::fopen(path_.c_str(), "rb");  // (opened for each read: a room may have hundreds of files)
+    std::FILE* f = openFile(path_, "rb");  // (opened for each read: a room may have hundreds of files)
     if (!f) return 0;
     const size_t width = size_t(bits_ / 8), frame_bytes = width * size_t(channels_);
     raw_.resize(count * frame_bytes);

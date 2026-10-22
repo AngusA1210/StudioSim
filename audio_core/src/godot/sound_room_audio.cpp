@@ -351,6 +351,7 @@ Array SoundRoomAudio::get_plugins() const {
         d["name"] = str(p.name);
         d["maker"] = str(p.maker);
         d["category"] = str(p.category);
+        d["format"] = str(p.format);
         out.push_back(d);
     }
     return out;
@@ -372,6 +373,7 @@ Array SoundRoomAudio::get_instrument_plugins() const {
         d["name"] = str(p.name);
         d["maker"] = str(p.maker);
         d["category"] = str(p.category);
+        d["format"] = str(p.format);
         out.push_back(d);
     }
     return out;
@@ -461,6 +463,15 @@ Array SoundRoomAudio::get_plugin_parameters(int id, const String& place, int ind
     }
     return out;
 }
+String SoundRoomAudio::get_plugin_parameter_text(int id, const String& place, int index, int param, float value) const {
+    return engine_ ? str(engine_->pluginParameterText(id, placeOf(place), index, uint32_t(param), value)) : String();
+}
+void SoundRoomAudio::set_vst3_search_paths(const PackedStringArray& paths) {
+    std::vector<std::string> list;
+    for (int64_t i = 0; i < paths.size(); ++i) list.push_back(str(paths[i]));
+    sr::setVst3SearchPaths(list);
+}
+String SoundRoomAudio::preset_extension(const String& plugin_id) const { return str(sr::presetExtension(str(plugin_id))); }
 float SoundRoomAudio::get_plugin_parameter(int id, const String& place, int index, int param) const {
     return engine_ ? engine_->pluginParameter(id, placeOf(place), index, uint32_t(param)) : 0.0f;
 }
@@ -955,6 +966,9 @@ void SoundRoomAudio::_bind_methods() {
     ClassDB::bind_method(D_METHOD("set_track", "id", "notes", "clips", "automation"), &SoundRoomAudio::set_track, DEFVAL(Dictionary()));
     ClassDB::bind_method(D_METHOD("set_automation_read", "id", "volume", "mute", "sustain", "params"), &SoundRoomAudio::set_automation_read, DEFVAL(true));
     ClassDB::bind_method(D_METHOD("get_plugin_parameters", "id", "place", "index"), &SoundRoomAudio::get_plugin_parameters);
+    ClassDB::bind_method(D_METHOD("get_plugin_parameter_text", "id", "place", "index", "param", "value"), &SoundRoomAudio::get_plugin_parameter_text);
+    ClassDB::bind_method(D_METHOD("set_vst3_search_paths", "paths"), &SoundRoomAudio::set_vst3_search_paths);
+    ClassDB::bind_method(D_METHOD("preset_extension", "plugin_id"), &SoundRoomAudio::preset_extension);
     ClassDB::bind_method(D_METHOD("get_plugin_parameter", "id", "place", "index", "param"), &SoundRoomAudio::get_plugin_parameter);
     ClassDB::bind_method(D_METHOD("set_plugin_parameter", "id", "place", "index", "param", "value"), &SoundRoomAudio::set_plugin_parameter);
     ClassDB::bind_method(D_METHOD("notify_plugin_parameter", "id", "place", "index", "param"), &SoundRoomAudio::notify_plugin_parameter);

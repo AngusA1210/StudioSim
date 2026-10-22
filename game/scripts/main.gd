@@ -138,6 +138,8 @@ func _ready() -> void:
 
 	audio = SoundRoomAudio.new()
 	audio.name = "AudioCore"
+	if options.has("silent"):  # (automated runs see only the checks' own VST3 plug-in, never anyone's)
+		audio.set_vst3_search_paths(PackedStringArray([ProjectSettings.globalize_path("res://").path_join("../audio_core/build/vst3").simplify_path()]))
 	add_child(audio)
 	open_audio()
 	for device_name in settings.midi_disabled:
@@ -859,6 +861,18 @@ const TRACK_COLORS := [["Red", Color(0.92, 0.26, 0.24)], ["Orange", Color(1.0, 0
 	["Cyan", Color(0.3, 0.78, 0.95)], ["Blue", Color(0.38, 0.55, 1.0)], ["Indigo", Color(0.5, 0.45, 0.95)], ["Violet", Color(0.66, 0.4, 0.95)],
 	["Magenta", Color(0.9, 0.38, 0.85)], ["Pink", Color(1.0, 0.5, 0.7)], ["Brown", Color(0.66, 0.46, 0.32)], ["Grey", Color(0.66, 0.68, 0.74)],
 	["White", Color(0.92, 0.93, 0.96)]]
+
+
+## A plug-in that isn't here as it was saved (an Audio Unit on Windows, or one since uninstalled) may be here in
+## another format: the same plug-in, by its name and maker. Its id, or "" if there's none.
+func plugin_elsewhere(plugin_id: String, plugin_name: String, maker: String, instrument := false) -> String:
+	var here: Array = available_instrument_plugins() if instrument else available_plugins()
+	if here.any(func(p): return p.id == plugin_id):
+		return ""
+	for p in here:
+		if str(p.name).to_lower() == plugin_name.to_lower() and str(p.maker).to_lower() == maker.to_lower():
+			return str(p.id)
+	return ""
 
 
 func has_track(track) -> bool:

@@ -1,7 +1,7 @@
-// Audio Unit hosting on macOS: the effect plug-ins the system knows about, loaded into the game's process and played
-// one channel at a time, with their own windows floating over the game.
+// Audio Unit hosting on macOS: the plug-ins the system knows about, loaded into the game's process and played one
+// channel at a time (or two, on a bus), with their own windows floating over the game.
 
-#include "plugin_host.h"
+#include "plugin_formats.h"
 
 #import <AVFoundation/AVFoundation.h>
 #import <AppKit/AppKit.h>
@@ -586,44 +586,22 @@ private:
 
 }  // namespace
 
-std::vector<PluginDescription> PluginInstance::available() {
+std::vector<PluginDescription> auPlugins(bool instruments) {
     std::vector<PluginDescription> out;
-    for (OSType type : {kAudioUnitType_Effect, kAudioUnitType_MusicEffect}) {
+    const std::vector<OSType> types = instruments ? std::vector<OSType>{kAudioUnitType_MusicDevice}
+                                                  : std::vector<OSType>{kAudioUnitType_Effect, kAudioUnitType_MusicEffect};
+    for (OSType type : types) {
         AudioComponentDescription wanted{type, 0, 0, 0, 0};
         for (AudioComponent c = AudioComponentFindNext(nullptr, &wanted); c; c = AudioComponentFindNext(c, &wanted))
             out.push_back(describe(c));
     }
-    auto lower = [](std::string s) {
-        for (char& ch : s) ch = char(std::tolower(static_cast<unsigned char>(ch)));
-        return s;
-    };
-    std::sort(out.begin(), out.end(), [&](const PluginDescription& a, const PluginDescription& b) {
-        const std::string am = lower(a.maker), bm = lower(b.maker);
-        return am != bm ? am < bm : lower(a.name) < lower(b.name);
-    });
+    std::sort(out.begin(), out.end(), [](const PluginDescription& a, const PluginDescription& b) { return a.id < b.id; });
     out.erase(std::unique(out.begin(), out.end(), [](const PluginDescription& a, const PluginDescription& b) { return a.id == b.id; }),
               out.end());
     return out;
 }
 
-std::vector<PluginDescription> PluginInstance::availableInstruments() {
-    std::vector<PluginDescription> out;
-    AudioComponentDescription wanted{kAudioUnitType_MusicDevice, 0, 0, 0, 0};
-    for (AudioComponent c = AudioComponentFindNext(nullptr, &wanted); c; c = AudioComponentFindNext(c, &wanted)) out.push_back(describe(c));
-    auto lower = [](std::string s) {
-        for (char& ch : s) ch = char(std::tolower(static_cast<unsigned char>(ch)));
-        return s;
-    };
-    std::sort(out.begin(), out.end(), [&](const PluginDescription& a, const PluginDescription& b) {
-        const std::string am = lower(a.maker), bm = lower(b.maker);
-        return am != bm ? am < bm : lower(a.name) < lower(b.name);
-    });
-    out.erase(std::unique(out.begin(), out.end(), [](const PluginDescription& a, const PluginDescription& b) { return a.id == b.id; }),
-              out.end());
-    return out;
-}
-
-std::unique_ptr<PluginInstance> PluginInstance::load(const std::string& id, std::string* error) {
+std::unique_ptr<PluginInstance> auLoad(const std::string& id, std::string* error) {
     AudioComponentDescription wanted{};
     if (!parseId(id, wanted)) {
         if (error) *error = "\"" + id + "\" isn't a plug-in";
@@ -652,7 +630,7 @@ std::unique_ptr<PluginInstance> PluginInstance::load(const std::string& id, std:
     return std::make_unique<AudioUnitPlugin>(unit, describe(component));
 }
 
-bool writePluginPreset(const std::string& path, const std::string& name, const std::vector<uint8_t>& state, std::string* error) {
+bool auWritePreset(const std::string& path, const std::string& name, const std::vector<uint8_t>& state, std::string* error) {
     @autoreleasepool {
         NSData* data = [NSData dataWithBytes:state.data() length:state.size()];
         id info = state.empty() ? nil : [NSPropertyListSerialization propertyListWithData:data options:NSPropertyListMutableContainers
@@ -677,7 +655,7 @@ bool writePluginPreset(const std::string& path, const std::string& name, const s
     }
 }
 
-bool readPluginPreset(const std::string& path, PluginPresetFile* out, std::string* error) {
+bool auReadPreset(const std::string& path, PluginPresetFile* out, std::string* error) {
     @autoreleasepool {
         NSData* data = [NSData dataWithContentsOfFile:[NSString stringWithUTF8String:path.c_str()] ?: @""];
         id info = data ? [NSPropertyListSerialization propertyListWithData:data options:NSPropertyListImmutable format:nullptr error:nil] : nil;

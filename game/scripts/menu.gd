@@ -12,6 +12,7 @@ const WARN := Color(1.0, 0.61, 0.48)
 const MAX_GRID_CHANNELS := 16
 const FloorPlan := preload("res://scripts/floor_plan.gd")
 const Room := preload("res://scripts/room.gd")
+const Hints := preload("res://scripts/hints.gd")
 # The pages, in order.
 const METRONOME_TAB := 0
 const ROOM_TAB := 1
@@ -1105,14 +1106,14 @@ func _field(page: Control, title: String) -> HBoxContainer:
 
 func _heading(page: Control, title: String) -> void:
 	var label := Label.new()
-	label.text = title
+	label.text = Hints.keys(title)
 	label.add_theme_font_size_override("font_size", 17)
 	page.add_child(label)
 
 
 func _note(page: Control, text: String) -> Label:
 	var label := Label.new()
-	label.text = text
+	label.text = Hints.keys(text)
 	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	label.add_theme_color_override("font_color", DIM)
 	label.add_theme_font_size_override("font_size", 13)

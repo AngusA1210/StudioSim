@@ -1,5 +1,7 @@
 #include "wav.h"
 
+#include "file_util.h"
+
 #include <algorithm>
 #include <cstring>
 
@@ -21,7 +23,7 @@ uint16_t get16(const uint8_t* p) { return uint16_t(p[0] | p[1] << 8); }
 
 bool WavWriter::open(const std::string& path, int sample_rate, std::string* error, int channels) {
     close();
-    file_ = std::fopen(path.c_str(), "wb");
+    file_ = openFile(path, "wb");
     if (!file_) {
         if (error) *error = "it couldn't be made: " + path;
         return false;
@@ -61,7 +63,7 @@ void WavWriter::close() {
 }
 
 bool readWav(const std::string& path, AudioData* out, std::string* error) {
-    std::FILE* f = std::fopen(path.c_str(), "rb");
+    std::FILE* f = openFile(path, "rb");
     if (!f) {
         if (error) *error = "it couldn't be opened: " + path;
         return false;

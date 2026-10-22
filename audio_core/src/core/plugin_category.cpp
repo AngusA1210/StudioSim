@@ -95,6 +95,24 @@ std::string guessPluginCategory(const std::string& name, const std::string& make
     return "Other";
 }
 
+// A VST3 says what kind it is (its subcategories, "Fx|Reverb" or "Instrument|Drum"), more exactly than its name does:
+// what its kind is, where it says one ("" where it says only "Fx", or "Tools").
+std::string vst3Category(const std::vector<std::string>& subcategories, bool instrument) {
+    static const std::pair<const char*, const char*> kEffects[] = {
+        {"EQ", "EQ"}, {"Dynamics", "Dynamics"}, {"Reverb", "Reverb"}, {"Delay", "Delay"}, {"Distortion", "Saturation & distortion"},
+        {"Filter", "Filter"}, {"Pitch Shift", "Pitch & vocal"}, {"Modulation", "Modulation"}, {"Spatial", "Spatial"},
+        {"Surround", "Spatial"}, {"Analyzer", "Utility & metering"}, {"Mastering", "Mastering"}, {"Restoration", "Restoration"},
+    };
+    static const std::pair<const char*, const char*> kInstruments[] = {
+        {"Drum", "Drums & percussion"}, {"Piano", "Pianos & keys"}, {"Sampler", "Samplers"}, {"Synth", "Synths"},
+        {"Orchestral", "Orchestral & acoustic"}, {"External", "Other"},
+    };
+    for (const auto& [tag, category] : instrument ? std::vector<std::pair<const char*, const char*>>(std::begin(kInstruments), std::end(kInstruments))
+                                                  : std::vector<std::pair<const char*, const char*>>(std::begin(kEffects), std::end(kEffects)))
+        if (std::find(subcategories.begin(), subcategories.end(), tag) != subcategories.end()) return category;
+    return "";
+}
+
 std::string guessInstrumentCategory(const std::string& name, const std::string& maker, const std::vector<std::string>& tags) {
     static const std::vector<Rule> kInstrumentRules = {
         {"Drums & percussion", {"drum", "808", "909", "percuss", "battery", "groove agent", "ezdrummer", "bfd", "beatmaker"},

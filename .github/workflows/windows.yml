@@ -1,0 +1,48 @@
+# SoundRoom's audio core on Windows: built with Visual Studio (the engine, the Godot extension, the checks' own VST3
+# plug-in) and its offline checks run, whenever the audio core changes. The Mac is where it is played and tested by
+# hand; this keeps it building and working on Windows too.
+
+name: Windows
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "audio_core/src/**"
+      - "audio_core/tests/**"
+      - "audio_core/CMakeLists.txt"
+      - "tools/fetch_deps.sh"
+      - ".github/workflows/windows.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Third-party libraries (kept between runs)
+        uses: actions/cache@v4
+        with:
+          path: |
+            audio_core/thirdparty/steamaudio
+            audio_core/thirdparty/miniaudio
+            audio_core/thirdparty/vst3sdk
+          key: deps-${{ hashFiles('tools/fetch_deps.sh') }}
+
+      - name: Fetch what isn't kept in git
+        shell: bash
+        run: tools/fetch_deps.sh
+
+      - name: Configure
+        run: cmake -S audio_core -B audio_core/build -G "Visual Studio 17 2022" -A x64
+
+      - name: Build
+        run: cmake --build audio_core/build --config Release --parallel
+
+      - name: Offline checks
+        shell: bash
+        run: audio_core/build/Release/engine_tests.exe

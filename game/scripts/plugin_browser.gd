@@ -145,14 +145,15 @@ func _fill() -> void:
 		for i in groups[key]:
 			var p: Dictionary = plugins[i]
 			var item := _tree.create_item(heading)
-			item.set_text(0, p.name)
+			item.set_text(0, p.name if not _twinned(p) else "%s  ·  %s" % [p.name, p.get("format", "AU")])  # (in both formats: which)
 			item.set_text(1, p.category if by_maker else p.maker)
 			item.set_custom_color(1, DIM)
 			item.set_metadata(0, i)
 	if plugins.is_empty():
 		_count.text = "None of these are installed."
 	else:
-		_count.text = "%d of %d · your Audio Units (AAX-only plug-ins can't be used)" % [shown, plugins.size()]
+		_count.text = "%d of %d · your %s (AAX-only plug-ins can't be used)" % [shown, plugins.size(),
+			"Audio Units and VST3s" if OS.get_name() == "macOS" else "VST3s"]
 
 
 ## The plug-in an item stands for, or {} for a heading.
@@ -193,3 +194,8 @@ func _on_search_submitted(_text: String) -> void:
 		var first := _tree.get_root().get_first_child() if _tree.get_root() != null else null
 		picked = _plugin_at(first.get_first_child() if first != null else null)
 	_choose(picked)
+
+
+## Whether the same plug-in (its name and maker) is listed in another format too.
+func _twinned(p: Dictionary) -> bool:
+	return plugins.any(func(q): return q.id != p.id and q.name == p.name and q.maker == p.maker)

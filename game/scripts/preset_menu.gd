@@ -131,7 +131,8 @@ func _save(preset_name: String) -> void:
 func _is_taken(preset_name: String) -> bool:
 	var library = app.library
 	if place != "":
-		return FileAccess.file_exists(library.plugin_presets_dir(library.plugin_at(inst, place, index)).path_join(library._safe(preset_name) + ".aupreset"))
+		var plugin: Dictionary = library.plugin_at(inst, place, index)
+		return FileAccess.file_exists(library.plugin_presets_dir(plugin).path_join(library._safe(preset_name) + "." + app.audio.preset_extension(plugin.get("id", ""))))
 	return FileAccess.file_exists(library.presets_dir(library.family_of(inst)).path_join(library._safe(preset_name) + "." + library.PRESET_EXT))
 
 

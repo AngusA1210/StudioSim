@@ -8,6 +8,7 @@ game/bin/
 # Third-party downloads, fetched by tools/fetch_deps.sh
 audio_core/thirdparty/steamaudio/
 audio_core/thirdparty/miniaudio/
+audio_core/thirdparty/vst3sdk/
 
 .DS_Store
 

@@ -11,9 +11,10 @@ extends RefCounted
 ##   an amp's head, cabinet, knobs and pedals, a Speaker's volume, a plug-in instrument's plug-in. A .srpreset file in
 ##   SoundRoom/Instrument Presets, in a folder for each family (amps, Speakers, MIDI instruments, plug-in instruments). One loads onto any instrument of its
 ##   family, or comes into the room as a new instrument from the instrument menu.
-## - Plug-in presets: a plug-in's settings as an .aupreset file in ~/Library/Audio/Presets/Maker/Plug-in, where every
-##   Audio Unit host keeps them, so presets saved in Logic show up here and the other way round. The presets a plug-in
-##   comes with are listed alongside.
+## - Plug-in presets: a plug-in's settings as an .aupreset file (an Audio Unit's) or a .vstpreset (a VST3's) in
+##   Maker/Plug-in, under ~/Library/Audio/Presets on macOS (where every host keeps them, so presets saved in Logic show
+##   up here and the other way round) or Documents/VST3 Presets on Windows. The presets a plug-in comes with are listed
+##   alongside.
 ## - Copy and paste: an instrument's settings (onto another of its family) or a plug-in's (onto the same plug-in),
 ##   held until something else is copied.
 ##
@@ -32,7 +33,7 @@ var app
 var audio: SoundRoomAudio
 var automated := false
 var root := ""         # SoundRoom (see home())
-var plugin_root := ""  # ~/Library/Audio/Presets
+var plugin_root := ""  # ~/Library/Audio/Presets, or Documents/VST3 Presets
 var copied_instrument := {}  # instrument_settings() of what was copied
 var copied_plugin := {}      # {plugin_id, plugin_name, state}
 
@@ -47,7 +48,10 @@ func _init(the_app, automated_run: bool) -> void:
 		plugin_root = root.path_join("Audio Presets")
 	else:
 		root = home()
-		plugin_root = OS.get_environment("HOME").path_join("Library/Audio/Presets")
+		if OS.get_name() == "macOS":
+			plugin_root = OS.get_environment("HOME").path_join("Library/Audio/Presets")
+		else:
+			plugin_root = OS.get_system_dir(OS.SYSTEM_DIR_DOCUMENTS).path_join("VST3 Presets")
 
 
 ## Where rooms, templates and instrument presets are kept: the SoundRoom folder the game runs from (the one holding
@@ -117,7 +121,13 @@ func apply_instrument_settings(inst, settings: Dictionary, include := {}) -> Str
 	var with_plugins: bool = include.get("plugins", true)
 	var played = settings.get("instrument_plugin")
 	if inst.plays_plugin and played is Dictionary:  # always: without it, a plug-in instrument would have no sound at all
-		var problem: String = app.set_instrument_plugin(inst, str(played.get("plugin_id", "")), _bytes(played.get("state", "")))
+		var played_id := str(played.get("plugin_id", ""))
+		var played_state := _bytes(played.get("state", ""))
+		var other: String = app.plugin_elsewhere(played_id, str(played.get("plugin_name", "")), str(played.get("plugin_maker", "")), true)
+		if other != "":  # (the same plug-in in another format, without its settings)
+			played_id = other
+			played_state = PackedByteArray()
+		var problem: String = app.set_instrument_plugin(inst, played_id, played_state)
 		if problem != "":
 			problems.append("%s: %s" % [played.get("plugin_name", "its plug-in"), problem])
 	if inst.is_amp and settings.get("amp") is Dictionary and include.get("instrument_settings", true):
@@ -141,7 +151,13 @@ func apply_instrument_settings(inst, settings: Dictionary, include := {}) -> Str
 				app.set_pedal_control(inst, at, c, float(values[c]))
 			app.set_pedal_on(inst, at, bool(pedal.get("on", true)))
 			if str(pedal.get("plugin_id", "")) != "" and with_plugins:
-				var problem: String = app.load_pedal_plugin(inst, at, pedal.plugin_id, _bytes(pedal.get("state", "")))
+				var pedal_id := str(pedal.plugin_id)
+				var pedal_state := _bytes(pedal.get("state", ""))
+				var other: String = app.plugin_elsewhere(pedal_id, str(pedal.get("plugin_name", "")), str(pedal.get("plugin_maker", "")))
+				if other != "":  # (the same plug-in in another format, without its settings)
+					pedal_id = other
+					pedal_state = PackedByteArray()
+				var problem: String = app.load_pedal_plugin(inst, at, pedal_id, pedal_state)
 				if problem != "":
 					problems.append("%s on pedal %d: %s" % [pedal.get("plugin_name", "a plug-in"), at + 1, problem])
 	if family_of(inst) == "speaker" and settings.has("volume_db") and include.get("instrument_settings", true):
@@ -184,7 +200,15 @@ func apply_inserts(track, inserts: Array) -> String:
 		if not (insert is Dictionary):
 			app.clear_insert(track, slot)
 			continue
-		var problem: String = app.set_insert(track, slot, str(insert.get("plugin_id", "")), _bytes(insert.get("state", "")))
+		var plugin_id := str(insert.get("plugin_id", ""))
+		var state := _bytes(insert.get("state", ""))
+		var other: String = app.plugin_elsewhere(plugin_id, str(insert.get("plugin_name", "")), str(insert.get("plugin_maker", "")))
+		if other != "":  # (the same plug-in in another format: its settings don't go across)
+			problems.append("%s on insert %s: its %s instead, as it was made" % [insert.get("plugin_name", "a plug-in"), char(65 + slot),
+				"VST3" if other.begins_with("VST3:") else "Audio Unit"])
+			plugin_id = other
+			state = PackedByteArray()
+		var problem: String = app.set_insert(track, slot, plugin_id, state)
 		if problem != "":
 			app.clear_insert(track, slot)
 			problems.append("%s on insert %s: %s" % [insert.get("plugin_name", "a plug-in"), char(65 + slot), problem])
@@ -243,7 +267,7 @@ func plugin_presets_dir(plugin: Dictionary) -> String:
 ## The presets saved for the plug-in at that place: [{name, path}], by name.
 func plugin_presets(inst, place: String, index: int) -> Array:
 	var plugin := plugin_at(inst, place, index)
-	return [] if plugin.is_empty() else _files(plugin_presets_dir(plugin), "aupreset")
+	return [] if plugin.is_empty() else _files(plugin_presets_dir(plugin), audio.preset_extension(plugin.id))
 
 
 ## Saves the plug-in's settings as a preset under `preset_name` (replacing one of that name). Returns why it couldn't, or "".
@@ -251,7 +275,7 @@ func save_plugin_preset(inst, place: String, index: int, preset_name: String) ->
 	var plugin := plugin_at(inst, place, index)
 	if plugin.is_empty():
 		return "there is no plug-in there"
-	var path := plugin_presets_dir(plugin).path_join(_safe(preset_name) + ".aupreset")
+	var path := plugin_presets_dir(plugin).path_join(_safe(preset_name) + "." + audio.preset_extension(plugin.id))
 	if not audio.write_plugin_preset(path, preset_name, audio.get_plugin_state(inst.source_id, place, index)):
 		return audio.get_error()
 	return ""

@@ -373,6 +373,7 @@ public:
     // The controls of the plug-in there that automation can move, each one's value now, and setting one (game thread).
     std::vector<PluginParameter> pluginParameters(int id, PluginPlace place, int index) const;
     float pluginParameter(int id, PluginPlace place, int index, uint32_t param) const;
+    std::string pluginParameterText(int id, PluginPlace place, int index, uint32_t param, float value) const;  // "" if it doesn't say
     void setPluginParameter(int id, PluginPlace place, int index, uint32_t param, float value);  // (its window told too)
     void notifyPluginParameter(int id, PluginPlace place, int index, uint32_t param);  // its window shown what automation set
 

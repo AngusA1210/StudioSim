@@ -117,7 +117,7 @@ func is_down(action: String) -> bool:
 
 
 func label(action: String) -> String:
-	return ("⌘" if commands.has(action) else "") + name_of(key(action))
+	return (("⌘" if OS.get_name() == "macOS" else "Ctrl+") if commands.has(action) else "") + name_of(key(action))
 
 
 static func name_of(keycode: int) -> String:

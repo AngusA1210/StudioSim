@@ -254,6 +254,14 @@ double bandDb(const std::vector<float>& x, float sr, float low_hz, float high_hz
     return db(std::sqrt(energy / double(std::max<size_t>(x.size(), 1))));
 }
 
+// The checks' own echo (tests/vst3_test_plugin.cpp: what it hears, and again a second later at half its level), as a
+// VST3, on every platform: where an echo shows where a plug-in plays.
+std::string testEcho() {
+    for (const PluginDescription& p : PluginInstance::available())
+        if (p.name == "SR Test Echo") return p.id;
+    return "";
+}
+
 // The level (dB) of `x` in a narrow band round `hz` (two band-passes, Q 8).
 double narrowDb(const std::vector<float>& x, float sr, float hz) {
     Biquad bp[2];
@@ -431,6 +439,7 @@ int main(int argc, char** argv) {
         return 0;
     }
     std::printf("SoundRoom audio core: offline checks\n");
+    setVst3SearchPaths({SR_TEST_VST3_DIR});  // (the checks' own VST3 plug-in, never anyone's own)
 
     {
         std::printf("\nThe room at the spawn point\n");
@@ -2132,6 +2141,97 @@ int main(int argc, char** argv) {
     }
 
     {
+        std::printf("\nVST3 plug-ins\n");
+        // The checks' own plug-in (tests/vst3_test_plugin.cpp): a gain effect and a sine instrument.
+        const std::vector<PluginDescription> effects = PluginInstance::available(), instruments = PluginInstance::availableInstruments();
+        const auto gain_it = std::find_if(effects.begin(), effects.end(), [](const PluginDescription& p) { return p.name == "SR Test Gain"; });
+        const auto tone_it = std::find_if(instruments.begin(), instruments.end(), [](const PluginDescription& p) { return p.name == "SR Test Tone"; });
+        check(gain_it != effects.end() && gain_it->format == "VST3" && gain_it->id.rfind("VST3:", 0) == 0 && gain_it->id.size() == 37 &&
+                  gain_it->maker == "SoundRoom checks" && gain_it->category == "Dynamics" && tone_it != instruments.end() && tone_it->instrument,
+              "a VST3's effects and instruments are found in its bundle, each by its class id, as the same on every platform",
+              gain_it != effects.end() ? gain_it->id + ", " + gain_it->category : std::string("not found"));
+        const std::string gain_id = gain_it != effects.end() ? gain_it->id : "", tone_id = tone_it != instruments.end() ? tone_it->id : "";
+        std::string why;
+        std::unique_ptr<PluginInstance> gain = PluginInstance::load(gain_id, &why);
+        const bool gain_ready = gain && gain->prepare(48000.0, 512, &why);
+        std::vector<float> block(256, 0.5f);
+        if (gain_ready) gain->process(block.data(), 256);
+        const float unity = block[100];
+        const std::vector<PluginParameter> controls = gain_ready ? gain->parameters() : std::vector<PluginParameter>{};
+        if (gain_ready) gain->setParameter(0, 1.0f);  // (as automation does, between blocks)
+        std::fill(block.begin(), block.end(), 0.5f);
+        if (gain_ready) gain->process(block.data(), 256);
+        check(gain_ready && std::fabs(unity - 0.5f) < 1e-6f && std::fabs(block[100] - 1.0f) < 1e-6f && controls.size() == 1 &&
+                  controls[0].name == "Gain" && controls[0].unit == "dB" && gain->parameterText(0, 1.0f) == "+6.0 dB",
+              "one loads and plays in one channel; its control set (as automation sets it) takes effect at the next block, "
+              "and it says what its values are, as it writes them",
+              why + fmt("%.2f, then %.2f", unity, block[100]) + (gain_ready ? ", " + gain->parameterText(0, 1.0f) : ""));
+        const std::vector<uint8_t> saved = gain_ready ? gain->saveState() : std::vector<uint8_t>{};
+        std::unique_ptr<PluginInstance> second = PluginInstance::load(gain_id, &why);
+        const bool second_ready = second && second->prepare(48000.0, 512, &why, true) && second->loadState(saved);
+        std::vector<float> left(256, 0.5f), right(256, 0.25f);
+        if (second_ready) second->processStereo(left.data(), right.data(), 256);
+        const std::string preset_path = (std::filesystem::temp_directory_path() / "soundroom_check.vstpreset").string();
+        PluginPresetFile preset;
+        const bool preset_ok = writePluginPreset(preset_path, "Twice as loud", saved, &why) && readPluginPreset(preset_path, &preset, &why) &&
+                               preset.plugin_id == gain_id && preset.name == "Twice as loud" && preset.state == saved;
+        std::filesystem::remove(preset_path);
+        check(second_ready && std::fabs(left[100] - 1.0f) < 1e-6f && std::fabs(right[100] - 0.5f) < 1e-6f && preset_ok &&
+                  presetExtension(gain_id) == "vstpreset",
+              "its settings saved, a second one takes them, in two channels on a bus; and as a .vstpreset file, they come back",
+              why + fmt("left %.2f, right %.2f", left[100], right[100]));
+        std::unique_ptr<PluginInstance> tone = PluginInstance::load(tone_id, &why);
+        const bool tone_ready = tone && tone->prepare(48000.0, 512, &why) && tone->isInstrument();
+        auto played = [&]() {  // a block's loudest sample
+            std::vector<float> out(256, 0.0f);
+            if (tone_ready) tone->render(out.data(), 256);
+            float most = 0.0f;
+            for (float v : out) most = std::max(most, std::fabs(v));
+            return most;
+        };
+        if (tone_ready) tone->midi(0x90, 69, 100, 0);
+        const float sounding = played();
+        if (tone_ready) tone->midi(0x80, 69, 0, 0);
+        played();
+        const float let_go = played();
+        if (tone_ready) {  // the pedal down (mapped to the parameter that holds notes), a note played and let go
+            tone->midi(0xB0, 64, 127, 0);
+            tone->midi(0x90, 69, 100, 0);
+            played();
+            tone->midi(0x80, 69, 0, 0);
+        }
+        played();
+        const float held = played();
+        check(tone_ready && sounding > 0.05f && let_go < 1e-6f && held > 0.05f,
+              "an instrument plays its notes, stops when they are let go, and holds them while its sustain pedal (a mapped controller) is down",
+              why + fmt("%.2f playing, ", sounding) + fmt("%.4f let go, ", let_go) + fmt("%.2f held", held));
+        // In the room: on an insert of the keys, and as a plug-in instrument.
+        Room room;
+        room.hearMix();
+        room.quietRoom(room.keys);
+        auto keys_level = [&]() {
+            renderSeconds(room.engine, 0.3);
+            room.engine.noteOn(room.keys, 64, 0.8f);
+            const Render r = renderSeconds(room.engine, 0.3);
+            room.engine.noteOff(room.keys, 64);
+            renderSeconds(room.engine, 1.0);
+            return level(r);
+        };
+        const double dry = keys_level();
+        const bool inserted = room.engine.setInsert(room.keys, 0, gain_id, &why);
+        room.engine.setPluginParameter(room.keys, PluginPlace::Insert, 0, 0, 1.0f);
+        const double through = keys_level();
+        const int synth = room.engine.addSource(InstrumentKind::PluginSynth, {1.0f, 1.0f, 1.0f}, 1.0f, 0.0f);
+        const bool synth_loaded = room.engine.setInstrumentPlugin(synth, tone_id, &why);
+        renderSeconds(room.engine, 0.2);
+        room.engine.noteOn(synth, 72, 0.9f);
+        const Render synth_heard = renderSeconds(room.engine, 0.3);
+        check(inserted && std::fabs(through - dry - 6.02) < 0.3 && synth_loaded && synth_heard.peak > 0.01,
+              "in the room, one goes on an insert (its control at +6 dB makes the keys 6 dB louder), and one plays as a plug-in instrument",
+              why + fmt("%+.2f dB through it, ", through - dry) + fmt("the instrument at %.0f dBFS", db(synth_heard.peak)));
+    }
+
+    {
         std::printf("\nPlug-in instruments\n");
 #ifdef __APPLE__
         const std::string dls = "AU:61756d75:646c7320:6170706c";  // aumu dls  appl: Apple's General MIDI synthesizer
@@ -2582,12 +2682,12 @@ int main(int argc, char** argv) {
         room.engine.setMixOutput(-1, -1);
         check(main_energy > 0.0 && mix_energy > 0.0, "the room on the main outputs, and the mix on outputs of its own as well",
               fmt("%.0f dB apart", 10.0 * std::log10(std::max(main_energy, 1e-30) / std::max(mix_energy, 1e-30))));
-        // The master's inserts: AUDelay on the mix's master, its echo in the mix, not in the room.
+        // The master's inserts: an echo on the mix's master, heard in the mix, not in the room.
         Room masters;
         masters.quietRoom(masters.drums);
         const int master_bus = masters.engine.addSource(InstrumentKind::Bus, {0.0f, 0.0f, 0.0f}, 1.0f, 0.0f);
         std::string insert_error;
-        const bool delay_on = masters.engine.setInsert(master_bus, 0, "AU:61756678:64656c79:6170706c", &insert_error);
+        const bool delay_on = masters.engine.setInsert(master_bus, 0, testEcho(), &insert_error);
         masters.engine.setMasterInserts(master_bus);
         renderSeconds(masters.engine, 0.3);
         auto tail = [&](bool mix) {
@@ -2595,18 +2695,18 @@ int main(int argc, char** argv) {
             renderSeconds(masters.engine, 1.5);
             masters.engine.noteOn(masters.drums, 38, 0.9f);
             renderSeconds(masters.engine, 0.8);
-            return renderSeconds(masters.engine, 0.6);  // (around a second after the snare: AUDelay's echo, if any)
+            return renderSeconds(masters.engine, 0.6);  // (around a second after the snare: the echo, if any)
         };
         const Render room_tail = tail(false), mix_tail = tail(true);
-        check(delay_on && db(mix_tail.peak) > db(room_tail.peak) + 6.0, "the mix's master has inserts: AUDelay there echoes the mix, not the room",
+        check(delay_on && db(mix_tail.peak) > db(room_tail.peak) + 6.0, "the mix's master has inserts: an echo there echoes the mix, not the room",
               insert_error + fmt("echo %.0f dBFS in the mix, ", db(mix_tail.peak)) + fmt("%.0f in the room", db(room_tail.peak)));
-        // And the room's master: AUDelay there echoes the room, not the mix.
+        // And the room's master: an echo there echoes the room, not the mix.
         masters.engine.setMasterInserts(-1);
         const int room_bus = masters.engine.addSource(InstrumentKind::Bus, {0.0f, 0.0f, 0.0f}, 1.0f, 0.0f);
-        const bool room_delay = masters.engine.setInsert(room_bus, 0, "AU:61756678:64656c79:6170706c", &insert_error);
+        const bool room_delay = masters.engine.setInsert(room_bus, 0, testEcho(), &insert_error);
         masters.engine.setMasterInserts(room_bus, AudioEngine::Monitor::Room);
         const Render room_echo = tail(false), mix_dry = tail(true);
-        check(room_delay && db(room_echo.peak) > db(mix_dry.peak) + 6.0, "the room's master has inserts too: AUDelay there echoes the room, not the mix",
+        check(room_delay && db(room_echo.peak) > db(mix_dry.peak) + 6.0, "the room's master has inserts too: an echo there echoes the room, not the mix",
               insert_error + fmt("echo %.0f dBFS in the room, ", db(room_echo.peak)) + fmt("%.0f in the mix", db(mix_dry.peak)));
         // Hearing the mix on the main outputs, the room on outputs 3 and 4 of its own.
         masters.engine.setMonitor(AudioEngine::Monitor::Mix);
@@ -3264,8 +3364,8 @@ int main(int argc, char** argv) {
         check(loud_amp.rms_l > 0.003 && turned_down.rms_l < 0.1 * loud_amp.rms_l, "an amp's knob automated turns as it plays: its Master down from 5 to 0",
               fmt("%.0f dB lower", db(loud_amp.rms_l) - db(turned_down.rms_l)));
 
-        // A plug-in's control automated: AUDelay on an insert, its first control set where the music is.
-        const std::string au_delay = "AU:61756678:64656c79:6170706c";
+        // A plug-in's control automated: an echo on an insert, its first control set where the music is.
+        const std::string au_delay = testEcho();
         std::string delay_error;
         const bool delay_on = amp_room.engine.setInsert(amp, 0, au_delay, &delay_error);
         const std::vector<PluginParameter> controls = amp_room.engine.pluginParameters(amp, PluginPlace::Insert, 0);
@@ -3287,7 +3387,7 @@ int main(int argc, char** argv) {
             control_at = amp_room.engine.pluginParameter(amp, PluginPlace::Insert, 0, first.id);
             control_set = std::fabs(control_at - control_wanted) < 1e-3f * std::max(1.0f, std::fabs(first.max - first.min));
         }
-        check(delay_on && controls.size() >= 2 && control_set,
+        check(delay_on && !controls.empty() && control_set,
               "a plug-in lists its controls, and one automated is set as the music plays",
               delay_on ? fmt("%.0f controls; ", double(controls.size())) + (controls.empty() ? std::string() : controls[0].name) + fmt(" at %.2f", control_at)
                        : delay_error);
@@ -3458,7 +3558,7 @@ int main(int argc, char** argv) {
               fmt("%.1g apart, ", apart) + fmt("%.2f with the bus at half, ", halved.rms_l / straight2.rms_l) + fmt("metered %.0f dBFS, ", db(bus_level)) + fmt("muted %.0f dBFS", db(muted_bus.peak)));
         routed.engine.setSourceMuted(bus, false);
         routed.engine.setSourceGain(bus, 1.0f);
-        const std::string au_delay = "AU:61756678:64656c79:6170706c";
+        const std::string au_delay = testEcho();
         std::string bus_error;
         const bool bus_insert = routed.engine.setInsert(bus, 0, au_delay, &bus_error);
         renderSeconds(plain.engine, 1.5);
@@ -3469,8 +3569,8 @@ int main(int argc, char** argv) {
         renderSeconds(routed.engine, 0.9);
         const Render dry_after = renderSeconds(plain.engine, 0.3), echo = renderSeconds(routed.engine, 0.3);  // a second after the hit
         const std::vector<PedalStatus> bus_inserts = routed.engine.inserts(bus);
-        check(bus_insert && bus_inserts[0].plugin.name == "AUDelay" && echo.finite && echo.rms_l > 4.0 * dry_after.rms_l + 1e-4,
-              "an insert on a bus plays what reaches it: AUDelay, its echo a second after the snare", bus_insert ? fmt("echo %.0f dBFS", db(echo.rms_l)) : bus_error);
+        check(bus_insert && bus_inserts[0].plugin.name == "SR Test Echo" && echo.finite && echo.rms_l > 4.0 * dry_after.rms_l + 1e-4,
+              "an insert on a bus plays what reaches it: an echo, a second after the snare", bus_insert ? fmt("echo %.0f dBFS", db(echo.rms_l)) : bus_error);
     }
 
     {

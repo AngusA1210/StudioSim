@@ -3,6 +3,7 @@ extends CanvasLayer
 ## and the room reverb are on, the master meter, the keyboard while you are at an instrument, and (if switched on in
 ## the menu) a small audio readout. Everything else lives in the menu, the mix window and the pattern editor.
 
+const Hints := preload("res://scripts/hints.gd")
 const LevelMeter := preload("res://scripts/level_meter.gd")
 const PANEL_BG := Color(0.05, 0.06, 0.09, 0.82)
 const DIM := Color(0.62, 0.65, 0.74)
@@ -153,7 +154,7 @@ func setup(the_app) -> void:
 	_notice_panel.add_child(_notice)
 	_notice_panel.visible = false
 	app.session.notice.connect(func(text: String) -> void:
-		_notice.text = text
+		_notice.text = Hints.keys(text)
 		_notice_until = Time.get_ticks_msec() + 2500)
 
 

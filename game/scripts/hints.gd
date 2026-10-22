@@ -1,6 +1,17 @@
 extends RefCounted
 ## Hover hints. Rather than every explanation being written out on a panel, a control carries a short description of
 ## itself, and the panel's hint line shows the description of whatever the mouse is over, and nothing otherwise.
+## Descriptions name the keys as a Mac has them (Cmd, Option, ⌘); off a Mac they read as that keyboard has them.
+
+static var _mac := OS.get_name() == "macOS"
+
+
+## A description with its keys named as this computer's keyboard names them: off a Mac, Cmd is Ctrl and Option is Alt.
+static func keys(text: String) -> String:
+	if _mac:
+		return text
+	return text.replace("⌘", "Ctrl+").replace("Cmd", "Ctrl").replace("Option-", "Alt-").replace("Option ", "Alt ").replace(
+		"Option:", "Alt:").replace("Option)", "Alt)")
 
 ## Gives a control its description: a String, or a Callable returning one for a description that changes.
 static func give(control: Control, hint) -> Control:
@@ -21,7 +32,7 @@ static func under_mouse(within: Control) -> String:
 			if not within.is_ancestor_of(control) and control != within:
 				return ""
 			var hint = control.get_meta("hint")
-			return str(hint.call()) if hint is Callable else str(hint)
+			return keys(str(hint.call()) if hint is Callable else str(hint))
 		if control == within:
 			return ""
 		control = control.get_parent() as Control

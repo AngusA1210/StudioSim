@@ -160,6 +160,11 @@ public:
     bool set_plugin_state(int id, const String& place, int index, const PackedByteArray& state);
     PackedStringArray get_factory_presets(int id, const String& place, int index) const;
     bool load_factory_preset(int id, const String& place, int index, int preset);
+    // A control's value as the plug-in writes it ("-6.0 dB"), or "" if it doesn't say.
+    String get_plugin_parameter_text(int id, const String& place, int index, int param, float value) const;
+    // Where VST3 plug-ins are looked for: the system's folders (none given), or only these (the automated checks').
+    void set_vst3_search_paths(const PackedStringArray& paths);
+    String preset_extension(const String& plugin_id) const;  // a plug-in's preset files': "aupreset" or "vstpreset"
     Array get_plugin_parameters(int id, const String& place, int index) const;  // [{id, name, unit, min, max, default, value}]
     float get_plugin_parameter(int id, const String& place, int index, int param) const;
     void set_plugin_parameter(int id, const String& place, int index, int param, float value);
