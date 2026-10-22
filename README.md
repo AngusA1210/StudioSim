@@ -724,8 +724,8 @@ patterns go back to the defaults at each start until rooms can be saved.
 - **Metronome**: start and stop the patterns, tempo, swing, the click and its volume.
 - **Room**: the room's size and the walls inside it (see above).
 - **Playback Engine**: which output device the audio engine runs on, and the hardware buffer size (32–1024 samples).
-  The sample rate follows the device. Shows the resulting latency (the buffer, the device, and the quarter of a
-  buffer that binaural rendering adds while it is switched on) and CPU use.
+  The sample rate follows the device. Shows the resulting latency (the buffer, the device, and what binaural rendering
+  adds while it is switched on: about a quarter of a buffer, measured as the engine starts) and CPU use.
 - **I/O**: which of the device's outputs carry the mix, the input device, and which hardware input each Speaker plays.
   Live input always starts switched off, so an open microphone never meets a pair of speakers by surprise.
 - **MIDI**: every MIDI device the system sees, with a tick box each and a light that flashes when it sends notes.
@@ -833,7 +833,7 @@ To do, roughly in this order:
    about the room with nothing in its way.
 4. **Multiplayer**, the final goal: a session server, a networked clock, note events and low-latency audio streams.
 
-Also wanted along the way: MIDI on Windows and Linux, and VR through OpenXR. Perhaps later a free version with Jam rooms
+Also wanted along the way: MIDI on Linux, and VR through OpenXR. Perhaps later a free version with Jam rooms
 only, Record rooms coming with the full one.
 
 ## Third-party
