@@ -231,6 +231,7 @@ struct AudioEngine::Source {
         std::array<float, 3> mirror{}, mirror_target{}, scatter{}, scatter_target{};
         float late = -1.0f;            // samples behind the direct sound (-1: not heard yet)
         Vec3 way{0.0f, 0.0f, -1.0f};   // the way it arrives from, last block
+        float air_at = -1.0f, air[3] = {};  // what the air leaves of each band, over the distance it was last worked out for
         int bus = 0;                   // the surface whose scattered sound it adds to
         bool second = false;           // off two surfaces (put in the field at first order: it needs less precision)
     };
@@ -289,6 +290,7 @@ struct AudioEngine::Source {
         struct Way {
             bool filtered = true;  // (a point's direct way has no filters)
             bool reflection = false;  // off a surface other than the floor: read already split, without filters (see hearCapsule)
+            float air_at = -1.0f, air[3] = {};  // (a reflection's: what the air leaves of each band, over the distance last worked out)
             float distance = -1.0f, distance_target = 0.0f, nearness = 1.0f, nearness_target = 1.0f;
             float gain = 0.0f, gain_target = 0.0f, cut = 20000.0f, cut_target = 20000.0f;
             float low_db = 0.0f, low_target = 0.0f, high_db = 0.0f, high_target = 0.0f;
@@ -3291,7 +3293,8 @@ void AudioEngine::readReflection(const Source& s, float late_from, float late_to
     constexpr size_t mask = Source::kHistory - 1;
     const float n = float(block_);
     // Still (as most are, most of the time), and not running off the end of the history: each band read straight
-    // through at one fraction between samples, which the compiler can do several samples at a time.
+    // through at one fraction between samples. Its level steady too, the bands and the fraction fold into six gains on
+    // the three histories, sample by sample, which any compiler can do several samples at a time.
     if (late_to == late_from) {
         const double start = double(clock_) - double(late_from);
         const int64_t k = int64_t(std::floor(start));
@@ -3301,26 +3304,31 @@ void AudioEngine::readReflection(const Source& s, float late_from, float late_to
             const float* __restrict x0 = x + first;
             const float* __restrict lo0 = lo + first;
             const float* __restrict bh0 = bh + first;
-            float* __restrict o = out;
-            const float g0 = from[0], g1 = from[1], g2 = from[2];
-            const float d0 = (to[0] - from[0]) / n, d1 = (to[1] - from[1]) / n, d2 = (to[2] - from[2]) / n;
-            for (int i = 0; i < block_; ++i) {
-                const float whole = x0[i] + (x0[i + 1] - x0[i]) * f, low = lo0[i] + (lo0[i + 1] - lo0[i]) * f;
-                const float below = bh0[i] + (bh0[i + 1] - bh0[i]) * f;
-                const float a = float(i + 1);
-                o[i] += low * (g0 + d0 * a) + (below - low) * (g1 + d1 * a) + (whole - below) * (g2 + d2 * a);
-            }
-            if (spread_out) {
-                float* __restrict so = spread_out;
-                const float s0 = spread_from[0], s1 = spread_from[1], s2 = spread_from[2];
-                const float e0 = (spread_to[0] - s0) / n, e1 = (spread_to[1] - s1) / n, e2 = (spread_to[2] - s2) / n;
+            const auto steady = [](const float* a, const float* b) {
+                for (int band = 0; band < 3; ++band)
+                    if (std::fabs(b[band] - a[band]) > 1e-6f * std::fabs(a[band])) return false;
+                return true;
+            };
+            // (low * g0 + (below - low) * g1 + (whole - below) * g2 is low * (g0 - g1) + below * (g1 - g2) + whole * g2)
+            const auto add = [&](const float* g_from, const float* g_to, float* __restrict o) {
+                if (steady(g_from, g_to)) {
+                    const float l = g_from[0] - g_from[1], b = g_from[1] - g_from[2], w = g_from[2];
+                    const float l0 = l * (1.0f - f), l1 = l * f, b0 = b * (1.0f - f), b1 = b * f, w0 = w * (1.0f - f), w1 = w * f;
+                    for (int i = 0; i < block_; ++i)
+                        o[i] += l0 * lo0[i] + l1 * lo0[i + 1] + b0 * bh0[i] + b1 * bh0[i + 1] + w0 * x0[i] + w1 * x0[i + 1];
+                    return;
+                }
+                const float g0 = g_from[0], g1 = g_from[1], g2 = g_from[2];
+                const float d0 = (g_to[0] - g0) / n, d1 = (g_to[1] - g1) / n, d2 = (g_to[2] - g2) / n;
                 for (int i = 0; i < block_; ++i) {
                     const float whole = x0[i] + (x0[i + 1] - x0[i]) * f, low = lo0[i] + (lo0[i + 1] - lo0[i]) * f;
                     const float below = bh0[i] + (bh0[i + 1] - bh0[i]) * f;
                     const float a = float(i + 1);
-                    so[i] += low * (s0 + e0 * a) + (below - low) * (s1 + e1 * a) + (whole - below) * (s2 + e2 * a);
+                    o[i] += low * (g0 + d0 * a) + (below - low) * (g1 + d1 * a) + (whole - below) * (g2 + d2 * a);
                 }
-            }
+            };
+            add(from, to, out);
+            if (spread_out) add(spread_from, spread_to, spread_out);
             return;
         }
     }
@@ -3364,6 +3372,21 @@ static std::array<float, 3> beamingBands(float cut_hz) {
     return out;
 }
 
+// A reflection's loss to the air over `metres`, band by band, kept with the distance it was worked out for (reflections
+// mostly stay put, and there are many of them).
+static void airOver(float metres, float& at, float* air) {
+    if (metres == at) return;
+    at = metres;
+    for (int b = 0; b < 3; ++b) air[b] = std::exp(-SourceSpatializer::kAirAbsorption[b] * metres);
+}
+
+// A loudspeaker's beaming glided toward its target (in octaves), and settled once within a thousandth of it.
+static void glideCut(float& cut, float target, float glide) {
+    if (cut == target) return;
+    cut = std::exp(std::log(cut) + (std::log(target) - std::log(cut)) * glide);
+    if (std::fabs(cut - target) < 1e-3f * target) cut = target;
+}
+
 // The listener's reflections: each source's off each of the room's surfaces, off two of them, and off each wall standing
 // in it, read from its split history as much later than its direct sound as the way round by the surface is longer
 // (sooner by as much as the field's binaural rendering is later than a source's own, while binaural is on), dulled by
@@ -3395,7 +3418,8 @@ void AudioEngine::playReflections(float binaural_from) {
             e.way = way_to;
             // Each band's level (what the surface sends back, the air, a loudspeaker's beaming), at the start of the block
             // and at its end.
-            const float loud = std::pow(SourceSpatializer::kRefDistance / std::max(SourceSpatializer::kRefDistance, reflected), falloff_);
+            const float loud = distanceLaw(SourceSpatializer::kRefDistance / std::max(SourceSpatializer::kRefDistance, reflected));
+            airOver(reflected, e.air_at, e.air);
             float as_mirror[2][3], spread[2][3];
             for (int end = 0; end < 2; ++end) {
                 if (end == 1) {
@@ -3404,11 +3428,11 @@ void AudioEngine::playReflections(float binaural_from) {
                         e.scatter[b] += (e.scatter_target[b] - e.scatter[b]) * glide;
                     }
                     e.gain += (e.gain_target - e.gain) * glide;
-                    e.cut = std::exp(std::log(e.cut) + (std::log(e.cut_target) - std::log(e.cut)) * glide);
+                    glideCut(e.cut, e.cut_target, glide);
                 }
                 const std::array<float, 3> beam = e.filtered ? beamingBands(e.cut) : std::array<float, 3>{1.0f, 1.0f, 1.0f};
                 for (int b = 0; b < 3; ++b) {
-                    const float level = e.gain * loud * std::exp(-SourceSpatializer::kAirAbsorption[b] * reflected) * beam[size_t(b)];
+                    const float level = e.gain * loud * e.air[b] * beam[size_t(b)];
                     as_mirror[end][b] = e.mirror[size_t(b)] * level;
                     spread[end][b] = e.scatter[size_t(b)] * level;
                 }
@@ -3528,18 +3552,19 @@ void AudioEngine::hearCapsule(Source& mic, int capsule_index, float* out, float 
                 way.nearness += (way.nearness_target - way.nearness) * glide;
                 way.gain += (way.gain_target - way.gain) * glide;
                 way.from = turnToward(way.from, way.from_target, glide);
-                way.cut = std::exp(std::log(way.cut) + (std::log(way.cut_target) - std::log(way.cut)) * glide);
+                glideCut(way.cut, way.cut_target, glide);
                 for (int b = 0; b < 3; ++b) {
                     way.bands[b] += (way.bands_target[b] - way.bands[b]) * glide;
                     way.scatter[b] += (way.scatter_target[b] - way.scatter[b]) * glide;
                 }
             }
             late[end] = std::clamp(way.distance / kSpeedOfSound * float(rate), 1.0f, furthest_late);
-            const float level = way.gain * std::pow(way.nearness, falloff_);
+            const float level = way.gain * distanceLaw(way.nearness);
             const float off = dot(way.from, end == 0 ? aim_from : capsule.aim);
             const std::array<float, 3> beam = way.filtered ? beamingBands(way.cut) : std::array<float, 3>{1.0f, 1.0f, 1.0f};
+            airOver(way.distance, way.air_at, way.air);
             for (size_t b = 0; b < 3; ++b) {
-                const float carried = level * std::exp(-SourceSpatializer::kAirAbsorption[b] * way.distance) * beam[b];
+                const float carried = level * way.air[b] * beam[b];
                 heard[end][b] = carried * way.bands[b] * (pressure[b] + (sound.gradient ? gradient[b] * off : 0.0f));
                 spread[end][b] = carried * way.scatter[b] * sound.diffuse[b];
             }

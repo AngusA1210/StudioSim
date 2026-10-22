@@ -9,6 +9,7 @@
 
 #include <array>
 #include <atomic>
+#include <cmath>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -743,6 +744,8 @@ private:
     std::array<int, 2> master_bus_{-1, -1};  // the buses carrying the masters' inserts (by Monitor)
     float room_ms_l_ = 0.0f, room_ms_r_ = 0.0f, mix_ms_l_ = 0.0f, mix_ms_r_ = 0.0f;
     float falloff_target_, falloff_;
+    // A level raised to the distance law (1: -6 dB a doubling, as it starts, which needs no power worked out).
+    float distanceLaw(float ratio) const { return falloff_ == 1.0f ? ratio : std::pow(ratio, falloff_); }
     std::array<bool, 2> limiter_on_{true, true};  // each master's (by Monitor)
     float meter_ms_l_ = 0.0f, meter_ms_r_ = 0.0f;  // running mean squares for the meter
     Sequencer sequencer_;
