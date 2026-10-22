@@ -320,7 +320,8 @@ private:
     double phase_ = 0.0;
 };
 
-class Factory final : public U::Implements<U::Directly<IPluginFactory2>> {
+// (IPluginFactory too, as a base: the SDK's Windows host asks for it by name.)
+class Factory final : public U::Implements<U::Directly<IPluginFactory2>, U::Indirectly<IPluginFactory>> {
 public:
     tresult PLUGIN_API getFactoryInfo(PFactoryInfo* info) override {
         *info = {};
