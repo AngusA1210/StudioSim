@@ -2,7 +2,7 @@ extends RefCounted
 ## What a track's menu offers (a right-click on its name, in the mix window or the edit window), whatever else that
 ## window adds: renaming it, its colour (from Pro Tools' kind of palette), and its folder: the tracks chosen in a new
 ## one (Cmd-G), into another folder, out of its own (an instrument's track, an aux track, or a folder with all in it);
-## a new aux track; and for a folder or an aux, taking it away. These are the ids it uses.
+## a new aux track; and for a folder or an aux, stereo or mono, and taking it away. These are the ids it uses.
 
 const RENAME := 500
 const NEW_FOLDER := 501
@@ -10,6 +10,8 @@ const OUT := 502
 const REMOVE_FOLDER := 503
 const NEW_AUX := 504
 const REMOVE_AUX := 505
+const STEREO := 506
+const MONO := 507
 const INTO := 600  # and on, a folder each
 
 
@@ -44,6 +46,12 @@ static func add_items(menu: PopupMenu, app, track, colors: PopupMenu, modes: Pop
 	menu.add_separator()
 	if track.get("is_master"):
 		return
+	if track.is_folder:  # its format: its pan a balance, or its sound summed to mono and placed
+		menu.add_radio_check_item("Stereo (its pan a balance)", STEREO)
+		menu.set_item_checked(menu.get_item_index(STEREO), not track.mono)
+		menu.add_radio_check_item("Mono (summed, its pan placing it)", MONO)
+		menu.set_item_checked(menu.get_item_index(MONO), track.mono)
+		menu.add_separator()
 	menu.add_item("New aux track", NEW_AUX)
 	var chosen: int = app.chosen_tracks.size() if app.chosen_tracks.has(track) else 1
 	menu.add_item("New folder with %s  (%s)" % ["the %d chosen tracks" % chosen if chosen > 1 else "it", app.bindings.label("group")], NEW_FOLDER)
@@ -86,6 +94,8 @@ static func chosen(app, track, id: int) -> bool:
 			app.add_aux()
 		REMOVE_AUX:
 			app.remove_aux(track)
+		STEREO, MONO:
+			app.set_folder_mono(track, id == MONO)
 		_:
 			if id < INTO or id - INTO >= app.folders.size():
 				return false

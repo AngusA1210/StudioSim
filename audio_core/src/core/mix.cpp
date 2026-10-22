@@ -6,12 +6,6 @@ namespace {
 constexpr float kLineMs[8] = {23.3f, 28.9f, 33.7f, 39.1f, 44.9f, 50.3f, 56.1f, 61.7f};
 constexpr float kInSign[8] = {1, -1, 1, 1, -1, 1, -1, -1};
 
-inline float softClip(float x) {
-    const float a = std::fabs(x);
-    if (a <= 0.9f) return x;
-    return std::copysign(0.9f + 0.1f * std::tanh((a - 0.9f) / 0.1f), x);
-}
-
 }  // namespace
 
 void FadedDelay::init(int delay) {
@@ -98,11 +92,11 @@ float Limiter::process(float* l, float* r, int n) {
     float lowest = 1.0f;
     for (int i = 0; i < n; ++i) {
         const float peak = std::max(std::fabs(l[i]), std::fabs(r[i]));
-        env_ = std::max(peak, env_ * release_);
-        const float g = env_ > kThreshold ? kThreshold / env_ : 1.0f;
+        env_ = std::max(peak, env_ * release_);  // (it reacts at once, so nothing gets past the ceiling)
+        const float g = env_ > ceiling_ ? ceiling_ / env_ : 1.0f;
         lowest = std::min(lowest, g);
-        l[i] = softClip(l[i] * g);
-        r[i] = softClip(r[i] * g);
+        l[i] *= g;
+        r[i] *= g;
     }
     return lowest;
 }

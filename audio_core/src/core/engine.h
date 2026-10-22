@@ -271,7 +271,10 @@ public:
     void setMicAim(int id, Vec3 aim, int capsule = 0);
     void setMicCapsule(int id, int capsule, Vec3 position);
     void setMicMidSide(int id, bool mid_side, float width = 1.0f);
-    void setSourcePan(int id, float pan);  // (a microphone's track: the instruments are placed by where they stand)
+    void setSourcePan(int id, float pan);  // (a microphone's track, or a folder: the instruments are placed by where they stand)
+    // A folder's bus: stereo (its pan a balance, as a stereo track's) or summed to mono (its pan placing it, as a mono
+    // track's). Stereo to begin with.
+    void setBusMono(int id, bool mono);
     // A loudspeaker cabinet's cones (an amp's: radiation.h), in the room: each heard by the microphones on its own way,
     // beaming, with its near field and its open back; and the cabinet heard by the listener from where they stand
     // against its baffle (its position should be the middle of the baffle). No cones: a point source again.
@@ -311,6 +314,10 @@ public:
     // (radiation.h) where their cones break up and how bright their dust caps are close up.
     void setAmpSpeaker(int id, AmpSpeaker speaker);
     AmpSpeaker ampSpeaker(int id) const;
+    // An amp's effects loop is a parallel one: its Mix is how much of what comes back from the pedals in it is blended
+    // with the preamp's own signal (0 to 1; 0.5 to begin with; 1 is a series loop).
+    void setAmpLoopMix(int id, float mix);
+    float ampLoopMix(int id) const;
     // The loop pedal on an amp's board (a PedalKind::Looper; see addPedal), whose controls are its level (5 = as
     // recorded), Sync (recordings start and end on bar lines while the patterns run) and whether finishing the first
     // recording goes straight into overdubbing. The first Press gives it its memory (two buffers of kLoopSeconds),
@@ -422,11 +429,12 @@ public:
     // decibels. The default, 6, is the inverse square law; less keeps levels more even as the listener moves about.
     // Within the reference distance a source is at its own level and gets no louder, however close.
     void setDistanceFalloff(float db_per_doubling);
-    // A master's limiter keeps its sound from ever reaching full scale on its way into its fader. With it off it is
-    // what the sound adds up to. Either way, anything the main outputs play over full scale is cut off (and counted by
-    // the meter). setLimiter switches both masters'.
+    // A master's limiter, after its fader, holds its peaks at its ceiling (-1 dBFS to begin with), so the fader brought
+    // down stops it working. With it off the sound is what it adds up to. Either way, anything the main outputs play
+    // over full scale is cut off (and counted by the meter). setLimiter switches both masters'; the ceiling is both's.
     void setLimiter(bool on);
     void setMasterLimiter(bool on, Monitor which);
+    void setLimiterCeiling(float db);
     MeterReading readMeter();  // the output meter; reading it starts a new measurement
 
     // ── The sequencer ────────────────────────────────────────────────────────────────────────────────────
@@ -542,7 +550,7 @@ private:
             AmpKnob, AmpHeadSet, AmpCabinetSet, AmpSpeakerSet, LooperMemory, LooperAct, PedalBoardSet, PedalOn, PedalControl, SynthPlugin,
             TimelinePlay, TimelineLoop, TrackSet, RecordArm, RecordStart, RecordStop, SourceOutput, AutomationRead, SendSet,
             MasterAutomation, MasterRead, SourceSoloMuted, MicPath, MicCone, SourceFacing, MicModelSet, MicAim, SourcePan, MicMidSide,
-            SourceRoomGain, SourceRoomMuted, RoomVolume, MonitorSet, MasterInserts,
+            SourceRoomGain, SourceRoomMuted, RoomVolume, MonitorSet, MasterInserts, AmpLoopMix, LimiterCeiling, BusMono,
         } type = AddSource;
         int id = 0;
         float v[9] = {};

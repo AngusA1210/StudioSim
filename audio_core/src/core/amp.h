@@ -30,9 +30,10 @@
 // harsh tones back down.
 // In front of each amp is a board of effect pedals (pedals.h), the loop pedal among them if it has one: the input
 // goes through them in order, and the amp plays what comes out. The last of them can be in the amp's effects loop
-// instead: a series loop, as most amps have one, sent out after the preamp and its tone stack and returned before the
-// power amp (its presence and master), so a delay or a reverb there repeats the amp's distortion rather than being
-// distorted by it.
+// instead, sent out after the preamp and its tone stack and returned before the power amp (its presence and master), so
+// a delay or a reverb there repeats the amp's distortion rather than being distorted by it. It is a parallel loop: its
+// Mix blends what comes back with the preamp's own signal, which goes on to the power amp untouched alongside it (half
+// and half to begin with; all of it returned is a series loop).
 
 #include <array>
 #include <vector>
@@ -130,6 +131,7 @@ public:
     void setHead(AmpHead head, bool on) { model_.setHead(head, on); }
     void setCabinet(AmpCabinet cabinet, bool on) { model_.setCabinet(cabinet, on); }
     void setSpeaker(AmpSpeaker speaker) { model_.setSpeaker(speaker); }
+    void setLoopMix(float mix) { loop_mix_ = std::clamp(mix, 0.0f, 1.0f); }  // how much of its effects loop returns
     // The pedals belong to the source, so that they outlive the amp being rebuilt; `timing` is where the engine
     // keeps the bar lines for this block (samples to the next one, or -1, and a bar's length).
     void connect(const PedalBoard* board, const int64_t* timing) {
@@ -146,7 +148,8 @@ private:
     const int64_t* timing_ = nullptr;
     int channel_ = -1;
     bool enabled_ = false;
-    std::vector<float> in_;
+    float loop_mix_ = 0.5f;
+    std::vector<float> in_, dry_;  // (dry_: the preamp's own signal, beside its effects loop)
 };
 
 }  // namespace sr

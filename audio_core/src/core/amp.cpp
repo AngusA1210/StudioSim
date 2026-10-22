@@ -344,7 +344,7 @@ void AmpModel::power(float* io, int n) {
 }
 
 Amp::Amp(float sample_rate, InstrumentKind kind, const InputBus* bus, int max_block)
-    : Instrument(sample_rate), bus_(bus), in_(size_t(max_block), 0.0f) {
+    : Instrument(sample_rate), bus_(bus), in_(size_t(max_block), 0.0f), dry_(size_t(max_block), 0.0f) {
     model_.init(kind, sample_rate);
 }
 
@@ -364,14 +364,18 @@ void Amp::render(float* out, int n) {
     if (enabled_) readInput(in_.data(), n);
     if (playback_)  // a recording of the guitar, played back through the pedals and the amp again
         for (int i = 0; i < n; ++i) in_[size_t(i)] += playback_[i];
-    // Through the pedals in front of it, in order, then the preamp; through those in its effects loop, then the power
-    // amp and the cabinet.
+    // Through the pedals in front of it, in order, then the preamp; through those in its effects loop, blended with the
+    // preamp's own signal as its Mix has it, then the power amp and the cabinet.
     PedalTiming timing;
     if (timing_) timing = {double(timing_[1]) / 4.0, timing_[0], timing_[1]};
     const int count = board_ ? board_->count : 0, front = board_ ? std::min(board_->front, count) : 0;
     for (int p = 0; p < front; ++p) board_->pedals[size_t(p)]->process(in_.data(), n, timing);
     model_.preamp(in_.data(), n);
-    for (int p = front; p < count; ++p) board_->pedals[size_t(p)]->process(in_.data(), n, timing);
+    if (front < count) {
+        std::copy(in_.begin(), in_.begin() + n, dry_.begin());
+        for (int p = front; p < count; ++p) board_->pedals[size_t(p)]->process(in_.data(), n, timing);
+        for (int i = 0; i < n; ++i) in_[size_t(i)] = dry_[size_t(i)] + (in_[size_t(i)] - dry_[size_t(i)]) * loop_mix_;
+    }
     model_.power(in_.data(), n);
     for (int i = 0; i < n; ++i) out[i] += in_[size_t(i)];
 }

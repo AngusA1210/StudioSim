@@ -1,6 +1,7 @@
 extends Control
 ## A mixing-desk fader: a cap that slides up and down a slot, with a decibel scale beside it. +12 dB at the top,
-## 0 dB three quarters of the way up, silence at the bottom, spaced the way a console's faders are.
+## 0 dB three quarters of the way up, silence at the bottom, spaced the way a console's faders are. A master's stops at
+## 0 dB (`top_db`), its travel spaced the same below that.
 ## Drag to move it (hold Shift for fine moves), turn the wheel to nudge it, double-click or Alt-click for 0 dB.
 
 signal value_changed(db: float)
@@ -13,6 +14,7 @@ const CAP := Vector2(30, 16)
 const SCALE_WIDTH := 18.0
 
 var value := 0.0
+var top_db := 12.0  # the top of its travel
 var _dragging := false
 
 
@@ -22,8 +24,17 @@ func _ready() -> void:
 
 
 func set_value_no_signal(db: float) -> void:
-	value = clampf(db, SILENT, 12.0)
+	value = clampf(db, SILENT, top_db)
 	queue_redraw()
+
+
+## How far up its own travel a level is (0 to 1), and the level that far up.
+func _up(db: float) -> float:
+	return position_of(db) / position_of(top_db)
+
+
+func _level(travel: float) -> float:
+	return level_at(travel * position_of(top_db))
 
 
 static func position_of(db: float) -> float:
@@ -58,11 +69,13 @@ func _draw() -> void:
 	var travel := _travel_pixels()
 	draw_rect(Rect2(slot_x - 2, top, 4, travel), Color(0, 0, 0, 0.75))
 	for mark in MARKS:
-		var y: float = top + (1.0 - position_of(mark[0])) * travel
+		if mark[0] > top_db:
+			continue
+		var y: float = top + (1.0 - _up(mark[0])) * travel
 		var ink := Color(1, 1, 1, 0.75 if mark[0] == 0.0 else 0.45)
 		draw_line(Vector2(SCALE_WIDTH - 2, y), Vector2(SCALE_WIDTH + 4, y), ink, 1.0)
 		draw_string(font, Vector2(0, y + 4), mark[1], HORIZONTAL_ALIGNMENT_RIGHT, SCALE_WIDTH - 4, 10, ink)
-	var cap_y := (1.0 - position_of(value)) * travel
+	var cap_y := (1.0 - _up(value)) * travel
 	var cap := Rect2(Vector2(slot_x - CAP.x / 2, cap_y), CAP)
 	draw_rect(cap, Color(0.78, 0.8, 0.84) if not _dragging else Color(0.92, 0.94, 0.97))
 	draw_rect(Rect2(cap.position + Vector2(0, CAP.y / 2 - 1), Vector2(CAP.x, 2)), Color(0.1, 0.1, 0.12))
@@ -85,13 +98,13 @@ func _gui_input(event: InputEvent) -> void:
 			_change(value + (0.5 if event.button_index == MOUSE_BUTTON_WHEEL_UP else -0.5))
 			accept_event()
 	elif event is InputEventMouseMotion and _dragging:
-		var travel: float = position_of(value) - event.relative.y / _travel_pixels() * (0.25 if event.shift_pressed else 1.0)
-		_change(level_at(travel))
+		var travel: float = _up(value) - event.relative.y / _travel_pixels() * (0.25 if event.shift_pressed else 1.0)
+		_change(_level(travel))
 		accept_event()
 
 
 func _change(db: float) -> void:
-	db = clampf(snappedf(db, 0.1), SILENT, 12.0)
+	db = clampf(snappedf(db, 0.1), SILENT, top_db)
 	if is_equal_approx(db, value):
 		return
 	value = db

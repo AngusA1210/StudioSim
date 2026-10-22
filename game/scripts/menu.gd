@@ -28,7 +28,8 @@ Walk and turn           the arrow keys, always (even while the letter keys are n
 An amp's pedals         1 to 8, facing the amp
 Notes                   A S D F G H J K L ;  white keys,  W E T Y U O P  black keys,
                         at an instrument (E) or with the keyboard open (K). Those keys
-                        are notes then, and do nothing else until you get up or close it."""
+                        are notes then, and do nothing else until you get up or close it
+                        (but for the panel's key, which opens it then too)."""
 
 var app
 var audio: SoundRoomAudio
@@ -121,6 +122,8 @@ var _midi_signature := ""
 var _binaural_toggle: CheckButton
 var _falloff_slider: HSlider
 var _falloff_value: Label
+var _ceiling_slider: HSlider
+var _ceiling_value: Label
 var _text_slider: HSlider
 var _text_value: Label
 var _text_dragging := false
@@ -534,6 +537,11 @@ func _build_settings_page(page: VBoxContainer) -> void:
 	_falloff_slider.value_changed.connect(_on_falloff_changed)
 	_falloff_value.custom_minimum_size.x = 150
 	_note(page, "How much quieter an instrument gets for each doubling of distance beyond 1.5 m. 6 dB is the inverse square law, as in a real room; less keeps the levels more even as you move about.")
+	_ceiling_value = Label.new()
+	_ceiling_slider = _slider(page, "Limiter ceiling", -12.0, 0.0, 0.1, _ceiling_value)
+	_ceiling_slider.value_changed.connect(func(db: float) -> void: app.set_limiter_ceiling(db))
+	_ceiling_value.custom_minimum_size.x = 150
+	_note(page, "Where the limiters on both masters (LIMIT, after the master fader) hold the peaks.")
 
 	page.add_child(HSeparator.new())
 	_heading(page, "Display and controls")
@@ -726,6 +734,8 @@ func _refresh_live() -> void:
 	_binaural_toggle.text = "On" if settings.binaural else "Off (plain stereo)"
 	_falloff_slider.set_value_no_signal(settings.distance_falloff_db)
 	_falloff_value.text = "%.1f dB per doubling" % settings.distance_falloff_db
+	_ceiling_slider.set_value_no_signal(settings.limiter_ceiling_db)
+	_ceiling_value.text = "%.1f dBFS" % settings.limiter_ceiling_db
 	if not _text_dragging:
 		_text_slider.set_value_no_signal(settings.text_scale * 100.0)
 		_text_value.text = "%d %%" % roundi(settings.text_scale * 100.0)

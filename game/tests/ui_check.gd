@@ -8,6 +8,7 @@ extends SceneTree
 var main
 var view: SubViewport  # headless runs only get a 64-pixel window, so the game runs in a full-size off-screen one
 var failures := 0
+const TrackMenu := preload("res://scripts/track_menu.gd")
 
 
 func _initialize() -> void:
@@ -258,7 +259,7 @@ func _run() -> void:
 		title._status.text.begins_with("Playing through"), "with no room open yet, New room is ready under the keyboard",
 		title._status.text.replace("\n", " / "))
 	var stood: Vector3 = player.global_position
-	for code in [KEY_E, KEY_TAB, KEY_T, KEY_N, KEY_M, KEY_APOSTROPHE, KEY_SPACE]:
+	for code in [KEY_E, KEY_TAB, KEY_T, KEY_N, KEY_M, KEY_P, KEY_SPACE]:
 		await tap(code)
 	check(player.playing == null and not seq.is_open() and not main.instrument_menu.is_open() and not main.mixer.is_open() and
 		main.sequence_running and player.global_position.is_equal_approx(stood), "the room's own keys do nothing here")
@@ -334,8 +335,8 @@ func _run() -> void:
 
 	print("Walking up to an instrument")
 	check(speaker.display_name == "Speaker", "the live input is called the Speaker", speaker.display_name)
-	await tap(KEY_APOSTROPHE)
-	check(not seq.is_open(), "' does nothing when you aren't at an instrument")
+	await tap(KEY_P)
+	check(not seq.is_open(), "P does nothing when you aren't at an instrument")
 	await tap(KEY_TAB)
 	check(main.mixer.is_open(), "Tab opens the mix window from anywhere")
 	await tap(KEY_TAB)
@@ -344,7 +345,7 @@ func _run() -> void:
 	await frames(5)
 	check(player.target == drums and player.can_play_target(), "standing at the drums, they are what you're facing")
 	var card: Array = main.hud.hint_lines()
-	check(card == ["Drums", "E play", "' edit its pattern", "I input on", "M loop off", "G carry", "V duplicate", "Backspace remove (press twice)"],
+	check(card == ["Drums", "E Play", "P Edit Pattern", "I Enable Input", "M Loop Off", "G Carry", "⌘L Lock in Place", "V Duplicate", "Backspace Remove (press twice)"],
 		"a card lists what each key does, one per line, with removing at the bottom", " / ".join(card))
 	var parts := 0
 	for node in drums._model.find_children("*", "MeshInstance3D", true, false):
@@ -372,8 +373,8 @@ func _run() -> void:
 	check(drums.loop_on, "M works while playing too, and brings the loop back")
 
 	print("The pattern editor")
-	await tap(KEY_APOSTROPHE)
-	check(seq.is_open() and seq.inst == drums and seq._title.text == "Drums pattern", "' opens the drums' pattern", seq._title.text)
+	await tap(KEY_P)
+	check(seq.is_open() and seq.inst == drums and seq._title.text == "Drums pattern", "P opens the drums' pattern", seq._title.text)
 	check(seq._grid.rows.size() == 8 and seq._grid.rows[7].label == "Kick" and seq._grid.rows[0].label == "Crash", "eight rows, kick at the bottom",
 		"%d rows" % seq._grid.rows.size())
 	check(not seq._note_length_box.visible, "no note-length choice for drums")
@@ -440,8 +441,8 @@ func _run() -> void:
 	seq._click.button_pressed = true
 	await frames(2)
 	check(main.settings.click and audio.get_transport().click, "the click switch turns the metronome on")
-	await tap(KEY_APOSTROPHE)
-	check(not seq.is_open() and player.playing == drums, "' closes the editor; you are still at the drums")
+	await tap(KEY_P)
+	check(not seq.is_open() and player.playing == drums, "P closes the editor; you are still at the drums")
 	await tap(KEY_C)
 	check(not main.settings.click, "C switches the click off")
 	check(main.hud._beat.text.contains("120 BPM"), "the beat readout shows the tempo", main.hud._beat.text)
@@ -471,8 +472,8 @@ func _run() -> void:
 	print("A melodic instrument")
 	main._sit_at("bass")
 	await frames(5)
-	await tap(KEY_APOSTROPHE)
-	check(seq.is_open() and seq.inst == bass and player.playing == bass, "' opens the bass pattern straight from facing it", seq._title.text)
+	await tap(KEY_P)
+	check(seq.is_open() and seq.inst == bass and player.playing == bass, "P opens the bass pattern straight from facing it", seq._title.text)
 	check(seq._note_length_box.visible and seq._grid.rows.size() >= 33, "a row for each note, and a note-length choice", "%d rows" % seq._grid.rows.size())
 	await frames(4)
 	seq._on_bar_pressed(0)
@@ -524,11 +525,11 @@ func _run() -> void:
 	var sounding: float = audio.get_source_level(bass2.source_id)
 	key(KEY_A, false)
 	check(player.playing == bass2 and silent_before < 0.0005 and sounding > 0.01, "it is silent until you play it", "before %.4f, playing %.3f" % [silent_before, sounding])
-	await tap(KEY_APOSTROPHE)
+	await tap(KEY_P)
 	check(seq.is_open() and seq._title.text == "Bass 2 pattern", "and it has its own pattern to edit", seq._title.text)
 	await tap(KEY_BACKSPACE)
 	check(main.instruments.has(bass2), "Backspace is ignored while the pattern editor is open")
-	await tap(KEY_APOSTROPHE)
+	await tap(KEY_P)
 	await tap(KEY_BACKSPACE)
 	await frames(2)
 	check(player.remove_pending == bass2 and main.instruments.has(bass2) and main.hud.hint_lines()[0] == "Remove Bass 2?",
@@ -606,10 +607,10 @@ func _run() -> void:
 	var bare_card: Array = main.hud.hint_lines()
 	await tap(KEY_L)
 	await frames(2)
-	check(player.target == amp and bare_card.has("' amp and pedals") and not bare_card.has("L record a loop") and not bare_card.has("E play") and
+	check(player.target == amp and bare_card.has("P Amp and Pedals") and not bare_card.has("L Record a Loop") and not bare_card.has("E Play") and
 		amp.looper.get("state", "") == "none" and amp._led == null, "without a loop pedal its card offers the amp and pedals, and L does nothing",
 		" / ".join(bare_card))
-	await tap(KEY_APOSTROPHE)
+	await tap(KEY_P)
 	await frames(3)
 	var panel = main.amp_panel
 	check(panel.is_open() and panel._tiles.is_empty() and panel._empty_page.visible, "its panel says the board is empty")
@@ -620,10 +621,10 @@ func _run() -> void:
 	check(amp.pedals.size() == 1 and amp.pedals[0].kind == "looper" and panel._loop_page.visible and panel._display.text == "EMPTY" and
 		panel._add_menu.is_item_disabled(load("res://scripts/catalog.gd").PEDAL_ORDER.find("looper")),
 		"+ Pedal puts a loop pedal on the board, and then offers no second one")
-	await tap(KEY_APOSTROPHE)
+	await tap(KEY_P)
 	await frames(5)
 	var amp_card: Array = main.hud.hint_lines()
-	check(not panel.is_open() and amp_card.has("L record a loop") and amp_card.has("1 stamp on a pedal") and amp._led != null and
+	check(not panel.is_open() and amp_card.has("L Record a Loop") and amp_card.has("1 Stamp on a Pedal") and amp._led != null and
 		amp._pedal_row.get_child_count() == 1, "now its card offers the loop pedal, and it stands on the floor", " / ".join(amp_card))
 	await tap(KEY_L)
 	await frames(3)
@@ -646,7 +647,7 @@ func _run() -> void:
 	await seconds(0.3)
 	await tap(KEY_L)
 	await seconds(0.3)
-	check(amp.looper.get("state", "") == "playing" and amp.looper.get("can_undo", false) and main.hud.hint_lines().has("U undo the last overdub"),
+	check(amp.looper.get("state", "") == "playing" and amp.looper.get("can_undo", false) and main.hud.hint_lines().has("U Undo the Last Overdub"),
 		"and again goes back to playing, with the overdub ready to undo")
 	await tap(KEY_U)
 	await frames(3)
@@ -654,10 +655,10 @@ func _run() -> void:
 	await tap(KEY_O)
 	await frames(3)
 	check(amp.looper.get("state", "") == "stopped" and amp._loop_label.text.contains("stopped"), "O stops the loop", amp._loop_label.text)
-	await tap(KEY_APOSTROPHE)
+	await tap(KEY_P)
 	await frames(4)
 	check(panel.is_open() and panel.inst == amp and panel._display.text == "■ STOPPED" and panel._footswitch.text.begins_with("Play"),
-		"' opens the amp's panel: its knobs and the loop pedal", panel._display.text)
+		"P opens the amp's panel: its knobs and the loop pedal", panel._display.text)
 	var gain_knob = panel._knobs.gain
 	var knob_at: Vector2 = gain_knob.get_global_rect().get_center() - Vector2(0, 20)
 	var grab := InputEventMouseButton.new()
@@ -732,8 +733,8 @@ func _run() -> void:
 	await tap(KEY_J)
 	await frames(3)
 	check(amp.looper.get("state", "") == "empty", "J twice clears the loop, from the panel too")
-	await tap(KEY_APOSTROPHE)
-	check(not panel.is_open(), "' closes the panel")
+	await tap(KEY_P)
+	check(not panel.is_open(), "P closes the panel")
 	await tap(KEY_L)
 	await frames(2)
 	await tap(KEY_L)  # cancel the wait
@@ -744,7 +745,7 @@ func _run() -> void:
 
 	print("Effect pedals")
 	var order: Array = load("res://scripts/catalog.gd").PEDAL_ORDER
-	await tap(KEY_APOSTROPHE)
+	await tap(KEY_P)
 	await frames(3)
 	await click(panel._remove.get_global_rect().get_center())
 	check(panel.is_open() and panel._tiles.is_empty() and panel._empty_page.visible and panel._add_button.visible and amp.looper.state == "none",
@@ -794,6 +795,13 @@ func _run() -> void:
 	await frames(3)
 	check(looped_in and out_again and amp.pedals.size() == 4 and amp.pedals[3].kind == "delay" and amp.pedals[3].get("in_loop", false),
 		"a pedal dragged past the PREAMP goes in the amp's effects loop, and dragged back comes out in front; the loop's + adds one in it")
+	var mix_at_first: float = amp.loop_mix
+	panel._loop_mix.value_changed.emit(8.0)
+	await frames(2)
+	check(is_equal_approx(mix_at_first, 0.5) and is_equal_approx(amp.loop_mix, 0.8) and panel._loop_box.is_ancestor_of(panel._loop_mix) and
+		panel._loop_mix.readout == "80 %" and is_equal_approx(float(main.library.instrument_settings(amp).amp.loop_mix), 0.8),
+		"the loop is a parallel one, its MIX knob in the loop: half and half to begin with, and kept with the amp's settings", panel._loop_mix.readout)
+	main.set_amp_loop_mix(amp, 0.5)
 	main.remove_pedal(amp, 3)
 	panel.selected = 0
 	await click(panel._remove.get_global_rect().get_center())
@@ -838,10 +846,10 @@ func _run() -> void:
 	browser._by_type.button_pressed = true
 	await click(panel._remove.get_global_rect().get_center())
 	check(amp.pedals.size() == 2 and panel.selected == 1, "a pedal can be taken off the board again")
-	await tap(KEY_APOSTROPHE)
+	await tap(KEY_P)
 	await frames(4)
 	var with_pedals: Array = main.hud.hint_lines()
-	check(not panel.is_open() and with_pedals.has("1-2 stamp on the pedals") and amp._pedal_row.get_child_count() == 2,
+	check(not panel.is_open() and with_pedals.has("1-2 Stamp on the Pedals") and amp._pedal_row.get_child_count() == 2,
 		"in the room the pedals stand in front of the amp, and the card offers 1 and 2 to stamp on them", " / ".join(with_pedals))
 	await tap(KEY_2)
 	await frames(2)
@@ -872,24 +880,24 @@ func _run() -> void:
 	player.place(Vector3(from.x, 0.0, from.z), 0.0)
 	await frames(5)
 	var speaker_card: Array = main.hud.hint_lines()
-	check(player.target == speaker and speaker_card == ["Speaker", "I input on", "' volume and input", "M mute", "G carry",
-		"V duplicate", "Backspace remove (press twice)"], "the Speaker's card offers input, its panel and mute, but not playing", " / ".join(speaker_card))
+	check(player.target == speaker and speaker_card == ["Speaker", "I Enable Input", "P Volume and Input", "M Mute", "G Carry",
+		"⌘L Lock in Place", "V Duplicate", "Backspace Remove (press twice)"], "the Speaker's card offers input, its panel and mute, but not playing", " / ".join(speaker_card))
 	await tap(KEY_M)
 	check(speaker.room_muted and not speaker.muted, "M mutes it in the room (you're standing in it; its track plays on in the mix)")
 	await tap(KEY_E)
 	check(player.playing == null and not seq.is_open(), "E does nothing at the Speaker: it isn't played")
 	await tap(KEY_M)
-	await tap(KEY_APOSTROPHE)
+	await tap(KEY_P)
 	await frames(3)
 	var speaker_panel = main.speaker_panel
 	check(speaker_panel.is_open() and speaker_panel.inst == speaker and speaker_panel._volume.readout == "+0.0 dB",
-		"' opens the Speaker's panel, its volume at 0 dB", speaker_panel._volume.readout)
+		"P opens the Speaker's panel, its volume at 0 dB", speaker_panel._volume.readout)
 	await turn(speaker_panel._volume, 75.0)  # 5 knob steps: right to the top
 	check(absf(speaker.volume_db - 24.0) < 0.6 and speaker_panel._volume.readout == "+24.0 dB",
 		"its volume goes up to +24 dB, as a big PA speaker's would", speaker_panel._volume.readout)
 	main.set_speaker_volume(speaker, 0.0)
-	await tap(KEY_APOSTROPHE)
-	check(not speaker_panel.is_open(), "' closes it")
+	await tap(KEY_P)
+	check(not speaker_panel.is_open(), "P closes it")
 	await tap(KEY_ESCAPE)
 	check(main.menu.is_open() and main.menu._tabs.get_tab_title(0) == "Metronome", "Esc opens the menu, Metronome page first", main.menu._tabs.get_tab_title(main.menu._tabs.current_tab))
 	main.menu._tempo_slider.value = 100
@@ -1049,8 +1057,11 @@ func _run() -> void:
 		await seconds(0.25)
 		if wait >= 6:
 			still_limiting = maxf(still_limiting, main.meter_reduction_db)
-	check(limiting > 1.0 and still_limiting > 1.0,  # 10 dB down would have ended limiting after the fader
-		"the limiter comes before the master fader: bringing the master down 10 dB doesn't ease it", "%.1f dB, then %.1f dB" % [limiting, still_limiting])
+	check(limiting > 1.0 and still_limiting < limiting - 3.0,
+		"the limiter comes after the master fader: bringing the master down 10 dB eases it", "%.1f dB, then %.1f dB" % [limiting, still_limiting])
+	mix._on_master_changed(6.0)
+	check(is_equal_approx(main.master_volume_db, 0.0) and mix._master.fader.top_db == 0.0, "the master fader goes no higher than 0 dB",
+		"%.1f dB" % main.master_volume_db)
 	mix._on_master_changed(0.0)
 	await click(mix._master.limiter.get_global_rect().get_center())
 	for wait in 16:  # however quiet the groove is just then, it clips within a bar or two
@@ -1566,17 +1577,17 @@ func _run() -> void:
 	await frames(3)
 	main._sit_at("plugin_synth")
 	await frames(5)
-	check(main.hud.hint_lines().has("P its plug-in's window"), "its card offers its plug-in's window", " / ".join(main.hud.hint_lines()))
-	await tap(KEY_P)
+	check(main.hud.hint_lines().has("' Plug-in Window"), "its card offers its plug-in's window", " / ".join(main.hud.hint_lines()))
+	await tap(KEY_APOSTROPHE)
 	check(player.plugin_open == synth and main.hud._piano.visible and main.hud._piano_title.text.begins_with("Playing the DLSMusicDevice") and
-		main.hud.piano_top_fraction() > 0.1, "P opens its plug-in's window over the on-screen keyboard", main.hud._piano_title.text)
+		main.hud.piano_top_fraction() > 0.1, "' opens its plug-in's window over the on-screen keyboard", main.hud._piano_title.text)
 	key(KEY_D)
 	var window_level: float = await average_level(synth.source_id, 0.3)
 	key(KEY_D, false)
 	await click(Vector2(640, 300))
 	check(window_level > 0.0005 and player.plugin_open == null and not main.hud._piano.visible,
 		"with it open the letter keys play it, and a click in the room puts it away", "%.4f" % window_level)
-	await tap(KEY_P)
+	await tap(KEY_APOSTROPHE)
 	var piano_key: Control = main.hud._piano_keys[KEY_F].rect
 	var at_key: Vector2 = piano_key.get_global_rect().get_center()
 	var key_press := InputEventMouseButton.new()
@@ -2212,6 +2223,35 @@ func _run() -> void:
 		mp.distances_text().get_slice("\n", 0))
 	mp._gain.value = 6.0
 	check(is_equal_approx(mic.mic_gain_db, 6.0), "and its gain, before it records")
+	check(mp.guide_text() == "W A S D move, R F height, drag aim, wheel closer or further, Shift fine, P close" and mp._guide.is_visible_in_tree(),
+		"the view shows its keys in the corner, as they lie on the keyboard: W A S D to move it, R and F for its height", mp.guide_text())
+	await seconds(0.8)  # (a pause: what comes next is a move of its own)
+	var mic_spot: Vector3 = mic.global_position
+	var raise := InputEventKey.new()
+	raise.physical_keycode = KEY_R
+	raise.keycode = KEY_R
+	raise.pressed = true
+	Input.parse_input_event(raise)
+	await seconds(0.4)
+	raise.pressed = false
+	Input.parse_input_event(raise)
+	await frames(2)
+	var raised: float = mic.source_height
+	await command_tap(KEY_Z)
+	var put_back: bool = is_equal_approx(mic.source_height, 0.6) and mic.global_position.is_equal_approx(mic_spot)
+	await command_tap(KEY_X)
+	check(raised > 0.65 and put_back and is_equal_approx(mic.source_height, raised),
+		"R held raises it; Cmd-Z puts it back (moves have an undo of their own, in the room), and Cmd-X raises it again", "%.2f m raised" % raised)
+	await command_tap(KEY_Z)
+	await command_tap(KEY_L)
+	var x_before: float = mic.global_position.x
+	mp._x.value = x_before + 0.5
+	await frames(2)
+	check(mic.locked and mic.lock_shown() and mp.guide_text().begins_with("Locked in place") and not mp._x.editable and
+		is_equal_approx(mic.global_position.x, x_before), "Cmd-L locks it in place: a padlock over its name, its place can't be changed, and the view says so",
+		mp.guide_text())
+	await command_tap(KEY_L)
+	check(not mic.locked and not mic.lock_shown() and mp._x.editable, "Cmd-L again unlocks it")
 	mp.close()
 	main.set_input(mic, true)
 	main.set_soloed(mic, true)
@@ -2245,6 +2285,30 @@ func _run() -> void:
 	check(mic_entry.size() == 1 and is_equal_approx(float(mic_entry[0].height), 0.6) and is_equal_approx(float(mic_entry[0].tilt), mic.mic_tilt) and
 		is_equal_approx(float(mic_entry[0].settings.mic_gain_db), 6.0), "it is kept with the room: where it stands, how high, how it points, and its gain")
 	timeline.undo()
+	# In the room: locked, an instrument can't be picked up; carried and put down, Cmd-Z puts it back.
+	var bells_moved = main.find_instrument("bells")
+	main._sit_at("bells")
+	await frames(3)
+	var bells_spot: Vector3 = bells_moved.global_position
+	var faced_bells: bool = player.target == bells_moved
+	await command_tap(KEY_L)
+	var locked_card: Array = main.hud.hint_lines()
+	await tap(KEY_G)
+	var lock_refused: bool = player.carried == null
+	await command_tap(KEY_L)
+	await tap(KEY_G)
+	var bells_lifted: bool = player.carried == bells_moved
+	player.place(player.global_position + Vector3(1.5, 0.0, 0.0), 0.0)
+	await frames(3)
+	await tap(KEY_G)
+	var moved_to: Vector3 = bells_moved.global_position
+	await command_tap(KEY_Z)
+	check(faced_bells and locked_card.has("⌘L Unlock") and not locked_card.has("G Carry") and lock_refused and bells_lifted and
+		moved_to.distance_to(bells_spot) > 0.5 and bells_moved.global_position.is_equal_approx(bells_spot),
+		"facing it, Cmd-L locks it (its card offers to unlock it, not to carry it) and G won't pick it up; unlocked, carried off and put down, Cmd-Z puts it back",
+		"%s; refused %s, lifted %s, moved %.2f m, back %s" % [" / ".join(locked_card), lock_refused, bells_lifted, moved_to.distance_to(bells_spot),
+		bells_moved.global_position.is_equal_approx(bells_spot)])
+	check(main.library.room_data().instruments.all(func(e): return not e.get("locked", false)), "and nothing is kept locked that isn't")
 
 	print("Microphone models, pans and stereo pairs")
 	mp.open(mic)
@@ -2490,8 +2554,18 @@ func _run() -> void:
 	await frames(3)
 	var new_folder_strip: Dictionary = main.mixer._strip_for(the_folder)
 	var drums_out_strip: Dictionary = main.mixer._strip_for(folder_drums)
+	var folder_frame: Control = new_folder_strip.panel.get_parent().get_parent() if not new_folder_strip.is_empty() else null
 	check(not new_folder_strip.is_empty() and new_folder_strip.source.text == "2 tracks" and drums_out_strip.output.selected == 1 and
-		main.mixer._strip_row.get_child(main.mixer._strips.find(new_folder_strip)) != null, "in the mix window the folder has a strip of its own, and its tracks' outputs say they go to it")
+		drums_out_strip.panel.get_parent() == new_folder_strip.panel.get_parent() and folder_frame is PanelContainer and
+		folder_frame.get_theme_stylebox("panel").border_color == the_folder.color,
+		"in the mix window the folder has a strip of its own, its tracks' strips beside it in a frame of its colour, and their outputs say they go to it")
+	new_folder_strip.pan.value_changed.emit(-0.5)
+	TrackMenu.chosen(main, the_folder, TrackMenu.MONO)
+	var folder_entry: Dictionary = main.library.room_data().folders[0]
+	check(new_folder_strip.pan != null and is_equal_approx(the_folder.pan, -0.5) and the_folder.mono and is_equal_approx(float(folder_entry.pan), -0.5) and
+		bool(folder_entry.mono), "a folder has its own pan, and can be stereo (its pan a balance) or mono (its name's menu): kept with the room")
+	TrackMenu.chosen(main, the_folder, TrackMenu.STEREO)
+	main.set_pan(the_folder, 0.0)
 	var problem_on_bus: String = main.set_insert(the_folder, 0, "AU:61756678:64656c79:6170706c")
 	check(problem_on_bus == "" and str(the_folder.inserts[0].plugin_name) == "AUDelay", "a folder takes plug-ins on its inserts, as a track does", problem_on_bus)
 	main.mixer._strip_for(folder_bass).output.item_selected.emit(0)
@@ -2960,6 +3034,23 @@ func _run() -> void:
 	main.mixer._strips[0].mute.toggled.emit(false)
 	check(all_muted and not main.instruments[0].muted and main.instruments[1].muted, "Option-click a mute in the mix window: every track mutes (a plain click, only its own)")
 	main.set_on_all("mute", false)
+	main.chosen_tracks = [main.instruments[1], main.instruments[2]]
+	var shift_option: InputEventKey = option.duplicate()
+	shift_option.physical_keycode = KEY_SHIFT
+	shift_option.keycode = KEY_SHIFT
+	Input.parse_input_event(option)
+	Input.parse_input_event(shift_option)
+	await frames(2)
+	main.mixer._strip_for(main.instruments[1]).mute.toggled.emit(true)
+	var shift_up: InputEventKey = shift_option.duplicate()
+	shift_up.pressed = false
+	Input.parse_input_event(shift_up)
+	Input.parse_input_event(option_up)
+	await frames(2)
+	check(main.instruments[1].muted and main.instruments[2].muted and not main.instruments[0].muted and not main.instruments[3].muted,
+		"Shift-Option-click a mute: only the tracks chosen by their names mute, as Pro Tools' selected-tracks modifier")
+	main.set_on_all("mute", false)
+	main.chosen_tracks = []
 	main.mixer.close()
 	check(is_equal_approx(float(library.room_data().reverb_db), -6.0), "and it is kept with the room")
 	timeline.set_mode("jam")

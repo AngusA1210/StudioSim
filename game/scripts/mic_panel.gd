@@ -1,9 +1,9 @@
 extends CanvasLayer
-## A microphone's panel (' at it, or its name in the mix window), docked down the right of the screen so the room stays
+## A microphone's panel (P at it, or its name in the mix window), docked down the right of the screen so the room stays
 ## in view, and the view from its capsule: looking the way it points (its own model out of the way), a cross at the
 ## middle, and what is on its axis under it, for placing it by eye as you would with your head beside the stand. In the
 ## view, W A S D (or the arrows) move it, R and F raise and lower it, dragging aims it, and the scroll wheel moves it
-## along its aim, closer or further; Shift for fine moves.
+## along its aim, closer or further; Shift for fine moves. Its keys are drawn in the corner of the view, lit while held.
 ## The panel has which model it is and which of its pickup patterns, with its frequency response and its pattern
 ## drawn; where it stands, to the centimetre (across the room and along it, from its middle, and its capsule's height),
 ## which way it points (its bearing, clockwise from north, the way you first face, and how far down), or straight at an
@@ -28,6 +28,9 @@ const TURN := 0.2              # degrees a pixel, dragging to aim it
 const WHEEL_STEP := 0.02       # metres along its aim, a turn of the scroll wheel
 const ON_AXIS := 25.0          # how far off its axis something can be and still be what it points at (degrees)
 const VIEW_HINT := "From its capsule, the way it points: W A S D or the arrows move it, R and F raise and lower it, drag to aim it, the scroll wheel moves it closer or further along its aim (Shift: fine)"
+const RAISE := KEY_R  # its height, up and down
+const LOWER := KEY_F
+const KEYCAP := 30.0  # a key drawn in the guide, square
 
 var app
 var inst = null
@@ -62,6 +65,7 @@ var _back_to_mixer := false
 var _eye: Camera3D  # the view from its capsule
 var _view: Control  # the room's part of the screen: dragged on, it aims the mic
 var _cross: Control  # the cross at the middle, and what is on its axis
+var _guide: Control  # its keys, in the corner of the view
 var _aiming := false
 
 
@@ -160,6 +164,7 @@ func _look_out() -> void:
 	_eye.frustum_offset = Vector2((screen.x / 2.0 - _view.size.x / 2.0) / maxf(screen.x, 1.0) * wide, 0.0)
 	inst.set_hidden_layer(HIDDEN_LAYER)  # (again each frame: its model is made afresh as it is raised or changed)
 	_cross.queue_redraw()
+	_guide.queue_redraw()
 
 
 ## The keys held, in the view: it moves along the floor the way it faces and across it, and up and down.
@@ -169,9 +174,10 @@ func _nudge(delta: float) -> void:
 	var keys = app.bindings
 	var across := _held(keys.key("right"), KEY_RIGHT) - _held(keys.key("left"), KEY_LEFT)
 	var ahead := _held(keys.key("forward"), KEY_UP) - _held(keys.key("back"), KEY_DOWN)
-	var rise := _held(KEY_R) - _held(KEY_F)
-	if across == 0.0 and ahead == 0.0 and rise == 0.0:
+	var rise := _held(RAISE) - _held(LOWER)
+	if across == 0.0 and ahead == 0.0 and rise == 0.0 or inst.locked:
 		return
+	app.note_move(inst)
 	var step := MOVE_SPEED * delta * (0.2 if Input.is_key_pressed(KEY_SHIFT) else 1.0)
 	var facing: Vector3 = inst.global_transform.basis.z
 	facing = Vector3(facing.x, 0.0, facing.z).normalized()
@@ -197,18 +203,87 @@ func _on_view_input(event: InputEvent) -> void:
 			if e.pressed:
 				_view.grab_focus()  # (off any number being typed)
 				_view.release_focus()
-		elif e.pressed and e.button_index in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN]:
+		elif e.pressed and e.button_index in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN] and not inst.locked:
+			app.note_move(inst)
 			var along: Vector3 = inst.mic_aim() * WHEEL_STEP * (0.25 if e.shift_pressed else 1.0) * (1.0 if e.button_index == MOUSE_BUTTON_WHEEL_UP else -1.0)
 			var to: Vector3 = inst.global_position + along
 			app.set_mic_spot(inst, to.x, to.z)
 			app.set_mic_height(inst, to.y)
 		_view.accept_event()
-	elif event is InputEventMouseMotion and _aiming:
+	elif event is InputEventMouseMotion and _aiming and not inst.locked:
+		app.note_move(inst)
 		var e: InputEventMouseMotion = event
 		var fine := 0.25 if e.shift_pressed else 1.0
 		app.set_mic_bearing(inst, app.mic_bearing(inst) + e.relative.x * TURN * fine)
 		app.set_mic_tilt(inst, clampf(inst.mic_tilt + e.relative.y * TURN * fine, -90.0, 90.0))
 		_view.accept_event()
+
+
+## Its keys, in the corner of the view, laid out as they are on the keyboard: W A S D (as bound) to move it along the
+## floor, R and F to raise and lower it, each lit while it is held; and the mouse's part under them.
+func _draw_guide() -> void:
+	var font := _guide.get_theme_default_font()
+	var back := StyleBoxFlat.new()
+	back.bg_color = Color(0.05, 0.06, 0.08, 0.72)
+	back.set_corner_radius_all(8)
+	_guide.draw_style_box(back, Rect2(Vector2.ZERO, _guide.size))
+	var keys = app.bindings
+	if inst != null and inst.locked:  # nothing moves it: say so, and how to unlock it
+		_guide.draw_texture_rect(inst._lock_texture, Rect2(Vector2(16, _guide.size.y / 2 - 20), Vector2(40, 40)), false)
+		_guide.draw_string(font, Vector2(68, _guide.size.y / 2 - 4), "Locked in place", HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color(1.0, 0.85, 0.4))
+		_guide.draw_string(font, Vector2(68, _guide.size.y / 2 + 16), "%s unlocks it" % keys.label("lock"), HORIZONTAL_ALIGNMENT_LEFT, -1, 12,
+			Color(1, 1, 1, 0.6))
+		return
+	var gap := KEYCAP + 4.0
+	var move := Vector2(14, 12)  # the W A S D block's top left: W above S, A and D either side
+	_keycap(font, move + Vector2(gap, 0), keys.key("forward"), KEY_UP)
+	_keycap(font, move + Vector2(0, gap), keys.key("left"), KEY_LEFT)
+	_keycap(font, move + Vector2(gap, gap), keys.key("back"), KEY_DOWN)
+	_keycap(font, move + Vector2(2 * gap, gap), keys.key("right"), KEY_RIGHT)
+	_caption(font, move + Vector2(0, 2 * gap + 14), 3 * gap, "Move")
+	var lift := Vector2(move.x + 3 * gap + 18, move.y)
+	_keycap(font, lift, RAISE)
+	_keycap(font, lift + Vector2(0, gap), LOWER)
+	_caption(font, lift + Vector2(gap, KEYCAP / 2 + 5), 52, "Up", HORIZONTAL_ALIGNMENT_LEFT)
+	_caption(font, lift + Vector2(gap, gap + KEYCAP / 2 + 5), 52, "Down", HORIZONTAL_ALIGNMENT_LEFT)
+	_caption(font, lift + Vector2(-16, 2 * gap + 14), KEYCAP + 32, "Height")
+	var mouse := Vector2(lift.x + gap + 58, move.y + 4)
+	var shift := Input.is_key_pressed(KEY_SHIFT)
+	for i in 4:
+		var row: Array = [["Drag", "Aim"], ["Wheel", "Closer / further"], ["Shift", "Fine"], [keys.label("edit"), "Close"]][i]
+		var at := mouse + Vector2(0, i * 21.0)
+		var lit: bool = (i == 0 and _aiming) or (i == 2 and shift)
+		_guide.draw_string(font, at + Vector2(0, 12), row[0], HORIZONTAL_ALIGNMENT_LEFT, 44, 12, Color(1.0, 0.85, 0.4) if lit else Color(1, 1, 1, 0.9))
+		_guide.draw_string(font, at + Vector2(46, 12), row[1], HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(1, 1, 1, 0.6))
+
+
+## A key in the guide: its letter on a cap, lit while it (or `also`, an arrow key) is held.
+func _keycap(font: Font, at: Vector2, code: int, also := KEY_NONE) -> void:
+	var held: bool = not (Input.is_key_pressed(KEY_META) or Input.is_key_pressed(KEY_CTRL)) and (Input.is_physical_key_pressed(code) or
+		(also != KEY_NONE and Input.is_physical_key_pressed(also)))
+	var cap := StyleBoxFlat.new()
+	cap.bg_color = Color(1.0, 0.82, 0.35) if held else Color(0.2, 0.22, 0.27)
+	cap.set_corner_radius_all(5)
+	cap.border_width_bottom = 3
+	cap.border_color = Color(0.7, 0.55, 0.2) if held else Color(0.09, 0.1, 0.12)
+	_guide.draw_style_box(cap, Rect2(at, Vector2(KEYCAP, KEYCAP)))
+	var text: String = app.bindings.name_of(code)
+	_guide.draw_string(font, at + Vector2(0, KEYCAP / 2 + 4), text, HORIZONTAL_ALIGNMENT_CENTER, KEYCAP, 13,
+		Color(0.1, 0.1, 0.12) if held else Color(1, 1, 1, 0.92))
+
+
+func _caption(font: Font, at: Vector2, width: float, text: String, align := HORIZONTAL_ALIGNMENT_CENTER) -> void:
+	_guide.draw_string(font, at, text, align, width, 11, Color(1, 1, 1, 0.55))
+
+
+## What the guide shows, as text (for the checks).
+func guide_text() -> String:
+	var keys = app.bindings
+	if inst != null and inst.locked:
+		return "Locked in place, %s unlocks it" % keys.label("lock")
+	return "%s %s %s %s move, %s %s height, drag aim, wheel closer or further, Shift fine, %s close" % [keys.name_of(keys.key("forward")),
+		keys.name_of(keys.key("left")), keys.name_of(keys.key("back")), keys.name_of(keys.key("right")), keys.name_of(RAISE),
+		keys.name_of(LOWER), keys.label("edit")]
 
 
 ## The cross at the middle of the view, and under it what the mic points at: how far, and how far off its axis.
@@ -233,6 +308,9 @@ func _draw_cross() -> void:
 
 
 func _refresh() -> void:
+	for box in [_x, _z, _height, _bearing, _tilt]:  # (locked, where it stands can't be changed)
+		box.editable = not inst.locked
+	_aim_at.disabled = inst.locked
 	_show(_x, inst.global_position.x)
 	_show(_z, inst.global_position.z)
 	_show(_height, inst.source_height)
@@ -269,7 +347,7 @@ func _refresh() -> void:
 		_width_label.visible = mid_side
 		_show(_width, inst.ms_width * 100.0)
 	_input_switch.set_pressed_no_signal(inst.input_on)
-	_input_switch.text = "Hearing it" if inst.input_on else "Hear it"
+	_input_switch.text = "Input on" if inst.input_on else "Input off"
 	var level: float = app.audio.get_source_level(inst.source_id, true)
 	_meter.feed([level * sqrt(2.0)], [level])
 	_show_distances(distances(inst, app.instruments))
@@ -335,6 +413,14 @@ func distances_text() -> String:
 	return "\n".join(lines)
 
 
+## A change to where it stands or points, typed in: remembered for Cmd-Z, and not made while it is locked.
+func _move(change: Callable) -> void:
+	if inst.locked:
+		return
+	app.note_move(inst)
+	change.call()
+
+
 func _show(box: SpinBox, value: float) -> void:
 	if not box.get_line_edit().has_focus():
 		box.set_value_no_signal(value)
@@ -382,6 +468,15 @@ func _build() -> void:
 	_cross.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_cross.draw.connect(_draw_cross)
 	_view.add_child(_cross)
+	_guide = Control.new()
+	_guide.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
+	_guide.offset_left = 16
+	_guide.offset_right = 16 + 392
+	_guide.offset_top = -16 - 120
+	_guide.offset_bottom = -16
+	_guide.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_guide.draw.connect(_draw_guide)
+	_view.add_child(_guide)
 	_panel = PanelContainer.new()
 	var style := StyleBoxFlat.new()
 	style.bg_color = Color(0.07, 0.08, 0.11, 0.96)
@@ -500,20 +595,21 @@ func _build() -> void:
 	grid.add_theme_constant_override("v_separation", 6)
 	left.add_child(grid)
 	_x = _number(grid, "Across", -10.0, 10.0, 0.01, " m", "Where it stands across the room, from its middle: to the east (right on the floor plan) is more",
-		func(v: float) -> void: app.set_mic_spot(inst, v, inst.global_position.z))
+		func(v: float) -> void: _move(func() -> void: app.set_mic_spot(inst, v, inst.global_position.z)))
 	_z = _number(grid, "Along", -10.0, 10.0, 0.01, " m", "Where it stands along the room, from its middle: to the south (towards you as you first face) is more",
-		func(v: float) -> void: app.set_mic_spot(inst, inst.global_position.x, v))
+		func(v: float) -> void: _move(func() -> void: app.set_mic_spot(inst, inst.global_position.x, v)))
 	_height = _number(grid, "Height", 0.05, 3.0, 0.01, " m", "How high its capsule is, where it hears from (over a kick drum's hole, low; over the kit, high)",
-		func(v: float) -> void: app.set_mic_height(inst, v))
+		func(v: float) -> void: _move(func() -> void: app.set_mic_height(inst, v)))
 	_bearing = _number(grid, "Points to", 0.0, 359.0, 1.0, "°", "Which way it points, clockwise from north (the way you first face): 90 is east. An omni mic hears all round alike, so this is for its stand, for now",
-		func(v: float) -> void: app.set_mic_bearing(inst, v))
+		func(v: float) -> void: _move(func() -> void: app.set_mic_bearing(inst, v)))
 	_tilt = _number(grid, "Down by", -90.0, 90.0, 1.0, "°", "How far it points down (90: straight down, as an overhead)",
-		func(v: float) -> void: app.set_mic_tilt(inst, v))
+		func(v: float) -> void: _move(func() -> void: app.set_mic_tilt(inst, v)))
 	_gain = _number(grid, "Gain", -20.0, 40.0, 0.5, " dB", "Its gain, before it records, as a preamp's: up for a mic far off, down for one right up against something loud",
 		func(v: float) -> void: app.set_mic_gain(inst, v))
 	_aim_at = OptionButton.new()
 	_aim_at.item_selected.connect(func(index: int) -> void:
 		if index > 0 and index - 1 < _aim_choices.size() and app.instruments.has(_aim_choices[index - 1]):
+			app.note_move(inst)
 			app.aim_mic(inst, _aim_choices[index - 1])
 		_aim_at.select(0))
 	Hints.give(_aim_at, "Turns it and tilts it to point straight at an instrument (at where its sound comes from)")
@@ -523,7 +619,7 @@ func _build() -> void:
 	left.add_child(input_row)
 	_input_switch = CheckButton.new()
 	_input_switch.toggled.connect(func(on: bool) -> void: app.set_input(inst, on))
-	Hints.give(_input_switch, "Its input monitoring: hear what it hears (through its track, in the middle of the stereo), rather than what it recorded")
+	Hints.give(_input_switch, "Its input: on, you hear what it hears (through its track, where its pan puts it), rather than what it recorded")
 	input_row.add_child(_input_switch)
 	_meter = LevelMeter.new()
 	_meter.custom_minimum_size = Vector2(150, 12)

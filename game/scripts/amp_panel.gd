@@ -1,13 +1,14 @@
 extends CanvasLayer
-## An amp's panel (' at an amp): its head and cabinet, its knobs and input, and the board of pedals on the floor
+## An amp's panel (P at an amp): its head and cabinet, its knobs and input, and the board of pedals on the floor
 ## in front of it. Any head goes with any cabinet, and either can be bypassed: without its head, the amp plays what
 ## reaches it straight through the cabinet (a plug-in amp on a Plug-in pedal can be the head); without its cabinet it
 ## is a flat full-range speaker.
 ##
 ## The board runs the way the signal does: from the input through the pedals in order, then the amp's preamp, then the
-## pedals in its effects loop (a series loop, after the preamp and its tone stack, before the power amp: a delay or a
-## reverb there repeats the amp's own sound, distortion and all, rather than being distorted by it), then the power amp
-## and the speakers. Click a pedal to set it up underneath; drag it along the line to move it, into the loop or out of it
+## pedals in its effects loop (after the preamp and its tone stack, before the power amp: a delay or a reverb there
+## repeats the amp's own sound, distortion and all, rather than being distorted by it), then the power amp and the
+## speakers. It is a parallel loop: its MIX knob blends what comes back with the preamp's own signal, which goes on to
+## the power amp beside it (half and half to begin with; all the way up, a series loop). Click a pedal to set it up underneath; drag it along the line to move it, into the loop or out of it
 ## (hold Option as you drop it for a second of it instead); "+ Pedal" adds one in front of the amp, "+" in the loop.
 ## The board folds away under its heading. 1 to 8 stamp on the pedals, here and facing
 ## the amp in the room: a pedal switches on or off, and the loop pedal (an amp can have one) presses its footswitch.
@@ -76,6 +77,7 @@ var _add_button: Button
 var _add_arrow: Label
 var _loop_box: PanelContainer  # the effects loop, between the preamp and the power amp
 var _loop_add: Button          # its own "+"
+var _loop_mix: Control         # its Mix knob (a parallel loop)
 var _adding_to_loop := false   # which the add menu is open for
 var _add_menu: PopupMenu
 var _board_signature := "-"  # what the board was built for ("-": nothing yet)
@@ -221,6 +223,10 @@ func _refresh() -> void:
 		if not held:  # (as its automation has it, while that is read)
 			_knobs[control].set_value_no_signal(app.automation.shown(inst, "amp:" + control))
 		_knobs[control].modulate.a = 1.0 if inst.head_on or control == "master" else 0.35  # the head's knobs, bypassed with it
+	if _loop_mix != null and is_instance_valid(_loop_mix) and not _loop_mix._dragging:
+		_loop_mix.set_value_no_signal(inst.loop_mix * 10.0)
+	if _loop_mix != null and is_instance_valid(_loop_mix):
+		_loop_mix.readout = "%d %%" % roundi(inst.loop_mix * 100.0)
 	_head_choice.select(_index_of(Catalog.AMP_HEADS, inst.amp_head))
 	_cabinet_choice.select(_index_of(Catalog.AMP_CABINETS, inst.amp_cabinet))
 	var fits: Array = Catalog.speakers_for(inst.amp_cabinet)
@@ -343,6 +349,12 @@ func _build_board() -> void:
 	var back := _end_label("FX\nRETURN")
 	back.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	loop_row.add_child(back)
+	_loop_mix = Knob.new()
+	_loop_mix.title = "MIX"
+	_loop_mix.resting = 5.0
+	_loop_mix.value_changed.connect(func(v: float) -> void: app.set_amp_loop_mix(inst, v / 10.0))
+	Hints.give(_loop_mix, "The loop's Mix: how much of what comes back from its pedals is blended with the preamp's own signal, which goes on to the power amp beside it. Half and half to begin with; all the way up, everything goes through the pedals, as a series loop. Set a delay or a reverb in it all wet")
+	loop_row.add_child(_loop_mix)
 	_board.add_child(_arrow())
 	_board.add_child(_end_label("POWER AMP"))
 

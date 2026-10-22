@@ -657,6 +657,9 @@ func _draw_header(inst, top: float, font: Font) -> void:
 	var chosen_track: bool = app.chosen_tracks.has(inst)
 	var indent := _indent(inst)  # a folder's tracks, under it
 	draw_rect(Rect2(0, top, HEADER, ROW - 1), Color(0.24, 0.26, 0.31) if chosen_track else Color(0.16, 0.17, 0.19))
+	var around: Array = app.folders_around(inst)  # each folder it is in: its colour carried down from its header, joining them
+	for j in mini(around.size(), 4):
+		draw_rect(Rect2(10.0 * (mini(around.size(), 4) - 1 - j), top, 5, ROW), Color(around[j].color, 0.75))
 	draw_rect(Rect2(indent, top, 5, ROW - 1), inst.color)
 	var name_x := 12.0 + indent
 	if _folds(inst):  # its arrow, to show or hide its tracks
@@ -896,14 +899,14 @@ func hint_at(at: Vector2) -> String:
 				if b.rect.has_point(at):
 					match b.what:
 						"arm":
-							return "Record-ready: it records when recording starts, and its input is heard while stopped or recording  ·  Option-click: every track"
+							return "Record-ready: it records when recording starts, and its input is heard while stopped or recording  ·  Option-click: every track; Shift-Option-click: the chosen ones"
 						"input":
 							return ("Input: the MIDI keyboard plays it" if track.playable else ("Input monitoring: what it hears is heard, rather than what it recorded"
 								if track.is_mic else "Input monitoring: its input is heard, rather than what it recorded")) + \
-								"  ·  Option-click: every track"
+								"  ·  Option-click: every track; Shift-Option-click: the chosen ones"
 						"mute":
-							return ("Mute: its tracks are silent" if track.is_folder else "Mute") + "  ·  Option-click: every track"
-					return ("Solo: its tracks are soloed" if track.is_folder else "Solo") + "  ·  Option-click: every track"
+							return ("Mute: its tracks are silent" if track.is_folder else "Mute") + "  ·  Option-click: every track; Shift-Option-click: the chosen ones"
+					return ("Solo: its tracks are soloed" if track.is_folder else "Solo") + "  ·  Option-click: every track; Shift-Option-click: the chosen ones"
 			return "%s: click to choose it (Shift or Cmd-click for more; %s: the chosen in a new folder), double-click to rename it, right-click for more" % [
 				track.display_name, app.bindings.label("group")]
 		"xfade":
@@ -958,6 +961,9 @@ func press(at: Vector2, all := false, add := false, command := false) -> void:
 				return
 			for b in _buttons(found.inst, row_top(found.row)):
 				if b.rect.has_point(at):
+					if all and add:  # Shift-Option: the tracks chosen by their names
+						app.set_on_chosen(b.what, not b.on, found.inst)
+						return
 					if all:
 						app.set_on_all(b.what, not b.on)
 						return
@@ -1093,6 +1099,8 @@ func _on_drag(at: Vector2) -> void:
 					p[1] = _lane_value(at.y, param, _drag.top)
 				else:  # up or down its own scale (a fader's, for volume and sends)
 					p[1] = auto.value_from(param, auto.height_of(param, _drag.values[k]) + (_drag.grab_y - at.y) / (LANE - 9))
+					if param == "volume" and _drag.track.get("is_master"):  # (a master's stops at 0 dB)
+						p[1] = minf(p[1], 0.0)
 			_drag.track.automation[param].sort_custom(func(a, b): return float(a[0]) < float(b[0]))
 		"ruler":
 			if absf(at.x - _drag.from_x) > 4.0:

@@ -3,7 +3,8 @@ extends RefCounted
 ## has one key. A few never change: Esc (back out of anything), the arrow keys (they always walk and turn, even while
 ## the letter keys are notes), 1 to 8 (an amp's pedals), and the note keys themselves: A S D F G H J K L ; for the
 ## white keys and W E T Y U O P for the black, while you are at an instrument or have the keyboard open. Then those
-## keys are notes, and whatever else they do waits until you get up or close the keyboard.
+## keys are notes, and whatever else they do waits until you get up or close the keyboard; all but the panel's key
+## (P), which opens the panel then too.
 
 # [action, what it does, its key to begin with], in the order the Controls page lists them.
 const ACTIONS := [
@@ -18,8 +19,8 @@ const ACTIONS := [
 	["octave_down", "Octave down (while playing)", KEY_Z],
 	["octave_up", "Octave up (while playing)", KEY_X],
 	["input", "Input on / off", KEY_I],
-	["edit", "Its pattern, an amp's panel, a Speaker's panel", KEY_APOSTROPHE],
-	["plugin_window", "A plug-in instrument's own window", KEY_P],
+	["edit", "Its panel: a pattern, an amp's, a Speaker's, a microphone's place", KEY_P],
+	["plugin_window", "A plug-in instrument's own window", KEY_APOSTROPHE],
 	["loop", "Its loop on / off (a Speaker or amp: mute it in the room; a microphone: its track)", KEY_M],
 	["carry", "Pick up, put down", KEY_G],
 	["add", "Add an instrument", KEY_T],
@@ -49,6 +50,7 @@ const COMMANDS := [
 	["duplicate_clip", "A second of the chosen clip, just after it", KEY_D],
 	["swap_windows", "The mix window and the edit window, in turn", KEY_EQUAL],
 	["group", "Put the chosen tracks in a new folder", KEY_G],
+	["lock", "Lock what you face in place, or unlock it", KEY_L],
 ]
 const MODIFIERS := [KEY_META, KEY_CTRL, KEY_SHIFT, KEY_ALT]
 # Keys that always mean the same, whatever is bound.

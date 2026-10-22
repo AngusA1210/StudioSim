@@ -70,10 +70,10 @@ var hud
 var menu
 var sequencer  # the pattern editor
 var mixer  # the mix window (Tab)
-var amp_panel  # an amp's knobs and its pedals (' at an amp)
+var amp_panel  # an amp's knobs and its pedals (P at an amp)
 var plugin_browser  # the effect plug-ins on the computer, to choose one for an insert or a Plug-in pedal
-var speaker_panel  # a Speaker's volume and input (' at a Speaker)
-var mic_panel      # a microphone's place, aim and gain (' at a microphone)
+var speaker_panel  # a Speaker's volume and input (P at a Speaker)
+var mic_panel      # a microphone's place, aim and gain (P at a microphone)
 var _mic_models = null  # the microphone models, as the audio core has them (asked for once)
 var bindings  # the keys, as set on the Controls page
 var library  # rooms' and templates' contents, presets, and settings copied to be pasted
@@ -185,6 +185,7 @@ func _ready() -> void:
 	audio.set_binaural(settings.binaural)
 	_apply_master_volume()
 	audio.set_distance_falloff(settings.distance_falloff_db)
+	audio.set_limiter_ceiling(settings.limiter_ceiling_db)
 	audio.set_master_limiter(settings.limiter, "mix")
 	audio.set_master_limiter(settings.room_limiter, "room")
 	audio.set_click(settings.click)
@@ -266,8 +267,9 @@ func _notification(what: int) -> void:
 
 
 ## The Cmd shortcuts (Ctrl off a Mac; bindings.gd lists them): saving the room, from anywhere but a box being typed
-## in; and in the room or its windows, recording, undo and redo, and the mix and edit windows in turn. Space starts and
-## stops the music in the mix and edit windows too.
+## in; and in the room or its windows, recording, undo and redo, the mix and edit windows in turn, and locking what you
+## face. Undo and redo have two histories: in the room, the instruments' moves; in the mix and edit windows (a Record
+## room), the edits to the clips. Space starts and stops the music in the mix and edit windows too.
 func _input(event: InputEvent) -> void:
 	if not (event is InputEventKey and event.pressed and not event.echo) or name_prompt.is_open() or rooms_page.is_open():
 		return
@@ -297,9 +299,22 @@ func _input(event: InputEvent) -> void:
 					mixer.close()
 				edit_window.open()
 		"undo", "redo":
-			if not timeline.is_record() or timeline.recording:
+			if not (mixer.is_open() or edit_window.is_open()):  # in the room: where the instruments stand
+				undo_move(shortcut == "redo")
+			elif not timeline.is_record() or timeline.recording:
 				return
-			undo_edit(shortcut == "redo")
+			else:
+				undo_edit(shortcut == "redo")
+		"lock":  # what you face (or carry, or the microphone whose panel is open) locked in place, or unlocked
+			if mixer.is_open() or edit_window.is_open():
+				return
+			var at = mic_panel.inst if mic_panel.is_open() else (player.carried if player.carried != null else player.target)
+			if at == null:
+				return
+			if at == player.carried:
+				player.put_down()
+			set_locked(at, not at.locked)
+			session.notice.emit(("%s locked in place (%s unlocks it)" if at.locked else "%s unlocked (%s locks it)") % [at.display_name, bindings.label("lock")])
 		"group":  # the tracks chosen, in a new folder
 			if not (mixer.is_open() or edit_window.is_open()):
 				return
@@ -554,6 +569,13 @@ func set_amp_control(inst, control: String, value: float) -> void:
 	audio.set_amp_control(inst.source_id, control, inst.amp_controls[control])
 
 
+## An amp's effects loop's Mix: it is a parallel loop, and this is how much of what comes back from its pedals is
+## blended with the preamp's own signal on its way to the power amp (0 to 1: half to begin with; all of it, a series loop).
+func set_amp_loop_mix(inst, mix: float) -> void:
+	inst.loop_mix = clampf(mix, 0.0, 1.0)
+	audio.set_amp_loop_mix(inst.source_id, inst.loop_mix)
+
+
 ## An amp's loop pedal's buttons, if it has one: "press" (the footswitch), "stop", "play", "undo", "redo", "clear".
 ## Starting a recording switches the amp's input on, since there would be nothing to record otherwise.
 func looper_action(inst, action: String) -> void:
@@ -784,13 +806,29 @@ func hide_plugin_editors(inst) -> void:
 ## Option-clicked, as Pro Tools' all-tracks modifier: every track's input ("input"), mute, solo or record arm ("arm")
 ## set as the one clicked now is.
 func set_on_all(what: String, on: bool) -> void:
-	if what in ["mute", "solo"]:
-		for folder in folders + auxes:
+	_set_on(instruments + folders + auxes, what, on)
+
+
+## Shift-Option-click: the same on the tracks chosen by their names (and the one clicked, if it isn't among them), as
+## Pro Tools' selected-tracks modifier.
+func set_on_chosen(what: String, on: bool, clicked = null) -> void:
+	var tracks: Array = chosen_tracks.filter(func(t): return is_instance_valid(t))
+	if clicked != null and not tracks.has(clicked):
+		tracks.append(clicked)
+	_set_on(tracks, what, on)
+
+
+## Input, mute, solo or record arm ("input", "mute", "solo", "arm") on or off on these tracks: a folder's or an aux's
+## mute and solo; an instrument's all four.
+func _set_on(tracks: Array, what: String, on: bool) -> void:
+	for track in tracks:
+		if not instruments.has(track):
 			if what == "mute":
-				folder.muted = on
-			else:
-				folder.soloed = on
-	for inst in instruments:
+				track.muted = on
+			elif what == "solo":
+				track.soloed = on
+			continue
+		var inst = track
 		match what:
 			"input":
 				if inst.input_on != on:
@@ -1355,6 +1393,7 @@ func load_default_room(empty := false) -> void:
 func clear_room() -> void:
 	player.stop_playing()
 	player.put_down()
+	clear_moves()
 	for inst in instruments.duplicate():
 		remove_instrument(inst)
 	for folder in folders.duplicate():
@@ -1441,6 +1480,7 @@ func duplicate_instrument(inst, at = null):
 			if copy_pedal(inst, i, copy) < 0:
 				problems.append("pedal %d: %s" % [i + 1, audio.get_error()])
 		audio.set_pedal_loop(copy.source_id, audio.get_pedal_loop(inst.source_id))  # (its effects loop the same)
+		set_amp_loop_mix(copy, inst.loop_mix)
 		copy.pedals = audio.get_pedals(copy.source_id)
 	var inserts: Array = audio.get_inserts(inst.source_id)
 	for slot in inserts.size():
@@ -1521,15 +1561,16 @@ func set_reverb_db(db: float) -> void:
 	audio.set_reverb_level(0.0 if reverb_db <= -79.0 else db_to_linear(reverb_db))
 
 
-## The master fader (the mix's), in decibels. It belongs to the room (saved with it), as a session's master fader does.
+## The master fader (the mix's), in decibels, 0 at most. It belongs to the room (saved with it), as a session's master
+## fader does.
 func set_master_volume_db(db: float) -> void:
-	master_volume_db = clampf(db, -80.0, 12.0)
+	master_volume_db = clampf(db, -80.0, 0.0)
 	_apply_master_volume()
 
 
 ## The room's master: how loud the room is as you hear it standing there.
 func set_room_volume_db(db: float) -> void:
-	room_volume_db = clampf(db, -80.0, 12.0)
+	room_volume_db = clampf(db, -80.0, 0.0)
 	_apply_master_volume()
 
 
@@ -1598,6 +1639,79 @@ func set_room_muted(inst, on: bool) -> void:
 
 
 ## A Speaker's own volume (its panel), in decibels: after its inserts, before its fader. -80 is off.
+# ── Moving instruments: their own undo history, and locks ──────────────────────────────────────────────────
+
+const MOVE_UNDO_LEVELS := 100
+const MOVE_PAUSE := 0.75  # seconds: one instrument's moves closer together than this (a key held, a drag) are one
+var _moves := []          # each move, before it was made: {inst, before (its placement), at}; the latest last
+var _moves_undone := []   # and those undone, to be redone
+var _placing := false     # (putting one back, which isn't a move of its own)
+
+
+## An instrument is about to be moved (picked up, nudged, aimed, its place typed in): where it is now is remembered, for
+## Cmd-Z in the room to put it back. This history is the room's own, apart from the clips' in the mix and edit windows.
+func note_move(inst) -> void:
+	if _placing or inst == null:
+		return
+	var now := Time.get_ticks_msec() / 1000.0
+	if not _moves.is_empty() and _moves.back().inst == inst and now - float(_moves.back().at) < MOVE_PAUSE:
+		_moves.back().at = now  # (the same move, still going)
+		return
+	_moves.append({"inst": inst, "before": inst.placement(), "at": now})
+	if _moves.size() > MOVE_UNDO_LEVELS:
+		_moves.pop_front()
+	_moves_undone.clear()
+
+
+## Cmd-Z in the room: the last instrument moved back where it was (with `redo`, the last move undone, made again). One
+## being carried is put down first, so it goes back to where it was picked up from.
+func undo_move(redo := false) -> void:
+	if player.carried != null:
+		player.put_down()
+	var from: Array = _moves_undone if redo else _moves
+	while not from.is_empty() and not instruments.has(from.back().inst):  # (taken out of the room since)
+		from.pop_back()
+	if from.is_empty():
+		session.notice.emit("No move to redo" if redo else "No move to undo")
+		return
+	var inst = from.back().inst
+	if inst.locked:
+		session.notice.emit("%s is locked (%s unlocks it)" % [inst.display_name, bindings.label("lock")])
+		return
+	var step: Dictionary = from.pop_back()
+	(_moves if redo else _moves_undone).append({"inst": inst, "before": inst.placement(), "at": 0.0})
+	_place(inst, step.before)
+	session.notice.emit("%s moving %s" % ["Redo" if redo else "Undo", inst.display_name])
+
+
+func can_undo_move() -> bool:  # (for the checks)
+	return _moves.any(func(step): return instruments.has(step.inst))
+
+
+## Forgets every move (a room opened).
+func clear_moves() -> void:
+	_moves.clear()
+	_moves_undone.clear()
+
+
+## Puts an instrument where a placement has it.
+func _place(inst, at: Dictionary) -> void:
+	_placing = true
+	inst.global_position = at.position
+	inst.rotation.y = at.yaw
+	if inst.is_mic:
+		set_mic_height(inst, at.height)
+		set_mic_tilt(inst, at.tilt)
+	inst.sync_position()
+	_placing = false
+
+
+## Locked, an instrument stays where it stands: it can't be picked up, nor a microphone moved or aimed, until it is
+## unlocked (Cmd-L at it). A yellow padlock floats over its name meanwhile.
+func set_locked(inst, on: bool) -> void:
+	inst.set_locked(on)
+
+
 # ── Microphones ─────────────────────────────────────────────────────────────────────────────────────────────
 
 ## A microphone's place: where it stands on the floor (x and z, metres from the middle of the room, kept inside it),
@@ -1671,7 +1785,18 @@ func set_mic_model(mic, model: String, pattern := "") -> void:
 ## Where a track sits in the stereo (-1 left, 1 right): an instrument's direct output, a microphone's track; a stereo
 ## mic's, its balance.
 func set_pan(track, pan: float) -> void:
-	track.set_pan(pan)
+	if track is Folder:  # a folder's (or an aux track's), after its fader: a balance, or a mono one's place
+		track.pan = clampf(pan, -1.0, 1.0)
+		audio.set_source_pan(track.source_id, track.pan)
+	else:
+		track.set_pan(pan)
+
+
+## A folder (or an aux track) in stereo, its pan a balance as a stereo track's, or summed to mono, its pan placing it
+## as a mono track's.
+func set_folder_mono(folder, mono: bool) -> void:
+	folder.mono = mono
+	audio.set_bus_mono(folder.source_id, mono)
 
 
 ## The models there are, as the audio core has them (asked for once): [{id, name, about, sensitivity_db, noise_db, patterns}].
@@ -1737,6 +1862,13 @@ func set_instrument_level(inst, db: float) -> void:
 func set_distance_falloff(db: float) -> void:
 	settings.distance_falloff_db = clampf(db, 0.0, 6.0)
 	audio.set_distance_falloff(settings.distance_falloff_db)
+	settings.save_to_disk()
+
+
+## Where both masters' limiters (after their faders) hold the peaks, in dBFS: -1 to begin with, -12 to 0.
+func set_limiter_ceiling(db: float) -> void:
+	settings.limiter_ceiling_db = clampf(snappedf(db, 0.1), -12.0, 0.0)
+	audio.set_limiter_ceiling(settings.limiter_ceiling_db)
 	settings.save_to_disk()
 
 

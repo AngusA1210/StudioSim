@@ -49,12 +49,15 @@ private:
 class Limiter {
 public:
     void init(float sr);
+    // Where it holds the peaks: its ceiling, as a gain (-1 dBFS to begin with).
+    void setCeiling(float gain) { ceiling_ = std::clamp(gain, 0.01f, 1.0f); }
     // Returns the lowest gain it had to apply in these samples (1 = it did nothing).
     float process(float* l, float* r, int n);
-    static constexpr float kThreshold = 0.8f;  // about -2 dBFS
+    static constexpr float kDefaultCeilingDb = -1.0f;
 
 private:
     float env_ = 0.0f, release_ = 0.0f;
+    float ceiling_ = 0.891f;  // -1 dBFS
 };
 
 }  // namespace sr

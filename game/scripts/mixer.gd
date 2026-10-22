@@ -55,6 +55,7 @@ var audio: SoundRoomAudio
 var _root: Control
 var _panel: PanelContainer
 var _strip_row: HBoxContainer
+var _strip_parent: Container  # where the strip being built goes: the row, or its folder's frame
 var _strips: Array = []  # {inst (an instrument or a folder), fader, meter, value, peak, input, mute, solo, source, output, inserts: [{button, style}], plate, frame}
 var _colors: PopupMenu   # the Colour submenu of a track's menu
 var _send_menu: PopupMenu  # an empty send's auxes to choose from, or a full one's options
@@ -328,8 +329,8 @@ func _build_master_strip(master) -> PanelContainer:
 		"the room" if which == "room" else "the mix", app.bindings.label("monitor")])
 	box.add_child(output)
 	var limiter := _toggle("LIMIT", Color(0.55, 0.78, 1.0))
-	Hints.give(limiter, "Limiter, before the fader: on, %s can't go over full scale; off, the plain sum. What the main outputs play over full scale is cut off either way." % (
-		"the room" if which == "room" else "the mix"))
+	Hints.give(limiter, func() -> String: return "Limiter, after the fader: on, %s can't go past %.1f dBFS (the ceiling, in Settings), and bringing the master down eases it; off, the plain sum. What the main outputs play over full scale is cut off either way." % [
+		"the room" if which == "room" else "the mix", app.settings.limiter_ceiling_db])
 	limiter.toggled.connect(func(on: bool) -> void: app.set_limiter(on, which))
 	limiter.custom_minimum_size = Vector2(76, 24)
 	limiter.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
@@ -436,15 +437,15 @@ func _build_strip(inst) -> Dictionary:
 	var input := _toggle("I", INPUT_GREEN)
 	Hints.give(input, ("Input: the MIDI keyboard plays it" if inst.playable else ("Input monitoring: hear what it hears, rather than what it recorded"
 		if inst.is_mic else "Input monitoring: it plays the hardware input chosen above")) +
-		"  ·  Option-click: every track")
+		"  ·  Option-click: every track; Shift-Option-click: the chosen ones")
 	input.toggled.connect(_on_input_toggled.bind(inst))
 	buttons.add_child(input)
 	var mute := _toggle("M", MUTE_ORANGE)
-	Hints.give(mute, "Mute  ·  Option-click: every track")
+	Hints.give(mute, "Mute  ·  Option-click: every track; Shift-Option-click: the chosen ones")
 	mute.toggled.connect(_on_mute_toggled.bind(inst))
 	buttons.add_child(mute)
 	var solo := _toggle("S", SOLO_YELLOW)
-	Hints.give(solo, "Solo: while anything is soloed, everything else is silent  ·  Option-click: every track")
+	Hints.give(solo, "Solo: while anything is soloed, everything else is silent  ·  Option-click: every track; Shift-Option-click: the chosen ones")
 	solo.toggled.connect(_on_solo_toggled.bind(inst))
 	buttons.add_child(solo)
 	var pair := _fader_and_meter(box, 1, inst)
@@ -453,7 +454,7 @@ func _build_strip(inst) -> Dictionary:
 	var room := _room_section(box, inst)
 	var plate := _name_plate(inst.display_name, inst.color, inst)
 	box.add_child(plate)
-	_strip_row.add_child(strip)
+	_strip_parent.add_child(strip)
 	return {"inst": inst, "fader": pair.fader, "meter": pair.meter, "value": readouts.value, "peak": readouts.peak, "input": input,
 		"mute": mute, "solo": solo, "source": source, "output": output, "inserts": inserts, "sends": sends, "plate": plate,
 		"frame": strip.get_theme_stylebox("panel"), "panel": strip, "small": small_label, "pan": pan, "room": room}
@@ -462,19 +463,19 @@ func _build_strip(inst) -> Dictionary:
 ## Where a track sits in the mix's stereo, as Pro Tools' pan pot (an instrument's direct output, a microphone's track; a
 ## stereo mic's balance between its two sides). A folder's and an aux's strips leave its space empty.
 func _pan_pot(box: VBoxContainer, track) -> Control:
-	if track.is_folder:
-		var space := Control.new()
-		space.custom_minimum_size.y = PAN_HEIGHT
-		box.add_child(space)
-		return null
 	var pan := PanControl.new()
 	pan.custom_minimum_size = Vector2(STRIP_WIDTH - 24, PAN_HEIGHT)
 	pan.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	pan.ink = track.color.lightened(0.2)
 	pan.value_changed.connect(func(v: float) -> void: app.set_pan(track, v))
-	Hints.give(pan, ("Balance: the stereo mic's two sides" if track.is_stereo_mic else ("Pan: where its track sits in the mix" if track.is_mic else
-		"Pan: where its direct output sits in the mix (in the room it is where it stands)")) +
-		".  Drag up or down (Shift: fine), double-click for the middle")
+	if track.is_folder:
+		Hints.give(pan, func() -> String: return (("Pan: where its sound, summed to mono, sits in the mix" if track.mono else
+			"Balance: its stereo, turned one way the other side turned down") + " (after its fader). Right-click its name for stereo or mono." +
+			"  Drag up or down (Shift: fine), double-click for the middle"))
+	else:
+		Hints.give(pan, ("Balance: the stereo mic's two sides" if track.is_stereo_mic else ("Pan: where its track sits in the mix" if track.is_mic else
+			"Pan: where its direct output sits in the mix (in the room it is where it stands)")) +
+			".  Drag up or down (Shift: fine), double-click for the middle")
 	box.add_child(pan)
 	return pan
 
@@ -541,17 +542,17 @@ func _build_folder_strip(folder) -> Dictionary:
 	box.add_child(count)
 	var output := _output_button(folder)
 	box.add_child(output)
-	_pan_pot(box, folder)
+	var pan := _pan_pot(box, folder)
 	var buttons := HBoxContainer.new()
 	buttons.add_theme_constant_override("separation", 3)
 	buttons.alignment = BoxContainer.ALIGNMENT_CENTER
 	box.add_child(buttons)
 	var mute := _toggle("M", MUTE_ORANGE)
-	Hints.give(mute, "Mute: its tracks are silent  ·  Option-click: every track")
+	Hints.give(mute, "Mute: its tracks are silent  ·  Option-click: every track; Shift-Option-click: the chosen ones")
 	mute.toggled.connect(_on_mute_toggled.bind(folder))
 	buttons.add_child(mute)
 	var solo := _toggle("S", SOLO_YELLOW)
-	Hints.give(solo, "Solo: its tracks are soloed  ·  Option-click: every track")
+	Hints.give(solo, "Solo: its tracks are soloed  ·  Option-click: every track; Shift-Option-click: the chosen ones")
 	solo.toggled.connect(_on_solo_toggled.bind(folder))
 	buttons.add_child(solo)
 	var pair := _fader_and_meter(box, 1, folder)
@@ -560,10 +561,10 @@ func _build_folder_strip(folder) -> Dictionary:
 	_foot(box)
 	var plate := _name_plate(folder.display_name, folder.color, folder)
 	box.add_child(plate)
-	_strip_row.add_child(strip)
+	_strip_parent.add_child(strip)
 	return {"inst": folder, "fader": pair.fader, "meter": pair.meter, "value": readouts.value, "peak": readouts.peak, "input": null,
 		"mute": mute, "solo": solo, "source": count, "output": output, "inserts": inserts, "sends": sends, "plate": plate,
-		"frame": strip.get_theme_stylebox("panel"), "panel": strip, "pan": null, "room": {}}
+		"frame": strip.get_theme_stylebox("panel"), "panel": strip, "pan": pan, "room": {}}
 
 
 const INSERT_HEIGHT := 17.0
@@ -801,6 +802,36 @@ func _on_send_menu_chosen(id: int) -> void:
 				app.set_send(inst, slot, app.auxes[id - 100], send.get("level_db", 0.0), send.get("pre", false), send.get("on", true))
 
 
+## A track's strip, in `parent`; a folder's, in a frame of its colour with its tracks' strips beside it (and a folder
+## in it framed within), so its tracks are seen to be its own.
+func _build_track(track, parent: Container) -> void:
+	if not track.is_folder or track.is_aux:
+		_strip_parent = parent
+		_strips.append(_build_folder_strip(track) if track.is_folder else _build_strip(track))  # (an aux's as a folder's)
+		return
+	var frame := PanelContainer.new()
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(track.color, 0.13)
+	style.set_corner_radius_all(6)
+	style.border_width_top = 4
+	style.border_color = track.color
+	style.set_content_margin_all(3)
+	style.content_margin_top = 6
+	frame.add_theme_stylebox_override("panel", style)
+	frame.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	frame.mouse_filter = Control.MOUSE_FILTER_PASS
+	Hints.give(frame, "%s and its tracks: they play into it, and through it to its output" % track.display_name)
+	parent.add_child(frame)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 4)
+	row.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	frame.add_child(row)
+	_strip_parent = row
+	_strips.append(_build_folder_strip(track))
+	for member in track.members:
+		_build_track(member, row)
+
+
 func _strip_panel(width: float) -> PanelContainer:
 	var strip := PanelContainer.new()
 	var style := StyleBoxFlat.new()
@@ -831,8 +862,10 @@ func _fader_and_meter(box: VBoxContainer, channels: int, inst) -> Dictionary:
 	box.add_child(row)
 	var fader := Fader.new()
 	fader.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	if inst is String and inst in ["mix", "room"]:  # (a master stops at 0 dB)
+		fader.top_db = 0.0
 	fader.gui_input.connect(_on_fader_area_input.bind(fader))
-	var fader_name: String = {"mix": "Mix master fader, after its inserts and the limiter", "room": "Room master: how loud the room is as you hear it standing there",
+	var fader_name: String = {"mix": "Mix master fader, after its inserts and before the limiter, 0 dB at most", "room": "Room master: how loud the room is as you hear it standing there, 0 dB at most",
 		"reverb": "Room Reverb: how much of the room's reverb you hear in it"}.get(inst, "Fader") if inst is String else "Fader"
 	Hints.give(fader, "%s: drag (Shift for fine moves), double-click or Alt-click for 0 dB.  Right-click: pre- or post-fader meters" % fader_name)
 	row.add_child(fader)
@@ -983,7 +1016,8 @@ func _refresh() -> void:
 			child.queue_free()
 		_strips.clear()
 		for track in app.track_order():
-			_strips.append(_build_folder_strip(track) if track.is_folder else _build_strip(track))  # (an aux's as a folder's)
+			if app.folder_of(track) == null:
+				_build_track(track, _strip_row)
 		_input_channels = -1
 	var channels: int = app.input_channel_count()
 	var relist := channels != _input_channels
@@ -1014,6 +1048,8 @@ func _refresh() -> void:
 			continue
 		if inst.is_folder:
 			strip.source.text = "%d track%s" % [inst.members.size(), "" if inst.members.size() == 1 else "s"]
+			if not strip.pan._dragging:
+				strip.pan.set_value_no_signal(inst.pan)
 			continue
 		strip.input.set_pressed_no_signal(inst.input_on)
 		if inst.is_mic:  # its model and pattern
@@ -1079,7 +1115,7 @@ func _refresh() -> void:
 	elif app.meter_reduction_db > 0.1:
 		_status.text = "Limiting %.1f dB" % app.meter_reduction_db
 		_status.add_theme_color_override("font_color", WARN)
-		Hints.give(_status, "The limiter is holding the mix (or the room) under full scale. It comes before the master faders: bring an instrument down to stop it")
+		Hints.give(_status, "The limiter is holding the mix (or the room) at its ceiling. It comes after the master faders: bring the master or an instrument down to ease it")
 	else:
 		_status.text = "Limiter idle" if app.limiter_on(settings.monitor) else "Limiter off"
 		_status.add_theme_color_override("font_color", DIM)
@@ -1150,26 +1186,31 @@ func _on_master_changed(db: float) -> void:
 	app.set_master_volume_db(db)
 
 
-## (Option held: every track, as Pro Tools' all-tracks modifier.)
+## (Option held: every track, as Pro Tools' all-tracks modifier; Shift and Option: the tracks chosen by their names.)
 func _on_input_toggled(on: bool, inst) -> void:
-	if Input.is_key_pressed(KEY_ALT):
-		app.set_on_all("input", on)
-	else:
+	if not _on_many("input", on, inst):
 		app.set_input(inst, on)
 
 
 func _on_mute_toggled(on: bool, inst) -> void:
-	if Input.is_key_pressed(KEY_ALT):
-		app.set_on_all("mute", on)
-	else:
+	if not _on_many("mute", on, inst):
 		app.set_muted(inst, on)
 
 
 func _on_solo_toggled(on: bool, inst) -> void:
-	if Input.is_key_pressed(KEY_ALT):
-		app.set_on_all("solo", on)
-	else:
+	if not _on_many("solo", on, inst):
 		app.set_soloed(inst, on)
+
+
+## A button clicked with Option (every track) or Shift-Option (the chosen ones): true if it was.
+func _on_many(what: String, on: bool, inst) -> bool:
+	if not Input.is_key_pressed(KEY_ALT):
+		return false
+	if Input.is_key_pressed(KEY_SHIFT):
+		app.set_on_chosen(what, on, inst)
+	else:
+		app.set_on_all(what, on)
+	return true
 
 
 func _on_source_selected(index: int, inst) -> void:

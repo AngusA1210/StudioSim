@@ -167,6 +167,7 @@ struct AudioEngine::Source {
     AmpHead amp_head = AmpHead::Crunch;
     AmpCabinet amp_cabinet = AmpCabinet::OpenBack1x12;
     AmpSpeaker amp_speaker = AmpSpeaker::AmericanVintage;
+    float loop_mix = 0.5f;  // its effects loop's Mix
     bool head_on = true, cabinet_on = true;
     // An amp's effect pedals, the loop pedal among them if it has one. They live here rather than in the amp, so that
     // a loop survives a change of buffer size. The game thread owns them, in order, with what it last set on each; the audio thread
@@ -281,6 +282,7 @@ struct AudioEngine::Source {
     float width = 1.0f, width_target = 1.0f;  // (how much of the side, decoding)
     std::vector<float> mono_r, pre_r, playback_r;  // a stereo mic's second channel
     float pan = 0.0f, pan_target = 0.0f;  // a microphone's track: where it sits in the stereo (a stereo one's, its balance)
+    bool bus_mono = false;  // a folder's bus summed to mono, its pan placing it; else stereo, its pan a balance
     bool hear_input = false;  // a microphone, this block: what it hears (rather than its clips) is its track's sound
     bool auto_sustain = false;  // the sustain pedal down by automation
     Track* track_rt = nullptr;
@@ -394,6 +396,7 @@ void AudioEngine::connect(Source& s) {
     amp->setHead(s.amp_head, s.head_on);
     amp->setCabinet(s.amp_cabinet, s.cabinet_on);
     amp->setSpeaker(s.amp_speaker);
+    amp->setLoopMix(s.loop_mix);
     for (int c = 0; c < kAmpControls; ++c) amp->setControl(AmpControl(c), s.amp_controls[size_t(c)]);
 }
 
@@ -661,6 +664,18 @@ void AudioEngine::setAmpSpeaker(int id, AmpSpeaker speaker) {
 AmpSpeaker AudioEngine::ampSpeaker(int id) const {
     const Source* s = owned(id);
     return s ? s->amp_speaker : AmpSpeaker::AmericanVintage;
+}
+
+void AudioEngine::setAmpLoopMix(int id, float mix) {
+    Source* s = owned(id);
+    if (!s || !isAmp(s->kind)) return;
+    s->loop_mix = std::clamp(mix, 0.0f, 1.0f);
+    Command c; c.type = Command::AmpLoopMix; c.id = id; c.v[0] = s->loop_mix; push(c);
+}
+
+float AudioEngine::ampLoopMix(int id) const {
+    const Source* s = owned(id);
+    return s ? s->loop_mix : 0.5f;
 }
 
 bool AudioEngine::looperAction(int id, Looper::Action action) {
@@ -1577,6 +1592,10 @@ void AudioEngine::setSourcePan(int id, float pan) {
     Command c; c.type = Command::SourcePan; c.id = id; c.v[0] = std::clamp(pan, -1.0f, 1.0f); push(c);
 }
 
+void AudioEngine::setBusMono(int id, bool mono) {
+    Command c; c.type = Command::BusMono; c.id = id; c.v[0] = mono ? 1.0f : 0.0f; push(c);
+}
+
 void AudioEngine::updateFacing(Source& s) {
     if (s.radiator.cones <= 0 && !s.facing_sent) return;
     Command c; c.type = Command::SourceFacing; c.id = s.id;
@@ -1893,6 +1912,10 @@ void AudioEngine::setMasterLimiter(bool on, Monitor which) {
     Command c; c.type = Command::LimiterOn; c.v[0] = on ? 1.0f : 0.0f; c.v[1] = float(which); push(c);
 }
 
+void AudioEngine::setLimiterCeiling(float db) {
+    Command c; c.type = Command::LimiterCeiling; c.v[0] = std::pow(10.0f, std::clamp(db, -20.0f, 0.0f) / 20.0f); push(c);
+}
+
 MeterReading AudioEngine::readMeter() {
     MeterReading m;
     m.peak_l = meter_peak_l_.exchange(0.0f, std::memory_order_relaxed);
@@ -2054,6 +2077,9 @@ void AudioEngine::drainCommands() {
                 break;
             case Command::SourcePan:
                 if (s) s->pan_target = c.v[0];
+                break;
+            case Command::BusMono:
+                if (s) s->bus_mono = c.v[0] > 0.5f;
                 break;
             case Command::RemoveSource:
                 if (s) {  // fade it out first, so it doesn't leave with a click
@@ -2312,6 +2338,9 @@ void AudioEngine::drainCommands() {
             case Command::AmpSpeakerSet:
                 if (s && isAmp(s->kind)) static_cast<Amp*>(s->instrument.get())->setSpeaker(AmpSpeaker(int(c.v[0])));
                 break;
+            case Command::AmpLoopMix:
+                if (s && isAmp(s->kind)) static_cast<Amp*>(s->instrument.get())->setLoopMix(c.v[0]);
+                break;
             case Command::AmpKnob:
                 if (s && isAmp(s->kind)) static_cast<Amp*>(s->instrument.get())->setControl(AmpControl(int(c.v[0])), c.v[1]);
                 break;
@@ -2358,6 +2387,10 @@ void AudioEngine::drainCommands() {
                 break;
             case Command::LimiterOn:
                 limiter_on_[size_t(c.v[1])] = c.v[0] > 0.5f;
+                break;
+            case Command::LimiterCeiling:
+                limiter_.setCeiling(c.v[0]);
+                room_limiter_.setCeiling(c.v[0]);
                 break;
             case Command::Reverb2:  // the spare reverb has been rebuilt for a new room: fade over to it
                 reverb_next_ = c.id;
@@ -3289,6 +3322,8 @@ void AudioEngine::renderBlock() {
         double energy = 0.0, pre_energy = 0.0;
         float peak = 0.0f, pre_peak = 0.0f;
         Automating automating(*this, *s);
+        const float pan_from = s->pan;
+        s->pan += (s->pan_target - s->pan) * wall_glide;
         for (int i = 0; i < block_; ++i) {
             pre_energy += 0.5 * (double(l[i]) * l[i] + double(r[i]) * r[i]);
             pre_peak = std::max(pre_peak, std::max(std::fabs(l[i]), std::fabs(r[i])));
@@ -3301,6 +3336,17 @@ void AudioEngine::renderBlock() {
             const float g = s->gain * s->mute_gain * s->auto_mute;
             l[i] *= g;
             r[i] *= g;
+            // Its pan, after its fader: a mono folder's sound summed and placed as a mono track's (equal power, so the
+            // middle of it keeps its level), a stereo one's balanced as a stereo track's (the other side turned down).
+            const float pan = pan_from + (s->pan - pan_from) * float(i + 1) / float(block_);
+            if (s->bus_mono) {
+                const float m = (l[i] + r[i]) * kDryPan, angle = (pan + 1.0f) * 0.25f * float(kPi);
+                l[i] = m * std::cos(angle);
+                r[i] = m * std::sin(angle);
+            } else if (pan != 0.0f) {
+                if (pan > 0.0f) l[i] *= std::cos(pan * 0.5f * float(kPi));
+                else r[i] *= std::cos(-pan * 0.5f * float(kPi));
+            }
             energy += 0.5 * (double(l[i]) * l[i] + double(r[i]) * r[i]);
             peak = std::max(peak, std::max(std::fabs(l[i]), std::fabs(r[i])));
             to_l[i] += l[i];
@@ -3355,8 +3401,8 @@ void AudioEngine::renderBlock() {
         mix_l_[size_t(i)] *= kMasterGain;  // the mix: the tracks' outputs
         mix_r_[size_t(i)] *= kMasterGain;
     }
-    // Each master, laid out as a DAW's master track: its inserts, then the limiter (an insert too, so it comes before
-    // the master fader and works as hard whatever the fader says), then the fader.
+    // Each master, laid out as a DAW's master track: its inserts, then the fader, then the limiter (at the very end, as
+    // an output limiter is: the fader brought down stops it working).
     for (const Monitor which : {Monitor::Mix, Monitor::Room}) {
         const int bus = master_bus_[size_t(which)];
         if (bus < 0 || !sources_[size_t(bus)]) continue;
@@ -3366,10 +3412,6 @@ void AudioEngine::renderBlock() {
         const PedalTiming timing{double(bar_timing_[1]) / 4.0, bar_timing_[0], bar_timing_[1]};
         for (int p = 0; p < master->insert_board.count; ++p) master->insert_board.pedals[size_t(p)]->processStereo(l, r, block_, timing);
     }
-    float lowest = 1.0f;
-    if (limiter_on_[size_t(Monitor::Mix)]) lowest = std::min(lowest, limiter_.process(mix_l_.data(), mix_r_.data(), block_));
-    if (limiter_on_[size_t(Monitor::Room)]) lowest = std::min(lowest, room_limiter_.process(room_l_.data(), room_r_.data(), block_));
-    if (lowest < meter_gain_.load(std::memory_order_relaxed)) meter_gain_.store(lowest, std::memory_order_relaxed);
     // The master faders: as set, or while the music plays, as their automation has them (glided every 32 samples).
     const auto automated = [&](Monitor which) {
         const size_t m = size_t(which);
@@ -3393,6 +3435,10 @@ void AudioEngine::renderBlock() {
         room_l_[size_t(i)] *= room_volume_;
         room_r_[size_t(i)] *= room_volume_;
     }
+    float lowest = 1.0f;
+    if (limiter_on_[size_t(Monitor::Mix)]) lowest = std::min(lowest, limiter_.process(mix_l_.data(), mix_r_.data(), block_));
+    if (limiter_on_[size_t(Monitor::Room)]) lowest = std::min(lowest, room_limiter_.process(room_l_.data(), room_r_.data(), block_));
+    if (lowest < meter_gain_.load(std::memory_order_relaxed)) meter_gain_.store(lowest, std::memory_order_relaxed);
     // Each mix metered as it leaves its master; the main outputs play the one monitored (and the click, which is for the
     // player, not part of either), and whatever they play over full scale is cut off and counted. Each also goes to
     // its own outputs, if it has some.

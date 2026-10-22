@@ -2782,11 +2782,23 @@ int main(int argc, char** argv) {
         const double front = throb();
         const bool moved = room.engine.setPedalLoop(stack, 1);
         const bool in_loop = room.engine.pedals(stack).front().in_loop && room.engine.pedalLoop(stack) == 1;
+        const bool half_to_begin = room.engine.ampLoopMix(stack) == 0.5f;
+        room.engine.setAmpLoopMix(stack, 1.0f);  // all of what the loop returns: a series loop
         const double looped = throb();
         check(in_front && moved && in_loop && looped - front > 6.0,
-              "a tremolo in front of a driven amp is squashed by its distortion; in its effects loop, after the preamp, it throbs "
-              "as deep as it is set",
+              "a tremolo in front of a driven amp is squashed by its distortion; in its effects loop, after the preamp (all of "
+              "it returned), it throbs as deep as it is set",
               fmt("%.1f dB of throb in front, ", front) + fmt("%.1f in the loop", looped));
+        // A parallel loop: the preamp's own signal goes on to the power amp beside what the loop returns.
+        room.engine.setAmpLoopMix(stack, 0.5f);
+        const double half = throb();
+        room.engine.setAmpLoopMix(stack, 0.0f);
+        const double none = throb();
+        room.engine.setAmpLoopMix(stack, 0.5f);
+        check(half_to_begin && half < looped - 3.0 && half > none + 2.0 && none < 1.5,
+              "the loop is a parallel one, half and half to begin with: the preamp's own signal goes on beside it, so the throb "
+              "is shallower, and with none of the loop returned there is none",
+              fmt("%.1f dB of throb at half, ", half) + fmt("%.1f with none returned", none));
         const int second = room.engine.addPedal(stack, PedalKind::Overdrive, 0);  // (in front: before the loop's first)
         const int third = room.engine.addPedal(stack, PedalKind::Delay);          // (at the end: in the loop)
         const auto board = room.engine.pedals(stack);
@@ -3595,6 +3607,29 @@ int main(int argc, char** argv) {
         const std::vector<PedalStatus> bus_inserts = routed.engine.inserts(bus);
         check(bus_insert && bus_inserts[0].plugin.name == "SR Test Echo" && echo.finite && echo.rms_l > 4.0 * dry_after.rms_l + 1e-4,
               "an insert on a bus plays what reaches it: an echo, a second after the snare", bus_insert ? fmt("echo %.0f dBFS", db(echo.rms_l)) : bus_error);
+
+        // A folder's pan, after its fader: stereo, a balance (turned left, the right side goes); mono, its sound summed
+        // and placed, the middle of it keeping its level (turned right, all of it on the right).
+        routed.engine.clearInsert(bus, 0);
+        auto hit = [&](Room& room) {
+            renderSeconds(room.engine, 1.5);
+            room.engine.noteOn(room.drums, 38, 0.9f);
+            return renderSeconds(room.engine, 0.1);
+        };
+        const Render centred = hit(plain);
+        routed.engine.setSourcePan(bus, -1.0f);
+        const Render balanced = hit(routed);
+        routed.engine.setBusMono(bus, true);
+        routed.engine.setSourcePan(bus, 1.0f);
+        const Render placed = hit(routed);
+        routed.engine.setSourcePan(bus, 0.0f);
+        const Render middle = hit(routed);
+        check(balanced.rms_r < 1e-4 && std::fabs(balanced.rms_l / centred.rms_l - 1.0) < 0.05 && placed.rms_l < 1e-4 &&
+                  std::fabs(placed.rms_r / centred.rms_l - std::sqrt(2.0)) < 0.1 && std::fabs(middle.rms_l / centred.rms_l - 1.0) < 0.05,
+              "a folder has a pan of its own: in stereo a balance (turned left, only the left), in mono its sound summed and placed "
+              "(turned right, all of it there; in the middle as loud as it was)",
+              fmt("balanced left: right %.0f dBFS; ", db(balanced.rms_r)) + fmt("mono right: %+.1f dB against one side before; ", db(placed.rms_r / centred.rms_l)) +
+                  fmt("mono middle %+.1f dB", db(middle.rms_l / centred.rms_l)));
     }
 
     {
@@ -3742,7 +3777,8 @@ int main(int argc, char** argv) {
         mix.engine.readMeter();
         Render beside = renderSeconds(mix.engine, 10.43);
         const MeterReading near_drums = mix.engine.readMeter();
-        check(near_drums.limiter_gain == 1.0f && beside.peak < Limiter::kThreshold, "standing next to the drums leaves headroom: the limiter isn't touched",
+        const float ceiling = std::pow(10.0f, Limiter::kDefaultCeilingDb / 20.0f);
+        check(near_drums.limiter_gain == 1.0f && beside.peak < ceiling, "standing next to the drums leaves headroom: the limiter isn't touched",
               fmt("peak %.1f dBFS", db(beside.peak)));
         // Every instrument's direct output turned up 12 dB: far too loud for the mix (heard on the main outputs now).
         mix.engine.setMonitor(AudioEngine::Monitor::Mix);
@@ -3757,20 +3793,27 @@ int main(int argc, char** argv) {
         };
         MeterReading limited, faded, boosted, clipped;
         Render pushed = cycle(limited);
-        check(pushed.peak <= 1.0 && limited.limiter_gain < 0.8f && limited.clipped == 0 && pushed.finite, "pushed too hard, the limiter holds the output under full scale",
-              fmt("peak %.1f dBFS with the limiter pulling down by up to %.1f dB", db(pushed.peak), -db(limited.limiter_gain)));
+        check(pushed.peak <= ceiling * 1.0001 && limited.limiter_gain < 0.6f && limited.clipped == 0 && pushed.finite,
+              "pushed too hard, the limiter holds the output at its ceiling, -1 dBFS",
+              fmt("peak %.2f dBFS with the limiter pulling down by up to %.1f dB", db(pushed.peak), -db(limited.limiter_gain)));
         mix.engine.setMasterVolume(0.5f);
         Render down = cycle(faded);
-        check(std::fabs(db(faded.limiter_gain) - db(limited.limiter_gain)) < 1.0 && std::fabs((db(pushed.peak) - db(down.peak)) - 6.0) < 0.5,
-              "the limiter comes before the master fader, as on a DAW's master track: turning the master down doesn't ease it",
-              fmt("limiting by %.1f dB with the master at 0 dB, %.1f dB at -6 dB; the output %.1f dB quieter", -db(limited.limiter_gain),
-                  -db(faded.limiter_gain), db(pushed.peak) - db(down.peak)));
+        const double eased = db(faded.limiter_gain) - db(limited.limiter_gain);
+        check(std::fabs(eased - 6.0) < 1.0 && down.peak <= ceiling * 1.0001,
+              "the limiter comes after the master fader, as an output limiter does: the master turned down 6 dB eases it by 6 dB",
+              fmt("limiting by %.1f dB with the master at 0 dB, %.1f dB at -6 dB", -db(limited.limiter_gain), -db(faded.limiter_gain)));
         mix.engine.setMasterVolume(4.0f);
         Render up = cycle(boosted);
-        check(up.peak == 1.0 && boosted.clipped > 0 && std::fabs(db(boosted.limiter_gain) - db(limited.limiter_gain)) < 1.0,
-              "so the master fader pushed up past the limiter can clip the output, and the meter counts it",
-              fmt("%.0f samples over", double(boosted.clipped)));
+        check(up.peak <= ceiling * 1.0001 && boosted.clipped == 0 && std::fabs((db(limited.limiter_gain) - db(boosted.limiter_gain)) - 12.0) < 1.0,
+              "so a master pushed up past 0 dB only works the limiter harder: nothing gets over its ceiling",
+              fmt("limiting by %.1f dB with the master at +12 dB", -db(boosted.limiter_gain)));
         mix.engine.setMasterVolume(1.0f);
+        mix.engine.setLimiterCeiling(-6.0f);
+        MeterReading lowered;
+        Render under = cycle(lowered);
+        mix.engine.setLimiterCeiling(Limiter::kDefaultCeilingDb);
+        check(db(under.peak) <= -6.0 + 1e-3 && db(under.peak) > -6.5, "its ceiling can be set lower: at -6 dBFS the peaks stop there",
+              fmt("peak %.2f dBFS", db(under.peak)));
         mix.engine.setLimiter(false);
         Render raw = cycle(clipped);
         check(raw.peak == 1.0 && clipped.clipped > 0 && clipped.limiter_gain == 1.0f, "with the limiter off the mix is left alone, and the meter counts what is cut off at full scale",

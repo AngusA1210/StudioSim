@@ -260,6 +260,8 @@ static func value_at(lane: Array, param: String, step: float) -> float:
 
 ## A point added (or moved to) at a step, keeping them in order. Returns its index.
 func add_point(track, param: String, step: float, value: float) -> int:
+	if track.get("is_master") and param == "volume":  # (a master's fader stops at 0 dB)
+		value = minf(value, 0.0)
 	var lane: Array = track.automation.get_or_add(param, [])
 	var at := 0
 	while at < lane.size() and float(lane[at][0]) <= step:
@@ -482,7 +484,7 @@ func _apply(track, param: String, value: float) -> void:
 	if param == "volume":
 		var gain: float = 0.0 if value <= -79.0 else db_to_linear(value)
 		if track.get("is_master"):
-			app.apply_master_gain(gain, track.which)
+			app.apply_master_gain(minf(gain, 1.0), track.which)
 		else:
 			audio.set_source_gain(track.source_id, gain * (1.0 if track.is_folder else track.normal_gain()))
 	elif param == "pan":

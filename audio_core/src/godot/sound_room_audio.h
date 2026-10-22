@@ -75,6 +75,7 @@ public:
     void set_mic_mid_side(int id, bool mid_side, float width = 1.0f);
     float get_mic_noise(const String& model) const;  // its noise and its preamp's, as a sound level (dB SPL)
     void set_source_pan(int id, float pan);
+    void set_bus_mono(int id, bool mono);  // a folder's bus: summed to mono (its pan places it), or stereo (its pan a balance)
     // An amp's cabinet in the room (AudioEngine::setSourceRadiator): its cones' middles, the way its baffle faces, the
     // speakers' size in inches, its open back's middle (if open), the baffle's width. No cones: a point source again.
     // A PA speaker's horn covers `coverage_deg` either side of its axis above `crossover_hz` (0: a plain cone).
@@ -99,6 +100,9 @@ public:
     // The speakers in its cabinet, of the cabinet's size: "british_25", "british_60", "american_vintage", "british_alnico"
     // (12"), "american_10", "bass_10" (10"), "bass_15" (15"). A cabinet comes with its usual ones.
     void set_amp_speaker(int id, const String& speaker);
+    // Its effects loop's Mix (a parallel loop): how much of what the pedals in it return is blended with the preamp's
+    // own signal, 0 to 1 (0.5 to begin with; 1 is a series loop).
+    void set_amp_loop_mix(int id, float mix);
     // The loop pedal on an amp's board (a "looper" pedal; its controls are its level, Sync, and Overdub after
     // recording). action: "press" (the footswitch: record, play, overdub), "stop", "play", "undo", "redo" or "clear".
     // False if the amp has no loop pedal.
@@ -201,6 +205,7 @@ public:
     void set_distance_falloff(float db_per_doubling);
     void set_limiter(bool on);  // off = the plain sum of the mix; either way the output is cut off at full scale
     void set_master_limiter(bool on, const String& which);  // one master's ("mix" or "room")
+    void set_limiter_ceiling(float db);  // where both masters' limiters (after their faders) hold the peaks: -1 dBFS at first
     // The output meter since it was last read: {peak_l, peak_r, rms_l, rms_r, limiter_gain} as linear levels
     // (1 = full scale; limiter_gain 1 = the limiter did nothing) and {clipped}, a count of samples cut off.
     Dictionary read_meter();

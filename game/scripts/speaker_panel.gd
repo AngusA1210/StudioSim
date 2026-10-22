@@ -1,5 +1,5 @@
 extends CanvasLayer
-## A Speaker's panel (' at a Speaker, or its name in the mix window): which hardware input it plays, its input
+## A Speaker's panel (P at a Speaker, or its name in the mix window): which hardware input it plays, its input
 ## switch, and its own volume, as on the back of a powered PA speaker. The volume goes up to +24 dB, so that a Speaker
 ## can fill a big room as a big PA would; it comes after the Speaker's inserts (an amp simulator on one keeps its
 ## sound whatever the volume) and before its fader.

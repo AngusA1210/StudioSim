@@ -234,7 +234,7 @@ func _handle_key(event: InputEventKey) -> void:
 			app.menu.open()
 		return
 	var notes := playing != null or typing or plugin_open != null  # the letter keys are a piano
-	if notes and Bindings.NOTES.has(key):
+	if notes and Bindings.NOTES.has(key) and app.bindings.action_for(key) != "edit":  # (the panel's key opens it, seated too)
 		_note_on(key)
 		return
 	# The instrument these keys act on: the one you are playing, or else the one you are facing.
@@ -495,7 +495,10 @@ func _grab_or_drop() -> void:
 		if carried.is_mic and app.nearest_instrument(carried) != null:  # a microphone put down points at what it is nearest
 			app.aim_mic(carried, app.nearest_instrument(carried))
 		carried = null
+	elif target != null and target.locked:
+		app.session.notice.emit("%s is locked in place (%s unlocks it)" % [target.display_name, app.bindings.label("lock")])
 	elif target != null:
+		app.note_move(target)  # (Cmd-Z puts it back where it was picked up from)
 		carried = target
 		carried.set_carried(true)
 		target.set_highlighted(false)

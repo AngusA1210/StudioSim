@@ -8,6 +8,9 @@ extends Node3D
 const Models := preload("res://scripts/instrument_models.gd")
 const Catalog := preload("res://scripts/catalog.gd")
 const INPUT_GREEN := Color(0.36, 0.9, 0.5)
+# A padlock, yellow, over a locked instrument's name.
+const LOCK_SVG := "<svg xmlns='http://www.w3.org/2000/svg' width='64' height='64' viewBox='0 0 64 64'><path d='M20 29 V20 a12 12 0 0 1 24 0 V29' fill='none' stroke='#1a1408' stroke-width='11' stroke-linecap='round'/><path d='M20 29 V20 a12 12 0 0 1 24 0 V29' fill='none' stroke='#f5c542' stroke-width='6' stroke-linecap='round'/><rect x='12' y='27' width='40' height='31' rx='6' fill='#f5c542' stroke='#1a1408' stroke-width='3'/><circle cx='32' cy='40' r='4.5' fill='#1a1408'/><rect x='30' y='41' width='4' height='9' rx='2' fill='#1a1408'/></svg>"
+static var _lock_texture: Texture2D
 # How an amp's loop pedal, if it has one, shows what it is doing: on the pedal's light, and under the amp's name.
 const LOOP_LOOKS := {
 	"waiting": ["waiting for the bar", Color(1.0, 0.75, 0.3)],
@@ -41,6 +44,7 @@ var room_db := 0.0     # its level in the room: how loud it sounds where it stan
 var soloed := false
 var loop_on := true    # playable instruments: whether the sequencer plays their pattern
 var input_on := false  # it takes input: MIDI controllers play it, or a Speaker plays its hardware input
+var locked := false    # it stays where it is (Cmd-L): it can't be carried, nor a microphone moved or aimed
 var input_channel := -1  # live-input instruments: the hardware input they play (0-based), or -1 for all of them
 var level_db := 0.0    # its fader, in the mix (its direct output): how far above or below its normal level it is set
 var room_meter_peak := 0.0  # its meter in the room (the game's, each frame; see main.gd)
@@ -74,6 +78,7 @@ var amp_cabinet := ""
 var amp_speaker := ""   # the speakers in its cabinet (catalog.gd: AMP_SPEAKERS), of the cabinet's size
 var head_on := true
 var cabinet_on := true
+var loop_mix := 0.5    # its effects loop's Mix (a parallel loop): how much of what comes back is blended in, 0 to 1
 var looper := {}       # what its loop pedal is doing, from the audio core: state "none" if it has none (amps only)
 var pedals := []       # its effect pedals, in signal order, from the audio core: [{kind, on, controls, plugin_name...}]
 var tuner := {}        # what its tuner hears while one is on: {pitched, note, cents, frequency}; empty otherwise
@@ -95,6 +100,7 @@ var _accent: StandardMaterial3D  # the parts in its own colour, which light up a
 var _light: OmniLight3D
 var _label: Label3D
 var _input_badge: Label3D
+var _lock_badge: Sprite3D  # the padlock over its name while it is locked
 var _loop_label: Label3D
 var _led: StandardMaterial3D  # the loop pedal's light, while it has one
 var _pedal_spot := Vector3.ZERO  # where the loop pedal stands; the effect pedals line up beside it
@@ -161,6 +167,16 @@ func setup(spec: Dictionary, audio: SoundRoomAudio) -> void:
 	_input_badge.modulate = INPUT_GREEN
 	_input_badge.visible = false
 	add_child(_input_badge)
+	if _lock_texture == null:
+		var image := Image.new()
+		image.load_svg_from_string(LOCK_SVG, 1.0)
+		_lock_texture = ImageTexture.create_from_image(image)
+	_lock_badge = Sprite3D.new()
+	_lock_badge.texture = _lock_texture
+	_lock_badge.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	_lock_badge.pixel_size = 0.0028
+	_lock_badge.visible = false
+	add_child(_lock_badge)
 	_loop_label = Label3D.new()  # an amp's loop pedal: recording, looping, overdubbing
 	_loop_label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	_loop_label.font_size = 30
@@ -208,6 +224,7 @@ func _place_parts() -> void:
 	_light.position = Vector3(0, top - source_height + 0.15, 0.6)  # above and in front, lighting it from the player's side
 	_label.position = Vector3(0, top - source_height + 0.3, 0)
 	_input_badge.position = _label.position - Vector3(0, 0.15, 0)
+	_lock_badge.position = _label.position + Vector3(0, 0.17, 0)
 	_loop_label.position = _label.position - Vector3(0, 0.3, 0)
 	(_collider.shape as BoxShape3D).size = Vector3(footprint.x * 0.85, top, footprint.y * 0.85)
 	_collider.position.y = top / 2 - source_height
@@ -527,8 +544,24 @@ func set_label_visible(on: bool) -> void:
 	_labels_shown = on
 	_label.visible = on
 	_input_badge.visible = on and input_on
+	_lock_badge.visible = on and locked
 	if not on:
 		_loop_label.visible = false
+
+
+## Locked, it stays where it stands: the yellow padlock over its name says so.
+func set_locked(on: bool) -> void:
+	locked = on
+	_lock_badge.visible = on and _label.visible
+
+
+func lock_shown() -> bool:  # (for the checks)
+	return _lock_badge.visible
+
+
+## Where it stands and which way it faces (a microphone, its height and how far down it points too), to be put back.
+func placement() -> Dictionary:
+	return {"position": global_position, "yaw": rotation.y, "height": source_height, "tilt": mic_tilt}
 
 
 func set_carried(value: bool) -> void:

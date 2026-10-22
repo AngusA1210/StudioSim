@@ -223,6 +223,7 @@ float SoundRoomAudio::get_mic_noise(const String& model) const {
     return index < 0 ? 0.0f : sr::micNoiseSpl(sr::micModels()[size_t(index)]);
 }
 void SoundRoomAudio::set_source_pan(int id, float pan) { if (engine_) engine_->setSourcePan(id, pan); }
+void SoundRoomAudio::set_bus_mono(int id, bool mono) { if (engine_) engine_->setBusMono(id, mono); }
 void SoundRoomAudio::set_floor_reflection(float amount) { if (engine_) engine_->setFloorReflection(amount); }
 void SoundRoomAudio::set_source_radiator(int id, const PackedVector3Array& cones, const Vector3& facing, float inches, bool open_back,
                                          const Vector3& back, float width, float coverage_deg, float crossover_hz) {
@@ -261,6 +262,10 @@ void SoundRoomAudio::set_amp_speaker(int id, const String& speaker) {
                                                          "american_10", "bass_10", "bass_15"};
     for (int k = 0; k < sr::kAmpSpeakers; ++k)
         if (speaker == kNames[k] && engine_) engine_->setAmpSpeaker(id, sr::AmpSpeaker(k));
+}
+
+void SoundRoomAudio::set_amp_loop_mix(int id, float mix) {
+    if (engine_) engine_->setAmpLoopMix(id, mix);
 }
 
 void SoundRoomAudio::set_amp_cabinet(int id, const String& cabinet, bool on) {
@@ -565,6 +570,7 @@ float SoundRoomAudio::get_source_room_peak(int id) { return engine_ ? engine_->s
 void SoundRoomAudio::set_distance_falloff(float db_per_doubling) { if (engine_) engine_->setDistanceFalloff(db_per_doubling); }
 void SoundRoomAudio::set_limiter(bool on) { if (engine_) engine_->setLimiter(on); }
 void SoundRoomAudio::set_master_limiter(bool on, const String& which) { if (engine_) engine_->setMasterLimiter(on, monitorOf(which)); }
+void SoundRoomAudio::set_limiter_ceiling(float db) { if (engine_) engine_->setLimiterCeiling(db); }
 
 Dictionary SoundRoomAudio::read_meter() {
     Dictionary d;
@@ -876,10 +882,12 @@ void SoundRoomAudio::_bind_methods() {
     ClassDB::bind_method(D_METHOD("set_mic_mid_side", "id", "mid_side", "width"), &SoundRoomAudio::set_mic_mid_side, DEFVAL(1.0f));
     ClassDB::bind_method(D_METHOD("get_mic_noise", "model"), &SoundRoomAudio::get_mic_noise);
     ClassDB::bind_method(D_METHOD("set_source_pan", "id", "pan"), &SoundRoomAudio::set_source_pan);
+    ClassDB::bind_method(D_METHOD("set_bus_mono", "id", "mono"), &SoundRoomAudio::set_bus_mono);
     ClassDB::bind_method(D_METHOD("set_source_radiator", "id", "cones", "facing", "inches", "open_back", "back", "width", "coverage_deg",
                                   "crossover_hz"), &SoundRoomAudio::set_source_radiator, DEFVAL(0.0f), DEFVAL(1800.0f));
     ClassDB::bind_method(D_METHOD("set_floor_reflection", "amount"), &SoundRoomAudio::set_floor_reflection);
     ClassDB::bind_method(D_METHOD("set_amp_speaker", "id", "speaker"), &SoundRoomAudio::set_amp_speaker);
+    ClassDB::bind_method(D_METHOD("set_amp_loop_mix", "id", "mix"), &SoundRoomAudio::set_amp_loop_mix);
     ClassDB::bind_method(D_METHOD("set_source_output", "id", "bus"), &SoundRoomAudio::set_source_output);
     ClassDB::bind_method(D_METHOD("set_source_input_channel", "id", "channel"), &SoundRoomAudio::set_source_input_channel);
     ClassDB::bind_method(D_METHOD("set_source_input", "id", "on"), &SoundRoomAudio::set_source_input);
@@ -944,6 +952,7 @@ void SoundRoomAudio::_bind_methods() {
     ClassDB::bind_method(D_METHOD("set_distance_falloff", "db_per_doubling"), &SoundRoomAudio::set_distance_falloff);
     ClassDB::bind_method(D_METHOD("set_limiter", "on"), &SoundRoomAudio::set_limiter);
     ClassDB::bind_method(D_METHOD("set_master_limiter", "on", "which"), &SoundRoomAudio::set_master_limiter);
+    ClassDB::bind_method(D_METHOD("set_limiter_ceiling", "db"), &SoundRoomAudio::set_limiter_ceiling);
     ClassDB::bind_method(D_METHOD("read_meter"), &SoundRoomAudio::read_meter);
     ClassDB::bind_method(D_METHOD("get_source_level", "id", "pre_fader"), &SoundRoomAudio::get_source_level, DEFVAL(false));
     ClassDB::bind_method(D_METHOD("get_source_peak", "id", "pre_fader"), &SoundRoomAudio::get_source_peak, DEFVAL(false));

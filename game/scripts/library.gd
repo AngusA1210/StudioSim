@@ -107,7 +107,7 @@ func instrument_settings(inst) -> Dictionary:
 					"state": Marshalls.raw_to_base64(audio.get_plugin_state(inst.source_id, "pedal", i))})
 			pedals.append(pedal)
 		out.amp = {"head": inst.amp_head, "head_on": inst.head_on, "cabinet": inst.amp_cabinet, "cabinet_on": inst.cabinet_on, "speaker": inst.amp_speaker,
-			"controls": inst.amp_controls.duplicate(), "pedals": pedals}
+			"controls": inst.amp_controls.duplicate(), "pedals": pedals, "loop_mix": inst.loop_mix}
 	return out
 
 
@@ -138,6 +138,7 @@ func apply_instrument_settings(inst, settings: Dictionary, include := {}) -> Str
 		for control in controls:
 			if inst.amp_controls.has(control):
 				app.set_amp_control(inst, control, float(controls[control]))
+		app.set_amp_loop_mix(inst, float(amp.get("loop_mix", 0.5)))
 		app.hide_plugin_editors(inst)
 		for i in range(audio.get_pedals(inst.source_id).size() - 1, -1, -1):
 			app.remove_pedal(inst, i)
@@ -353,6 +354,8 @@ func room_data() -> Dictionary:
 			"sends": _sends_data(inst)}
 		if inst.named:
 			entry.name = inst.display_name
+		if inst.locked:
+			entry.locked = true
 		if inst.is_mic:  # (where it stands: its capsule's height, and how far it points down; a stereo pair's other mic)
 			entry.height = inst.source_height
 			entry.tilt = inst.mic_tilt
@@ -371,12 +374,13 @@ func room_data() -> Dictionary:
 	var folders := []
 	for folder in app.folders:  # (its tracks: an instrument's by its place in the list, a folder's or an aux's as {"folder"} or {"aux"})
 		folders.append({"name": folder.display_name, "color": _color_data(folder.color), "level_db": folder.level_db, "muted": folder.muted,
-			"soloed": folder.soloed, "open": folder.open, "members": folder.members.map(_track_ref),
+			"soloed": folder.soloed, "open": folder.open, "members": folder.members.map(_track_ref), "pan": folder.pan, "mono": folder.mono,
 			"inserts": inserts_data(folder), "automation": folder.automation.duplicate(true), "auto_mode": folder.auto_mode, "lanes": folder.lanes.duplicate(),
 			"sends": _sends_data(folder)})
 	var auxes := []
 	for aux in app.auxes:
 		auxes.append({"name": aux.display_name, "color": _color_data(aux.color), "level_db": aux.level_db, "muted": aux.muted, "soloed": aux.soloed,
+			"pan": aux.pan, "mono": aux.mono,
 			"inserts": inserts_data(aux), "automation": aux.automation.duplicate(true), "auto_mode": aux.auto_mode, "lanes": aux.lanes.duplicate(),
 			"sends": _sends_data(aux)})
 	var masters := {}
@@ -514,6 +518,7 @@ func apply_room_data(data: Dictionary, carry := {}, size = null, mode := "") -> 
 			problems.append("a %s (%s)" % [kind, "the room is full" if app.Catalog.KINDS.has(kind) else "not a kind SoundRoom knows"])
 			continue
 		inst.rotation.y = float(entry.get("yaw", 0.0))
+		inst.set_locked(bool(entry.get("locked", false)))
 		inst.set_color(_color_from(entry.get("color"), inst.color))
 		if entry.has("name"):
 			app.rename_track(inst, str(entry.name))
@@ -560,6 +565,8 @@ func apply_room_data(data: Dictionary, carry := {}, size = null, mode := "") -> 
 		folder.open = bool(entry.get("open", true))
 		if keep.call("mix"):
 			app.set_folder_level(folder, float(entry.get("level_db", 0.0)))
+			app.set_pan(folder, float(entry.get("pan", 0.0)))
+			app.set_folder_mono(folder, bool(entry.get("mono", false)))
 			folder.muted = bool(entry.get("muted", false))
 			folder.soloed = bool(entry.get("soloed", false))
 		var problem := apply_inserts(folder, entry.get("inserts", []) if keep.call("plugins") else [])
@@ -579,6 +586,8 @@ func apply_room_data(data: Dictionary, carry := {}, size = null, mode := "") -> 
 		aux.color = _color_from(entry.get("color"), aux.color)
 		if keep.call("mix"):
 			app.set_folder_level(aux, float(entry.get("level_db", 0.0)))
+			app.set_pan(aux, float(entry.get("pan", 0.0)))
+			app.set_folder_mono(aux, bool(entry.get("mono", false)))
 			aux.muted = bool(entry.get("muted", false))
 			aux.soloed = bool(entry.get("soloed", false))
 		var problem := apply_inserts(aux, entry.get("inserts", []) if keep.call("plugins") else [])

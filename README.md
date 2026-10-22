@@ -50,16 +50,17 @@ to the title, which then offers to go back into the room.
 | W A S D, mouse | move, look (click to capture the mouse); the arrow keys walk and turn too |
 | Shift | run |
 | G or click | pick up the instrument you're facing, put it down (it turns to face you) |
+| ⌘L | lock the instrument you're facing (or carrying, or the microphone whose panel is open) in place, or unlock it: a yellow padlock floats over its name, and it can't be picked up, nor a microphone moved or aimed |
 | T | the instrument menu: add an instrument to the room |
 | V | duplicate the instrument you're facing or carrying, with its settings, pedals and plug-ins: the copy is in your hands to put down |
 | Backspace, twice | remove the instrument you're facing or carrying |
 | E | play the instrument you're next to; Q stops |
-| A S D F G H J K L ; | white keys while playing (W E T Y U O P are the black keys, Z/X change octave) |
+| A S D F G H J K L ; | white keys while playing (W E T Y U O are the black keys, Z/X change octave; P opens the panel, seated too) |
 | K | the keyboard: the letter keys play every instrument whose input is on, from wherever you stand. The arrow keys walk and turn meanwhile; Q or Esc closes it |
 | I | that instrument's input on/off (see below) |
 | MIDI keyboard | plays every instrument whose input is on, with velocity (and the sustain pedal on the Keys); plug in any time |
-| ' (beside Return) | open the pattern editor for the instrument you're next to or playing (at an amp: its knobs and pedals; at a Speaker: its volume and input) |
-| P | at a plug-in instrument, open its plug-in's window above the on-screen keyboard, the letter keys playing it; a click in the room, Esc or Q puts it away |
+| P | open the panel of the instrument you're facing: its pattern editor (at an amp: its knobs and pedals; at a Speaker: its volume and input; at a microphone: its place, seen from its capsule) |
+| ' (beside Return) | at a plug-in instrument, open its plug-in's window above the on-screen keyboard, the letter keys playing it; a click in the room, Esc or Q puts it away |
 | M | switch that instrument's loop off or on (for a Speaker or an amp: mute it in the room; for a microphone: mute its track) |
 | L O U J | at an amp with a loop pedal: L the footswitch (record, close the loop, overdub), O stop or play, U undo or redo the last overdub, J twice to clear. Elsewhere in a Record room, L switches loop playback on and off |
 | 1 to 8 | at an amp, stamp on its pedals: each switches that pedal on or off (the loop pedal: its footswitch) |
@@ -70,7 +71,7 @@ to the title, which then offers to go back into the room.
 | R | a Record room: the edit window, from the room or the mix window (⌘= swaps the two) |
 | Enter | a Record room: the playhead back to the start, from the room, the edit window or the mix window |
 | N | a Record room: insertion follows playback on/off (stopping leaves the playhead where the music stopped, rather than going back to where it started), as in Pro Tools |
-| ⌘Z, ⌘X | a Record room: undo the last edit to the clips (a recording, a move, a trim...), and redo it (⌘⇧Z redoes too) |
+| ⌘Z, ⌘X | in the room: undo the last move of an instrument (carried and put down, or a microphone placed or aimed), and redo it. In the mix and edit windows (a Record room): undo the last edit to the clips (a recording, a move, a trim...), and redo it. Two histories apart (⌘⇧Z redoes too) |
 | C | metronome click on/off |
 | Esc | the menu (see below), including the room's size and walls; the music keeps playing while it's open |
 | ⌘S | save the room |
@@ -119,7 +120,7 @@ MIDI drum map, except that the acoustic kits have a ride (D#, as at 51) where th
 A **Plug-in Instrument** plays one of the instrument plug-ins on your Mac (Audio Unit synthesizers, samplers,
 pianos), chosen from the plug-in browser when you pick it, and takes that plug-in's name. MIDI controllers, the
 computer keyboard and its pattern play it like any instrument, sending it the sustain pedal, the mod wheel and the
-other controllers, and pitch bend as well. **P**, facing it, opens the plug-in's own window just above the on-screen
+other controllers, and pitch bend as well. **'**, facing it, opens the plug-in's own window just above the on-screen
 keyboard: the letter keys play the instrument while you work the window with the mouse, and a click anywhere in the
 room (or Esc, or Q, or the window's close button) puts it away and gives the mouse back to looking about. The
 on-screen keyboard can be clicked to play too. A plug-in's window never takes the keyboard from the game (even those,
@@ -133,7 +134,7 @@ Pick one and it appears in your hands: walk it to where it should stand and clic
 instrument starts with an empty pattern, so it is silent until you play it or write it a pattern (the pattern editor
 can load the default one). A new Speaker plays the hardware input chosen in the menu, which can be changed later in
 its mix window strip or on the I/O page; several Speakers can each play a different input. A Speaker's own
-**volume** (' at it, or click its name in the mix window) goes up to +24 dB, as on a big powered PA speaker, so that
+**volume** (P at it, or click its name in the mix window) goes up to +24 dB, as on a big powered PA speaker, so that
 it can fill a large room; it comes after the Speaker's inserts and before its fader. A second instrument of a kind is numbered and a
 paler colour, to tell them apart. Everything in the room is saved with it (see Rooms).
 
@@ -179,11 +180,12 @@ to another in its panel:
   through the measurement mic at 0 dB of gain, is 120 dB SPL (an instrument heard at its own level is around 90 to
   105 dB SPL), so it is far below the music, but there in a quiet passage with a lot of gain, as with a real mic.
 - **Placing it**: pick one from the menu, carry it (G) and put it down: it points at the instrument nearest it. Then
-  **'** at it (or its name in the mix window) opens its panel, docked down the right of the screen, and the view
+  **P** at it (or its name in the mix window) opens its panel, docked down the right of the screen, and the view
   goes to the mic's capsule, looking the way it points (its own model out of the way), with a cross at the middle and,
   under it, what it is pointing at, how far off and how far off its axis, as you would check it with your head beside
   the stand. In that view W A S D (or the arrows) move it along the floor, R and F raise and lower it, dragging aims
-  it, and the scroll wheel moves it along its aim, closer or further (Shift for fine moves, in each). The panel has
+  it, and the scroll wheel moves it along its aim, closer or further (Shift for fine moves, in each): its keys are
+  drawn in the corner of the view as they lie on the keyboard, each lit while held. ⌘Z undoes a move. The panel has
   its model and pattern (with its frequency response and its pattern drawn, the lows and highs fainter), where it
   stands, to the centimetre (across and along the room, from its middle), its capsule's height (where it hears
   from), which way it points (its bearing, clockwise from north, and how far down) or **Point it at** an instrument,
@@ -283,14 +285,16 @@ is some 7 dB louder than at 5, not 12, and grittier), and whose supply **sags** 
 note dips just after its attack and blooms (most in the small Crunch head, with its tube rectifier; hardly at all in
 the big Clean one). Each head has its wattage (Clean 85 W, Crunch 30, High Gain 100, Bass Round 300, Bass Punch 500), and
 the speakers theirs: a head that can give more than its speakers take drives them, turned up, into compression (their
-voice coils heating) and breakup, as a small combo cranked does. Press ' facing an amp to
+voice coils heating) and breakup, as a small combo cranked does. Press P facing an amp to
 open its panel: drag a knob up or down (Shift for fine moves), turn the scroll wheel over it, or double-click it for
 5. The panel also has the amp's input switch and which hardware input it plays. Plug a guitar or bass straight into
 the interface's instrument input; the amp is the only processing it needs. Wear headphones.
 
 An amp has an **effects loop**: on the board, pedals after PREAMP are sent out after the preamp and its tone stack and
-returned before the power amp, so a delay or reverb there repeats the amp's own distorted sound. Drag a pedal across to
-move it in or out; the loop's own **+** adds one in it.
+returned before the power amp, so a delay or reverb there repeats the amp's own distorted sound. It is a parallel loop:
+its **MIX** knob blends what comes back with the preamp's own signal, which carries on to the power amp beside it (half
+and half to begin with; all the way up, everything goes through the pedals, as a series loop), so set a delay or reverb
+in it fully wet. Drag a pedal across to move it in or out; the loop's own **+** adds one in it.
 
 #### Effect pedals
 
@@ -425,8 +429,9 @@ In a Record room:
   and minutes and seconds), whether it is recording, and the loop.
 - **The edit window** (R from the room or the mix window, or the mix window's Edit window button): a row for each instrument, its name in its colour,
   and its clips along the bars. On each track's header, **R** makes it record-ready, **I** is its input, **M** mute and
-  **S** solo. Option-click any of them for every track at once, as Pro Tools' all-tracks modifier has it (in the mix
-  window too). Above them the ruler: click it to put the playhead there, drag along it to loop that range (**L**, or
+  **S** solo. Option-click any of them for every track at once, as Pro Tools' all-tracks modifier has it, or
+  Shift-Option-click for just the tracks chosen by their names (Shift-click names for a run of them, Cmd-click for one
+  more), as its selected-tracks modifier has it (in the mix window too). Above them the ruler: click it to put the playhead there, drag along it to loop that range (**L**, or
   Loop, switches loop playback on and off, in the mix window and the room too). The counter at the top shows bar |
   beat with the time beside it; click it and type a bar (`5`), a bar and beat (`5 | 3`) or a time (`1:24`), then
   Enter, to go there. Clips and the ruler snap to the grid (Bar, Beat, 1/8, 1/16, or Off for anywhere). Scroll to
@@ -647,8 +652,11 @@ in Touch, Latch or Write, holding one writes it.
 - **Peak readouts**: as in Pro Tools, the number beside each fader's level holds the highest peak (in dBFS) until
   you click it, and turns red once anything reaches full scale. Clicking a meter clears it too; Alt-click clears
   every one, the master's included.
-- **Folders**: a routing folder's strip comes before its tracks': its inserts (plug-ins in stereo, on what its tracks
-  play into it), mute and solo, and its fader and meter. See Tracks and folders.
+- **Folders**: a routing folder's strip comes before its tracks', in a frame of the folder's colour that holds them
+  all (a folder in it framed within): its inserts (plug-ins in stereo, on what its tracks play into it), its pan, mute
+  and solo, and its fader and meter. Its pan comes after its fader: a stereo folder's is a balance, as a stereo track's;
+  right-click its name for Mono, which sums its sound and places it, as a mono track's pan does. In the edit window its
+  colour runs down beside its tracks' headers. See Tracks and folders.
 - **Room Reverb**: the room's reverb return, a fader with a stereo meter of its own beside the room's master, as an
   aux return sits beside the master on a desk. 0 dB is the room's own reverb; down to the bottom there is none, up to
   +12 dB it is wetter than the room. It is the room's: the mix has none unless a track sends to an aux with a reverb on
@@ -657,12 +665,11 @@ in Touch, Latch or Write, holding one writes it.
   HEAR, lit while the main outputs play the room.
 - **Mix Master**: its inserts, A to E, in stereo on the whole mix (a bus compressor, an EQ; they can be automated,
   in its lanes at the foot of the edit window), its output (the main outputs only, while it is heard, or a pair of
-  outputs of its own as well), LIMIT, its fader with a stereo meter and peak readout, and HEAR. The master is laid out
-  as a DAW's master track: the limiter is an insert after the others, so it comes before the fader and works just as
-  hard wherever the fader is. With it on, neither the mix nor the room can reach full scale on its way to its fader,
-  and the window says by how many decibels it is being held back whenever it is: the cue to bring an instrument down.
-  With it off, the mix is the plain sum of the tracks. Either way, whatever the main outputs play over full scale is
-  cut off and reported as clipping, so a master pushed above 0 dB can clip even with the limiter on.
+  outputs of its own as well), LIMIT, its fader with a stereo meter and peak readout, and HEAR. Both master faders
+  start at 0 dB and go no higher. The limiter comes last, after the fader, as an output limiter does: with it on,
+  neither the mix nor the room gets past its ceiling (-1 dBFS to begin with; Settings changes it), and the window says
+  by how many decibels it is being held back whenever it is. Bringing the master down eases it. With it off, the mix is
+  the plain sum of the tracks, and whatever the main outputs play over full scale is cut off and reported as clipping.
 
 Rather than instructions written across it, the line at the foot of the window says what the mouse is over: an
 insert, a button, a fader, the limiter. The amp and Speaker panels work the same way.
@@ -707,8 +714,8 @@ computer keyboard becomes a small piano for it, and any MIDI controller plays it
 work like a drum machine: each key is a drum, laid out like a General MIDI kit
 (C kick, D snare, F# closed hat, A# open hat, F and A toms, D# clap, C# crash) and repeated in every octave.
 
-Each instrument also has a pattern that the sequencer loops. The room starts with the default groove. Press ' (the key beside
-Return) at an instrument to edit its pattern on a step grid, one bar at a time:
+Each instrument also has a pattern that the sequencer loops. The room starts with the default groove. Press P at an
+instrument to edit its pattern on a step grid, one bar at a time:
 
 - click a square to add a note, click a note to remove it, right-click a note to step through loud, medium, soft
   and "now and then" (a soft note that plays one time in four)
@@ -729,7 +736,7 @@ patterns go back to the defaults at each start until rooms can be saved.
 - **I/O**: which of the device's outputs carry the mix, the input device, and which hardware input each Speaker plays.
   Live input always starts switched off, so an open microphone never meets a pair of speakers by surprise.
 - **MIDI**: every MIDI device the system sees, with a tick box each and a light that flashes when it sends notes.
-- **Settings**: binaural, distance falloff, text size, field of view, mouse sensitivity, room lighting, full screen (which
+- **Settings**: binaural, distance falloff, the limiter's ceiling, text size, field of view, mouse sensitivity, room lighting, full screen (which
   SoundRoom then opens in every time), whether the master meter and the audio readout are shown on screen, and
   auto-save and backups for the room.
 

@@ -1,5 +1,5 @@
 extends CanvasLayer
-## The pattern editor (' at an instrument): a step grid for the loop that instrument plays, one bar at a time,
+## The pattern editor (P at an instrument): a step grid for the loop that instrument plays, one bar at a time,
 ## with the tempo and the metronome click along the top. The music keeps playing while it's open, so every change
 ## is heard on the next time round. While it's open, a MIDI controller plays the instrument being edited.
 
