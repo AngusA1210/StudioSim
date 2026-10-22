@@ -2759,6 +2759,7 @@ int main(int argc, char** argv) {
         room.engine.setLoopRange(true, 50.0 * 8, 52.0 * 8);
         const uint64_t missed_before = room.engine.stats().disk_misses;
         room.engine.playFrom(49.0 * 8);
+        room.engine.settleStreaming();  // (once, after the jump: a slow machine's disk thread may not be there yet)
         std::vector<float> buffer(size_t(room.engine.blockSize()) * 2);
         double energy = 0.0;
         const int blocks = int(3.0 * room.engine.sampleRate() / room.engine.blockSize());
