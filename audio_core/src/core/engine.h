@@ -68,7 +68,7 @@ struct EngineStats {
     int output_channels = 0, input_channels = 0;
     double buffer_ms = 0;          // the hardware buffer we fill ahead of playback
     double device_ms = 0;          // what the OS reports for the output device itself (driver, safety offset, hardware)
-    double binaural_ms = 0;        // what binaural rendering adds: a quarter of a block (0 while it is switched off)
+    double binaural_ms = 0;        // what binaural rendering adds: about a quarter of a block (0 while it is off)
     double output_latency_ms = 0;  // buffer + device + binaural: from a block being rendered to it being heard
     double input_latency_ms = 0;   // from sound entering the input device to the engine receiving it
     float cpu_load = 0;            // share of each block's time budget spent rendering
@@ -390,8 +390,8 @@ public:
     void noteOn(int id, int note, float velocity);
     void noteOff(int id, int note);
     void allNotesOff(int id);
-    // Binaural (HRTF) rendering, or plain stereo panning to compare it with. Binaural comes out a quarter of a block
-    // later (EngineStats::binaural_ms), and the reverb and the click with it. Switching crossfades between the two.
+    // Binaural (HRTF) rendering, or plain stereo panning to compare it with. Binaural comes out about a quarter of a
+    // block later (EngineStats::binaural_ms), and the reverb and the click with it. Switching crossfades between the two.
     void setBinaural(bool on);
     void setReverb(bool on);              // as setReverbLevel(1) or (0)
     void setReverbLevel(float gain);      // the room reverb's return: 1 is as the room has it, 0 none; up to 4

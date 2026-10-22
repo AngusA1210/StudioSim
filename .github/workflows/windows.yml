@@ -38,11 +38,17 @@ jobs:
         run: tools/fetch_deps.sh
 
       - name: Configure
+        id: configure
         run: cmake -S audio_core -B audio_core/build -A x64  # (the newest Visual Studio the runner has)
 
-      - name: Build
-        run: cmake --build audio_core/build --config Release --parallel
+      # The checks first, as they build in a few minutes; the Godot extension's bindings take a quarter of an hour.
+      - name: Build the checks
+        run: cmake --build audio_core/build --config Release --parallel --target engine_tests
 
       - name: Offline checks
         shell: bash
         run: audio_core/build/Release/engine_tests.exe
+
+      - name: Build the Godot extension
+        if: ${{ !cancelled() && steps.configure.outcome == 'success' }}
+        run: cmake --build audio_core/build --config Release --parallel --target soundroom_audio

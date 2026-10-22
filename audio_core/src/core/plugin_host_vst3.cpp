@@ -72,6 +72,7 @@ struct Found {
 struct Scanned {
     std::filesystem::file_time_type when;
     std::vector<Found> classes;
+    std::string problem;  // why it wouldn't load, if it wouldn't
 };
 
 std::mutex g_lock;                                 // what follows (the game thread's, but the checks run anywhere)
@@ -141,7 +142,7 @@ void addClass(std::vector<Found>& out, const std::string& path, const std::strin
 }
 
 // What a module holds: from its moduleinfo.json if it has one, or by loading it and asking its factory.
-std::vector<Found> scanModule(const std::string& path) {
+std::vector<Found> scanModule(const std::string& path, std::string* problem) {
     std::vector<Found> out;
     if (auto info_path = Hosting::Module::getModuleInfoPath(path)) {
         std::ifstream file(pathOf(*info_path), std::ios::binary);
@@ -153,11 +154,13 @@ std::vector<Found> scanModule(const std::string& path) {
             return out;
         }
     }
-    auto module = loadModule(path, nullptr);
+    auto module = loadModule(path, problem);
     if (!module) return out;
     const auto factory_vendor = module->getFactory().info().vendor();
-    for (const auto& c : module->getFactory().classInfos())
+    const auto classes = module->getFactory().classInfos();
+    for (const auto& c : classes)
         addClass(out, path, c.ID().toString(), c.category(), c.name(), c.vendor().empty() ? factory_vendor : c.vendor(), c.subCategories());
+    if (out.empty() && problem) *problem = "none of the " + std::to_string(classes.size()) + " things it makes is an audio plug-in";
     return out;
 }
 
@@ -169,7 +172,13 @@ std::vector<Found> everything() {
         std::error_code ec;
         const auto when = std::filesystem::last_write_time(pathOf(path), ec);
         auto it = g_scanned.find(path);
-        Scanned scanned = it != g_scanned.end() && it->second.when == when ? it->second : Scanned{when, scanModule(path)};
+        Scanned scanned;
+        if (it != g_scanned.end() && it->second.when == when) {
+            scanned = it->second;
+        } else {
+            scanned.when = when;
+            scanned.classes = scanModule(path, &scanned.problem);
+        }
         out.insert(out.end(), scanned.classes.begin(), scanned.classes.end());
         seen[path] = std::move(scanned);
     }
@@ -730,6 +739,14 @@ void setVst3SearchPaths(const std::vector<std::string>& paths) {
     g_search = paths;
     g_search_set = !paths.empty();
     g_scanned.clear();
+}
+
+std::vector<std::string> vst3ScanProblems() {
+    std::lock_guard<std::mutex> lock(g_lock);
+    std::vector<std::string> out;
+    for (const auto& [path, scanned] : g_scanned)
+        if (!scanned.problem.empty()) out.push_back(path + ": " + scanned.problem);
+    return out;
 }
 
 std::vector<PluginDescription> vst3Plugins(bool instruments) {

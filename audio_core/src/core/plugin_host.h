@@ -41,6 +41,8 @@ std::string vst3Category(const std::vector<std::string>& subcategories, bool ins
 
 // Where VST3 plug-ins are looked for: the system's folders (none given), or only these (the checks' own test plug-in).
 void setVst3SearchPaths(const std::vector<std::string>& paths);
+// Each VST3 module found at the last look that wouldn't load, and why ("<its path>: <the reason>").
+std::vector<std::string> vst3ScanProblems();
 
 class PluginInstance {
 public:

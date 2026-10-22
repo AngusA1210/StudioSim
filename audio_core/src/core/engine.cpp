@@ -350,7 +350,7 @@ void AudioEngine::allocateBuffers() {
     for (auto& ch : input_bus_.channel) ch.assign(size_t(block_), 0.0f);
     block_seconds_.assign(size_t(block_), -1.0);
     take_.assign(size_t(block_), 0.0f);
-    for (auto* delay : {&send_delay_, &click_delay_}) delay->init(SourceSpatializer::binauralDelay(block_));
+    for (auto* delay : {&send_delay_, &click_delay_}) delay->init(steam_.binauralDelay());
     input_fifo_.assign(kFifoFrames * InputBus::kMaxChannels, 0.0f);
     input_read_ = input_count_ = 0;
     block_pos_ = block_;  // nothing rendered yet
@@ -403,6 +403,7 @@ std::vector<AudioDeviceInfo> AudioEngine::inputDevices() { return listDevices(ma
 bool AudioEngine::init(std::string* error) {
     if (initialized_) return true;
     initialized_ = steam_.init(sr_, block_, error);
+    for (auto* delay : {&send_delay_, &click_delay_}) delay->init(steam_.binauralDelay());  // (now that it is known)
     return initialized_;
 }
 
@@ -436,6 +437,7 @@ bool AudioEngine::configure(int sample_rate, int block_size, std::string* error)
         initialized_ = false;
         return false;
     }
+    for (auto* delay : {&send_delay_, &click_delay_}) delay->init(steam_.binauralDelay());
     for (auto& s : owned_) {
         if (!s) continue;
         s->instrument = makeInstrument(s->kind);
@@ -1966,7 +1968,7 @@ EngineStats AudioEngine::stats() const {
         s.block_size = block_;
     }
     // The binaural rendering's delay is the engine's own, not the device's: it comes and goes with the setting.
-    s.binaural_ms = binaural_wanted_ ? 1000.0 * SourceSpatializer::binauralDelay(block_) / sr_ : 0.0;
+    s.binaural_ms = binaural_wanted_ ? 1000.0 * steam_.binauralDelay() / sr_ : 0.0;
     s.output_latency_ms = s.buffer_ms + s.device_ms + s.binaural_ms;
     s.cpu_load = cpu_load_.load(std::memory_order_relaxed);
     s.blocks = blocks_.load(std::memory_order_relaxed);

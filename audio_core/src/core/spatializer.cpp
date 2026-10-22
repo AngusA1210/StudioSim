@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <vector>
 
 namespace sr {
 namespace {
@@ -18,6 +19,7 @@ void SteamAudio::release() {
     if (context_) iplContextRelease(&context_);
     hrtf_ = nullptr;
     context_ = nullptr;
+    binaural_delay_ = 0;
 }
 
 bool SteamAudio::init(int sample_rate, int frame_size, std::string* error) {
@@ -39,7 +41,41 @@ bool SteamAudio::init(int sample_rate, int frame_size, std::string* error) {
         if (error) *error = "Steam Audio: could not load the default HRTF";
         return false;
     }
+    binaural_delay_ = measureBinauralDelay();
     return true;
+}
+
+// A single sample from straight ahead, through the binaural rendering as a source's goes: where it comes out (where it
+// first reaches a quarter of its peak, as an onset is heard) is how late that rendering is.
+int SteamAudio::measureBinauralDelay() const {
+    IPLBinauralEffectSettings bs{};
+    bs.hrtf = hrtf_;
+    IPLAudioSettings settings = settings_;
+    IPLBinauralEffect effect = nullptr;
+    if (iplBinauralEffectCreate(context_, &settings, &bs, &effect) != IPL_STATUS_SUCCESS) return settings_.frameSize / 4;
+    const int frame = settings_.frameSize;
+    const size_t n = size_t(frame);
+    std::vector<float> in(n), left(n), right(n), heard;
+    for (int f = 0; f * frame < 4096 + frame; ++f) {
+        std::fill(in.begin(), in.end(), 0.0f);
+        if (f == 0) in[0] = 1.0f;
+        float* in_ch[1] = {in.data()};
+        float* out_ch[2] = {left.data(), right.data()};
+        IPLAudioBuffer in_buf{1, frame, in_ch}, out_buf{2, frame, out_ch};
+        IPLBinauralEffectParams bp{};
+        bp.direction = IPLVector3{0.0f, 0.0f, -1.0f};
+        bp.interpolation = IPL_HRTFINTERPOLATION_BILINEAR;
+        bp.spatialBlend = 1.0f;
+        bp.hrtf = hrtf_;
+        iplBinauralEffectApply(effect, &bp, &in_buf, &out_buf);
+        heard.insert(heard.end(), left.begin(), left.end());
+    }
+    iplBinauralEffectRelease(&effect);
+    float peak = 0.0f;
+    for (float v : heard) peak = std::max(peak, std::fabs(v));
+    for (size_t i = 0; i < heard.size(); ++i)
+        if (peak > 0.0f && std::fabs(heard[i]) > 0.25f * peak) return int(i);
+    return frame / 4;
 }
 
 Vec3 SteamAudio::relativeDirection(Vec3 source, Vec3 listener, Vec3 ahead, Vec3 up) const {

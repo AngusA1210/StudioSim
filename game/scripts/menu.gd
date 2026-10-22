@@ -659,7 +659,7 @@ func _refresh_live() -> void:
 	_rate_label.text = "%.1f kHz" % (float(s.get("sample_rate", 0)) / 1000.0) if running else "-"
 	if running:
 		var parts := "%.1f ms buffer + %.1f ms device" % [s.buffer_ms, s.device_ms]
-		if float(s.binaural_ms) > 0.0:  # binaural rendering holds the sound back by a quarter of a buffer
+		if float(s.binaural_ms) > 0.0:  # binaural rendering holds the sound back by about a quarter of a buffer
 			parts += " + %.1f ms binaural" % s.binaural_ms
 		_latency_label.text = "%.1f ms   (%s)" % [s.output_latency_ms, parts]
 		_cpu_label.text = "%.0f %%" % (100.0 * float(s.cpu_load))

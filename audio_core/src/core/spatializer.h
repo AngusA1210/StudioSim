@@ -24,11 +24,18 @@ public:
     IPLHRTF hrtf() const { return hrtf_; }
     IPLAudioSettings settings() const { return settings_; }
     Vec3 relativeDirection(Vec3 source, Vec3 listener, Vec3 ahead, Vec3 up) const;
+    // How many samples later the binaural rendering comes out than the plain one, measured with a click from straight
+    // ahead when it is set up (0 before then). Steam Audio overlaps its frames by a quarter of their length; its
+    // Windows HRTF adds a little more than its Mac one does.
+    int binauralDelay() const { return binaural_delay_; }
 
 private:
+    int measureBinauralDelay() const;
+
     IPLContext context_ = nullptr;
     IPLHRTF hrtf_ = nullptr;
     IPLAudioSettings settings_{};
+    int binaural_delay_ = 0;
 };
 
 struct SpatialParams {
@@ -49,10 +56,6 @@ public:
     void release();
     // Renders one frame of mono input and adds the stereo result into out_l / out_r.
     void process(const float* mono, float* out_l, float* out_r, const SpatialParams& params);
-    // How many samples later the binaural rendering comes out than the plain one: Steam Audio overlaps its frames
-    // by a quarter of their length. (Measured rather than documented; the offline checks hold it to this.)
-    static int binauralDelay(int frame_size) { return frame_size / 4; }
-
     static constexpr float kRefDistance = 1.5f;  // full level inside this distance, falling away beyond it
     // Steam Audio's default air absorption coefficients (per metre) for its low / mid / high bands (below 800 Hz,
     // 800 Hz–8 kHz, above 8 kHz).
