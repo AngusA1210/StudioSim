@@ -987,6 +987,27 @@ func _run() -> void:
 		main.automation.value_text(drums, "insert:4:0", 1.0) == "+6.0 dB",
 		"a VST3 plug-in goes on an insert as well (the checks' own), its control's values as it writes them", vst3_problem)
 	main.clear_insert(drums, 4)
+	# Delay compensation: a plug-in that makes the drums 1000 samples late holds the others back as much.
+	var lookahead_id := ""
+	for p in main.available_plugins():
+		if p.name == "SR Test Lookahead":
+			lookahead_id = str(p.id)
+	main.set_insert(drums, 4, lookahead_id)
+	main.refresh_delays()
+	await frames(2)
+	var bass_strip: Dictionary = mix._strip_for(main.find_instrument("bass"))
+	var held_cells := [drums_strip.delay.dly.text, drums_strip.delay.cmp.text, bass_strip.delay.dly.text, bass_strip.delay.cmp.text,
+		mix._master.delay.cmp.text]
+	main.set_delay_compensation(false)
+	await frames(2)
+	var off_cells := [bass_strip.delay.cmp.text, mix._master.delay.cmp.text]
+	main.set_delay_compensation(true)
+	check(held_cells == ["dly 1000", "cmp 0", "dly 0", "cmp 1000", "tot 1000"] and off_cells == ["cmp off", ""] and
+		is_equal_approx(float(audio.get_stats().compensation_ms), 1000.0 / float(audio.get_stats().sample_rate) * 1000.0),
+		"delay compensation, at the foot of each strip as Pro Tools shows it: the drums' plug-in delays them 1000 samples (dly), the bass is held back to meet them (cmp), the master says the total; off, nothing is held back",
+		" / ".join(held_cells))
+	main.clear_insert(drums, 4)
+	main.refresh_delays()
 	var pad_strip: Dictionary = mix._strips[main.instruments.find(pad)]
 	pad.set_loop(false)
 	await seconds(1.5)

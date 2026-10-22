@@ -38,6 +38,7 @@
 #include <array>
 #include <vector>
 
+#include "compensation.h"
 #include "dsp.h"
 #include "instruments.h"
 #include "pedals.h"
@@ -132,6 +133,9 @@ public:
     void setCabinet(AmpCabinet cabinet, bool on) { model_.setCabinet(cabinet, on); }
     void setSpeaker(AmpSpeaker speaker) { model_.setSpeaker(speaker); }
     void setLoopMix(float mix) { loop_mix_ = std::clamp(mix, 0.0f, 1.0f); }  // how much of its effects loop returns
+    // How late the plug-ins in its effects loop make what comes back: the preamp's own signal beside it is held back as
+    // much, so that the two meet in step rather than combing.
+    void setLoopDelay(int samples) { loop_delay_ = std::clamp(samples, 0, CompensationDelay::kMaxDelay); }
     // The pedals belong to the source, so that they outlive the amp being rebuilt; `timing` is where the engine
     // keeps the bar lines for this block (samples to the next one, or -1, and a bar's length).
     void connect(const PedalBoard* board, const int64_t* timing) {
@@ -149,7 +153,9 @@ private:
     int channel_ = -1;
     bool enabled_ = false;
     float loop_mix_ = 0.5f;
+    int loop_delay_ = 0;
     std::vector<float> in_, dry_;  // (dry_: the preamp's own signal, beside its effects loop)
+    CompensationDelay dry_hold_;   // which is held back to meet what the loop returns
 };
 
 }  // namespace sr

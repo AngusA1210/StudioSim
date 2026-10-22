@@ -124,6 +124,7 @@ var _falloff_slider: HSlider
 var _falloff_value: Label
 var _ceiling_slider: HSlider
 var _ceiling_value: Label
+var _compensation_toggle: CheckButton
 var _text_slider: HSlider
 var _text_value: Label
 var _text_dragging := false
@@ -542,6 +543,10 @@ func _build_settings_page(page: VBoxContainer) -> void:
 	_ceiling_slider.value_changed.connect(func(db: float) -> void: app.set_limiter_ceiling(db))
 	_ceiling_value.custom_minimum_size.x = 150
 	_note(page, "Where the limiters on both masters (LIMIT, after the master fader) hold the peaks.")
+	_compensation_toggle = CheckButton.new()
+	_compensation_toggle.toggled.connect(func(on: bool) -> void: app.set_delay_compensation(on))
+	_field(page, "Delay compensation").add_child(_compensation_toggle)
+	_note(page, "Plug-ins that look ahead make their tracks late. With it on, every track is held back to meet the latest at the mix's master, as a DAW does; the mix window shows each track's delay (dly) and how far it is held back (cmp). The room isn't held back: it is heard as it is played.")
 
 	page.add_child(HSeparator.new())
 	_heading(page, "Display and controls")
@@ -667,7 +672,10 @@ func _refresh_live() -> void:
 	_rate_label.text = "%.1f kHz" % (float(s.get("sample_rate", 0)) / 1000.0) if running else "-"
 	if running:
 		var parts := "%.1f ms buffer + %.1f ms device" % [s.buffer_ms, s.device_ms]
-		if float(s.binaural_ms) > 0.0:  # binaural rendering holds the sound back by about a quarter of a buffer
+		if settings.monitor == "mix":  # the mix, held back by its delay compensation
+			if float(s.get("compensation_ms", 0.0)) > 0.0:
+				parts += " + %.1f ms delay compensation" % s.compensation_ms
+		elif float(s.binaural_ms) > 0.0:  # the room: binaural rendering holds the sound back by about a quarter of a buffer
 			parts += " + %.1f ms binaural" % s.binaural_ms
 		_latency_label.text = "%.1f ms   (%s)" % [s.output_latency_ms, parts]
 		_cpu_label.text = "%.0f %%" % (100.0 * float(s.cpu_load))
@@ -736,6 +744,10 @@ func _refresh_live() -> void:
 	_falloff_value.text = "%.1f dB per doubling" % settings.distance_falloff_db
 	_ceiling_slider.set_value_no_signal(settings.limiter_ceiling_db)
 	_ceiling_value.text = "%.1f dBFS" % settings.limiter_ceiling_db
+	_compensation_toggle.set_pressed_no_signal(settings.delay_compensation)
+	var total: int = int(app.delays.get("total", 0))
+	_compensation_toggle.text = ("On  (the mix held back %d samples, %.1f ms)" % [total, 1000.0 * total / maxf(float(app.delays.get("sample_rate", 48000)), 1.0)]
+		if settings.delay_compensation else "Off")
 	if not _text_dragging:
 		_text_slider.set_value_no_signal(settings.text_scale * 100.0)
 		_text_value.text = "%d %%" % roundi(settings.text_scale * 100.0)

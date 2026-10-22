@@ -126,6 +126,10 @@ var _clip_age := 10.0
 var _frames := 0
 var _elapsed := 0.0
 var _midi_poll := 0.0
+var _delay_poll := 0.0
+# Delay compensation as the audio core last worked it out (refresh_delays): {on, total, tracks: {id: {delay,
+# compensation, over}}}, for the mix window to show.
+var delays := {}
 
 
 func _ready() -> void:
@@ -186,6 +190,7 @@ func _ready() -> void:
 	_apply_master_volume()
 	audio.set_distance_falloff(settings.distance_falloff_db)
 	audio.set_limiter_ceiling(settings.limiter_ceiling_db)
+	audio.set_delay_compensation(settings.delay_compensation)
 	audio.set_master_limiter(settings.limiter, "mix")
 	audio.set_master_limiter(settings.room_limiter, "room")
 	audio.set_click(settings.click)
@@ -339,6 +344,10 @@ func _process(delta: float) -> void:
 	_frames += 1
 	_elapsed += delta
 	_read_meter(delta)
+	_delay_poll += delta
+	if _delay_poll > 0.25:  # (a plug-in's delay can change as it plays: a lookahead switched on, say)
+		_delay_poll = 0.0
+		refresh_delays()
 	_midi_poll += delta
 	if _midi_poll > 2.0:  # the system tells us about new controllers too; this is the fallback
 		_midi_poll = 0.0
@@ -1863,6 +1872,27 @@ func set_distance_falloff(db: float) -> void:
 	settings.distance_falloff_db = clampf(db, 0.0, 6.0)
 	audio.set_distance_falloff(settings.distance_falloff_db)
 	settings.save_to_disk()
+
+
+## Delay compensation, as a DAW's: every track's plug-ins make it late by as much as they report, and with it on each
+## track's output is held back so that all of them reach the mix's master together (sends their auxes; the room isn't
+## held back, it is heard as it is played). The mix window shows each track's delay and how far it is held back.
+func set_delay_compensation(on: bool) -> void:
+	settings.delay_compensation = on
+	audio.set_delay_compensation(on)
+	settings.save_to_disk()
+	refresh_delays()
+
+
+## Asks the plug-ins how late they are again, and keeps what the audio core works out (`delays`).
+func refresh_delays() -> void:
+	audio.refresh_delay_compensation()
+	delays = audio.get_delay_compensation()
+
+
+## A track's delay (its plug-ins', samples), how far it is held back, and whether it needs more than can be made up.
+func delay_of(track) -> Dictionary:
+	return delays.get("tracks", {}).get(track.source_id, {"delay": 0, "compensation": 0, "over": false}) if track != null else {}
 
 
 ## Where both masters' limiters (after their faders) hold the peaks, in dBFS: -1 to begin with, -12 to 0.

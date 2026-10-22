@@ -37,6 +37,8 @@ namespace {
 const FUID kGainId(0x5352A001, 0x7E5D4C2B, 0x9A6B1C0D, 0x2E3F4051);
 const FUID kToneId(0x5352A002, 0x7E5D4C2B, 0x9A6B1C0D, 0x2E3F4051);
 const FUID kEchoId(0x5352A003, 0x7E5D4C2B, 0x9A6B1C0D, 0x2E3F4051);
+const FUID kLookaheadId(0x5352A004, 0x7E5D4C2B, 0x9A6B1C0D, 0x2E3F4051);
+constexpr int kLookahead = 1000;  // samples: how late SR Test Lookahead plays what it hears, and says so
 
 void copy128(String128 to, const char* from) {
     int i = 0;
@@ -248,6 +250,67 @@ private:
     size_t at_ = 0;
 };
 
+// A plug-in that makes its sound late and reports by how much, as a lookahead limiter or a linear-phase EQ does: what
+// it hears, kLookahead samples later, otherwise untouched.
+class Lookahead final : public Plugin {
+public:
+    int32 PLUGIN_API getBusCount(MediaType type, BusDirection) override { return type == kAudio ? 1 : 0; }
+    tresult PLUGIN_API getBusInfo(MediaType type, BusDirection dir, int32 index, BusInfo& bus) override {
+        if (type != kAudio || index != 0) return kInvalidArgument;
+        bus.mediaType = kAudio;
+        bus.direction = dir;
+        bus.channelCount = SpeakerArr::getChannelCount(arrangement_);
+        copy128(bus.name, dir == kInput ? "In" : "Out");
+        bus.busType = kMain;
+        bus.flags = BusInfo::kDefaultActive;
+        return kResultOk;
+    }
+    tresult PLUGIN_API setBusArrangements(SpeakerArrangement* ins, int32 nin, SpeakerArrangement* outs, int32 nout) override {
+        if (nin != 1 || nout != 1 || ins[0] != outs[0] || (ins[0] != SpeakerArr::kMono && ins[0] != SpeakerArr::kStereo)) return kResultFalse;
+        arrangement_ = ins[0];
+        return kResultTrue;
+    }
+    tresult PLUGIN_API getBusArrangement(BusDirection, int32 index, SpeakerArrangement& arr) override {
+        if (index != 0) return kInvalidArgument;
+        arr = arrangement_;
+        return kResultOk;
+    }
+    uint32 PLUGIN_API getLatencySamples() override { return kLookahead; }
+    tresult PLUGIN_API setupProcessing(ProcessSetup&) override {
+        for (auto& line : lines_) line.assign(size_t(kLookahead), 0.0f);
+        at_ = 0;
+        return kResultOk;
+    }
+    tresult PLUGIN_API process(ProcessData& data) override {
+        if (data.numInputs < 1 || data.numOutputs < 1 || lines_[0].empty()) return kResultOk;
+        size_t at = at_;
+        for (int32 c = 0; c < data.outputs[0].numChannels && c < 2; ++c) {
+            const float* in = data.inputs[0].channelBuffers32[std::min(c, data.inputs[0].numChannels - 1)];
+            float* out = data.outputs[0].channelBuffers32[c];
+            std::vector<float>& line = lines_[size_t(c)];
+            at = at_;
+            for (int32 i = 0; i < data.numSamples; ++i) {
+                const float x = in[i];
+                out[i] = line[at];
+                line[at] = x;
+                at = (at + 1) % line.size();
+            }
+        }
+        at_ = at;
+        return kResultOk;
+    }
+    tresult PLUGIN_API getParameterInfo(int32, ParameterInfo&) override { return kInvalidArgument; }
+    tresult PLUGIN_API getParamStringByValue(ParamID, ParamValue, String128) override { return kInvalidArgument; }
+
+protected:
+    int count() const override { return 0; }
+
+private:
+    SpeakerArrangement arrangement_ = SpeakerArr::kStereo;
+    std::vector<float> lines_[2];
+    size_t at_ = 0;
+};
+
 class Tone final : public Plugin {
 public:
     int32 PLUGIN_API getBusCount(MediaType type, BusDirection dir) override { return dir == kOutput ? (type == kAudio ? 1 : 0) : (type == kEvent ? 1 : 0); }
@@ -329,7 +392,7 @@ public:
         info->flags = PFactoryInfo::kUnicode;
         return kResultOk;
     }
-    int32 PLUGIN_API countClasses() override { return 3; }
+    int32 PLUGIN_API countClasses() override { return 4; }
     tresult PLUGIN_API getClassInfo(int32 index, PClassInfo* info) override {
         PClassInfo2 two{};
         if (getClassInfo2(index, &two) != kResultOk) return kInvalidArgument;
@@ -340,13 +403,16 @@ public:
         return kResultOk;
     }
     tresult PLUGIN_API getClassInfo2(int32 index, PClassInfo2* info) override {
-        if (index < 0 || index > 2) return kInvalidArgument;
+        if (index < 0 || index > 3) return kInvalidArgument;
         *info = {};
-        (index == 0 ? kGainId : (index == 1 ? kToneId : kEchoId)).toTUID(info->cid);
+        const FUID* ids[4] = {&kGainId, &kToneId, &kEchoId, &kLookaheadId};
+        const char* names[4] = {"SR Test Gain", "SR Test Tone", "SR Test Echo", "SR Test Lookahead"};
+        const char* kinds[4] = {"Fx|Dynamics", "Instrument|Synth", "Fx|Delay", "Fx|Mastering"};
+        ids[index]->toTUID(info->cid);
         info->cardinality = PClassInfo::kManyInstances;
         std::strcpy(info->category, kVstAudioEffectClass);
-        std::strcpy(info->name, index == 0 ? "SR Test Gain" : (index == 1 ? "SR Test Tone" : "SR Test Echo"));
-        std::strcpy(info->subCategories, index == 0 ? "Fx|Dynamics" : (index == 1 ? "Instrument|Synth" : "Fx|Delay"));
+        std::strcpy(info->name, names[index]);
+        std::strcpy(info->subCategories, kinds[index]);
         std::strcpy(info->vendor, "SoundRoom checks");
         std::strcpy(info->version, "1.0.0");
         std::strcpy(info->sdkVersion, kVstVersionString);
@@ -357,6 +423,7 @@ public:
         if (FUnknownPrivate::iidEqual(cid, kGainId.toTUID())) made = static_cast<IComponent*>(new Gain());
         else if (FUnknownPrivate::iidEqual(cid, kToneId.toTUID())) made = static_cast<IComponent*>(new Tone());
         else if (FUnknownPrivate::iidEqual(cid, kEchoId.toTUID())) made = static_cast<IComponent*>(new Echo());
+        else if (FUnknownPrivate::iidEqual(cid, kLookaheadId.toTUID())) made = static_cast<IComponent*>(new Lookahead());
         if (!made) {
             *obj = nullptr;
             return kNoInterface;

@@ -206,6 +206,12 @@ public:
     void set_limiter(bool on);  // off = the plain sum of the mix; either way the output is cut off at full scale
     void set_master_limiter(bool on, const String& which);  // one master's ("mix" or "room")
     void set_limiter_ceiling(float db);  // where both masters' limiters (after their faders) hold the peaks: -1 dBFS at first
+    // Delay compensation (AudioEngine's): on or off; asked of the plug-ins again (as often as you like: only a change
+    // does anything); and as it stands: {on, total (samples the mix is held back), sample_rate, tracks: {id: {delay,
+    // compensation, over}}}, every track's, folder's and aux's, and the masters' buses' (their plug-ins' delay alone).
+    void set_delay_compensation(bool on);
+    void refresh_delay_compensation();
+    Dictionary get_delay_compensation() const;
     // The output meter since it was last read: {peak_l, peak_r, rms_l, rms_r, limiter_gain} as linear levels
     // (1 = full scale; limiter_gain 1 = the limiter did nothing) and {clipped}, a count of samples cut off.
     Dictionary read_meter();

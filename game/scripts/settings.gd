@@ -20,6 +20,7 @@ var distance_falloff_db := 6.0  # how much quieter an instrument gets for each d
 var limiter := true             # hold the mix under full scale; off = hear and meter exactly what it adds up to
 var room_limiter := true        # and the room
 var limiter_ceiling_db := -1.0  # where both limiters (after the master faders) hold the peaks, dBFS
+var delay_compensation := true  # the mix's tracks held back to meet the latest of them at the master (plug-ins' delays)
 var monitor := "room"           # what the main outputs play (H): "room", what you hear standing there, or "mix"
 var mix_output := -1            # the mix on a pair of outputs of its own too (its first, 0-based), or -1 for none
 var room_output := -1           # and the room
@@ -76,6 +77,7 @@ func load_from_disk() -> void:
 	click_volume_db = clampf(file.get_value("sound", "click_volume_db", click_volume_db), -24.0, 6.0)
 	distance_falloff_db = clampf(file.get_value("sound", "falloff_db_per_doubling", distance_falloff_db), 0.0, 6.0)
 	limiter_ceiling_db = clampf(file.get_value("sound", "limiter_ceiling_db", limiter_ceiling_db), -12.0, 0.0)
+	delay_compensation = bool(file.get_value("sound", "delay_compensation", delay_compensation))
 	limiter = file.get_value("sound", "limiter", limiter)
 	room_limiter = file.get_value("sound", "room_limiter", room_limiter)
 	monitor = file.get_value("sound", "monitor", monitor)
@@ -123,6 +125,7 @@ func save_to_disk() -> void:
 	file.set_value("sound", "click_volume_db", click_volume_db)
 	file.set_value("sound", "falloff_db_per_doubling", distance_falloff_db)
 	file.set_value("sound", "limiter_ceiling_db", limiter_ceiling_db)
+	file.set_value("sound", "delay_compensation", delay_compensation)
 	file.set_value("sound", "limiter", limiter)
 	file.set_value("sound", "room_limiter", room_limiter)
 	file.set_value("sound", "monitor", monitor)

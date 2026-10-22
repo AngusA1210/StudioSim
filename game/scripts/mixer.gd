@@ -301,6 +301,7 @@ func _build_reverb() -> PanelContainer:
 	var readouts := _readouts(box, "reverb")
 	_foot(box)
 	box.add_child(_name_plate("Room Reverb", Color(0.4, 0.86, 0.78), null))
+	_delay_row(box, false)  # (none: so its fader lines up with the others)
 	_reverb = {"fader": pair.fader, "meter": pair.meter, "value": readouts.value, "peak": readouts.peak, "gap": gap}
 	return strip
 
@@ -344,8 +345,9 @@ func _build_master_strip(master) -> PanelContainer:
 	var hear := _hear_button(box, which)
 	var plate := _name_plate(master.display_name, master.color, master)
 	box.add_child(plate)
+	var delay := _delay_row(box)
 	var made := {"inst": master, "fader": pair.fader, "meter": pair.meter, "value": readouts.value, "peak": readouts.peak,
-		"limiter": limiter, "gap": gap, "inserts": inserts, "output": output, "hear": hear, "plate": plate, "outputs": -1}
+		"limiter": limiter, "gap": gap, "inserts": inserts, "output": output, "hear": hear, "plate": plate, "outputs": -1, "delay": delay}
 	if which == "room":
 		_room = made
 	else:
@@ -454,10 +456,11 @@ func _build_strip(inst) -> Dictionary:
 	var room := _room_section(box, inst)
 	var plate := _name_plate(inst.display_name, inst.color, inst)
 	box.add_child(plate)
+	var delay := _delay_row(box)
 	_strip_parent.add_child(strip)
 	return {"inst": inst, "fader": pair.fader, "meter": pair.meter, "value": readouts.value, "peak": readouts.peak, "input": input,
 		"mute": mute, "solo": solo, "source": source, "output": output, "inserts": inserts, "sends": sends, "plate": plate,
-		"frame": strip.get_theme_stylebox("panel"), "panel": strip, "small": small_label, "pan": pan, "room": room}
+		"frame": strip.get_theme_stylebox("panel"), "panel": strip, "small": small_label, "pan": pan, "room": room, "delay": delay}
 
 
 ## Where a track sits in the mix's stereo, as Pro Tools' pan pot (an instrument's direct output, a microphone's track; a
@@ -561,10 +564,11 @@ func _build_folder_strip(folder) -> Dictionary:
 	_foot(box)
 	var plate := _name_plate(folder.display_name, folder.color, folder)
 	box.add_child(plate)
+	var delay := _delay_row(box)
 	_strip_parent.add_child(strip)
 	return {"inst": folder, "fader": pair.fader, "meter": pair.meter, "value": readouts.value, "peak": readouts.peak, "input": null,
 		"mute": mute, "solo": solo, "source": count, "output": output, "inserts": inserts, "sends": sends, "plate": plate,
-		"frame": strip.get_theme_stylebox("panel"), "panel": strip, "pan": pan, "room": {}}
+		"frame": strip.get_theme_stylebox("panel"), "panel": strip, "pan": pan, "room": {}, "delay": delay}
 
 
 const INSERT_HEIGHT := 17.0
@@ -832,6 +836,62 @@ func _build_track(track, parent: Container) -> void:
 		_build_track(member, row)
 
 
+## Delay compensation at the foot of a strip, as Pro Tools shows it: the track's own delay (dly: what its plug-ins make
+## it late by, in samples) and how far it is held back to meet the latest at the master (cmp). The mix's master shows
+## its plug-ins' delay and how far the whole mix is held back (tot); the room's, its plug-ins' alone. `shown` false: the
+## space alone.
+func _delay_row(box: VBoxContainer, shown := true) -> Dictionary:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 3)
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	box.add_child(row)
+	var cells := []
+	for i in 2:
+		var cell := Label.new()
+		cell.add_theme_font_size_override("font_size", 10)
+		cell.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		cell.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		cell.custom_minimum_size = Vector2(STRIP_WIDTH / 2.0 - 5.0, 17)
+		var back := StyleBoxFlat.new()
+		back.bg_color = Color(0, 0, 0, 0.35 if shown else 0.0)
+		back.set_corner_radius_all(2)
+		cell.add_theme_stylebox_override("normal", back)
+		cell.mouse_filter = Control.MOUSE_FILTER_PASS
+		row.add_child(cell)
+		cells.append(cell)
+	return {"dly": cells[0], "cmp": cells[1]}
+
+
+## Each strip's delay and compensation, as the audio core last worked them out.
+func _show_delays() -> void:
+	var rate: float = maxf(float(app.delays.get("sample_rate", 48000)), 1.0)
+	var on: bool = app.settings.delay_compensation
+	var ms := func(samples: int) -> String: return "%d samples, %.1f ms" % [samples, 1000.0 * samples / rate]
+	for strip in _strips + [_master, _room]:
+		if strip.is_empty() or not strip.has("delay"):
+			continue
+		var track = strip.inst
+		var d: Dictionary = app.delay_of(track)
+		var late: int = int(d.get("delay", 0))
+		var held: int = int(d.get("compensation", 0))
+		var cells: Dictionary = strip.delay
+		cells.dly.text = "dly %d" % late
+		cells.dly.add_theme_color_override("font_color", WARN if d.get("over", false) else (Color(1.0, 0.8, 0.4) if late > 0 else DIM))
+		Hints.give(cells.dly, "Its delay: how late its plug-ins make it (%s)%s" % [ms.call(late), ". More than delay compensation can make up: it is late by the rest"
+			if d.get("over", false) else ""])
+		if track.get("is_master"):
+			var total: int = int(app.delays.get("total", 0))
+			cells.cmp.text = ("tot %d" % total) if track.which == "mix" and on else ""
+			cells.cmp.add_theme_color_override("font_color", Color(0.55, 0.85, 1.0) if total > 0 else DIM)
+			Hints.give(cells.cmp, "Delay compensation: the whole mix is held back %s, the most any track is late, so that all of them reach it together" % ms.call(total)
+				if track.which == "mix" and on else "")
+			continue
+		cells.cmp.text = ("cmp %d" % held) if on else "cmp off"
+		cells.cmp.add_theme_color_override("font_color", Color(0.55, 0.85, 1.0) if held > 0 else DIM)
+		Hints.give(cells.cmp, ("Held back %s to meet the latest at %s (delay compensation)" % [ms.call(held), "its folder" if app.folder_of(track) != null else "the master"])
+			if on else "Delay compensation is off (Settings): nothing is held back")
+
+
 func _strip_panel(width: float) -> PanelContainer:
 	var strip := PanelContainer.new()
 	var style := StyleBoxFlat.new()
@@ -1019,6 +1079,7 @@ func _refresh() -> void:
 			if app.folder_of(track) == null:
 				_build_track(track, _strip_row)
 		_input_channels = -1
+	_show_delays()
 	var channels: int = app.input_channel_count()
 	var relist := channels != _input_channels
 	_input_channels = channels

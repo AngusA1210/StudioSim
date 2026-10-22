@@ -373,6 +373,7 @@ void Amp::render(float* out, int n) {
     model_.preamp(in_.data(), n);
     if (front < count) {
         std::copy(in_.begin(), in_.begin() + n, dry_.begin());
+        dry_hold_.process(dry_.data(), nullptr, n, loop_delay_);
         for (int p = front; p < count; ++p) board_->pedals[size_t(p)]->process(in_.data(), n, timing);
         for (int i = 0; i < n; ++i) in_[size_t(i)] = dry_[size_t(i)] + (in_[size_t(i)] - dry_[size_t(i)]) * loop_mix_;
     }

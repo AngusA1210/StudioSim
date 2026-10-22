@@ -69,7 +69,10 @@ struct EngineStats {
     double buffer_ms = 0;          // the hardware buffer we fill ahead of playback
     double device_ms = 0;          // what the OS reports for the output device itself (driver, safety offset, hardware)
     double binaural_ms = 0;        // what binaural rendering adds: about a quarter of a block (0 while it is off)
-    double output_latency_ms = 0;  // buffer + device + binaural: from a block being rendered to it being heard
+    double compensation_ms = 0;    // what delay compensation holds the mix back by (0 while it is off)
+    // From a block being rendered to it being heard: buffer + device, and what is heard is late by: the room, binaural
+    // rendering; the mix, delay compensation.
+    double output_latency_ms = 0;
     double input_latency_ms = 0;   // from sound entering the input device to the engine receiving it
     float cpu_load = 0;            // share of each block's time budget spent rendering
     uint64_t blocks = 0;
@@ -472,6 +475,28 @@ public:
     // A master fader's automation (dB, as a track's volume), and whether it is read.
     void setMasterAutomation(const std::vector<AutoPoint>& volume, Monitor which = Monitor::Mix);
     void setMasterAutomationRead(bool read, Monitor which = Monitor::Mix);
+
+    // ── Delay compensation ───────────────────────────────────────────────────────────────────────────────
+    // The mix's, as Pro Tools' is: a track's plug-ins make its sound late by as much as they report (its inserts', a
+    // plug-in instrument's, an amp's plug-in pedals'; a bypassed one's still, as its untouched signal is held back to
+    // match), and with compensation on, each track's output is held back so that all of them reach the mix's master
+    // together: those in a folder, its folder, and the folders' own plug-ins counted along the way; each send so as to
+    // reach its aux with the others'. The room isn't held back: it is heard as it is played, as a real one is. With it
+    // on, the click is held back with the mix while the mix is heard. On to begin with.
+    struct TrackDelay {
+        int delay = 0;         // its plug-ins' delay (samples)
+        int compensation = 0;  // how far it is held back to meet the rest (samples)
+        bool over = false;     // it would need more than kMaxCompensation
+    };
+    static constexpr int kMaxCompensation = CompensationDelay::kMaxDelay;
+    void setDelayCompensation(bool on);
+    bool delayCompensation() const { return compensation_on_; }
+    // Asks the plug-ins again how late they are (one can change: a lookahead switched on, say), and works it all out
+    // anew if anything changed. It is worked out whenever the plug-ins or the routing change too.
+    void refreshDelayCompensation();
+    TrackDelay trackDelay(int id) const;  // a track's, a folder's or an aux's (a master's: its plug-ins' delay alone)
+    bool hasSource(int id) const;         // whether there is one with this id
+    int compensationTotal() const { return compensation_total_; }  // how far the mix is held back: the most any track is late
     // An audio file's loudest sample in each `1 / per_second` of a second, for drawing its clips (read once and kept).
     std::vector<float> audioPeaks(const std::string& path, double per_second);
     double audioSeconds(const std::string& path);  // 0 if it can't be read
@@ -551,6 +576,7 @@ private:
             TimelinePlay, TimelineLoop, TrackSet, RecordArm, RecordStart, RecordStop, SourceOutput, AutomationRead, SendSet,
             MasterAutomation, MasterRead, SourceSoloMuted, MicPath, MicCone, SourceFacing, MicModelSet, MicAim, SourcePan, MicMidSide,
             SourceRoomGain, SourceRoomMuted, RoomVolume, MonitorSet, MasterInserts, AmpLoopMix, LimiterCeiling, BusMono,
+            Compensation, CompensationTotal, AmpLoopDelay,
         } type = AddSource;
         int id = 0;
         float v[9] = {};
@@ -564,6 +590,8 @@ private:
         int8_t slots[kMaxPedals] = {};  // PedalBoardSet (inserts): each one's slot
         uint32_t epoch = 0;
         void* data = nullptr;  // TrackSet: the track's timeline; RecordStart: the recorder
+        // Compensation: the delays its output (v[0]) and its sends (v[1] on) are held back by, these delay lines.
+        CompensationDelay* lines[1 + kMaxSends] = {};
     };
 
     void push(const Command& c);
@@ -635,6 +663,12 @@ private:
     MidiInput midi_;
     TransportState transport_;  // what the game asked for; the audio thread follows
     bool binaural_wanted_ = true;  // likewise; stats() reports the latency that goes with it
+    Monitor heard_ = Monitor::Room;  // likewise (setMonitor)
+    std::array<int, 2> master_bus_wanted_{-1, -1};  // the buses carrying the masters' inserts (setMasterInserts)
+    bool compensation_on_ = true;
+    int compensation_total_ = 0;
+    void updateDelayCompensation();  // works out every track's delay and compensation, and hands them over
+    int ownDelay(Source& source);    // its plug-ins' (and tells its pedals theirs, for their bypass)
     RoomGeometry geometry_;
     Vec3 ear_{0, 1.65f, 0};     // where the listener was last put
     // The reverb the room's size calls for, and the one that has been handed to the audio thread so far.
@@ -674,6 +708,11 @@ private:
     // The reverb's feed and the click bypass the binaural rendering, which comes out a little late: these hold them
     // back by as much while binaural is on, so the mix lines up the same way at every block size.
     FadedDelay send_delay_, click_delay_;
+    CompensationDelay click_hold_;  // and while the mix is heard, the click is held back with it
+    int click_compensation_ = 0;
+    std::vector<float> comp_l_, comp_r_;  // a block held back on its way somewhere (delay compensation)
+    void playOut(Source& source, const float* l, const float* r, float* to_l, float* to_r);
+    void playSend(Source& source, int slot, Source& aux, const float* l, const float* r, float scale, float mute_coef);
     std::vector<float> mix_l_, mix_r_, send_, rev_l_, rev_r_, rev2_l_, rev2_r_, click_;
     std::vector<float> room_l_, room_r_;  // the room, as you hear it standing there
     std::vector<float> out_l_, out_r_;    // what the main outputs play (the room or the mix), and the mix, for its outputs

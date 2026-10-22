@@ -490,7 +490,14 @@ public:
         return done;
     }
 
-    int latencySamples() const override { return latency_; }
+    // As it reports it now (it can change: a lookahead switched on, say), or as it was when prepared if it won't say.
+    int latencySamples() const override {
+        Float64 latency = 0.0;
+        UInt32 size = sizeof(latency);
+        if (AudioUnitGetProperty(unit_, kAudioUnitProperty_Latency, kAudioUnitScope_Global, 0, &latency, &size) == noErr)
+            return int(std::lround(latency * sample_rate_));
+        return latency_;
+    }
 
     void setTempo(double bpm) override { tempo_.store(bpm, std::memory_order_relaxed); }
 

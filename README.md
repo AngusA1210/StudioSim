@@ -649,6 +649,16 @@ in Touch, Latch or Write, holding one writes it.
 - **Metering**: the channel meters read before the fader (after the inserts), as with Pro Tools' pre-fader
   metering, so a fader pulled down or a mute doesn't hide what the channel is doing. Right-click any fader or meter
   to have them read after the fader instead; the choice is remembered. The masters' meters read what leaves them.
+- **Delay compensation**: plug-ins that look ahead (a limiter, a linear-phase EQ) make their tracks late, and say by
+  how much. At the foot of each strip, as Pro Tools shows it, **dly** is how late its plug-ins make it (in samples:
+  its inserts', a plug-in instrument's, an amp's plug-in pedals') and **cmp** how far it is held back to meet the
+  latest at the master, so that every track reaches the mix together; the Mix Master's **tot** is how far the whole mix
+  is held back. A folder's and an aux's own plug-ins count along the way: a folder's tracks are lined up within it, and
+  each send is held back to meet the others at its aux. A bypassed plug-in keeps its delay, as in a DAW, so bypassing
+  it moves nothing in time; and a plug-in pedal in an amp's parallel loop has the preamp's own signal held back to meet
+  it, rather than combing against it. Only the mix is held back: the room is heard as it is played, as a real one is.
+  While the mix is heard the click is held back with it, and recordings are lined up allowing for it. It can be switched
+  off in Settings; it is worked out again whenever plug-ins come or go and as they report a change.
 - **Peak readouts**: as in Pro Tools, the number beside each fader's level holds the highest peak (in dBFS) until
   you click it, and turns red once anything reaches full scale. Clicking a meter clears it too; Alt-click clears
   every one, the master's included.
@@ -732,11 +742,12 @@ patterns go back to the defaults at each start until rooms can be saved.
 - **Room**: the room's size and the walls inside it (see above).
 - **Playback Engine**: which output device the audio engine runs on, and the hardware buffer size (32–1024 samples).
   The sample rate follows the device. Shows the resulting latency (the buffer, the device, and what binaural rendering
-  adds while it is switched on: about a quarter of a buffer, measured as the engine starts) and CPU use.
+  adds while it is switched on: about a quarter of a buffer, measured as the engine starts; while the mix is heard,
+  its delay compensation instead) and CPU use.
 - **I/O**: which of the device's outputs carry the mix, the input device, and which hardware input each Speaker plays.
   Live input always starts switched off, so an open microphone never meets a pair of speakers by surprise.
 - **MIDI**: every MIDI device the system sees, with a tick box each and a light that flashes when it sends notes.
-- **Settings**: binaural, distance falloff, the limiter's ceiling, text size, field of view, mouse sensitivity, room lighting, full screen (which
+- **Settings**: binaural, distance falloff, the limiter's ceiling, delay compensation, text size, field of view, mouse sensitivity, room lighting, full screen (which
   SoundRoom then opens in every time), whether the master meter and the audio readout are shown on screen, and
   auto-save and backups for the room.
 
@@ -786,9 +797,10 @@ audio_core/
     spatializer.*          Steam Audio: distance, air absorption, wall filtering, binaural (HRTF)
     room_geometry.*        the walls: which way round them sound reaches the listener, and how much further that is
     acoustics.h            how much each frequency band dims when sound bends around a wall edge
-    midi_input.*           MIDI controllers, read straight into the audio thread (CoreMIDI; other platforms to do)
+    midi_input.*           MIDI controllers, read straight into the audio thread (CoreMIDI on a Mac, WinMM on Windows)
     mix.*                  room reverb (feedback delay network, sized to the room) and output limiter
                            (the output meter and the distance law live in engine.* and spatializer.*)
+    compensation.h         the delay lines delay compensation is made of
   src/godot/               the Godot extension wrapping the engine (SoundRoomAudio node)
   tests/engine_tests.cpp   offline checks: levels, binaural direction, walls, latency, MIDI, live input, sequencer, amps, pedals, plug-ins, loop pedal
 game/tests/ui_check.gd     the game driven by pretend keys and clicks: title, playing, patterns, instruments, amps, room, menus,

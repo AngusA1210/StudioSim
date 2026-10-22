@@ -168,6 +168,7 @@ struct AudioEngine::Source {
     AmpCabinet amp_cabinet = AmpCabinet::OpenBack1x12;
     AmpSpeaker amp_speaker = AmpSpeaker::AmericanVintage;
     float loop_mix = 0.5f;  // its effects loop's Mix
+    int loop_delay = 0;     // how late its loop's plug-ins make what comes back (its preamp's own signal is held back as much)
     bool head_on = true, cabinet_on = true;
     // An amp's effect pedals, the loop pedal among them if it has one. They live here rather than in the amp, so that
     // a loop survives a change of buffer size. The game thread owns them, in order, with what it last set on each; the audio thread
@@ -206,6 +207,16 @@ struct AudioEngine::Source {
         bool pre = false, on = true;
     };
     std::array<Send, AudioEngine::kMaxSends> sends;  // the audio thread's
+    // Delay compensation: the game thread's copy of where it plays and where its sends go, what it has worked out (its
+    // plug-ins' delay, how far its output and each send are held back), and the delay lines that hold them back (made
+    // when first needed, and kept while it is); then the audio thread's hold of them, its output's first.
+    int route = -1;
+    std::array<int, AudioEngine::kMaxSends> send_to{-1, -1, -1, -1, -1};
+    AudioEngine::TrackDelay delay;
+    std::array<int, AudioEngine::kMaxSends> send_compensation{};
+    std::array<std::unique_ptr<CompensationDelay>, 1 + AudioEngine::kMaxSends> holds;
+    std::array<CompensationDelay*, 1 + AudioEngine::kMaxSends> holds_rt{};
+    std::array<int, 1 + AudioEngine::kMaxSends> held_by{};
     std::vector<float> pre, out_l, out_r;  // a block of its sound before its fader, and placed in the room (for sends; a bus
                                            // keeps what reaches its fader in out_l and out_r)
     float auto_mute = 1.0f;     // its mute automation's share of it heard, glided
@@ -347,7 +358,7 @@ AudioEngine::~AudioEngine() {
 
 void AudioEngine::allocateBuffers() {
     for (auto* buf : {&mix_l_, &mix_r_, &send_, &rev_l_, &rev_r_, &rev2_l_, &rev2_r_, &click_, &room_l_, &room_r_, &out_l_, &out_r_,
-                      &mix_tap_l_, &mix_tap_r_, &room_tap_l_, &room_tap_r_})
+                      &mix_tap_l_, &mix_tap_r_, &room_tap_l_, &room_tap_r_, &comp_l_, &comp_r_})
         buf->assign(size_t(block_), 0.0f);
     for (auto& ch : input_bus_.channel) ch.assign(size_t(block_), 0.0f);
     block_seconds_.assign(size_t(block_), -1.0);
@@ -397,6 +408,7 @@ void AudioEngine::connect(Source& s) {
     amp->setCabinet(s.amp_cabinet, s.cabinet_on);
     amp->setSpeaker(s.amp_speaker);
     amp->setLoopMix(s.loop_mix);
+    amp->setLoopDelay(s.loop_delay);
     for (int c = 0; c < kAmpControls; ++c) amp->setControl(AmpControl(c), s.amp_controls[size_t(c)]);
 }
 
@@ -466,6 +478,7 @@ bool AudioEngine::configure(int sample_rate, int block_size, std::string* error)
             if (!buffer->empty()) buffer->assign(size_t(block_), 0.0f);
         if (!s->spatializer.init(steam_, error)) return false;
     }
+    updateDelayCompensation();  // (the plug-ins' delays, in samples at the new rate)
     return true;
 }
 
@@ -726,6 +739,7 @@ bool AudioEngine::sendBoard(Source& s, bool inserts) {
     c.epoch = s.board_sent + 1;
     if (!commands_.push(c)) return false;
     s.board_sent = c.epoch;
+    updateDelayCompensation();  // (its plug-ins may have come or gone)
     return true;
 }
 
@@ -847,6 +861,10 @@ void AudioEngine::setSend(int id, int slot, int bus, float gain, bool pre, bool 
     Command c; c.type = Command::SendSet; c.id = id;
     c.v[0] = float(slot); c.v[1] = float(bus); c.v[2] = std::clamp(gain, 0.0f, 16.0f); c.v[3] = pre ? 1.0f : 0.0f; c.v[4] = on ? 1.0f : 0.0f;
     push(c);
+    if (Source* s = owned(id); s && s->send_to[size_t(slot)] != bus) {
+        s->send_to[size_t(slot)] = bus;
+        updateDelayCompensation();
+    }
 }
 
 void AudioEngine::setMasterAutomation(const std::vector<AutoPoint>& volume, Monitor which) {
@@ -1321,6 +1339,7 @@ bool AudioEngine::setInstrumentPlugin(int id, const std::string& plugin_id, std:
         if (PluginInstance* previous = static_cast<PluginPedal*>(old.get())->plugin()) previous->hideEditor();
         s->retired.emplace_back(std::move(old), s->board_sent);
     }
+    updateDelayCompensation();
     return true;
 }
 
@@ -1461,6 +1480,7 @@ int AudioEngine::addSource(InstrumentKind kind, Vec3 position, float gain, float
     else owned_[slot] = std::move(src);
     updatePath(*owned_[slot]);
     updateMicPaths(*owned_[slot]);
+    updateDelayCompensation();
     return c.id;
 }
 
@@ -1472,6 +1492,7 @@ bool AudioEngine::removeSource(int id) {
     s->removing = true;
     streamer_.setRegions(id, {});
     reap();
+    updateDelayCompensation();
     return true;
 }
 
@@ -1772,6 +1793,8 @@ void AudioEngine::setSourceOutput(int id, int bus) {
     const Source* target = bus >= 0 ? owned(bus) : nullptr;
     if (bus >= 0 && (!target || !isBus(target->kind) || bus == id)) bus = -1;  // (no bus into itself; folders in folders, though)
     Command c; c.type = Command::SourceOutput; c.id = id; c.v[0] = float(bus); push(c);
+    if (Source* s = owned(id)) s->route = bus;
+    updateDelayCompensation();
 }
 void AudioEngine::setSourceInputChannel(int id, int channel) {
     if (Source* s = owned(id)) s->input_channel = channel;  // remembered across reconfigures
@@ -1815,6 +1838,7 @@ void AudioEngine::setRoomVolume(float gain) {
 }
 void AudioEngine::setMonitor(Monitor monitor) {
     Command c; c.type = Command::MonitorSet; c.v[0] = monitor == Monitor::Mix ? 1.0f : 0.0f; push(c);
+    heard_ = monitor;
 }
 void AudioEngine::setMasterOutput(int left, int right, Monitor which) {
     (which == Monitor::Mix ? mix_out_left_ : room_out_left_).store(left, std::memory_order_relaxed);
@@ -1823,6 +1847,8 @@ void AudioEngine::setMasterOutput(int left, int right, Monitor which) {
 void AudioEngine::setMasterInserts(int bus, Monitor which) {
     const Source* s = bus >= 0 ? owned(bus) : nullptr;
     Command c; c.type = Command::MasterInserts; c.id = s && isBus(s->kind) ? bus : -1; c.v[0] = float(which); push(c);
+    master_bus_wanted_[size_t(which)] = c.id;
+    updateDelayCompensation();
 }
 void AudioEngine::setSourceRoomGain(int id, float gain) {
     Command c; c.type = Command::SourceRoomGain; c.id = id; c.v[0] = std::clamp(gain, 0.0f, 100.0f); push(c);
@@ -1916,6 +1942,180 @@ void AudioEngine::setLimiterCeiling(float db) {
     Command c; c.type = Command::LimiterCeiling; c.v[0] = std::pow(10.0f, std::clamp(db, -20.0f, 0.0f) / 20.0f); push(c);
 }
 
+// ── Delay compensation ──────────────────────────────────────────────────────────────────────────────────────
+
+namespace {
+
+// How late a pedal's plug-in makes what it plays back, as it reports it (a stock pedal's: none). Told to the pedal,
+// for its bypass.
+int pedalDelay(Pedal* pedal) {
+    if (!pedal || pedal->kind() != PedalKind::Plugin) return 0;
+    auto* holder = static_cast<PluginPedal*>(pedal);
+    const int samples = holder->ready() && holder->plugin() ? std::max(holder->plugin()->latencySamples(), 0) : 0;
+    pedal->setLatency(samples);
+    return samples;
+}
+
+}  // namespace
+
+int AudioEngine::ownDelay(Source& s) {
+    int delay = 0;
+    for (auto& slot : s.inserts) delay += pedalDelay(slot.pedal.get());
+    if (s.synth.pedal) {  // a plug-in instrument's own
+        auto* holder = static_cast<PluginPedal*>(s.synth.pedal.get());
+        delay += holder->ready() && holder->plugin() ? std::max(holder->plugin()->latencySamples(), 0) : 0;
+    }
+    if (isAmp(s.kind)) {  // its pedals: those in front, and those in its loop (the preamp's signal held back to meet them)
+        const int front = int(s.pedals.size()) - std::clamp(s.fx_loop, 0, int(s.pedals.size()));
+        int loop = 0;
+        for (int p = 0; p < int(s.pedals.size()); ++p) {
+            const int d = pedalDelay(s.pedals[size_t(p)].pedal.get());
+            if (p < front) delay += d;
+            else loop += d;
+        }
+        loop = std::min(loop, kMaxCompensation);
+        if (loop != s.loop_delay) {
+            s.loop_delay = loop;
+            Command c; c.type = Command::AmpLoopDelay; c.id = s.id; c.v[0] = float(loop); push(c);
+        }
+        delay += loop;
+    }
+    return delay;
+}
+
+// Each track's delay (its plug-ins'), and when its sound leaves it (before it is held back): a track's at once, a bus's
+// once the latest of what plays or sends into it has arrived, and its own plug-ins have played. Each is then held
+// back to meet the latest of the others where it goes (its folder, or the mix's master), and each send to meet the
+// rest at its aux. The masters' buses aren't part of it: what reaches them is lined up already.
+void AudioEngine::updateDelayCompensation() {
+    const int n = int(owned_.size());
+    std::vector<int> own(size_t(n), 0), leaves(size_t(n), 0), arrives(size_t(n), 0);
+    std::vector<bool> counted(size_t(n), false);
+    for (int id = 0; id < n; ++id) {
+        Source* s = owned(id);
+        if (!s) continue;
+        own[size_t(id)] = ownDelay(*s);
+        counted[size_t(id)] = !(isBus(s->kind) && (id == master_bus_wanted_[0] || id == master_bus_wanted_[1]));
+        leaves[size_t(id)] = own[size_t(id)];
+    }
+    auto into = [&](int bus) { return bus >= 0 && bus < n && counted[size_t(bus)] && owned(bus) && isBus(owned(bus)->kind); };
+    // A bus fed by a bus is worked out after it: as many rounds as it takes (a circle, which the game never makes, is
+    // cut short by the rounds running out).
+    for (int round = 0; round <= kSourceSlots; ++round) {
+        std::vector<int> latest(size_t(n), 0);
+        for (int id = 0; id < n; ++id) {
+            Source* s = owned(id);
+            if (!s || !counted[size_t(id)]) continue;
+            if (into(s->route)) latest[size_t(s->route)] = std::max(latest[size_t(s->route)], leaves[size_t(id)]);
+            for (int to : s->send_to)
+                if (into(to)) latest[size_t(to)] = std::max(latest[size_t(to)], leaves[size_t(id)]);
+        }
+        bool settled = true;
+        for (int id = 0; id < n; ++id) {
+            Source* s = owned(id);
+            if (!s || !counted[size_t(id)] || !isBus(s->kind)) continue;
+            const int now = std::min(latest[size_t(id)] + own[size_t(id)], 4 * kMaxCompensation);
+            arrives[size_t(id)] = latest[size_t(id)];
+            if (now != leaves[size_t(id)]) {
+                leaves[size_t(id)] = now;
+                settled = false;
+            }
+        }
+        if (settled) break;
+    }
+    int total = 0;
+    for (int id = 0; id < n; ++id) {
+        Source* s = owned(id);
+        if (s && counted[size_t(id)] && !into(s->route)) total = std::max(total, leaves[size_t(id)]);
+    }
+    const auto held = [&](int until, int leaving, bool& over) {
+        const int by = std::max(until - leaving, 0);
+        over = over || by > kMaxCompensation;
+        return compensation_on_ ? std::min(by, kMaxCompensation) : 0;
+    };
+    for (int id = 0; id < n; ++id) {
+        Source* s = owned(id);
+        if (!s) continue;
+        TrackDelay delay;
+        delay.delay = own[size_t(id)];
+        std::array<int, kMaxSends> sends{};
+        if (counted[size_t(id)]) {
+            delay.compensation = held(into(s->route) ? arrives[size_t(s->route)] : total, leaves[size_t(id)], delay.over);
+            for (int k = 0; k < kMaxSends; ++k)
+                if (into(s->send_to[size_t(k)])) sends[size_t(k)] = held(arrives[size_t(s->send_to[size_t(k)])], leaves[size_t(id)], delay.over);
+        }
+        const bool changed = delay.compensation != s->delay.compensation || sends != s->send_compensation;
+        s->delay = delay;
+        s->send_compensation = sends;
+        if (!changed) continue;
+        Command c; c.type = Command::Compensation; c.id = id;
+        for (size_t k = 0; k < s->holds.size(); ++k) {
+            const int by = k == 0 ? delay.compensation : sends[k - 1];
+            if (by > 0 && !s->holds[k]) s->holds[k] = std::make_unique<CompensationDelay>();  // (kept from now on)
+            c.lines[k] = s->holds[k].get();
+            c.v[k] = float(by);
+        }
+        push(c);
+    }
+    total = compensation_on_ ? std::min(total, kMaxCompensation) : 0;
+    if (total != compensation_total_) {
+        compensation_total_ = total;
+        Command c; c.type = Command::CompensationTotal; c.v[0] = float(total); push(c);
+    }
+}
+
+void AudioEngine::setDelayCompensation(bool on) {
+    compensation_on_ = on;
+    updateDelayCompensation();
+}
+
+void AudioEngine::refreshDelayCompensation() { updateDelayCompensation(); }
+
+bool AudioEngine::hasSource(int id) const { return owned(id) != nullptr; }
+
+AudioEngine::TrackDelay AudioEngine::trackDelay(int id) const {
+    const Source* s = owned(id);
+    return s ? s->delay : TrackDelay{};
+}
+
+// Its sound on its way to where it plays (its folder, or the mix's master), held back by its delay compensation: once
+// it has a delay line, all of it goes through (with none to make up, at once), so that a delay taken up later has
+// what came before.
+void AudioEngine::playOut(Source& s, const float* l, const float* r, float* to_l, float* to_r) {
+    if (CompensationDelay* hold = s.holds_rt[0]) {
+        std::copy(l, l + block_, comp_l_.begin());
+        std::copy(r, r + block_, comp_r_.begin());
+        hold->process(comp_l_.data(), comp_r_.data(), block_, s.held_by[0]);
+        l = comp_l_.data();
+        r = comp_r_.data();
+    }
+    for (int i = 0; i < block_; ++i) {
+        to_l[i] += l[i];
+        to_r[i] += r[i];
+    }
+}
+
+// One of its sends: `l` and `r`, scaled, into the aux at its level (glided), held back by its own compensation.
+void AudioEngine::playSend(Source& s, int slot, Source& aux, const float* l, const float* r, float scale, float mute_coef) {
+    auto& send = s.sends[size_t(slot)];
+    const float target = send.on ? send.gain_target : 0.0f;
+    if (CompensationDelay* hold = s.holds_rt[size_t(1 + slot)]) {
+        for (int i = 0; i < block_; ++i) {
+            comp_l_[size_t(i)] = l[i] * scale;
+            comp_r_[size_t(i)] = r[i] * scale;
+        }
+        hold->process(comp_l_.data(), comp_r_.data(), block_, s.held_by[size_t(1 + slot)]);
+        l = comp_l_.data();
+        r = comp_r_.data();
+        scale = 1.0f;
+    }
+    for (int i = 0; i < block_; ++i) {
+        send.gain += (target - send.gain) * mute_coef;
+        aux.bus_l[size_t(i)] += l[i] * scale * send.gain;
+        aux.bus_r[size_t(i)] += r[i] * scale * send.gain;
+    }
+}
+
 MeterReading AudioEngine::readMeter() {
     MeterReading m;
     m.peak_l = meter_peak_l_.exchange(0.0f, std::memory_order_relaxed);
@@ -1992,7 +2192,9 @@ EngineStats AudioEngine::stats() const {
     }
     // The binaural rendering's delay is the engine's own, not the device's: it comes and goes with the setting.
     s.binaural_ms = binaural_wanted_ ? 1000.0 * steam_.binauralDelay() / sr_ : 0.0;
-    s.output_latency_ms = s.buffer_ms + s.device_ms + s.binaural_ms;
+    s.compensation_ms = 1000.0 * compensation_total_ / sr_;
+    // (what is heard: the room, after its binaural rendering; the mix, held back by its delay compensation)
+    s.output_latency_ms = s.buffer_ms + s.device_ms + (heard_ == Monitor::Mix ? s.compensation_ms : s.binaural_ms);
     s.cpu_load = cpu_load_.load(std::memory_order_relaxed);
     s.blocks = blocks_.load(std::memory_order_relaxed);
     s.disk_misses = streamer_.misses();
@@ -2080,6 +2282,19 @@ void AudioEngine::drainCommands() {
                 break;
             case Command::BusMono:
                 if (s) s->bus_mono = c.v[0] > 0.5f;
+                break;
+            case Command::Compensation:
+                if (s)
+                    for (size_t k = 0; k < s->holds_rt.size(); ++k) {
+                        s->holds_rt[k] = c.lines[k];
+                        s->held_by[k] = int(c.v[k]);
+                    }
+                break;
+            case Command::CompensationTotal:
+                click_compensation_ = int(c.v[0]);
+                break;
+            case Command::AmpLoopDelay:
+                if (s && isAmp(s->kind)) static_cast<Amp*>(s->instrument.get())->setLoopDelay(int(c.v[0]));
                 break;
             case Command::RemoveSource:
                 if (s) {  // fade it out first, so it doesn't leave with a click
@@ -3033,26 +3248,18 @@ void AudioEngine::playSource(size_t index, float binaural_from, float glide, flo
         const float angle = (pan + 1.0f) * 0.25f * float(kPi);
         s->out_l[size_t(i)] = mono[i] * std::cos(angle);
         s->out_r[size_t(i)] = mono[i] * std::sin(angle);
-        to_l[i] += s->out_l[size_t(i)];
-        to_r[i] += s->out_r[size_t(i)];
     }
-    if (sending) {
+    playOut(*s, s->out_l.data(), s->out_r.data(), to_l, to_r);
+    if (sending) {  // (before it is held back: each send is held back to meet the others at its aux)
         const float muted = s->mute_gain * s->auto_mute * s->solo_gain;
-        for (auto& send : s->sends) {
+        for (int k = 0; k < kMaxSends; ++k) {
+            const auto& send = s->sends[size_t(k)];
             Source* aux = send.bus >= 0 && size_t(send.bus) < sources_.size() ? sources_[size_t(send.bus)] : nullptr;
             if (!aux || !isBus(aux->kind)) continue;
-            const float target = send.on ? send.gain_target : 0.0f;
-            for (int i = 0; i < block_; ++i) {
-                send.gain += (target - send.gain) * mute_coef;
-                if (send.pre) {  // its own sound before its fader, in the middle of the stereo
-                    const float v = s->pre[size_t(i)] * kDryPan * muted * send.gain;
-                    aux->bus_l[size_t(i)] += v;
-                    aux->bus_r[size_t(i)] += v;
-                } else {
-                    aux->bus_l[size_t(i)] += s->out_l[size_t(i)] * send.gain;
-                    aux->bus_r[size_t(i)] += s->out_r[size_t(i)] * send.gain;
-                }
-            }
+            if (send.pre)  // its own sound before its fader, in the middle of the stereo
+                playSend(*s, k, *aux, s->pre.data(), s->pre.data(), kDryPan * muted, mute_coef);
+            else
+                playSend(*s, k, *aux, s->out_l.data(), s->out_r.data(), 1.0f, mute_coef);
         }
     }
 
@@ -3126,28 +3333,21 @@ void AudioEngine::playStereoMic(size_t index, float wall_glide, float mute_coef)
         const float keep_l = pan > 0.0f ? std::cos(pan * 0.5f * float(kPi)) : 1.0f, keep_r = pan < 0.0f ? std::cos(-pan * 0.5f * float(kPi)) : 1.0f;
         s->out_l[size_t(i)] = a * keep_l;
         s->out_r[size_t(i)] = b * keep_r;
-        to_l[i] += s->out_l[size_t(i)];
-        to_r[i] += s->out_r[size_t(i)];
     }
+    playOut(*s, s->out_l.data(), s->out_r.data(), to_l, to_r);
     levels_[size_t(s->id)].store(float(std::sqrt(energy / block_)), std::memory_order_relaxed);
     if (peak > peaks_[size_t(s->id)].load(std::memory_order_relaxed)) peaks_[size_t(s->id)].store(peak, std::memory_order_relaxed);
     pre_levels_[size_t(s->id)].store(float(std::sqrt(pre_energy / block_)), std::memory_order_relaxed);
     if (pre_peak > pre_peaks_[size_t(s->id)].load(std::memory_order_relaxed))
         pre_peaks_[size_t(s->id)].store(pre_peak, std::memory_order_relaxed);
-    if (sending) {  // its sends: after its fader (and balance), or before it (muted with it)
+    if (sending) {  // its sends: after its fader (and balance), or before it (muted with it); each held back to meet the rest
         const float muted = s->mute_gain * s->auto_mute * s->solo_gain;
-        for (auto& send : s->sends) {
+        for (int k = 0; k < kMaxSends; ++k) {
+            const auto& send = s->sends[size_t(k)];
             Source* aux = bus_at(send.bus);
             if (!aux) continue;
-            const float target = send.on ? send.gain_target : 0.0f;
-            const float* from_l = send.pre ? s->pre.data() : s->out_l.data();
-            const float* from_r = send.pre ? s->pre_r.data() : s->out_r.data();
-            const float scale = send.pre ? muted : 1.0f;
-            for (int i = 0; i < block_; ++i) {
-                send.gain += (target - send.gain) * mute_coef;
-                aux->bus_l[size_t(i)] += from_l[i] * scale * send.gain;
-                aux->bus_r[size_t(i)] += from_r[i] * scale * send.gain;
-            }
+            if (send.pre) playSend(*s, k, *aux, s->pre.data(), s->pre_r.data(), muted, mute_coef);
+            else playSend(*s, k, *aux, s->out_l.data(), s->out_r.data(), 1.0f, mute_coef);
         }
     }
     if (s->fade_blocks >= 0 && --s->fade_blocks < 0) {  // removed and faded out
@@ -3204,7 +3404,10 @@ void AudioEngine::renderBlock() {
     const float binaural_from = binaural_mix_;
     const float fade = float(block_) / (kBinauralFadeSeconds * float(sr_));
     binaural_mix_ = binaural_ ? std::min(binaural_mix_ + fade, 1.0f) : std::max(binaural_mix_ - fade, 0.0f);
-    click_delay_.process(click_.data(), block_, binaural_from, binaural_mix_);
+    // The click, in step with what is heard: the room, as late as binaural rendering; the mix, as its compensation.
+    const bool mix_heard = monitor_ == Monitor::Mix;
+    click_delay_.process(click_.data(), block_, mix_heard ? 0.0f : binaural_from, mix_heard ? 0.0f : binaural_mix_);
+    click_hold_.process(click_.data(), nullptr, block_, mix_heard ? click_compensation_ : 0);
 
     // Game updates arrive at frame rate; glide toward them so movement doesn't step (time constant ~15 ms).
     const float glide = 1.0f - std::exp(-float(block_) / (0.015f * float(sr_)));
@@ -3349,23 +3552,15 @@ void AudioEngine::renderBlock() {
             }
             energy += 0.5 * (double(l[i]) * l[i] + double(r[i]) * r[i]);
             peak = std::max(peak, std::max(std::fabs(l[i]), std::fabs(r[i])));
-            to_l[i] += l[i];
-            to_r[i] += r[i];
         }
-        if (sending) {  // its sends: after its fader, or before it (muted with it, as a track's)
+        playOut(*s, l, r, to_l, to_r);
+        if (sending) {  // its sends: after its fader, or before it (muted with it, as a track's); each held back to meet the rest
             const float muted = s->mute_gain * s->auto_mute;
-            for (auto& send : s->sends) {
-                Source* aux = bus_at(send.bus);
+            for (int k = 0; k < kMaxSends; ++k) {
+                Source* aux = bus_at(s->sends[size_t(k)].bus);
                 if (!aux) continue;
-                const float target = send.on ? send.gain_target : 0.0f;
-                const float* from_l = send.pre ? s->out_l.data() : l;
-                const float* from_r = send.pre ? s->out_r.data() : r;
-                const float scale = send.pre ? muted : 1.0f;
-                for (int i = 0; i < block_; ++i) {
-                    send.gain += (target - send.gain) * mute_coef;
-                    aux->bus_l[size_t(i)] += from_l[i] * scale * send.gain;
-                    aux->bus_r[size_t(i)] += from_r[i] * scale * send.gain;
-                }
+                if (s->sends[size_t(k)].pre) playSend(*s, k, *aux, s->out_l.data(), s->out_r.data(), muted, mute_coef);
+                else playSend(*s, k, *aux, l, r, 1.0f, mute_coef);
             }
         }
         // Metered as it reaches the master, before the master fader: as dBFS.

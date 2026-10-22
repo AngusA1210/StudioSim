@@ -565,6 +565,15 @@ void Pedal::setControl(int index, float value) {
     changed_ = true;
 }
 
+void Pedal::setLatency(int samples) {
+    samples = std::clamp(samples, 0, CompensationDelay::kMaxDelay);
+    if (samples > 0 && !held_) {
+        held_ = std::make_unique<CompensationDelay>();
+        held_rt_.store(held_.get(), std::memory_order_release);
+    }
+    latency_.store(samples, std::memory_order_relaxed);
+}
+
 void Pedal::process(float* io, int n, const PedalTiming& timing) {
     started_ = true;
     if (changed_) {
@@ -572,13 +581,19 @@ void Pedal::process(float* io, int n, const PedalTiming& timing) {
         changed_ = false;
     }
     const float target = on_ ? 1.0f : 0.0f, step = 1.0f / (kSwitchSeconds * sr_);
+    CompensationDelay* held = held_rt_.load(std::memory_order_acquire);
+    const int lag = held ? latency() : 0;
+    if (held) held->feed(io, nullptr, n);  // (what it hears, to come out as late as the effect would while bypassed)
     if (trails()) {
         const float from = share_;
         share_ = target > share_ ? std::min(share_ + step * float(n), 1.0f) : std::max(share_ - step * float(n), 0.0f);
         runTrails(io, n, from, share_, timing);
         return;
     }
-    if (share_ == 0.0f && target == 0.0f) return;  // bypassed: the signal passes untouched
+    if (share_ == 0.0f && target == 0.0f) {  // bypassed: the signal passes untouched (and as late as the effect)
+        if (lag > 0) held->read(io, nullptr, n, lag, n);
+        return;
+    }
     if (share_ == 0.0f) clear();
     if (share_ == 1.0f && target == 1.0f) {
         run(io, n, timing);
@@ -587,7 +602,8 @@ void Pedal::process(float* io, int n, const PedalTiming& timing) {
     float dry[kChunk];  // switching: crossfade between the untouched signal and the effect
     for (int done = 0; done < n;) {
         const int m = std::min(n - done, kChunk);
-        std::copy(io + done, io + done + m, dry);
+        if (lag > 0) held->read(dry, nullptr, m, lag, n - done);
+        else std::copy(io + done, io + done + m, dry);
         PedalTiming part = timing;  // the next bar line, counted from this part of the block
         if (part.next_bar >= 0) part.next_bar = std::max<int64_t>(part.next_bar - done, 0);
         run(io + done, m, part);
@@ -606,7 +622,13 @@ void Pedal::processStereo(float* left, float* right, int n, const PedalTiming& t
         changed_ = false;
     }
     const float target = on_ ? 1.0f : 0.0f, step = 1.0f / (kSwitchSeconds * sr_);
-    if (share_ == 0.0f && target == 0.0f) return;  // bypassed: the signal passes untouched
+    CompensationDelay* held = held_rt_.load(std::memory_order_acquire);
+    const int lag = held ? latency() : 0;
+    if (held) held->feed(left, right, n);
+    if (share_ == 0.0f && target == 0.0f) {  // bypassed: the signal passes untouched (and as late as the effect)
+        if (lag > 0) held->read(left, right, n, lag, n);
+        return;
+    }
     if (share_ == 0.0f) clear();
     if (share_ == 1.0f && target == 1.0f) {
         runStereo(left, right, n, timing);
@@ -615,8 +637,12 @@ void Pedal::processStereo(float* left, float* right, int n, const PedalTiming& t
     float dry_l[kChunk], dry_r[kChunk];  // switching: crossfade between the untouched signal and the effect
     for (int done = 0; done < n;) {
         const int m = std::min(n - done, kChunk);
-        std::copy(left + done, left + done + m, dry_l);
-        std::copy(right + done, right + done + m, dry_r);
+        if (lag > 0) {
+            held->read(dry_l, dry_r, m, lag, n - done);
+        } else {
+            std::copy(left + done, left + done + m, dry_l);
+            std::copy(right + done, right + done + m, dry_r);
+        }
         PedalTiming part = timing;
         if (part.next_bar >= 0) part.next_bar = std::max<int64_t>(part.next_bar - done, 0);
         runStereo(left + done, right + done, m, part);

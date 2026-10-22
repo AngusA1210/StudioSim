@@ -2254,6 +2254,127 @@ int main(int argc, char** argv) {
     }
 
     {
+        std::printf("\nDelay compensation\n");
+        // The checks' own lookahead plug-in (SR Test Lookahead) plays what it hears 1000 samples late, and says so. Two
+        // Speakers play one click from the input, one panned left and the other right, so that each side says when
+        // that track reaches the mix's master.
+        const auto plugins = PluginInstance::available();
+        const auto found = std::find_if(plugins.begin(), plugins.end(), [](const PluginDescription& p) { return p.name == "SR Test Lookahead"; });
+        const std::string lookahead = found != plugins.end() ? found->id : "";
+        constexpr int kAt = 4800, kLate = 1000;
+        Room room;
+        room.hearMix();
+        room.engine.setLimiter(false);
+        room.soloOnly(room.speaker);
+        const int left = room.speaker, right = room.engine.addSource(InstrumentKind::Live, {1.0f, 0.8f, 2.6f}, 1.0f, 0.0f);
+        for (int id : {left, right}) room.engine.setSourceInput(id, true);
+        room.engine.setSourcePan(left, -1.0f);
+        room.engine.setSourcePan(right, 1.0f);
+        auto heard = [&]() {  // when each side's click reaches the master, from when it came in
+            renderSeconds(room.engine, 0.3);
+            const Render r = renderSeconds(room.engine, 0.4, [](int64_t n) { return n == kAt ? 0.25f : 0.0f; });
+            return std::make_pair(onsetAfter(r.l, 0) - kAt, onsetAfter(r.r, 0) - kAt);
+        };
+        std::string why;
+        const bool on_left = room.engine.setInsert(left, 0, lookahead, &why);
+        const auto both = heard();
+        const AudioEngine::TrackDelay late = room.engine.trackDelay(left), held = room.engine.trackDelay(right);
+        check(on_left && room.engine.delayCompensation() && late.delay == kLate && late.compensation == 0 && held.delay == 0 &&
+                  held.compensation == kLate && room.engine.compensationTotal() == kLate && both.first == kLate && both.second == kLate,
+              "a plug-in that makes a track 1000 samples late: the other track is held back 1000 samples, and the two reach the mix together",
+              why + fmt("left %.0f samples late, ", both.first) + fmt("right %.0f", both.second));
+        room.engine.setDelayCompensation(false);
+        const auto apart = heard();
+        const bool off_reported = room.engine.trackDelay(left).delay == kLate && room.engine.trackDelay(right).compensation == 0 &&
+                                  room.engine.compensationTotal() == 0;
+        room.engine.setDelayCompensation(true);
+        check(off_reported && apart.first == kLate && apart.second == 0,
+              "switched off, nothing is held back: the late track is heard late (its delay still reported)",
+              fmt("left %.0f samples late, ", apart.first) + fmt("right %.0f", apart.second));
+        room.engine.setInsertOn(left, 0, false);
+        const auto bypassed = heard();
+        room.engine.setInsertOn(left, 0, true);
+        check(bypassed.first == kLate && bypassed.second == kLate && room.engine.trackDelay(left).delay == kLate,
+              "bypassed, the plug-in keeps its delay, as in a DAW: what passes it untouched is held back as much, so nothing moves",
+              fmt("left %.0f samples late, ", bypassed.first) + fmt("right %.0f", bypassed.second));
+
+        // In a folder whose own plug-in makes it 1000 samples late, the right track and its folder reach the master
+        // 2000 samples late with a plug-in of its own on it too: the left track (1000) is held back the other 1000.
+        const int folder = room.engine.addSource(InstrumentKind::Bus, {0.0f, 0.0f, 0.0f}, 1.0f, 0.0f);
+        room.engine.setSourceOutput(right, folder);
+        const bool on_folder = room.engine.setInsert(folder, 0, lookahead, &why);
+        const bool on_right = room.engine.setInsert(right, 0, lookahead, &why);
+        const auto folded = heard();
+        check(on_folder && on_right && room.engine.trackDelay(folder).delay == kLate && room.engine.compensationTotal() == 2 * kLate &&
+                  room.engine.trackDelay(left).compensation == kLate && room.engine.trackDelay(right).compensation == 0 &&
+                  folded.first == 2 * kLate && folded.second == 2 * kLate,
+              "a folder's own plug-in counts along the way: its track and it 2000 samples late, the other track held back 1000 to meet them",
+              fmt("left %.0f samples late, ", folded.first) + fmt("right %.0f", folded.second));
+
+        // Sends: both tracks into the folder (muted, so only their sends are heard), each sending to an aux. The left
+        // one leaves 1000 samples later than the right: the right's send is held back to meet it at the aux.
+        room.engine.clearInsert(folder, 0);
+        room.engine.clearInsert(right, 0);
+        const int aux = room.engine.addSource(InstrumentKind::Bus, {0.0f, 0.0f, 0.0f}, 1.0f, 0.0f);
+        room.engine.setSourceOutput(left, folder);
+        room.engine.setSourceMuted(folder, true);
+        for (int id : {left, right}) room.engine.setSend(id, 0, aux, 1.0f, false, true);
+        const auto sent = heard();
+        check(sent.first == kLate && sent.second == kLate && room.engine.trackDelay(right).compensation == kLate,
+              "each send is held back to meet the others at its aux: the two sends come back from it together",
+              fmt("left %.0f samples late, ", sent.first) + fmt("right %.0f", sent.second));
+        for (int id : {left, right}) room.engine.setSend(id, 0, -1, 1.0f, false, true);
+        room.engine.setSourceOutput(left, -1);
+        room.engine.setSourceOutput(right, -1);
+        room.engine.setSourceMuted(folder, false);
+
+        // While the mix is heard, the click is held back with it; and the latency reported is the mix's.
+        Room clicking;
+        clicking.hearMix();
+        clicking.quietRoom(-1);
+        const int late_track = clicking.engine.addSource(InstrumentKind::Live, {1.0f, 0.8f, 2.6f}, 1.0f, 0.0f);
+        clicking.engine.setInsert(late_track, 0, lookahead, &why);
+        auto click_onset = [&](bool compensating) {
+            clicking.engine.setDelayCompensation(compensating);
+            clicking.engine.setSequencerRunning(false);
+            clicking.engine.setTempo(120.0);
+            clicking.engine.setClick(true);
+            clicking.engine.setSequencerRunning(true);
+            const Render r = renderSeconds(clicking.engine, 0.75);
+            return onsetAfter(r.l, 24960 - 4800);
+        };
+        const int plain = click_onset(false), with = click_onset(true);
+        const EngineStats mix_stats = clicking.engine.stats();
+        clicking.engine.setMonitor(AudioEngine::Monitor::Room);
+        const EngineStats room_stats = clicking.engine.stats();
+        check(with - plain == kLate && std::fabs(mix_stats.compensation_ms - 1000.0 * kLate / 48000.0) < 1e-9 &&
+                  std::fabs(mix_stats.output_latency_ms - (mix_stats.buffer_ms + mix_stats.device_ms + mix_stats.compensation_ms)) < 1e-9 &&
+                  std::fabs(room_stats.output_latency_ms - (room_stats.buffer_ms + room_stats.device_ms + room_stats.binaural_ms)) < 1e-9,
+              "while the mix is heard, the click is held back with it, and the latency reported is the mix's (the room's, binaural rendering's)",
+              fmt("the click %.0f samples later; ", with - plain) + fmt("%.2f ms of compensation", mix_stats.compensation_ms));
+
+        // An amp with the lookahead plug-in in its parallel effects loop: the preamp's own signal is held back to meet
+        // what comes back, so a pluck comes out once, 1000 samples late, rather than twice.
+        Room amped;
+        amped.hearMix();
+        amped.quietRoom(-1);
+        amped.engine.setLimiter(false);
+        const int amp = amped.engine.addSource(InstrumentKind::GuitarCombo, {0.0f, 0.55f, 0.0f}, 1.0f, 0.0f);
+        amped.engine.setSourceInput(amp, true);
+        const int pedal = amped.engine.addPedal(amp, PedalKind::Plugin);
+        const bool loaded = pedal >= 0 && amped.engine.loadPedalPlugin(amp, pedal, lookahead, &why);
+        amped.engine.setPedalLoop(amp, 1);
+        renderSeconds(amped.engine, 0.3);
+        const Render pluck = renderSeconds(amped.engine, 0.4, [](int64_t n) { return n >= kAt && n < kAt + 48 ? 0.3f : 0.0f; });
+        double early = 0.0, on_time = 0.0;
+        for (int i = kAt; i < kAt + 900; ++i) early += double(pluck.l[size_t(i)]) * pluck.l[size_t(i)];
+        for (int i = kAt + kLate; i < kAt + kLate + 900; ++i) on_time += double(pluck.l[size_t(i)]) * pluck.l[size_t(i)];
+        check(loaded && amped.engine.trackDelay(amp).delay == kLate && on_time > 1e-6 && early < on_time * 1e-4,
+              "a plug-in in an amp's parallel loop: the preamp's own signal is held back to meet it, so a pluck comes out once, not twice",
+              why + fmt("%.0f dB before it", 10.0 * std::log10(std::max(early, 1e-30) / std::max(on_time, 1e-30))));
+    }
+
+    {
         std::printf("\nPlug-in instruments\n");
 #ifdef __APPLE__
         const std::string dls = "AU:61756d75:646c7320:6170706c";  // aumu dls  appl: Apple's General MIDI synthesizer

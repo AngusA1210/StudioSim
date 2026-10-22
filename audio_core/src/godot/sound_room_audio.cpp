@@ -571,6 +571,27 @@ void SoundRoomAudio::set_distance_falloff(float db_per_doubling) { if (engine_) 
 void SoundRoomAudio::set_limiter(bool on) { if (engine_) engine_->setLimiter(on); }
 void SoundRoomAudio::set_master_limiter(bool on, const String& which) { if (engine_) engine_->setMasterLimiter(on, monitorOf(which)); }
 void SoundRoomAudio::set_limiter_ceiling(float db) { if (engine_) engine_->setLimiterCeiling(db); }
+void SoundRoomAudio::set_delay_compensation(bool on) { if (engine_) engine_->setDelayCompensation(on); }
+void SoundRoomAudio::refresh_delay_compensation() { if (engine_) engine_->refreshDelayCompensation(); }
+
+Dictionary SoundRoomAudio::get_delay_compensation() const {
+    Dictionary d;
+    Dictionary tracks;
+    d["on"] = engine_ ? engine_->delayCompensation() : false;
+    d["total"] = engine_ ? engine_->compensationTotal() : 0;
+    d["sample_rate"] = engine_ ? engine_->sampleRate() : 48000;
+    for (int id = 0; engine_ && id < sr::AudioEngine::kSourceSlots; ++id) {
+        if (!engine_->hasSource(id)) continue;
+        const sr::AudioEngine::TrackDelay t = engine_->trackDelay(id);
+        Dictionary track;
+        track["delay"] = t.delay;
+        track["compensation"] = t.compensation;
+        track["over"] = t.over;
+        tracks[id] = track;
+    }
+    d["tracks"] = tracks;
+    return d;
+}
 
 Dictionary SoundRoomAudio::read_meter() {
     Dictionary d;
@@ -614,6 +635,7 @@ Dictionary SoundRoomAudio::get_stats() const {
     d["buffer_ms"] = s.buffer_ms;
     d["device_ms"] = s.device_ms;
     d["binaural_ms"] = s.binaural_ms;
+    d["compensation_ms"] = s.compensation_ms;
     d["output_latency_ms"] = s.output_latency_ms;
     d["live_input"] = s.live_input;
     d["input_device"] = str(s.input_device);
@@ -953,6 +975,9 @@ void SoundRoomAudio::_bind_methods() {
     ClassDB::bind_method(D_METHOD("set_limiter", "on"), &SoundRoomAudio::set_limiter);
     ClassDB::bind_method(D_METHOD("set_master_limiter", "on", "which"), &SoundRoomAudio::set_master_limiter);
     ClassDB::bind_method(D_METHOD("set_limiter_ceiling", "db"), &SoundRoomAudio::set_limiter_ceiling);
+    ClassDB::bind_method(D_METHOD("set_delay_compensation", "on"), &SoundRoomAudio::set_delay_compensation);
+    ClassDB::bind_method(D_METHOD("refresh_delay_compensation"), &SoundRoomAudio::refresh_delay_compensation);
+    ClassDB::bind_method(D_METHOD("get_delay_compensation"), &SoundRoomAudio::get_delay_compensation);
     ClassDB::bind_method(D_METHOD("read_meter"), &SoundRoomAudio::read_meter);
     ClassDB::bind_method(D_METHOD("get_source_level", "id", "pre_fader"), &SoundRoomAudio::get_source_level, DEFVAL(false));
     ClassDB::bind_method(D_METHOD("get_source_peak", "id", "pre_fader"), &SoundRoomAudio::get_source_peak, DEFVAL(false));
