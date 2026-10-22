@@ -68,14 +68,17 @@ const MATERIALS := {
 	"acoustic_panel": ["Acoustic panels", "Thick mineral-wool panels: they take nearly everything, the lows too. Standing in the room, a gobo: it shields what is behind it, the highs most.",
 		Color(0.1, 0.12, 0.17), ["walls", "ceiling"]],
 	"ceiling_tile": ["Acoustic tiles", "A suspended ceiling of acoustic tiles: it takes much of everything.", Color(0.12, 0.12, 0.13), ["ceiling"]],
+	"diffuser": ["Diffuser panels", "Wooden panels of wells of different depths: they send back nearly all of the mids and highs, but scattered, spread out in time and from all over them rather than as a mirror's echo. The room keeps its life without the flutter between bare walls.",
+		Color(0.19, 0.12, 0.07), ["walls", "ceiling"]],
+	"bookshelf": ["Bookshelves", "Full shelves of books: they take some of everything and scatter much of what they send back.", Color(0.16, 0.1, 0.12), ["walls"]],
 	"wood_floor": ["Wooden floor", "Wood: it sends most back. A mic a little way off a floor-standing amp hears a strong bounce off it (notches, where it arrives half a wave late).",
 		Color(0.11, 0.065, 0.04), ["floor"]],
 	"tile": ["Tiles", "Tiles: as hard as a floor gets, a strong, bright bounce.", Color(0.17, 0.17, 0.19), ["floor"]],
 	"rug": ["A rug", "A rug under the band: a softer bounce, without its highs.", Color(0.17, 0.08, 0.05), ["floor"]],
 	"carpet": ["Carpet", "Thick carpet: hardly any bounce, and little of the highs comes back off it.", Color(0.09, 0.07, 0.1), ["floor"]],
 }
-const MATERIAL_ORDER := ["drywall", "plaster", "brick", "concrete", "wood", "glass", "curtain", "foam", "acoustic_panel", "ceiling_tile",
-	"wood_floor", "tile", "rug", "carpet"]
+const MATERIAL_ORDER := ["drywall", "plaster", "brick", "concrete", "wood", "glass", "curtain", "foam", "acoustic_panel", "diffuser",
+	"bookshelf", "ceiling_tile", "wood_floor", "tile", "rug", "carpet"]
 ## The room's own surfaces, and what each is made of as a room starts (north is the way you first face).
 const SURFACES := ["floor", "ceiling", "north", "south", "east", "west"]
 const SURFACE_NAMES := {"floor": "Floor", "ceiling": "Ceiling", "north": "North wall", "south": "South wall", "east": "East wall", "west": "West wall"}

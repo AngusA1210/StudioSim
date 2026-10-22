@@ -703,9 +703,9 @@ The Room page of the menu changes the room itself, while the music plays:
   longer but more quietly, a small one is short and close. Instruments, walls and you are brought inside if the room
   shrinks past them.
 - **What it's made of**: its floor, its ceiling and each of its four walls (north is the way you first face), each a
-  material from its menu: drywall, plaster, brick, concrete, wood panelling, glass, heavy curtain, acoustic foam or
-  acoustic panels for the walls; acoustic tiles and most of those for the ceiling; a wooden floor, tiles, concrete, a
-  rug or carpet underfoot. Hover over one for what it does. A room starts with drywall walls, a wooden floor and an
+  material from its menu: drywall, plaster, brick, concrete, wood panelling, glass, heavy curtain, acoustic foam,
+  acoustic panels, diffuser panels or bookshelves for the walls; acoustic tiles and most of those for the ceiling; a
+  wooden floor, tiles, concrete, a rug or carpet underfoot. Hover over one for what it does. A room starts with drywall walls, a wooden floor and an
   acoustic-tile ceiling, and rings for about 0.7 s. Kept with the room.
 - **Walls**: a floor plan of the room, seen from above with the instruments and yourself marked on it (the room's own
   walls in their materials' colours). Drag on the floor to draw a wall, drag a wall to move it, drag the dot at either
@@ -717,9 +717,21 @@ Every material takes its own share of each band (below 800 Hz, 800 Hz to 8 kHz, 
 and the rest it sends back. From them the room's reverb rings for as long in each band as Eyring's formula has it (what
 the air takes as well): a room of bare concrete and tile rings on for seconds, bright; foam, carpet and panels leave it
 nearly dead; curtains and carpet take the highs and leave the lows ringing. The more a room absorbs, the quieter its
-ring, too. The microphones hear the first reflection off each of the walls and the ceiling, from the source's image
-beyond it, coloured by its material and as late as its longer way: a mic near a concrete wall hears it clearly, near
-foam, hardly. (The listener hears the room's reverb; reflections of their own are still to come.)
+ring, too.
+
+Before the reverb, the **first reflections**: every instrument off the floor, the ceiling and each wall, from its image
+beyond the surface, as much later than its own sound as that way round is longer, as loud as the image is far, coloured
+by the surface's material, the air, and a loudspeaker's beaming as seen from there (and by any wall standing in the
+way). You hear them from where they come: walk up to a concrete wall and it is there beside you; line it with foam and
+it goes. They are rendered together as one second-order Ambisonic field, binaurally with the HRTF (lined up with the
+direct sound, whatever the buffer) or in plain stereo, so they cost little however many instruments there are. Each
+microphone hears its own reflections the same way, by its pattern.
+
+A material also **scatters** a share of what it sends back rather than mirroring it: a flat wall little, brick and a
+curtain's folds more as the waves get shorter, bookshelves much of it, and **diffuser panels** (wooden wells of
+different depths) nearly all the mids and highs. What is scattered comes back spread out over some 20 ms and from all
+over the surface rather than as a mirror's echo, so a room keeps its life without the flutter and the hard slap
+between bare walls.
 
 Sound finds its way round the walls. Behind one, an instrument is duller and seems to come from the edge its sound
 bends round; the longer the detour, the duller it gets, highs first. A wall lower than the ceiling also lets sound
@@ -810,9 +822,9 @@ audio_core/
     sequencer.*            the clock (tempo, swing, playing from a step, loop playback), pattern notes, and the default groove
     recorder.* wav.*       recording: what armed tracks take in, written to WAV files on a thread of its own; reading them
     disk_stream.*          the recordings read from disk as they play: in chunks, a few seconds ahead, by a thread of its own
-    spatializer.*          Steam Audio: distance, air absorption, wall filtering, binaural (HRTF)
+    spatializer.*          Steam Audio: distance, air absorption, wall filtering, binaural (HRTF), the reflections' Ambisonic field
     room_geometry.*        the walls: which way round them sound reaches the listener, and how much further that is
-    materials.*            what each material absorbs and lets through, band by band, and the reverb a room of them has
+    materials.*            what each material absorbs, scatters and lets through, band by band, and the reverb a room of them has
     acoustics.h            how much each frequency band dims when sound bends around a wall edge
     midi_input.*           MIDI controllers, read straight into the audio thread (CoreMIDI on a Mac, WinMM on Windows)
     mix.*                  room reverb (feedback delay network, sized to the room) and output limiter
@@ -862,8 +874,8 @@ To do, roughly in this order:
 
 1. **Windows, played**: built and checked on every change; next, played and listened to on a Windows machine, and
    ASIO for interfaces whose Windows drivers want it.
-2. **The room's sound**: the listener hearing the walls' own reflections (the microphones do already), and diffusers,
-   which scatter what they send back rather than mirroring it.
+2. **The room's sound**: reflections off the walls standing in the room (as well as its own), and second ones (off one
+   surface, then another) before the reverb takes over.
 3. **You in the room**: an avatar whose height you can set (the ears and eyes go with it; the view is a little tall
    for some now), which multiplayer will show to the others; and a free camera, detached from the avatar, that flies
    about the room with nothing in its way.

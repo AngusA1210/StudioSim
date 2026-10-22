@@ -585,7 +585,7 @@ private:
             TimelinePlay, TimelineLoop, TrackSet, RecordArm, RecordStart, RecordStop, SourceOutput, AutomationRead, SendSet,
             MasterAutomation, MasterRead, SourceSoloMuted, MicPath, MicCone, SourceFacing, MicModelSet, MicAim, SourcePan, MicMidSide,
             SourceRoomGain, SourceRoomMuted, RoomVolume, MonitorSet, MasterInserts, AmpLoopMix, LimiterCeiling, BusMono,
-            Compensation, CompensationTotal, AmpLoopDelay,
+            Compensation, CompensationTotal, AmpLoopDelay, Echo,
         } type = AddSource;
         int id = 0;
         float v[9] = {};
@@ -602,6 +602,8 @@ private:
         // Compensation: the delays its output (v[0]) and its sends (v[1] on) are held back by, these delay lines.
         CompensationDelay* lines[1 + kMaxSends] = {};
         float bands[3] = {1.0f, 1.0f, 1.0f};  // MicCone: what the surface it comes off leaves of each band
+        float scatter[3] = {0.0f, 0.0f, 0.0f};  // MicCone, Echo: and what it scatters
+        float at[3] = {0.0f, 0.0f, 0.0f};       // Echo: where the source is
     };
 
     void push(const Command& c);
@@ -624,6 +626,17 @@ private:
     Source* owned(int id) const;  // the source with this id, unless it is on its way out
     void reap();                  // frees removed sources the audio thread has finished with
     void updatePath(Source& source);  // works out how its sound reaches the listener and tells the audio thread
+    // The room's own surfaces, as its reflections come off them: floor, ceiling, north, south, east, west (each the
+    // axis it stands across, 0 to 2 for x to z, where on it, and what it is made of).
+    static constexpr int kFaces = 6;
+    struct Face {
+        int axis;
+        float plane;
+        Material material;
+    };
+    std::array<Face, kFaces> faces() const;
+    void updateEchoes(Source& source);  // its first reflections, as the listener hears them
+    void playReflections(float binaural_from);  // and heard (audio thread)
     void updatePaths();
     void updateMicPaths(Source& source);  // how its sound reaches each microphone (or, a microphone, how each reaches it)
     void updateMicPath(const Source& mic, const Source& source);
@@ -724,6 +737,13 @@ private:
     // back by as much while binaural is on, so the mix lines up the same way at every block size.
     FadedDelay send_delay_, click_delay_;
     CompensationDelay click_hold_;  // and while the mix is heard, the click is held back with it
+    // The listener's early reflections: the field they are heard in, and what each surface scatters (spread out in
+    // time, and heard from all over it); a block of one reflection on its way.
+    ReflectionField reflections_;
+    std::array<Smear, kFaces> echo_smear_;
+    std::array<std::vector<float>, kFaces> echo_scatter_;
+    std::array<int, kFaces> echo_quiet_{};  // blocks since each last scattered anything
+    std::vector<float> echo_;
     int click_compensation_ = 0;
     std::vector<float> comp_l_, comp_r_;  // a block held back on its way somewhere (delay compensation)
     void playOut(Source& source, const float* l, const float* r, float* to_l, float* to_r);

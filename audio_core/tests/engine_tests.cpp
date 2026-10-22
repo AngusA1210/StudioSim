@@ -480,6 +480,14 @@ int main(int argc, char** argv) {
             return std::make_pair(heard.finite, std::chrono::duration<double>(std::chrono::steady_clock::now() - m0).count());
         };
         const auto floor_only = timed(false), with_walls = timed(true);
+        Room heard_all;  // the listener hearing every reflection as well (the floor, the walls, the ceiling)
+        heard_all.engine.setFloorReflection(1.0f);
+        heard_all.engine.setEarlyReflections(true);
+        const auto l0 = std::chrono::steady_clock::now();
+        const Render all_heard = renderSeconds(heard_all.engine, 10.43);
+        const double listener_secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - l0).count();
+        check(all_heard.finite && listener_secs < 10.43 / 4, "the listener hearing every instrument's reflections too, well faster than real time",
+              fmt("%.1fx real time", 10.43 / listener_secs));
         check(with_walls.first && with_walls.second < 10.43 / 1.5 && with_walls.second < 3.0 * floor_only.second,
               "with eight microphones hearing the room's reflections too, still faster than real time (the walls costing no more than twice again)",
               fmt("%.1fx real time (", 10.43 / with_walls.second) + fmt("%.1fx with the floor's bounce alone)", 10.43 / floor_only.second));
@@ -1300,6 +1308,100 @@ int main(int argc, char** argv) {
         const double off_tile = bounced(Material::Tile), off_carpet = bounced(Material::Carpet);
         check(off_tile - off_carpet > 2.5, "the floor's bounce is its material's: a tiled floor sends back more than carpet",
               fmt("%.1f dB more off tile", off_tile - off_carpet));
+
+        // The listener hears the walls too. Standing 2 m from the east wall with a source 2 m ahead of them (the
+        // ceiling 10 m up, the floor taking it all): the wall's reflection comes 2.47 m of air after the sound itself
+        // (346 samples), from ahead and to the right, from its image 4.47 m away (7 dB down on the sound itself).
+        Room walled;
+        walled.quietRoom(walled.speaker);
+        walled.engine.setLimiter(false);
+        walled.engine.setSourceInput(walled.speaker, true);
+        walled.engine.setEarlyReflections(true);
+        walled.engine.setBinaural(false);
+        auto listen = [&](Vec3 ear, Vec3 source, RoomSurfaces surfaces) {
+            walled.engine.setRoom(14.0f, 10.0f, 10.0f, {}, surfaces);
+            walled.engine.setSourcePosition(walled.speaker, source);
+            walled.engine.setListener(ear, {0.0f, 0.0f, -1.0f}, {0.0f, 1.0f, 0.0f});
+            renderSeconds(walled.engine, 0.5);
+            return renderSeconds(walled.engine, 0.3, [](int64_t n) { return n == 2400 ? 0.5f : 0.0f; });
+        };
+        auto first = [](const std::vector<float>& x, size_t from, size_t to) {  // where a click arrives (a quarter of its peak)
+            float peak = 0.0f;
+            for (size_t i = from; i < to && i < x.size(); ++i) peak = std::max(peak, std::fabs(x[i]));
+            for (size_t i = from; i < to && i < x.size(); ++i)
+                if (std::fabs(x[i]) > 0.25f * peak) return int(i);
+            return -1;
+        };
+        auto window_energy = [](const Render& r, int from, int to) {
+            double e = 0.0;
+            for (int i = std::max(from, 0); i < to && i < int(r.l.size()); ++i) e += double(r.l[size_t(i)]) * r.l[size_t(i)] + double(r.r[size_t(i)]) * r.r[size_t(i)];
+            return e;
+        };
+        RoomSurfaces concrete_east;
+        concrete_east.floor = Material::Tile;
+        concrete_east.east = Material::Concrete;
+        walled.engine.setFloorReflection(0.0f);
+        const Vec3 ear{5.0f, 1.6f, 0.0f}, ahead{5.0f, 1.6f, -2.0f};
+        const Render plain = listen(ear, ahead, concrete_east);
+        const int sound_at = first(plain.l, 2000, 2700), echo_at = first(plain.r, size_t(sound_at + 250), size_t(sound_at + 600));
+        const double sound_e = window_energy(plain, sound_at - 10, sound_at + 60), echo_e = window_energy(plain, echo_at - 10, echo_at + 60);
+        double echo_l = 0.0, echo_r = 0.0;
+        for (int i = echo_at - 10; i < echo_at + 60; ++i) {
+            echo_l += double(plain.l[size_t(i)]) * plain.l[size_t(i)];
+            echo_r += double(plain.r[size_t(i)]) * plain.r[size_t(i)];
+        }
+        const double echo_db = 10.0 * std::log10(echo_e / sound_e), expected_db = 20.0 * std::log10((1.5 / 4.472) / (1.5 / 2.0));
+        check(std::abs((echo_at - sound_at) - 346) <= 3 && std::fabs(echo_db - expected_db) < 2.0 && echo_r > 2.0 * echo_l,
+              "the listener hears a wall's reflection: as much later as its way round is longer, as loud as its image is far, from its side",
+              fmt("%.0f samples later, ", echo_at - sound_at) + fmt("%.1f dB on the sound itself ", echo_db) + fmt("(%.1f by its distance), ", expected_db) +
+                  fmt("%.1f dB more on the right", 10.0 * std::log10(echo_r / std::max(echo_l, 1e-30))));
+        // Straight ahead, off the north wall (12 m away, 10 m of air later), binaural or not, it arrives as late.
+        const Vec3 back_ear{0.0f, 1.6f, 2.0f}, centre{0.0f, 1.6f, 0.0f};
+        RoomSurfaces concrete_north;
+        concrete_north.north = Material::Concrete;
+        const Render flat = listen(back_ear, centre, concrete_north);
+        walled.engine.setBinaural(true);
+        const Render spatial = listen(back_ear, centre, concrete_north);
+        walled.engine.setBinaural(false);
+        const int flat_sound = first(flat.l, 2000, 2700), spatial_sound = first(spatial.l, 2000, 2900);
+        const int flat_echo = first(flat.l, size_t(flat_sound + 1300), size_t(flat_sound + 1500));
+        const int spatial_echo = first(spatial.l, size_t(spatial_sound + 1300), size_t(spatial_sound + 1500));
+        check(std::abs((flat_echo - flat_sound) - 1399) <= 3 && std::abs((spatial_echo - spatial_sound) - (flat_echo - flat_sound)) <= 3,
+              "binaural or not, a reflection arrives as much after the sound itself (the field's own rendering's delay allowed for)",
+              fmt("%.0f samples after it in plain stereo, ", flat_echo - flat_sound) + fmt("%.0f binaurally", spatial_echo - spatial_sound));
+
+        // A diffuser in place of the concrete: its mirror-like reflection much weaker, the sound it sends back spread
+        // out over the next 20 ms or so rather than lost.
+        RoomSurfaces diffusing_east = concrete_east;
+        diffusing_east.east = Material::Diffuser;
+        const Render diffused = listen(ear, ahead, diffusing_east);
+        const double peak_hard = window_energy(plain, echo_at - 5, echo_at + 15), peak_soft = window_energy(diffused, echo_at - 5, echo_at + 15);
+        const double whole_hard = window_energy(plain, echo_at - 10, echo_at + 1500), whole_soft = window_energy(diffused, echo_at - 10, echo_at + 1500);
+        check(10.0 * std::log10(peak_hard / peak_soft) > 5.0 && std::fabs(10.0 * std::log10(whole_soft / whole_hard)) < 2.5,
+              "a diffuser scatters what it sends back: its mirror-like reflection much weaker, the rest spread out in time, not lost",
+              fmt("its peak %.1f dB down, ", 10.0 * std::log10(peak_hard / peak_soft)) +
+                  fmt("all it sends back %+.1f dB", 10.0 * std::log10(whole_soft / whole_hard)));
+
+        // And for a microphone: the same diffuser, by it.
+        heard.engine.setFloorReflection(0.0f);
+        heard.engine.setEarlyReflections(true);
+        auto miked = [&](Material east) {
+            RoomSurfaces surfaces;
+            surfaces.east = east;
+            heard.engine.setRoom(14.0f, 10.0f, 10.0f, {}, surfaces);
+            renderSeconds(heard.engine, 0.3);
+            return renderSeconds(heard.engine, 0.3, [](int64_t n) { return n == 2400 ? 0.5f : 0.0f; });
+        };
+        const Render mic_hard = miked(Material::Concrete), mic_soft = miked(Material::Diffuser);
+        size_t mic_direct = 0;
+        for (size_t i = 1; i < mic_hard.l.size(); ++i)
+            if (std::fabs(mic_hard.l[i]) > std::fabs(mic_hard.l[mic_direct])) mic_direct = i;
+        const int mic_echo = int(mic_direct) + 560;  // (4 m of air after it, as before)
+        const double mic_peak = window_energy(mic_hard, mic_echo - 5, mic_echo + 15) / window_energy(mic_soft, mic_echo - 5, mic_echo + 15);
+        const double mic_whole = window_energy(mic_soft, mic_echo - 10, mic_echo + 1500) / window_energy(mic_hard, mic_echo - 10, mic_echo + 1500);
+        check(10.0 * std::log10(mic_peak) > 5.0 && std::fabs(10.0 * std::log10(mic_whole)) < 2.5,
+              "a microphone by a diffuser hears its reflection scattered likewise: weaker as a mirror's, spread out, not lost",
+              fmt("its peak %.1f dB down, ", 10.0 * std::log10(mic_peak)) + fmt("all it sends back %+.1f dB", 10.0 * std::log10(mic_whole)));
     }
 
     {

@@ -84,6 +84,154 @@ Vec3 SteamAudio::relativeDirection(Vec3 source, Vec3 listener, Vec3 ahead, Vec3 
     return Vec3{d.x, d.y, d.z};
 }
 
+std::array<float, 9> ambisonicGains(Vec3 d) {
+    const float n = std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
+    if (n < 1e-6f) return {0.282095f, 0, 0, 0, 0, 0, 0, 0, 0};
+    // Steam Audio's listener space (right, up, back) as the harmonics' axes (ahead, left, up).
+    const float x = -d.z / n, y = -d.x / n, z = d.y / n;
+    return {0.282095f, 0.488603f * y, 0.488603f * z, 0.488603f * x, 1.092548f * x * y, 1.092548f * y * z,
+            0.315392f * (3.0f * z * z - 1.0f), 1.092548f * x * z, 0.546274f * (x * x - y * y)};
+}
+
+ReflectionField::~ReflectionField() { release(); }
+
+void ReflectionField::release() {
+    if (binaural_) iplAmbisonicsDecodeEffectRelease(&binaural_);
+    if (panning_) iplAmbisonicsDecodeEffectRelease(&panning_);
+    binaural_ = panning_ = nullptr;
+}
+
+void ReflectionField::decode(IPLAmbisonicsDecodeEffect effect, bool binaural, float* l, float* r) {
+    float* in[kChannels];
+    for (int c = 0; c < kChannels; ++c) in[c] = field_[size_t(c)].data();
+    float* out[2] = {l, r};
+    IPLAudioBuffer in_buf{kChannels, frame_, in}, out_buf{2, frame_, out};
+    IPLAmbisonicsDecodeEffectParams p{};
+    p.order = 2;
+    p.hrtf = steam_->hrtf();
+    p.orientation.right = IPLVector3{1.0f, 0.0f, 0.0f};  // (the field is already the listener's way round)
+    p.orientation.up = IPLVector3{0.0f, 1.0f, 0.0f};
+    p.orientation.ahead = IPLVector3{0.0f, 0.0f, -1.0f};
+    p.binaural = binaural ? IPL_TRUE : IPL_FALSE;
+    iplAmbisonicsDecodeEffectApply(effect, &p, &in_buf, &out_buf);
+}
+
+bool ReflectionField::init(const SteamAudio& steam, std::string* error) {
+    release();
+    steam_ = &steam;
+    IPLAudioSettings settings = steam.settings();
+    frame_ = settings.frameSize;
+    IPLAmbisonicsDecodeEffectSettings ds{};
+    ds.speakerLayout.type = IPL_SPEAKERLAYOUTTYPE_STEREO;
+    ds.hrtf = steam.hrtf();
+    ds.maxOrder = 2;
+    if (iplAmbisonicsDecodeEffectCreate(steam.context(), &settings, &ds, &binaural_) != IPL_STATUS_SUCCESS ||
+        iplAmbisonicsDecodeEffectCreate(steam.context(), &settings, &ds, &panning_) != IPL_STATUS_SUCCESS) {
+        if (error) *error = "Steam Audio: could not create the reflections' renderers";
+        return false;
+    }
+    for (auto& channel : field_) channel.assign(size_t(frame_), 0.0f);
+    for (auto* side : {&bl_, &br_, &pl_, &pr_}) side->assign(size_t(frame_), 0.0f);
+    // A click from a few ways round, through the field and through a source's own rendering: how much later the field's
+    // binaural rendering is (from straight ahead, where an onset is plainest), and how loud each rendering is against a
+    // source's own (its binaural; plain panning, equal power).
+    IPLBinauralEffectSettings bs{};
+    bs.hrtf = steam.hrtf();
+    IPLBinauralEffect direct = nullptr;
+    if (iplBinauralEffectCreate(steam.context(), &settings, &bs, &direct) != IPL_STATUS_SUCCESS) return true;  // (as it is)
+    const Vec3 ways[] = {{0, 0, -1}, {1, 0, 0}, {-1, 0, 0}, {0, 0, 1}, {0, 1, 0}, {0.6f, 0.0f, -0.8f}};
+    double field_energy = 0.0, own_energy = 0.0, panned_energy = 0.0;
+    const size_t frame = size_t(frame_);
+    std::vector<float> in(frame), l(frame), r(frame);
+    for (const Vec3& way : ways) {
+        iplBinauralEffectReset(direct);
+        iplAmbisonicsDecodeEffectReset(binaural_);
+        iplAmbisonicsDecodeEffectReset(panning_);
+        const std::array<float, 9> gains = ambisonicGains(way);
+        std::vector<float> heard_field, heard_own;
+        for (int f = 0; f * frame_ < 8192 + frame_; ++f) {
+            clear();
+            std::fill(in.begin(), in.end(), 0.0f);
+            if (f == 0) {
+                in[0] = 1.0f;
+                for (int c = 0; c < kChannels; ++c) field_[size_t(c)][0] = gains[size_t(c)];
+            }
+            decode(binaural_, true, l.data(), r.data());
+            for (int i = 0; i < frame_; ++i) {
+                field_energy += double(l[size_t(i)]) * l[size_t(i)] + double(r[size_t(i)]) * r[size_t(i)];
+                heard_field.push_back(l[size_t(i)]);
+            }
+            decode(panning_, false, l.data(), r.data());
+            for (int i = 0; i < frame_; ++i) panned_energy += double(l[size_t(i)]) * l[size_t(i)] + double(r[size_t(i)]) * r[size_t(i)];
+            float* in_ch[1] = {in.data()};
+            float* out_ch[2] = {l.data(), r.data()};
+            IPLAudioBuffer in_buf{1, frame_, in_ch}, out_buf{2, frame_, out_ch};
+            IPLBinauralEffectParams bp{};
+            bp.direction = IPLVector3{way.x, way.y, way.z};
+            bp.interpolation = IPL_HRTFINTERPOLATION_BILINEAR;
+            bp.spatialBlend = 1.0f;
+            bp.hrtf = steam.hrtf();
+            iplBinauralEffectApply(direct, &bp, &in_buf, &out_buf);
+            for (int i = 0; i < frame_; ++i) {
+                own_energy += double(l[size_t(i)]) * l[size_t(i)] + double(r[size_t(i)]) * r[size_t(i)];
+                heard_own.push_back(l[size_t(i)]);
+            }
+        }
+        if (&way == &ways[0]) {  // straight ahead: where each first reaches a quarter of its peak
+            const auto onset = [](const std::vector<float>& x) {
+                float peak = 0.0f;
+                for (float v : x) peak = std::max(peak, std::fabs(v));
+                for (size_t i = 0; i < x.size(); ++i)
+                    if (peak > 0.0f && std::fabs(x[i]) > 0.25f * peak) return int(i);
+                return 0;
+            };
+            late_ = onset(heard_field) - onset(heard_own);
+        }
+    }
+    iplBinauralEffectRelease(&direct);
+    const double count = double(sizeof(ways) / sizeof(ways[0]));  // (plain panning: each way's energy 1)
+    binaural_gain_ = field_energy > 0.0 ? float(std::sqrt(own_energy / field_energy)) : 1.0f;
+    panning_gain_ = panned_energy > 0.0 ? float(std::sqrt(count / panned_energy)) : 1.0f;
+    iplAmbisonicsDecodeEffectReset(binaural_);
+    iplAmbisonicsDecodeEffectReset(panning_);
+    clear();
+    return true;
+}
+
+void ReflectionField::clear() {
+    for (auto& channel : field_) std::fill(channel.begin(), channel.end(), 0.0f);
+    added_ = false;
+}
+
+void ReflectionField::add(const float* mono, Vec3 from, Vec3 to, float focus) {
+    added_ = true;
+    std::array<float, 9> a = ambisonicGains(from), b = ambisonicGains(to);
+    for (int c = 1; c < kChannels; ++c) {  // (spread: the first order's channels down by `focus`, the second's by its square)
+        const float keep = c < 4 ? focus : focus * focus;
+        a[size_t(c)] *= keep;
+        b[size_t(c)] *= keep;
+    }
+    for (int c = 0; c < kChannels; ++c) {
+        float* channel = field_[size_t(c)].data();
+        const float step = (b[size_t(c)] - a[size_t(c)]) / float(frame_);
+        for (int i = 0; i < frame_; ++i) channel[i] += mono[i] * (a[size_t(c)] + step * float(i + 1));
+    }
+}
+
+void ReflectionField::render(float* out_l, float* out_r, float binaural_from, float binaural_to) {
+    if (!binaural_ || !panning_) return;
+    quiet_ = added_ ? 0 : quiet_ + 1;
+    if (quiet_ > 2 + 8192 / std::max(frame_, 1)) return;  // nothing in it for long enough that nothing is left to come out
+    // Both renderings run all the time, so that either is ready to be heard the moment binaural is switched.
+    decode(binaural_, true, bl_.data(), br_.data());
+    decode(panning_, false, pl_.data(), pr_.data());
+    for (int i = 0; i < frame_; ++i) {
+        const float share = binaural_from + (binaural_to - binaural_from) * float(i + 1) / float(frame_);
+        out_l[i] += bl_[size_t(i)] * binaural_gain_ * share + pl_[size_t(i)] * panning_gain_ * (1.0f - share);
+        out_r[i] += br_[size_t(i)] * binaural_gain_ * share + pr_[size_t(i)] * panning_gain_ * (1.0f - share);
+    }
+}
+
 SourceSpatializer::~SourceSpatializer() { release(); }
 
 void SourceSpatializer::release() {

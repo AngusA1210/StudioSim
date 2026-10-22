@@ -24,6 +24,20 @@ private:
     int pos_ = 0;
 };
 
+// Sound scattered off a surface (a diffuser's wells, a bookshelf's books), spread out in time: four all-pass filters
+// in a row, which leave every frequency as loud as it was but smear a click over some 20 ms.
+class Smear {
+public:
+    void init(float sr);
+    void process(float* io, int n);  // in place
+    void reset();
+
+private:
+    static constexpr int kStages = 4;
+    std::array<std::vector<float>, kStages> lines_;
+    std::array<int, kStages> pos_{};
+};
+
 // Eight-line feedback delay network. Each band (below 800 Hz, 800 Hz to 8 kHz, above 8 kHz) dies away in its own
 // time, as a room's surfaces and its air have it; left and right are decorrelated, and the output is scaled to unit
 // energy so the send level alone sets how wet the room is.

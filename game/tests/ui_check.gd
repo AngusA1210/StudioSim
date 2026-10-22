@@ -1380,6 +1380,13 @@ func _run() -> void:
 		main.library.room_data().room.surfaces.west == "curtain" and audio.get_room_decay() < as_built - 0.2 and hung[0] > hung[1] * 1.5,
 		"the floor can be carpeted and the walls hung with curtains (its menus say what each does): the room rings shorter, its highs gone first, and it is kept with the room",
 		"%.2f s, then %.2f s: %.2f s in the lows" % [as_built, audio.get_room_decay(), hung[0]])
+	var north_choices: Array = menu._surface_choices.north.get_meta("materials")
+	menu._surface_choices.north.item_selected.emit(north_choices.find("diffuser"))
+	await frames(2)
+	check(room.surfaces.north == "diffuser" and menu._surface_choices.ceiling.get_meta("materials").has("diffuser") and
+		not menu._surface_choices.floor.get_meta("materials").has("diffuser") and main.library.room_data().room.surfaces.north == "diffuser" and
+		menu._surface_choices.north.tooltip_text.begins_with("Wooden panels"),
+		"a wall (or the ceiling) can be lined with diffuser panels, which scatter what they send back; kept with the room", menu._surface_choices.north.tooltip_text)
 	for surface in room.SURFACES:
 		room.set_surface(surface, room.DEFAULT_SURFACES[surface])
 

@@ -105,6 +105,35 @@ void FdnReverb::process(const float* in, float* out_l, float* out_r, int n) {
     }
 }
 
+void Smear::init(float sr) {
+    constexpr float kStageMs[kStages] = {1.7f, 3.1f, 5.3f, 8.9f};
+    for (int k = 0; k < kStages; ++k) lines_[size_t(k)].assign(size_t(std::max(1, int(kStageMs[k] * 0.001f * sr + 0.5f))), 0.0f);
+    pos_.fill(0);
+}
+
+void Smear::reset() {
+    for (auto& line : lines_) std::fill(line.begin(), line.end(), 0.0f);
+    pos_.fill(0);
+}
+
+void Smear::process(float* io, int n) {
+    constexpr float g = 0.6f;
+    for (int k = 0; k < kStages; ++k) {
+        std::vector<float>& line = lines_[size_t(k)];
+        if (line.empty()) continue;
+        int pos = pos_[size_t(k)];
+        const int len = int(line.size());
+        for (int i = 0; i < n; ++i) {  // (Schroeder's all-pass: what went in `len` ago, less this, plus this fed back)
+            const float held = line[size_t(pos)];
+            const float v = io[i] + g * held;
+            io[i] = held - g * v;
+            line[size_t(pos)] = v;
+            if (++pos == len) pos = 0;
+        }
+        pos_[size_t(k)] = pos;
+    }
+}
+
 void Limiter::init(float sr) {
     release_ = tauCoef(0.15f, sr);
     env_ = 0.0f;
