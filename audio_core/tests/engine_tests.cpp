@@ -2272,7 +2272,7 @@ int main(int argc, char** argv) {
         room.engine.setSourcePan(right, 1.0f);
         auto heard = [&]() {  // when each side's click reaches the master, from when it came in
             renderSeconds(room.engine, 0.3);
-            const Render r = renderSeconds(room.engine, 0.4, [](int64_t n) { return n == kAt ? 0.25f : 0.0f; });
+            const Render r = renderSeconds(room.engine, 0.4, [&](int64_t n) { return n == kAt ? 0.25f : 0.0f; });
             return std::make_pair(onsetAfter(r.l, 0) - kAt, onsetAfter(r.r, 0) - kAt);
         };
         std::string why;
@@ -2365,7 +2365,7 @@ int main(int argc, char** argv) {
         const bool loaded = pedal >= 0 && amped.engine.loadPedalPlugin(amp, pedal, lookahead, &why);
         amped.engine.setPedalLoop(amp, 1);
         renderSeconds(amped.engine, 0.3);
-        const Render pluck = renderSeconds(amped.engine, 0.4, [](int64_t n) { return n >= kAt && n < kAt + 48 ? 0.3f : 0.0f; });
+        const Render pluck = renderSeconds(amped.engine, 0.4, [&](int64_t n) { return n >= kAt && n < kAt + 48 ? 0.3f : 0.0f; });
         double early = 0.0, on_time = 0.0;
         for (int i = kAt; i < kAt + 900; ++i) early += double(pluck.l[size_t(i)]) * pluck.l[size_t(i)];
         for (int i = kAt + kLate; i < kAt + kLate + 900; ++i) on_time += double(pluck.l[size_t(i)]) * pluck.l[size_t(i)];
