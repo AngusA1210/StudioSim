@@ -456,8 +456,7 @@ func _physics_process(_delta: float) -> void:
 
 ## The room's size or walls changed: tell the audio core, and bring in anything left outside or inside a wall.
 func _on_room_changed() -> void:
-	audio.set_room(room.size, room.audio_walls())
-	audio.set_floor_reflection(room.floor_reflection())
+	audio.set_room(room.size, room.audio_walls(), room.surfaces)  # (what it is made of, too: its floor's bounce among it)
 	for inst in instruments:
 		var at: Vector3 = inst.global_position
 		at.y = inst.source_height

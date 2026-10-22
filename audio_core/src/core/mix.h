@@ -24,21 +24,35 @@ private:
     int pos_ = 0;
 };
 
-// Eight-line feedback delay network. Highs decay faster than lows, left and right are decorrelated,
-// and the output is scaled to unit energy so the send level alone sets how wet the room is.
+// Eight-line feedback delay network. Each band (below 800 Hz, 800 Hz to 8 kHz, above 8 kHz) dies away in its own
+// time, as a room's surfaces and its air have it; left and right are decorrelated, and the output is scaled to unit
+// energy so the send level alone sets how wet the room is.
 class FdnReverb {
 public:
-    // `size` stretches the spacing of the reflections: 1 is a room of ordinary size.
-    void init(float sr, float rt60, float predelay_ms, float size = 1.0f);
+    // `rt60` is the time each band takes to fall 60 dB: low, middle, high. `size` stretches the spacing of the
+    // reflections: 1 is a room of ordinary size.
+    void init(float sr, const std::array<float, 3>& rt60, float predelay_ms, float size = 1.0f);
     // Mono in, stereo out. Overwrites out_l / out_r.
     void process(const float* in, float* out_l, float* out_r, int n);
     void reset();
 
 private:
     static constexpr int kLines = 8;
+    // A first-order shelf (its gain below or above its corner against 1 beyond it), as a line's loss in the low and
+    // high bands against the middle's.
+    struct Shelf {
+        float b0 = 1.0f, b1 = 0.0f, a1 = 0.0f, x1 = 0.0f, y1 = 0.0f;
+        float process(float x) {
+            const float y = b0 * x + b1 * x1 - a1 * y1;
+            x1 = x;
+            y1 = y;
+            return y;
+        }
+    };
     std::array<std::vector<float>, kLines> lines_;
     std::array<int, kLines> pos_{}, len_{};
-    std::array<float, kLines> gain_{}, damp_{}, damp_state_{};
+    std::array<float, kLines> gain_{};  // each line's loss in the middle band
+    std::array<Shelf, kLines> low_{}, high_{};
     std::vector<float> pre_;
     int pre_pos_ = 0;
     Biquad highpass_;

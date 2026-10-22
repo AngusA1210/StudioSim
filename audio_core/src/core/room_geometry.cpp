@@ -28,6 +28,7 @@ void RoomGeometry::setRoom(float width, float depth, float ceiling, const std::v
         box.half_thickness = std::max(w.thickness, 0.02f) * 0.5f;
         box.half_length = run * 0.5f + box.half_thickness;
         box.top = std::min(w.height, ceiling);
+        box.through = materialInfo(w.material).transmission;
         boxes_.push_back(box);
         for (int c = 0; c < 4; ++c) {  // in order round the wall, so neighbours in the list share a face
             const float u = (c == 0 || c == 3 ? -1.0f : 1.0f) * (box.half_length + kNudge);
@@ -210,6 +211,16 @@ bool RoomGeometry::routeOver(Vec3 ear, Vec3 source, Route& out) const {
     return true;
 }
 
+std::array<float, 3> RoomGeometry::transmission(Vec3 a, Vec3 b) const {
+    std::array<float, 3> through{1.0f, 1.0f, 1.0f};
+    for (const Box& box : boxes_) {
+        float enter;
+        if (!inLineOfSight(box, a, b, enter)) continue;
+        for (size_t band = 0; band < 3; ++band) through[band] *= box.through[band];
+    }
+    return through;
+}
+
 DirectPath RoomGeometry::directPath(Vec3 ear, Vec3 source) const {
     DirectPath path;
     path.via = source;
@@ -234,13 +245,14 @@ DirectPath RoomGeometry::directPath(Vec3 ear, Vec3 source) const {
     }
 
     path.blocked = true;
+    const std::array<float, 3> through = transmission(ear, source);
+    std::copy(through.begin(), through.end(), path.through);
     std::vector<Route> routes;
     routesAround(*first, ear, source, routes);
     Route over;
     if (routeOver(ear, source, over)) routes.push_back(over);
-    if (routes.empty()) {  // sealed in: only what leaks through the wall
-        path.differences[0] = 10.0f;
-        path.count = 1;
+    if (routes.empty()) {  // sealed in: only what leaks through the walls, straight
+        path.count = 0;
         return path;
     }
     std::sort(routes.begin(), routes.end(), [](const Route& p, const Route& q) { return p.length < q.length; });

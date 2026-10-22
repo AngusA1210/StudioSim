@@ -7,7 +7,6 @@ signal selection_changed
 
 const Room := preload("res://scripts/room.gd")
 const ACCENT := Color(0.49, 0.89, 0.82)
-const WALL := Color(0.72, 0.75, 0.86)
 const PAD := 16.0
 const HANDLE := 7.0  # radius of the dots on a selected wall's ends, in pixels
 
@@ -67,11 +66,16 @@ func _draw() -> void:
 	while z < half.y:
 		draw_line(to_screen(Vector2(-half.x, z)), to_screen(Vector2(half.x, z)), Color(1, 1, 1, 0.09 if is_zero_approx(z) else 0.045))
 		z += spacing
-	draw_rect(floor_rect, Color(1, 1, 1, 0.55), false, 2.0)
+	# The room's own walls, each in its material's colour (north at the top).
+	var corners := [to_screen(Vector2(-half.x, -half.y)), to_screen(Vector2(half.x, -half.y)), to_screen(Vector2(half.x, half.y)),
+		to_screen(Vector2(-half.x, half.y))]
+	for side in [["north", 0, 1], ["east", 1, 2], ["south", 2, 3], ["west", 3, 0]]:
+		draw_line(corners[side[1]], corners[side[2]], Room.material_color(room.surfaces[side[0]]).lightened(0.55), 3.0)
 
 	for i in room.walls.size():
 		var wall: Dictionary = room.walls[i]
-		var ink := ACCENT if i == selected else (WALL.lightened(0.25) if i == _hover else WALL)
+		var made: Color = Room.material_color(wall.get("material", Room.DEFAULT_WALL_MATERIAL)).lightened(0.45)
+		var ink := ACCENT if i == selected else (made.lightened(0.25) if i == _hover else made)
 		if room.wall_top(wall) < room.size.y - 0.05:
 			ink.a = 0.6  # paler: it stops short of the ceiling, so sound comes over it
 		draw_colored_polygon(_outline(wall.a, wall.b), ink)

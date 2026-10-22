@@ -2,8 +2,11 @@ extends Node3D
 ## The room itself: a floor, ceiling and outer walls of whatever size it is set to, a light under the ceiling, and
 ## the walls standing inside it. Whatever depends on the room's shape asks here, and `changed` says when it moves.
 ##
-## A wall is {a: Vector2, b: Vector2, height: float}: it runs between two points on the floor plan (x, z) and
-## reaches half its thickness past each, so two walls drawn to the same point close the corner between them.
+## A wall is {a: Vector2, b: Vector2, height: float, material: String}: it runs between two points on the floor plan
+## (x, z) and reaches half its thickness past each, so two walls drawn to the same point close the corner between them.
+## Each of the room's own surfaces (its floor, its ceiling, its four walls) is made of a material, and so is each wall
+## standing in it: what it absorbs sets how long and how brightly the room rings, what it sends back is what the
+## microphones hear off it, and what passes through a wall standing in the room is what is heard behind it.
 
 signal changed
 
@@ -44,25 +47,56 @@ void fragment() {
 var size := DEFAULT_SIZE
 var walls: Array = []
 var brightness := 1.0  # of the room's own lights
-## What the floor is, as the microphones hear it: how much of a sound it sends back up to them (an amplitude), as a mic a
-## little way off a floor-standing amp hears its bounce. [name, reflection, about]
-const FLOORS := {
-	"hard": ["Hard floor", 0.9, "Wood or concrete: a mic a little way off an amp hears a strong bounce off it (notches, where it arrives half a wave late)."],
-	"rug": ["A rug", 0.6, "A rug under the band: a softer bounce, without its highs."],
-	"carpet": ["Carpet", 0.3, "Thick carpet: hardly any bounce."],
+## The materials, as the audio core has them (materials.h): [name, what it does to sound, its colour, where it can go:
+## "walls" (the room's own and those standing in it), "floor", "ceiling"].
+const MATERIALS := {
+	"drywall": ["Drywall", "Gypsum board on studs: it gives a little in the lows and sends the rest back. Standing in the room, it lets some sound through, the lows most.",
+		Color(0.07, 0.075, 0.095), ["walls", "ceiling"]],
+	"plaster": ["Plaster", "Plaster on masonry: hard and heavy, it sends nearly everything back, and next to nothing gets through it.",
+		Color(0.16, 0.15, 0.14), ["walls", "ceiling"]],
+	"brick": ["Brick", "Bare brick: hard, its texture taking a little of the highs. Next to nothing gets through it.", Color(0.2, 0.08, 0.05), ["walls"]],
+	"concrete": ["Concrete", "Sealed concrete: as hard as a surface gets, so a room of it rings on and on. Nothing gets through it to speak of.",
+		Color(0.13, 0.13, 0.14), ["walls", "ceiling", "floor"]],
+	"wood": ["Wood panelling", "Wood on studs: it takes some of the lows and sends the rest back warm. Standing in the room, it lets more through than drywall.",
+		Color(0.16, 0.09, 0.05), ["walls", "ceiling"]],
+	"glass": ["Glass", "Glass: it sends nearly everything back. As a booth's window, it lets a little through, the highs a little more than drywall does.",
+		Color(0.2, 0.32, 0.38), ["walls"]],
+	"curtain": ["Heavy curtain", "Draped velour: it takes most of the mids and highs and few of the lows. Hung across the room, it hides more than it stops.",
+		Color(0.2, 0.03, 0.05), ["walls"]],
+	"foam": ["Acoustic foam", "Foam: it takes the mids and highs and leaves the lows. Standing in the room, sound passes through it.",
+		Color(0.035, 0.035, 0.04), ["walls", "ceiling"]],
+	"acoustic_panel": ["Acoustic panels", "Thick mineral-wool panels: they take nearly everything, the lows too. Standing in the room, a gobo: it shields what is behind it, the highs most.",
+		Color(0.1, 0.12, 0.17), ["walls", "ceiling"]],
+	"ceiling_tile": ["Acoustic tiles", "A suspended ceiling of acoustic tiles: it takes much of everything.", Color(0.12, 0.12, 0.13), ["ceiling"]],
+	"wood_floor": ["Wooden floor", "Wood: it sends most back. A mic a little way off a floor-standing amp hears a strong bounce off it (notches, where it arrives half a wave late).",
+		Color(0.11, 0.065, 0.04), ["floor"]],
+	"tile": ["Tiles", "Tiles: as hard as a floor gets, a strong, bright bounce.", Color(0.17, 0.17, 0.19), ["floor"]],
+	"rug": ["A rug", "A rug under the band: a softer bounce, without its highs.", Color(0.17, 0.08, 0.05), ["floor"]],
+	"carpet": ["Carpet", "Thick carpet: hardly any bounce, and little of the highs comes back off it.", Color(0.09, 0.07, 0.1), ["floor"]],
 }
-const FLOOR_ORDER := ["hard", "rug", "carpet"]
-var floor_kind := "hard"
+const MATERIAL_ORDER := ["drywall", "plaster", "brick", "concrete", "wood", "glass", "curtain", "foam", "acoustic_panel", "ceiling_tile",
+	"wood_floor", "tile", "rug", "carpet"]
+## The room's own surfaces, and what each is made of as a room starts (north is the way you first face).
+const SURFACES := ["floor", "ceiling", "north", "south", "east", "west"]
+const SURFACE_NAMES := {"floor": "Floor", "ceiling": "Ceiling", "north": "North wall", "south": "South wall", "east": "East wall", "west": "West wall"}
+const DEFAULT_SURFACES := {"floor": "wood_floor", "ceiling": "ceiling_tile", "north": "drywall", "south": "drywall", "east": "drywall",
+	"west": "drywall"}
+const DEFAULT_WALL_MATERIAL := "drywall"
+var surfaces := DEFAULT_SURFACES.duplicate()
 
 var _shell: Node3D
 var _wall_nodes: Node3D
 var _lights: Array = []  # [light, its energy at normal brightness]
 var _shader: Shader
+var _clear_shader: Shader
 
 
 func setup() -> void:
 	_shader = Shader.new()
 	_shader.code = GRID_SHADER
+	_clear_shader = Shader.new()  # the same, see-through
+	_clear_shader.code = GRID_SHADER.replace("uniform float line_strength", "uniform float alpha = 1.0;\nuniform float line_strength").replace(
+		"ROUGHNESS = 0.92;", "ROUGHNESS = 0.1;\n\tALPHA = alpha;")
 	_shell = Node3D.new()
 	add_child(_shell)
 	_wall_nodes = Node3D.new()
@@ -72,28 +106,41 @@ func setup() -> void:
 
 ## The wall the default room has: a short one standing between the drums and the bass.
 static func default_walls() -> Array:
-	return [{"a": Vector2(-2.5, -3.25), "b": Vector2(-2.5, -0.55), "height": DEFAULT_WALL_HEIGHT}]
+	return [{"a": Vector2(-2.5, -3.25), "b": Vector2(-2.5, -0.55), "height": DEFAULT_WALL_HEIGHT, "material": DEFAULT_WALL_MATERIAL}]
 
 
 ## Back to the room the game starts with.
 func reset() -> void:
 	size = DEFAULT_SIZE
 	walls = default_walls()
-	floor_kind = "hard"
+	surfaces = DEFAULT_SURFACES.duplicate()
 	_build_shell()
 	_build_walls()
 	changed.emit()
 
 
-func set_floor(kind: String) -> void:
-	if FLOORS.has(kind) and kind != floor_kind:
-		floor_kind = kind
-		changed.emit()
+## The materials a surface can be made of: the floor's, the ceiling's, or a wall's (the room's own or one standing in it).
+static func materials_for(surface: String) -> Array:
+	var place := surface if surface in ["floor", "ceiling"] else "walls"
+	return MATERIAL_ORDER.filter(func(m): return place in MATERIALS[m][3])
 
 
-## How much of a sound its floor sends back up.
-func floor_reflection() -> float:
-	return float(FLOORS[floor_kind][1])
+## What one of the room's own surfaces is made of ("floor", "ceiling", "north", "south", "east", "west").
+func set_surface(surface: String, material: String) -> void:
+	if not surfaces.has(surface) or not materials_for(surface).has(material) or surfaces[surface] == material:
+		return
+	surfaces[surface] = material
+	_build_shell()
+	changed.emit()
+
+
+## What a wall standing in the room is made of.
+func set_wall_material(index: int, material: String) -> void:
+	if index < 0 or index >= walls.size() or not materials_for("walls").has(material) or walls[index].get("material", "") == material:
+		return
+	walls[index].material = material
+	_build_walls()
+	changed.emit()
 
 
 func set_size(new_size: Vector3) -> void:
@@ -116,12 +163,14 @@ func set_size(new_size: Vector3) -> void:
 
 ## Adds a wall between two points on the floor plan. Returns its index, or -1 if it would be too short or there
 ## are already as many walls as the room takes.
-func add_wall(a: Vector2, b: Vector2, height := DEFAULT_WALL_HEIGHT) -> int:
+func add_wall(a: Vector2, b: Vector2, height := DEFAULT_WALL_HEIGHT, material := DEFAULT_WALL_MATERIAL) -> int:
 	a = _on_floor(a)
 	b = _on_floor(b)
 	if walls.size() >= MAX_WALLS or a.distance_to(b) < MIN_WALL_RUN:
 		return -1
-	walls.append({"a": a, "b": b, "height": clampf(height, MIN_WALL_HEIGHT, MAX_SIZE.y)})
+	if not materials_for("walls").has(material):
+		material = DEFAULT_WALL_MATERIAL
+	walls.append({"a": a, "b": b, "height": clampf(height, MIN_WALL_HEIGHT, MAX_SIZE.y), "material": material})
 	_build_walls()
 	changed.emit()
 	return walls.size() - 1
@@ -172,8 +221,14 @@ func wall_length(wall: Dictionary) -> float:
 func audio_walls() -> Array:
 	var out := []
 	for wall in walls:
-		out.append({"a": wall.a, "b": wall.b, "thickness": WALL_THICKNESS, "height": wall_top(wall)})
+		out.append({"a": wall.a, "b": wall.b, "thickness": WALL_THICKNESS, "height": wall_top(wall),
+			"material": wall.get("material", DEFAULT_WALL_MATERIAL)})
 	return out
+
+
+## A material's colour, as the room is drawn.
+static func material_color(material: String) -> Color:
+	return MATERIALS.get(material, MATERIALS[DEFAULT_WALL_MATERIAL])[2]
 
 
 static func snap(point: Vector2) -> Vector2:
@@ -228,12 +283,13 @@ func _build_shell() -> void:
 	var h := size.y
 	var d := size.z
 	var t := SHELL_THICKNESS
-	_block(_shell, Vector3(0, -t / 2, 0), Vector3(w + 2 * t, t, d + 2 * t), Color(0.05, 0.055, 0.07))  # floor
-	_block(_shell, Vector3(0, h + t / 2, 0), Vector3(w + 2 * t, t, d + 2 * t), Color(0.035, 0.04, 0.05))  # ceiling
-	_block(_shell, Vector3(-w / 2 - t / 2, h / 2, 0), Vector3(t, h, d), Color(0.06, 0.065, 0.085))
-	_block(_shell, Vector3(w / 2 + t / 2, h / 2, 0), Vector3(t, h, d), Color(0.06, 0.065, 0.085))
-	_block(_shell, Vector3(0, h / 2, -d / 2 - t / 2), Vector3(w, h, t), Color(0.06, 0.065, 0.085))
-	_block(_shell, Vector3(0, h / 2, d / 2 + t / 2), Vector3(w, h, t), Color(0.06, 0.065, 0.085))
+	# Each in its material's colour (the ceiling a little darker, as it is lit from below).
+	_block(_shell, Vector3(0, -t / 2, 0), Vector3(w + 2 * t, t, d + 2 * t), material_color(surfaces.floor))
+	_block(_shell, Vector3(0, h + t / 2, 0), Vector3(w + 2 * t, t, d + 2 * t), material_color(surfaces.ceiling).darkened(0.3))
+	_block(_shell, Vector3(-w / 2 - t / 2, h / 2, 0), Vector3(t, h, d), material_color(surfaces.west))
+	_block(_shell, Vector3(w / 2 + t / 2, h / 2, 0), Vector3(t, h, d), material_color(surfaces.east))
+	_block(_shell, Vector3(0, h / 2, -d / 2 - t / 2), Vector3(w, h, t), material_color(surfaces.north))
+	_block(_shell, Vector3(0, h / 2, d / 2 + t / 2), Vector3(w, h, t), material_color(surfaces.south))
 	# Lights in a grid about seven metres apart, so a big room is lit as evenly as a small one. They hang at the
 	# default room's ceiling height, where they light the floor and what stands on it; a tall room gets a second
 	# set under its own ceiling for the upper walls.
@@ -269,11 +325,12 @@ func _build_walls() -> void:
 		var centre: Vector2 = (wall.a + wall.b) / 2
 		var along: Vector2 = wall.b - wall.a
 		# Sound has to bend round these, and the player has to walk round them.
-		_block(_wall_nodes, Vector3(centre.x, top / 2, centre.y), Vector3(wall_length(wall), top, WALL_THICKNESS), Color(0.12, 0.13, 0.17),
-			atan2(-along.y, along.x))
+		var material: String = wall.get("material", DEFAULT_WALL_MATERIAL)
+		_block(_wall_nodes, Vector3(centre.x, top / 2, centre.y), Vector3(wall_length(wall), top, WALL_THICKNESS),
+			material_color(material).lightened(0.15), atan2(-along.y, along.x), 0.35 if material == "glass" else 1.0)
 
 
-func _block(parent: Node3D, centre: Vector3, block_size: Vector3, color: Color, turn := 0.0) -> void:
+func _block(parent: Node3D, centre: Vector3, block_size: Vector3, color: Color, turn := 0.0, alpha := 1.0) -> void:
 	var body := StaticBody3D.new()
 	body.position = centre
 	body.rotation.y = turn
@@ -287,8 +344,10 @@ func _block(parent: Node3D, centre: Vector3, block_size: Vector3, color: Color, 
 	box_mesh.size = block_size
 	mesh.mesh = box_mesh
 	var material := ShaderMaterial.new()
-	material.shader = _shader
+	material.shader = _shader if alpha >= 1.0 else _clear_shader  # (glass: seen through)
 	material.set_shader_parameter("base_color", color)
+	if alpha < 1.0:
+		material.set_shader_parameter("alpha", alpha)
 	mesh.material_override = material
 	body.add_child(mesh)
 	parent.add_child(body)

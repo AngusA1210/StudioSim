@@ -26,9 +26,10 @@ const float kStage = std::sqrt(SourceSpatializer::kRefDistance / 7.0f);
 const float kMasterGain = 1.9f * kStage;  // about -28 dBFS RMS at the spawn point, peaks around -12
 const float kReverbLevel = 0.16f;
 const float kClickLevel = 0.13f;  // the metronome peaks about 10 dB above the mix's average level
-// The room the reverb was tuned in. Other sizes are worked out from it, keeping the same wall surfaces.
+// The room the reverb was tuned in, with its surfaces as a room starts (materials.h: RoomSurfaces): its reverb is
+// kReverbLevel loud, and other rooms' are louder or quieter as they absorb less or more.
 constexpr float kReferenceRoom[3] = {14.0f, 4.0f, 10.0f};  // width, height, depth in metres
-constexpr float kReferenceDecay = 1.1f;                    // its reverb time (RT60) in seconds
+RoomAcoustics referenceAcoustics() { return roomAcoustics(kReferenceRoom[0], kReferenceRoom[1], kReferenceRoom[2], RoomSurfaces{}); }
 constexpr float kPredelayMs = 12.0f;
 constexpr float kReverbFadeSeconds = 0.3f;
 constexpr float kBinauralFadeSeconds = 0.03f;  // switching binaural on or off crossfades over about this long
@@ -37,7 +38,7 @@ float volumeOf(const float r[3]) { return r[0] * r[1] * r[2]; }
 float surfaceOf(const float r[3]) { return 2.0f * (r[0] * r[1] + r[1] * r[2] + r[0] * r[2]); }
 
 // The delay lines and pre-delay stretch with the room, within what still sounds like a room rather than echoes.
-void buildReverb(FdnReverb& reverb, float sr, float rt60, float size) {
+void buildReverb(FdnReverb& reverb, float sr, const std::array<float, 3>& rt60, float size) {
     reverb.init(sr, rt60, kPredelayMs * std::clamp(size, 0.3f, 3.5f), std::clamp(size, 0.5f, 1.8f));
 }
 constexpr size_t kFifoFrames = 4096;
@@ -258,6 +259,7 @@ struct AudioEngine::Source {
             float distance = -1.0f, distance_target = 0.0f, nearness = 1.0f, nearness_target = 1.0f;
             float gain = 0.0f, gain_target = 0.0f, cut = 20000.0f, cut_target = 20000.0f;
             float low_db = 0.0f, low_target = 0.0f, high_db = 0.0f, high_target = 0.0f;
+            float bands[3] = {1.0f, 1.0f, 1.0f}, bands_target[3] = {1.0f, 1.0f, 1.0f};  // what a surface it comes off leaves
             Vec3 from{0.0f, 0.0f, 1.0f}, from_target{0.0f, 0.0f, 1.0f};
             float low = 0.0f, below_high = 0.0f, near_in = 0.0f, near_out = 0.0f;
             std::array<EqFilter, 3> filters{};
@@ -338,8 +340,8 @@ struct AudioEngine::Device {
 };
 
 AudioEngine::AudioEngine(const EngineConfig& config)
-    : sr_(config.sample_rate), block_(config.block_size), wanted_rt60_(kReferenceDecay), wanted_level_(kReverbLevel),
-      room_rt60_(kReferenceDecay), room_level_(kReverbLevel), falloff_target_(kDefaultFalloffDb / 6.0f),
+    : sr_(config.sample_rate), block_(config.block_size), wanted_rt60_(referenceAcoustics().decay), wanted_level_(kReverbLevel),
+      room_rt60_(referenceAcoustics().decay), room_level_(kReverbLevel), falloff_target_(kDefaultFalloffDb / 6.0f),
       falloff_(kDefaultFalloffDb / 6.0f), reverb_level_(kReverbLevel), block_pos_(config.block_size) {
     for (auto& l : levels_) l.store(0.0f);
     for (auto* meters : {&peaks_, &pre_levels_, &pre_peaks_})
@@ -1543,7 +1545,7 @@ void AudioEngine::updatePath(Source& s) {
     }
     const DirectPath path = geometry_.directPath(ear_, s.position);
     s.blocked = path.blocked;
-    setSourceDirectPath(s.id, path.via, path.extra, path.differences, path.count, path.blocked);
+    setSourceDirectPath(s.id, path.via, path.extra, path.differences, path.count, path.blocked, path.through);
 }
 
 void AudioEngine::updatePaths() {
@@ -1631,12 +1633,15 @@ void AudioEngine::updateFacing(Source& s) {
     s.facing_sent = s.radiator.cones > 0;
 }
 
-// A cabinet's image under the floor (at y = 0): its cones, its back and the way it faces, mirrored.
-Radiator AudioEngine::mirrored(const Radiator& r) {
+// A cabinet's image beyond a surface (`axis` 0, 1 or 2 for x, y or z, at `plane`; the floor: y = 0): its cones, its back
+// and the way it faces, mirrored.
+Radiator AudioEngine::mirrored(const Radiator& r, int axis, float plane) {
+    const auto flip = [&](Vec3& p) { float& v = axis == 0 ? p.x : (axis == 1 ? p.y : p.z); v = 2.0f * plane - v; };
     Radiator image = r;
-    for (auto& cone : image.cone) cone.y = -cone.y;
-    image.back.y = -image.back.y;
-    image.facing.y = -image.facing.y;
+    for (auto& cone : image.cone) flip(cone);
+    flip(image.back);
+    float& facing = axis == 0 ? image.facing.x : (axis == 1 ? image.facing.y : image.facing.z);
+    facing = -facing;
     return image;
 }
 
@@ -1677,7 +1682,7 @@ void AudioEngine::updateMicPath(const Source& mic, const Source& source) {
             const DirectPath path = geometry_.directPath(at, source.position);
             via = path.via;
             c.v[1] = length(sub(path.via, at)) + path.extra;
-            directPathGains(path.differences, path.count, path.blocked, gains);
+            directPathGains(path.differences, path.count, path.blocked, gains, path.through);
         }
         for (int b = 0; b < 3; ++b) c.v[2 + b] = gains[b];
         const Vec3 way = sub(via, at);
@@ -1688,16 +1693,19 @@ void AudioEngine::updateMicPath(const Source& mic, const Source& source) {
         push(c);
         // Each way it comes: a loudspeaker cabinet's cones (and its open back) each their own (round a wall as much
         // further as the cabinet's middle is); anything else from where it stands, or the wall's edge it bends round.
-        // And each of them again off the floor, from its image under the floor, a little quieter and duller, unless
-        // the floor takes it all.
+        // And each of them again off the floor, from its image under the floor, as much of each band as its material
+        // sends back, unless it is told to take it all; and the first reflection off each of the room's walls and its
+        // ceiling, from the source's image beyond it (a cabinet as one, as it is heard from there), likewise.
         const bool radiates = radiatedPaths(source.radiator) > 0;
         const int direct = radiates ? radiatedPaths(source.radiator) : 1;
         const bool floor = floor_reflection_ > 0.0f;
-        const int ways = direct * (floor ? 2 : 1);
+        const int bounces = early_reflections_ ? 5 : 0;
+        const int ways = direct * (floor ? 2 : 1) + bounces;
         const float detour = std::max(c.v[1] - length(sub(source.position, at)), 0.0f);
         const float ref = SourceSpatializer::kRefDistance;
-        const auto send = [&](int w, const RadiatedPath& p, bool filtered) {
+        const auto send = [&](int w, const RadiatedPath& p, bool filtered, const std::array<float, 3>& bands = {1.0f, 1.0f, 1.0f}) {
             Command cone; cone.type = Command::MicCone; cone.id = mic.id;
+            std::copy(bands.begin(), bands.end(), cone.bands);
             cone.epoch = uint32_t(source.id) | uint32_t(k) << 8 | uint32_t(w) << 10 | uint32_t(ways) << 15;
             cone.v[0] = p.distance;
             cone.v[1] = p.nearness;
@@ -1721,6 +1729,8 @@ void AudioEngine::updateMicPath(const Source& mic, const Source& source) {
             return p;
         };
         const Radiator image = mirrored(source.radiator);
+        std::array<float, 3> floor_bands = reflection(surfaces_.floor);
+        for (float& b : floor_bands) b *= floor_reflection_;
         for (int w = 0; w < direct; ++w) {
             RadiatedPath p = radiates ? radiate(source.radiator, w, at, ref) : point(via, c.v[1] - length(sub(via, at)));
             if (radiates) p.distance += detour;
@@ -1729,9 +1739,35 @@ void AudioEngine::updateMicPath(const Source& mic, const Source& source) {
             const Vec3 under{source.position.x, -source.position.y, source.position.z};
             RadiatedPath bounce = radiates ? radiate(image, w, at, ref) : point(under, 0.0f);
             bounce.distance += detour;
-            bounce.gain *= floor_reflection_;
-            bounce.cut_hz = std::min(bounce.cut_hz, kFloorCutHz);
-            send(direct + w, bounce, true);
+            send(direct + w, bounce, radiates, floor_bands);
+        }
+        const struct { int axis; float plane; Material material; } faces[5] = {
+            {2, -room_dims_[2] * 0.5f, surfaces_.north}, {2, room_dims_[2] * 0.5f, surfaces_.south},
+            {0, room_dims_[0] * 0.5f, surfaces_.east},   {0, -room_dims_[0] * 0.5f, surfaces_.west},
+            {1, room_dims_[1], surfaces_.ceiling},
+        };
+        for (int f = 0; f < bounces; ++f) {
+            const auto along = [&](Vec3 p) { return faces[f].axis == 0 ? p.x : (faces[f].axis == 1 ? p.y : p.z); };
+            Vec3 beyond = source.position;  // its image beyond the surface
+            float& mirrored_coordinate = faces[f].axis == 0 ? beyond.x : (faces[f].axis == 1 ? beyond.y : beyond.z);
+            mirrored_coordinate = 2.0f * faces[f].plane - mirrored_coordinate;
+            RadiatedPath bounce = point(beyond, 0.0f);
+            bool filtered = false;
+            if (radiates) {  // a cabinet as it is heard from here off the surface: duller and quieter off its axis
+                const Facing look = facingFrom(mirrored(source.radiator, faces[f].axis, faces[f].plane), beyond, at);
+                bounce.gain = look.gain;
+                bounce.cut_hz = look.cut_hz;
+                filtered = true;
+            }
+            // Where it strikes the surface (on the way from the mic to the image): what the surface sends back of each
+            // band, and what passes any wall standing between there and the source or the mic.
+            const float span = along(beyond) - along(at);
+            const float t = std::fabs(span) > 1e-6f ? std::clamp((faces[f].plane - along(at)) / span, 0.0f, 1.0f) : 0.5f;
+            const Vec3 strike{at.x + (beyond.x - at.x) * t, at.y + (beyond.y - at.y) * t, at.z + (beyond.z - at.z) * t};
+            std::array<float, 3> bands = reflection(faces[f].material);
+            const std::array<float, 3> in = geometry_.transmission(source.position, strike), out = geometry_.transmission(strike, at);
+            for (size_t b = 0; b < 3; ++b) bands[b] *= in[b] * out[b];
+            send(direct * (floor ? 2 : 1) + f, bounce, filtered, bands);
         }
     }
 }
@@ -1742,23 +1778,36 @@ void AudioEngine::setFloorReflection(float amount) {
         if (s && !s->removing && isMic(s->kind)) updateMicPaths(*s);
 }
 
-void AudioEngine::setRoom(float width, float height, float depth, const std::vector<Wall>& walls) {
+void AudioEngine::setRoom(float width, float height, float depth, const std::vector<Wall>& walls, const RoomSurfaces& surfaces) {
     const float room[3] = {std::clamp(width, 2.0f, 100.0f), std::clamp(height, 2.0f, 50.0f), std::clamp(depth, 2.0f, 100.0f)};
     geometry_.setRoom(room[0], room[2], room[1], walls);
+    std::copy(room, room + 3, room_dims_.begin());
+    surfaces_ = surfaces;
     updatePaths();
     for (auto& s : owned_)
         if (s && !s->removing && isMic(s->kind)) updateMicPaths(*s);
-    // Sabine: the reverb time grows with volume over surface (the same surfaces as the reference room, so the same
-    // share of sound is absorbed at each bounce), and the reverberant level falls as the absorbing surface grows.
+    // How long it rings in each band, from what its surfaces (and the walls standing in it, both faces) absorb and what
+    // the air takes; how loud, from its room constant (the more it absorbs, the quieter its ring); and its delay lines
+    // as long as its average distance between bounces (volume over surface) has them.
+    std::vector<StandingSurface> standing;
+    for (const Wall& w : walls)
+        standing.push_back({std::hypot(w.bx - w.ax, w.bz - w.az) * std::min(w.height, room[1]), w.material});
+    const RoomAcoustics acoustics = roomAcoustics(room[0], room[1], room[2], surfaces, standing);
     wanted_size_ = (volumeOf(room) / surfaceOf(room)) / (volumeOf(kReferenceRoom) / surfaceOf(kReferenceRoom));
-    wanted_rt60_ = std::clamp(kReferenceDecay * wanted_size_, 0.15f, 8.0f);
-    wanted_level_ = kReverbLevel * std::sqrt(surfaceOf(kReferenceRoom) / surfaceOf(room));
+    wanted_rt60_ = acoustics.decay;
+    wanted_level_ = kReverbLevel * std::sqrt(referenceAcoustics().constant / std::max(acoustics.constant, 0.1f));
     roomSettled();
+}
+
+void AudioEngine::setEarlyReflections(bool on) {
+    early_reflections_ = on;
+    for (auto& s : owned_)
+        if (s && !s->removing && isMic(s->kind)) updateMicPaths(*s);
 }
 
 bool AudioEngine::roomSettled() {
     const bool fading = reverb_changing_.load(std::memory_order_acquire);
-    if (wanted_rt60_ == room_rt60_ && wanted_size_ == room_size_ && wanted_level_ == room_level_) return !fading;
+    if (wanted_rt60_ == room_rt60_ && wanted_size_ == room_size_ && wanted_level_ == room_level_) return !fading;  // (as it is)
     if (fading) return false;  // the last change has to finish fading in before the next can start
 
     buildReverb(reverbs_[size_t(reverb_spare_)], float(sr_), wanted_rt60_, wanted_size_);
@@ -1776,11 +1825,11 @@ bool AudioEngine::roomSettled() {
 }
 
 void AudioEngine::setSourceDirectPath(int id, Vec3 via, float extra_length, const float* path_differences, int count,
-                                      bool blocked) {
+                                      bool blocked, const float* through) {
     Command c; c.type = Command::SourceDirectPath; c.id = id;
     c.v[0] = via.x; c.v[1] = via.y; c.v[2] = via.z;
     c.v[3] = std::max(extra_length, 0.0f);
-    directPathGains(path_differences, count, blocked, &c.v[4]);
+    directPathGains(path_differences, count, blocked, &c.v[4], through);
     push(c);
 }
 void AudioEngine::setSourceMuted(int id, bool muted) {
@@ -2243,6 +2292,7 @@ void AudioEngine::drainCommands() {
                 w.low_target = c.v[4];
                 w.high_target = c.v[5];
                 w.from_target = {c.v[6], c.v[7], c.v[8]};
+                std::copy(c.bands, c.bands + 3, w.bands_target);
                 if (w.distance < 0.0f) {  // new: from where it is
                     w.distance = w.distance_target;
                     w.nearness = w.nearness_target;
@@ -2251,6 +2301,7 @@ void AudioEngine::drainCommands() {
                     w.low_db = w.low_target;
                     w.high_db = w.high_target;
                     w.from = w.from_target;
+                    std::copy(w.bands_target, w.bands_target + 3, w.bands);
                 }
                 break;
             }
@@ -3028,9 +3079,11 @@ void AudioEngine::hearCapsule(Source& mic, int capsule_index, float* out, float 
         float& below_high_s = state[1];
         float& near_in = state[2];
         float& near_out = state[3];
+        // How late it is heard (samples), gliding straight from one end of the block to the other.
+        const double late_from = double(from_m) / kSpeedOfSound * rate, late_step = (double(to_m) - double(from_m)) / kSpeedOfSound * rate / block_;
         for (int i = 0; i < block_; ++i) {
             const float a = float(i + 1) / float(block_);
-            const double late = std::clamp(double(from_m + (to_m - from_m) * a) / kSpeedOfSound * rate, 1.0, furthest);
+            const double late = std::clamp(late_from + late_step * double(i + 1), 1.0, furthest);
             const double at = double(clock_ + i) - late;
             const int64_t n = int64_t(std::floor(at));
             const float frac = float(at - double(n));
@@ -3111,6 +3164,11 @@ void AudioEngine::hearCapsule(Source& mic, int capsule_index, float* out, float 
             float air_from[3], air_to[3];
             air(d_from, band_from, air_from);
             air(way.distance, k.band, air_to);
+            for (int b = 0; b < 3; ++b) {  // (off a surface: what it sends back of each band)
+                air_from[b] *= way.bands[b];
+                way.bands[b] += (way.bands_target[b] - way.bands[b]) * glide;
+                air_to[b] *= way.bands[b];
+            }
             float state[4] = {way.low, way.below_high, way.near_in, way.near_out};
             const float wave = std::sqrt(way.distance * way.distance + s->cone_radius * s->cone_radius);
             hear(s->history.data(), d_from, way.distance, air_from, air_to, dot(arrive_from, aim_from), dot(way.from, capsule.aim), wave,

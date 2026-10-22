@@ -239,7 +239,8 @@ lows in front; behind a closed back only the lows wrap round. The listener hears
 beams at your knees). **Point it at** aims a mic at an amp's nearest dust cap. A mic a little way off also hears the
 **floor's bounce**: each cone again from its image under the floor, a little late, so the sound has notches where the
 bounce arrives half a wave late (and more where a whole wave late), as a real one does; up against the grille it hardly
-matters. The Room page sets what the floor is: hard (a strong bounce), a rug, or thick carpet (hardly any). The PA
+matters. The floor's material sets how much of each band comes back (tile or wood, a strong bounce; a rug or carpet,
+little of the highs), and the mic hears the room's walls and ceiling the same way (see The room). The PA
 **Speaker** is heard the same way: its 10-inch woofer, and the horn over it covering 45 degrees either side evenly
 and little beyond. (radiation.h has the physics.)
 
@@ -701,16 +702,31 @@ The Room page of the menu changes the room itself, while the music plays:
 - **Size**: width and length from 4 to 40 m, height from 2.4 to 12 m. The reverb follows: a bigger room rings for
   longer but more quietly, a small one is short and close. Instruments, walls and you are brought inside if the room
   shrinks past them.
-- **Floor**: hard (wood or concrete), a rug, or thick carpet: how much of a sound it sends back up to the microphones
-  (see Amps' speakers). Kept with the room.
-- **Walls**: a floor plan of the room, seen from above with the instruments and yourself marked on it. Drag on the
-  floor to draw a wall, drag a wall to move it, drag the dot at either end to turn and stretch it. Walls can stand at
-  any angle and there can be up to 16. Each has its own height.
+- **What it's made of**: its floor, its ceiling and each of its four walls (north is the way you first face), each a
+  material from its menu: drywall, plaster, brick, concrete, wood panelling, glass, heavy curtain, acoustic foam or
+  acoustic panels for the walls; acoustic tiles and most of those for the ceiling; a wooden floor, tiles, concrete, a
+  rug or carpet underfoot. Hover over one for what it does. A room starts with drywall walls, a wooden floor and an
+  acoustic-tile ceiling, and rings for about 0.7 s. Kept with the room.
+- **Walls**: a floor plan of the room, seen from above with the instruments and yourself marked on it (the room's own
+  walls in their materials' colours). Drag on the floor to draw a wall, drag a wall to move it, drag the dot at either
+  end to turn and stretch it. Walls can stand at any angle and there can be up to 16. Each has its own height, and its
+  own material (drywall to begin with): a glass booth window, a concrete partition, a curtain hung across the room, a
+  gobo of acoustic panels.
+
+Every material takes its own share of each band (below 800 Hz, 800 Hz to 8 kHz, above 8 kHz), the published figures,
+and the rest it sends back. From them the room's reverb rings for as long in each band as Eyring's formula has it (what
+the air takes as well): a room of bare concrete and tile rings on for seconds, bright; foam, carpet and panels leave it
+nearly dead; curtains and carpet take the highs and leave the lows ringing. The more a room absorbs, the quieter its
+ring, too. The microphones hear the first reflection off each of the walls and the ceiling, from the source's image
+beyond it, coloured by its material and as late as its longer way: a mic near a concrete wall hears it clearly, near
+foam, hardly. (The listener hears the room's reverb; reflections of their own are still to come.)
 
 Sound finds its way round the walls. Behind one, an instrument is duller and seems to come from the edge its sound
 bends round; the longer the detour, the duller it gets, highs first. A wall lower than the ceiling also lets sound
 over the top. Walls that meet close the gap between them, so four walls to the ceiling make a booth that all but
-shuts an instrument away, and a wall built out from the side of the room can only be passed at its free end.
+shuts an instrument away, heard only through its walls: drywall lets a little through (the lows most), concrete next to
+nothing, glass a little more in the highs, a curtain or a gobo a good deal. A wall built out from the side of the room
+can only be passed at its free end.
 
 The room is lit by a grid of lamps that grows with it, so a large room is no darker than the default one. Settings
 has a Room lighting slider if it is still too dim or too bright for your screen.
@@ -796,6 +812,7 @@ audio_core/
     disk_stream.*          the recordings read from disk as they play: in chunks, a few seconds ahead, by a thread of its own
     spatializer.*          Steam Audio: distance, air absorption, wall filtering, binaural (HRTF)
     room_geometry.*        the walls: which way round them sound reaches the listener, and how much further that is
+    materials.*            what each material absorbs and lets through, band by band, and the reverb a room of them has
     acoustics.h            how much each frequency band dims when sound bends around a wall edge
     midi_input.*           MIDI controllers, read straight into the audio thread (CoreMIDI on a Mac, WinMM on Windows)
     mix.*                  room reverb (feedback delay network, sized to the room) and output limiter
@@ -845,8 +862,8 @@ To do, roughly in this order:
 
 1. **Windows, played**: built and checked on every change; next, played and listened to on a Windows machine, and
    ASIO for interfaces whose Windows drivers want it.
-2. **The room's sound**: wall materials, each absorbing and diffusing sound in its
-   own way, which shape how the room's reverb rings.
+2. **The room's sound**: the listener hearing the walls' own reflections (the microphones do already), and diffusers,
+   which scatter what they send back rather than mirroring it.
 3. **You in the room**: an avatar whose height you can set (the ears and eyes go with it; the view is a little tall
    for some now), which multiplayer will show to the others; and a free camera, detached from the avatar, that flies
    about the room with nothing in its way.

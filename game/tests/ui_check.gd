@@ -1364,16 +1364,24 @@ func _run() -> void:
 	menu._size_sliders.z.value = 16.0
 	menu._size_sliders.y.value = 6.0
 	await frames(3)
-	check(room.size.is_equal_approx(Vector3(24, 6, 16)) and audio.get_room_decay() > rang + 0.4 and menu._decay_label.text.contains("%.1f" % audio.get_room_decay()),
+	check(room.size.is_equal_approx(Vector3(24, 6, 16)) and audio.get_room_decay() > rang * 1.3 and menu._decay_label.text.contains("%.1f" % audio.get_room_decay()),
 		"the sliders resize the room, and a bigger room rings longer", "%.2f s, then %.2f s" % [rang, audio.get_room_decay()])
 	await seconds(1.2)
 	check(audio.is_room_settled(), "the reverb has changed over within about a second")
-	menu._floor_choice.select(2)
-	menu._floor_choice.item_selected.emit(2)
+	var as_built: float = audio.get_room_decay()
+	var floors: Array = menu._surface_choices.floor.get_meta("materials")
+	menu._surface_choices.floor.item_selected.emit(floors.find("carpet"))
+	for wall_side in ["north", "south", "east", "west"]:
+		var choices: Array = menu._surface_choices[wall_side].get_meta("materials")
+		menu._surface_choices[wall_side].item_selected.emit(choices.find("curtain"))
 	await frames(2)
-	check(room.floor_kind == "carpet" and menu._floor_note.text.begins_with("Thick carpet") and main.library.room_data().room.get("floor", "") == "carpet",
-		"the floor can be carpeted (the mics hear hardly any bounce off it), and is kept with the room", menu._floor_note.text)
-	room.set_floor("hard")
+	var hung: PackedFloat32Array = audio.get_room_decay_bands()
+	check(room.surfaces.floor == "carpet" and room.surfaces.east == "curtain" and menu._surface_choices.floor.tooltip_text.begins_with("Thick carpet") and
+		main.library.room_data().room.surfaces.west == "curtain" and audio.get_room_decay() < as_built - 0.2 and hung[0] > hung[1] * 1.5,
+		"the floor can be carpeted and the walls hung with curtains (its menus say what each does): the room rings shorter, its highs gone first, and it is kept with the room",
+		"%.2f s, then %.2f s: %.2f s in the lows" % [as_built, audio.get_room_decay(), hung[0]])
+	for surface in room.SURFACES:
+		room.set_surface(surface, room.DEFAULT_SURFACES[surface])
 
 	var had: int = room.walls.size()
 	await drag(plan, Vector2(2.1, 3.05), Vector2(6.05, 2.9))
@@ -1394,6 +1402,12 @@ func _run() -> void:
 	menu._wall_height.value = 6.0
 	await frames(2)
 	check(is_equal_approx(room.walls[0].height, 6.0) and menu._wall_note.text.contains("reaches the ceiling"), "its height slider raises it to the ceiling", menu._wall_note.text)
+	var wall_choices: Array = menu._wall_material.get_meta("materials")
+	menu._wall_material.item_selected.emit(wall_choices.find("glass"))
+	await frames(2)
+	check(room.walls[0].material == "glass" and main.library.room_data().room.walls[0][5] == "glass" and not menu._wall_material.disabled and
+		menu._wall_material.tooltip_text.begins_with("Glass"), "the chosen wall can be made of glass (its menu says what each material does), kept with the room",
+		menu._wall_material.tooltip_text)
 	menu._wall_remove.pressed.emit()
 	await frames(2)
 	check(room.walls.size() == had and plan.selected == -1 and menu._wall_remove.disabled, "Remove takes the selected wall away")
@@ -1420,7 +1434,7 @@ func _run() -> void:
 		"%s, reverb %.2f s; left outside: %s" % [room.size, audio.get_room_decay(), ", ".join(outside) if not outside.is_empty() else "nothing"])
 	menu._on_room_reset_pressed()
 	await frames(3)
-	check(room.size.is_equal_approx(Vector3(14, 4, 10)) and room.walls.size() == 1 and is_equal_approx(audio.get_room_decay(), 1.1),
+	check(room.size.is_equal_approx(Vector3(14, 4, 10)) and room.walls.size() == 1 and is_equal_approx(audio.get_room_decay(), rang),
 		"Back to the default room restores its size and its one wall")
 
 	print("Back to the title screen")

@@ -10,7 +10,8 @@ namespace sr {
 // Representative frequencies for Steam Audio's three bands (below 800 Hz, 800 Hz–8 kHz, above 8 kHz).
 constexpr float kBandFrequency[3] = {300.0f, 2500.0f, 12000.0f};
 
-// What leaks straight through a light partition, per band (amplitude).
+// What leaks straight through a light partition (drywall on studs), per band (amplitude): a wall's own, as its
+// material has it, comes with the way to the listener (DirectPath::through).
 constexpr float kWallTransmission[3] = {0.08f, 0.02f, 0.006f};
 
 // Maekawa's barrier formula. `path_difference` is how much longer the route around the edge is than the
@@ -25,15 +26,16 @@ inline float barrierGain(float path_difference, float frequency) {
 }
 
 // Per-band gain for a source heard by one or more routes around a wall (their energies add), plus what leaks
-// through the wall when it blocks the line of sight.
-inline void directPathGains(const float* path_differences, int count, bool blocked, float out_gains[3]) {
+// through the walls when they block the line of sight (`through`, band by band; none given, a light partition's).
+inline void directPathGains(const float* path_differences, int count, bool blocked, float out_gains[3], const float* through = nullptr) {
     for (int b = 0; b < 3; ++b) {
-        float energy = blocked ? kWallTransmission[b] * kWallTransmission[b] : 0.0f;
+        const float leak = through ? through[b] : kWallTransmission[b];
+        float energy = blocked ? leak * leak : 0.0f;
         for (int i = 0; i < count; ++i) {
             const float g = barrierGain(path_differences[i], kBandFrequency[b]);
             energy += g * g;
         }
-        out_gains[b] = count > 0 ? std::min(std::sqrt(energy), 1.0f) : 1.0f;
+        out_gains[b] = count > 0 || blocked ? std::min(std::sqrt(energy), 1.0f) : 1.0f;  // (sealed off: what leaks through)
     }
 }
 

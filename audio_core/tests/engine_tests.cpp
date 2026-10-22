@@ -211,7 +211,8 @@ struct Room {
         speaker = engine.addSource(InstrumentKind::Live, {-1.5f, 0.8f, 2.6f}, 1.0f, 0.7f);
         for (int s : {drums, bass, pad, bells, keys}) engine.loadDefaultPattern(s);
         face(0.0f, 3.6f, 0.0f);
-        engine.setFloorReflection(0.0f);  // (a floor that takes it all, so the mics hear the direct sound alone)
+        engine.setFloorReflection(0.0f);  // (a floor that takes it all, and no reflections off the walls and the ceiling,
+        engine.setEarlyReflections(false);  // so the mics hear the direct sound alone)
     }
     // yaw 0 faces -z (north); positive yaw turns left
     void face(float x, float z, float yaw) {
@@ -463,6 +464,25 @@ int main(int argc, char** argv) {
         check(rms > 0.025 && rms < 0.06 && r.peak < 0.4, "a moderate level, with headroom to spare",
               fmt("%.1f dBFS RMS (L %.1f, R %.1f)", db(rms), db(r.rms_l), db(r.rms_r)) + fmt(", peaks %.1f dBFS", db(r.peak)));
         check(secs < 10.43 / 4, "renders well faster than real time", fmt("%.1fx real time", 10.43 / secs));
+        // And with eight microphones round the room, each hearing every instrument straight, off the floor, and off each
+        // wall and the ceiling.
+        Room miked;
+        miked.engine.setFloorReflection(1.0f);
+        miked.engine.setEarlyReflections(true);
+        for (int m = 0; m < 8; ++m) {
+            const int mic = miked.engine.addSource(InstrumentKind::Mic, {-5.0f + 1.4f * float(m), 1.5f, 1.0f}, 1.0f, 0.0f);
+            miked.engine.setSourceInput(mic, true);
+        }
+        const auto timed = [&](bool reflections) {
+            miked.engine.setEarlyReflections(reflections);
+            const auto m0 = std::chrono::steady_clock::now();
+            const Render heard = renderSeconds(miked.engine, 10.43);
+            return std::make_pair(heard.finite, std::chrono::duration<double>(std::chrono::steady_clock::now() - m0).count());
+        };
+        const auto floor_only = timed(false), with_walls = timed(true);
+        check(with_walls.first && with_walls.second < 10.43 / 1.5 && with_walls.second < 3.0 * floor_only.second,
+              "with eight microphones hearing the room's reflections too, still faster than real time (the walls costing no more than twice again)",
+              fmt("%.1fx real time (", 10.43 / with_walls.second) + fmt("%.1fx with the floor's bounce alone)", 10.43 / floor_only.second));
     }
 
     {
@@ -1093,8 +1113,10 @@ int main(int argc, char** argv) {
         const Vec3 in_booth{0.0f, 1.0f, 0.0f}, listener{4.0f, 1.65f, 0.5f};
         const DirectPath sealed = path(booth(kCeiling), listener, in_booth);
         const DirectPath open_top = path(booth(2.5f), listener, in_booth);
-        check(sealed.blocked && sealed.count == 1 && sealed.differences[0] >= 10.0f, "a booth with walls to the ceiling seals its instrument in",
-              "only what leaks through the wall is heard");
+        float sealed_gains[3];
+        directPathGains(sealed.differences, sealed.count, sealed.blocked, sealed_gains, sealed.through);
+        check(sealed.blocked && sealed.count == 0 && std::fabs(sealed_gains[1] - materialInfo(Material::Drywall).transmission[1]) < 1e-6f,
+              "a booth with walls to the ceiling seals its instrument in", "only what leaks through the wall is heard");
         check(open_top.blocked && open_top.count == 1 && open_top.differences[0] < 3.0f && std::fabs(open_top.via.y - 2.5f) < 1e-3f,
               "lower the booth's walls and the sound comes over the top", fmt("%.2f m longer, arriving from %.1f m up", open_top.differences[0], open_top.via.y));
 
@@ -1135,11 +1157,149 @@ int main(int argc, char** argv) {
         check(hidden_now && before - boxed > 15.0 && std::fabs(after - before) < 0.1 && !room.engine.sourceBlocked(room.drums),
               "building a booth round the drums shuts them away, and taking it down brings them back",
               fmt("%.1f dBFS open, %.1f dBFS boxed in, %.1f dBFS open again", before, boxed, after));
+        // What the booth is made of: concrete lets through far less than drywall on studs; a curtain far more.
+        auto made_of = [&](Material material) {
+            std::vector<Wall> built = walls;
+            for (Wall& w : built) w.material = material;
+            room.face(0.5f, -1.0f, 0.0f);
+            room.engine.setRoom(14.0f, 4.0f, 10.0f, built);
+            renderSeconds(room.engine, 0.5);
+            return level(renderSeconds(room.engine, 10.43));
+        };
+        const double concrete = made_of(Material::Concrete), curtained = made_of(Material::Curtain);
+        check(boxed - concrete > 12.0 && curtained - boxed > 10.0,
+              "what a booth is made of decides what leaks out: concrete far less than drywall on studs, a curtain far more",
+              fmt("%.1f dBFS through drywall, ", boxed) + fmt("%.1f through concrete, ", concrete) + fmt("%.1f through a curtain", curtained));
         room.engine.setRoom(14.0f, 4.0f, 10.0f, walls);
         room.face(0.5f, -3.6f, 0.0f);  // step inside the booth
         renderSeconds(room.engine, 0.5);
         check(!room.engine.sourceBlocked(room.drums) && room.engine.sourceBlocked(room.keys), "walking into the booth, the drums are clear and the rest is shut out",
               "the routes follow the listener");
+    }
+
+    {
+        std::printf("\nWhat the room is made of\n");
+        // How long the room takes to die away by 60 dB in a band, judged from the tail of one snare hit.
+        auto decay_in = [](Room& room, float low_hz, float high_hz) {
+            while (!room.engine.roomSettled()) renderSeconds(room.engine, 0.1);
+            renderSeconds(room.engine, 1.5);
+            room.engine.noteOn(room.drums, 38, 1.0f);
+            const Render r = renderSeconds(room.engine, 1.2);
+            Biquad hp[2], lp[2];
+            for (auto& f : hp) f.set(Biquad::Highpass, 48000.0f, low_hz, 0.707f);
+            for (auto& f : lp) f.set(Biquad::Lowpass, 48000.0f, high_hz, 0.707f);
+            std::vector<float> y(r.l.size());
+            for (size_t i = 0; i < y.size(); ++i) y[i] = lp[1].process(lp[0].process(hp[1].process(hp[0].process(r.l[i]))));
+            auto window = [&](double from, double to) {
+                double e = 0;
+                for (size_t i = size_t(from * 48000); i < size_t(to * 48000); ++i) e += double(y[i]) * y[i];
+                return 10.0 * std::log10(e + 1e-30);
+            };
+            return 60.0 * 0.3 / (window(0.3, 0.45) - window(0.6, 0.75));
+        };
+        Room room;
+        room.soloOnly(room.drums);
+        room.engine.setSourceLoop(room.drums, false);
+        const double as_built = decay_in(room, 150.0f, 12000.0f);
+        RoomSurfaces bare;  // concrete all round, a tiled floor
+        bare.floor = Material::Tile;
+        bare.ceiling = bare.north = bare.south = bare.east = bare.west = Material::Concrete;
+        room.engine.setRoom(14.0f, 4.0f, 10.0f, {}, bare);
+        const float bare_says = room.engine.roomDecaySeconds();
+        const double hard = decay_in(room, 150.0f, 12000.0f);
+        RoomSurfaces treated;  // foam on the walls, carpet, acoustic panels overhead
+        treated.floor = Material::Carpet;
+        treated.ceiling = Material::AcousticPanel;
+        treated.north = treated.south = treated.east = treated.west = Material::Foam;
+        room.engine.setRoom(14.0f, 4.0f, 10.0f, {}, treated);
+        const float treated_says = room.engine.roomDecaySeconds();
+        const double dead = decay_in(room, 150.0f, 12000.0f);
+        check(hard > 2.5 * as_built && dead < 0.6 * as_built && bare_says > 3.0f && treated_says < 0.3f,
+              "bare concrete and tile ring on far longer than the room as it starts; foam, carpet and acoustic panels hardly ring at all",
+              fmt("snare tail %.2f s bare, ", hard) + fmt("%.2f s as built, ", as_built) + fmt("%.2f s treated", dead) +
+                  fmt(" (the engine reckons %.1f and %.2f s)", bare_says, treated_says));
+        RoomSurfaces hung;  // curtains on every wall, a carpeted floor, a drywall ceiling
+        hung.floor = Material::Carpet;
+        hung.ceiling = Material::Drywall;
+        hung.north = hung.south = hung.east = hung.west = Material::Curtain;
+        room.engine.setRoom(14.0f, 4.0f, 10.0f, {}, hung);
+        const std::array<float, 3> hung_says = room.engine.roomDecay();
+        const double lows = decay_in(room, 150.0f, 500.0f), highs = decay_in(room, 2000.0f, 5000.0f);
+        check(hung_says[0] > 2.0f * hung_says[1] && lows > 1.8 * highs,
+              "curtains and carpet take the highs and leave the lows: the lows ring on long after the highs have gone",
+              fmt("150-500 Hz %.2f s, ", lows) + fmt("2-5 kHz %.2f s", highs) + fmt(" (the engine reckons %.2f s low, ", hung_says[0]) +
+                  fmt("%.2f s in the middle)", hung_says[1]));
+
+        // A microphone 2 m from a source, both 1.2 m up and 4 m from the east wall (the ceiling and the other walls
+        // further off): the wall's reflection comes 4 m of air after the source itself (11.7 ms), from 6 m away. A
+        // concrete wall sends it all back; foam little of it.
+        Room heard;
+        heard.hearMix();
+        heard.quietRoom(heard.speaker);
+        heard.engine.setLimiter(false);
+        heard.engine.setSourceMuted(heard.speaker, true);  // (its own track out of the mix: the mic's alone)
+        heard.engine.setSourceInput(heard.speaker, true);
+        heard.engine.setSourcePosition(heard.speaker, {3.0f, 1.2f, 0.0f});
+        const int mic = heard.engine.addSource(InstrumentKind::Mic, {5.0f, 1.2f, 0.0f}, 1.0f, 0.0f);
+        heard.engine.setSourceInput(mic, true);
+        heard.engine.setEarlyReflections(true);
+        // (Each arrival's energy between 1.5 and 5 kHz, the middle of the middle band: what a surface takes there is what
+        // most tells one material from another.)
+        auto mids = [](const Render& r) {
+            Biquad hp[2], lp[2];
+            for (auto& f : hp) f.set(Biquad::Highpass, 48000.0f, 1500.0f, 0.707f);
+            for (auto& f : lp) f.set(Biquad::Lowpass, 48000.0f, 5000.0f, 0.707f);
+            std::vector<float> y(r.l.size());
+            for (size_t i = 0; i < y.size(); ++i) y[i] = lp[1].process(lp[0].process(hp[1].process(hp[0].process(r.l[i]))));
+            return y;
+        };
+        auto energy = [](const std::vector<float>& y, size_t at) {
+            double e = 0.0;
+            for (size_t i = at - 20; i <= at + 40 && i < y.size(); ++i) e += double(y[i]) * y[i];
+            return e;
+        };
+        auto reflected = [&](Material east) {  // the reflection against the sound itself (dB), and how long after it (samples)
+            RoomSurfaces surfaces;
+            surfaces.east = east;
+            heard.engine.setRoom(14.0f, 10.0f, 10.0f, {}, surfaces);
+            heard.engine.setReverb(false);
+            renderSeconds(heard.engine, 0.3);
+            const Render r = renderSeconds(heard.engine, 0.3, [](int64_t n) { return n == 2400 ? 0.5f : 0.0f; });
+            size_t direct = 0;
+            for (size_t i = 1; i < r.l.size(); ++i)
+                if (std::fabs(r.l[i]) > std::fabs(r.l[direct])) direct = i;
+            size_t bounce = direct + 400;
+            for (size_t i = direct + 400; i < direct + 700 && i < r.l.size(); ++i)
+                if (std::fabs(r.l[i]) > std::fabs(r.l[bounce])) bounce = i;
+            const std::vector<float> y = mids(r);
+            return std::make_pair(10.0 * std::log10(energy(y, bounce) / energy(y, direct)), double(bounce) - double(direct));
+        };
+        const auto off_concrete = reflected(Material::Concrete), off_foam = reflected(Material::Foam);
+        const double expected = 4.0 / 343.0 * 48000.0;
+        check(std::fabs(off_concrete.second - expected) < 6.0 && std::fabs(off_concrete.first - db(2.0 / 6.0)) < 2.5 &&
+                  off_concrete.first - off_foam.first > 8.0,
+              "a mic hears a wall's reflection when it should (4 m of air later) and as loud as 6 m away; off foam, far quieter",
+              fmt("%.0f samples later, ", off_concrete.second) + fmt("%.1f dB off concrete, ", off_concrete.first) +
+                  fmt("%.1f dB off foam", off_foam.first));
+        // And the floor's bounce is the floor's material's: tile sends back more of it than carpet does.
+        heard.engine.setEarlyReflections(false);
+        heard.engine.setFloorReflection(1.0f);
+        auto bounced = [&](Material floor) {
+            RoomSurfaces surfaces;
+            surfaces.floor = floor;
+            heard.engine.setRoom(14.0f, 10.0f, 10.0f, {}, surfaces);
+            renderSeconds(heard.engine, 0.3);
+            const Render r = renderSeconds(heard.engine, 0.3, [](int64_t n) { return n == 2400 ? 0.5f : 0.0f; });
+            size_t direct = 0;
+            for (size_t i = 1; i < r.l.size(); ++i)
+                if (std::fabs(r.l[i]) > std::fabs(r.l[direct])) direct = i;
+            const size_t bounce = direct + size_t((std::sqrt(2.0 * 2.0 + 2.4 * 2.4) - 2.0) / 343.0 * 48000.0 + 0.5);  // (3.12 m against 2 m)
+            const std::vector<float> y = mids(r);
+            return 10.0 * std::log10(energy(y, bounce) / energy(y, direct));
+        };
+        const double off_tile = bounced(Material::Tile), off_carpet = bounced(Material::Carpet);
+        check(off_tile - off_carpet > 2.5, "the floor's bounce is its material's: a tiled floor sends back more than carpet",
+              fmt("%.1f dB more off tile", off_tile - off_carpet));
     }
 
     {
@@ -1161,7 +1321,9 @@ int main(int argc, char** argv) {
         room.soloOnly(room.drums);
         room.engine.setSourceLoop(room.drums, false);
         room.engine.setRoom(14.0f, 4.0f, 10.0f, {});
-        const bool unchanged = room.engine.roomSettled() && std::fabs(room.engine.roomDecaySeconds() - 1.1f) < 1e-6f;
+        const float default_says = roomAcoustics(14.0f, 4.0f, 10.0f, RoomSurfaces{}).decay[1];
+        const bool unchanged = room.engine.roomSettled() && std::fabs(room.engine.roomDecaySeconds() - default_says) < 1e-6f &&
+                               default_says > 0.6f && default_says < 0.85f;
         const double normal = decay(room);
         room.engine.setRoom(30.0f, 8.0f, 20.0f, {});
         const float hall_says = room.engine.roomDecaySeconds();
@@ -1170,8 +1332,11 @@ int main(int argc, char** argv) {
         room.engine.setRoom(5.0f, 2.6f, 4.0f, {});
         const float booth_says = room.engine.roomDecaySeconds();
         const double small = decay(room);
-        check(unchanged, "the default room keeps the reverb it has always had", "1.1 s, nothing rebuilt");
-        check(busy && hall > 1.6 * normal && small < 0.7 * normal && std::fabs(hall_says - 2.22f) < 0.02f && std::fabs(booth_says - 0.555f) < 0.01f,
+        check(unchanged, "the default room rings as its materials have it (drywall walls, a wood floor, an acoustic-tile ceiling), as it began",
+              fmt("%.2f s, nothing rebuilt", default_says));
+        check(busy && hall > 1.6 * normal && small < 0.7 * normal &&
+                  std::fabs(hall_says - roomAcoustics(30.0f, 8.0f, 20.0f, RoomSurfaces{}).decay[1]) < 1e-6f &&
+                  std::fabs(booth_says - roomAcoustics(5.0f, 2.6f, 4.0f, RoomSurfaces{}).decay[1]) < 1e-6f,
               "a bigger room rings longer and a smaller one shorter", fmt("snare tail: %.2f s in a 30 x 20 m hall, %.2f s by default, %.2f s in a 5 x 4 m room",
                                                                          hall, normal, small) +
                                                                          fmt(" (the engine reckons %.2f and %.2f s)", hall_says, booth_says));

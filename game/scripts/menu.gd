@@ -75,8 +75,8 @@ var _click_value: Label
 # Room
 var _size_sliders := {}  # "x", "y", "z" → HSlider
 var _size_values := {}
-var _floor_choice: OptionButton  # what the floor is (as the microphones hear its bounce)
-var _floor_note: Label
+var _surface_choices := {}  # what each of the room's own surfaces is made of: surface → its menu
+var _wall_material: OptionButton  # and the chosen wall standing in it
 var _decay_label: Label
 var _plan
 var _wall_title: Label
@@ -402,10 +402,16 @@ func _build_room_page(page: VBoxContainer) -> void:
 	_plan.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_plan.selection_changed.connect(_refresh_live)
 	columns.add_child(_plan)
+	var side_scroll := ScrollContainer.new()  # (the column scrolls on a short screen, rather than stretching the page)
+	side_scroll.custom_minimum_size.x = 290
+	side_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	side_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	columns.add_child(side_scroll)
 	var side := VBoxContainer.new()
-	side.custom_minimum_size.x = 270
+	side.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	side.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	side.add_theme_constant_override("separation", 7)
-	columns.add_child(side)
+	side_scroll.add_child(side)
 
 	_heading(side, "Size")
 	for axis in [["x", "Width", Room.MIN_SIZE.x, Room.MAX_SIZE.x, 0.5], ["z", "Length", Room.MIN_SIZE.z, Room.MAX_SIZE.z, 0.5],
@@ -413,24 +419,28 @@ func _build_room_page(page: VBoxContainer) -> void:
 		_size_values[axis[0]] = Label.new()
 		_size_sliders[axis[0]] = _narrow_slider(side, axis[1], axis[2], axis[3], axis[4], _size_values[axis[0]])
 		_size_sliders[axis[0]].value_changed.connect(_on_size_changed)
+	_heading(side, "What it's made of")
+	var made_of := GridContainer.new()
+	made_of.columns = 2
+	made_of.add_theme_constant_override("h_separation", 8)
+	made_of.add_theme_constant_override("v_separation", 4)
+	side.add_child(made_of)
+	for surface in Room.SURFACES:
+		var label := Label.new()
+		label.text = Room.SURFACE_NAMES[surface]
+		label.add_theme_color_override("font_color", DIM)
+		label.add_theme_font_size_override("font_size", 13)
+		made_of.add_child(label)
+		var choice := _material_choice(Room.materials_for(surface), func(material: String) -> void:
+			app.room.set_surface(surface, material)
+			_refresh_live())
+		made_of.add_child(choice)
+		_surface_choices[surface] = choice
 	_decay_label = Label.new()
 	_decay_label.add_theme_color_override("font_color", DIM)
 	_decay_label.add_theme_font_size_override("font_size", 13)
 	_decay_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	side.add_child(_decay_label)
-	_heading(side, "Floor")
-	_floor_choice = OptionButton.new()
-	for kind in Room.FLOOR_ORDER:
-		_floor_choice.add_item(Room.FLOORS[kind][0])
-	_floor_choice.item_selected.connect(func(i: int) -> void:
-		app.room.set_floor(Room.FLOOR_ORDER[i])
-		_refresh_live())
-	side.add_child(_floor_choice)
-	_floor_note = Label.new()
-	_floor_note.add_theme_color_override("font_color", DIM)
-	_floor_note.add_theme_font_size_override("font_size", 13)
-	_floor_note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	side.add_child(_floor_note)
 
 	side.add_child(HSeparator.new())
 	_heading(side, "Walls")
@@ -439,6 +449,18 @@ func _build_room_page(page: VBoxContainer) -> void:
 	_wall_height_value = Label.new()
 	_wall_height = _narrow_slider(side, "Height", Room.MIN_WALL_HEIGHT, Room.MAX_SIZE.y, 0.1, _wall_height_value)
 	_wall_height.value_changed.connect(_on_wall_height_changed)
+	var wall_made_of := HBoxContainer.new()
+	wall_made_of.add_theme_constant_override("separation", 8)
+	side.add_child(wall_made_of)
+	var made_label := Label.new()
+	made_label.text = "Made of"
+	made_label.custom_minimum_size.x = 58
+	made_label.add_theme_color_override("font_color", DIM)
+	wall_made_of.add_child(made_label)
+	_wall_material = _material_choice(Room.materials_for("walls"), func(material: String) -> void:
+		app.room.set_wall_material(_plan.selected, material)
+		_refresh_live())
+	wall_made_of.add_child(_wall_material)
 	_wall_note = Label.new()
 	_wall_note.add_theme_color_override("font_color", DIM)
 	_wall_note.add_theme_font_size_override("font_size", 13)
@@ -645,12 +667,16 @@ func _refresh_live() -> void:
 	for axis in _size_sliders:
 		_size_sliders[axis].set_value_no_signal(room.size[axis])
 		_size_values[axis].text = "%.1f m" % room.size[axis]
-	_decay_label.text = "Rings for about %.1f s. Bigger rooms ring longer but more quietly." % audio.get_room_decay()
-	_floor_choice.select(Room.FLOOR_ORDER.find(room.floor_kind))
-	_floor_note.text = Room.FLOORS[room.floor_kind][2]
+	var bands: PackedFloat32Array = audio.get_room_decay_bands()
+	_decay_label.text = ("Rings for about %.1f s: %.1f s in the lows, %.1f s in the highs. Bigger rooms ring longer but more quietly; harder surfaces, longer and brighter." %
+		[audio.get_room_decay(), bands[0], bands[2]]) if bands.size() == 3 else ""
+	for surface in _surface_choices:
+		_show_material(_surface_choices[surface], room.surfaces[surface])
 	var chosen: int = _plan.selected
 	var has_wall: bool = chosen >= 0 and chosen < room.walls.size()
 	_wall_height.editable = has_wall
+	_wall_material.disabled = not has_wall
+	_show_material(_wall_material, room.walls[chosen].get("material", Room.DEFAULT_WALL_MATERIAL) if has_wall else Room.DEFAULT_WALL_MATERIAL)
 	_wall_remove.disabled = not has_wall
 	if has_wall:
 		var wall: Dictionary = room.walls[chosen]
@@ -1141,6 +1167,26 @@ func _note(page: Control, text: String) -> Label:
 	label.add_theme_font_size_override("font_size", 13)
 	page.add_child(label)
 	return label
+
+
+## A menu of materials, each described as the mouse passes over it; `picked` is called with the one chosen.
+func _material_choice(materials: Array, picked: Callable) -> OptionButton:
+	var choice := OptionButton.new()
+	choice.fit_to_longest_item = false
+	choice.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	choice.custom_minimum_size.x = 150
+	for i in materials.size():
+		choice.add_item(Room.MATERIALS[materials[i]][0])
+		choice.get_popup().set_item_tooltip(i, Room.MATERIALS[materials[i]][1])
+	choice.set_meta("materials", materials)
+	choice.item_selected.connect(func(i: int) -> void: picked.call(materials[i]))
+	return choice
+
+
+## Shows a material in its menu (and says what it does, as the mouse passes over it).
+func _show_material(choice: OptionButton, material: String) -> void:
+	choice.select(choice.get_meta("materials").find(material))
+	choice.tooltip_text = Room.MATERIALS.get(material, ["", ""])[1]
 
 
 func _slider(page: VBoxContainer, title: String, low: float, high: float, step: float, value_label: Label) -> HSlider:

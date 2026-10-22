@@ -6,8 +6,10 @@
 //
 // Used on the game thread only. The audio thread just receives the answers.
 
+#include <array>
 #include <vector>
 
+#include "materials.h"
 #include "spatializer.h"
 
 namespace sr {
@@ -18,14 +20,17 @@ struct Wall {
     float ax = 0, az = 0, bx = 0, bz = 0;
     float thickness = 0.3f;
     float height = 3.0f;
+    Material material = Material::Drywall;  // what it is made of: what passes through it, and what it absorbs
 };
 
 struct DirectPath {
     Vec3 via;                   // where the sound arrives from: the source itself, or the edge it bends around
     float extra = 0.0f;         // how far it travels beyond `via` to reach the source
     float differences[3] = {};  // how much longer each route is than the straight line, shortest first;
-    int count = 0;              //   a single negative entry when the line of sight is clear (by how little)
+    int count = 0;              //   a single negative entry when the line of sight is clear (by how little); none
+                                //   when it is sealed off (heard through the walls alone)
     bool blocked = false;       // a wall stands in the line of sight
+    float through[3] = {1.0f, 1.0f, 1.0f};  // what passes through the walls in the line of sight, band by band
 };
 
 class RoomGeometry {
@@ -40,12 +45,15 @@ public:
     int wallCount() const { return int(boxes_.size()); }
 
     DirectPath directPath(Vec3 ear, Vec3 source) const;
+    // What of each band passes through the walls on the straight line from `a` to `b` (1: none in the way).
+    std::array<float, 3> transmission(Vec3 a, Vec3 b) const;
 
 private:
     struct Flat { float x = 0, z = 0; };
     struct Box {
         Flat centre, along;  // `along` is a unit vector down the wall's length
         float half_length = 0, half_thickness = 0, top = 0;
+        std::array<float, 3> through{1.0f, 1.0f, 1.0f};  // what of each band passes through it
     };
     struct Route { float length = 0; Vec3 via; };
 

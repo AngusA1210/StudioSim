@@ -153,16 +153,36 @@ void SoundRoomAudio::set_source_position(int id, const Vector3& p) { if (engine_
 bool SoundRoomAudio::is_source_blocked(int id) const { return engine_ && engine_->sourceBlocked(id); }
 void SoundRoomAudio::set_source_gain(int id, float gain) { if (engine_) engine_->setSourceGain(id, gain); }
 
-void SoundRoomAudio::set_room(const Vector3& size, const Array& walls) {
+void SoundRoomAudio::set_room(const Vector3& size, const Array& walls, const Dictionary& surfaces) {
     if (!ensureEngine()) return;
+    const auto material = [](const Variant& id, sr::Material otherwise) {
+        return id.get_type() == Variant::STRING ? sr::materialFromId(str(String(id)), otherwise) : otherwise;
+    };
     std::vector<sr::Wall> list;
     for (int64_t i = 0; i < walls.size(); ++i) {
         const Dictionary wall = walls[i];
         const Vector2 a = wall.get("a", Vector2()), b = wall.get("b", Vector2());
-        list.push_back({float(a.x), float(a.y), float(b.x), float(b.y), float(wall.get("thickness", 0.3)), float(wall.get("height", 3.0))});
+        list.push_back({float(a.x), float(a.y), float(b.x), float(b.y), float(wall.get("thickness", 0.3)), float(wall.get("height", 3.0)),
+                        material(wall.get("material", Variant()), sr::Material::Drywall)});
     }
-    engine_->setRoom(float(size.x), float(size.y), float(size.z), list);
+    sr::RoomSurfaces room;
+    room.floor = material(surfaces.get("floor", Variant()), room.floor);
+    room.ceiling = material(surfaces.get("ceiling", Variant()), room.ceiling);
+    room.north = material(surfaces.get("north", Variant()), room.north);
+    room.south = material(surfaces.get("south", Variant()), room.south);
+    room.east = material(surfaces.get("east", Variant()), room.east);
+    room.west = material(surfaces.get("west", Variant()), room.west);
+    engine_->setRoom(float(size.x), float(size.y), float(size.z), list, room);
 }
+
+PackedFloat32Array SoundRoomAudio::get_room_decay_bands() const {
+    PackedFloat32Array out;
+    if (engine_)
+        for (float seconds : engine_->roomDecay()) out.push_back(seconds);
+    return out;
+}
+
+void SoundRoomAudio::set_early_reflections(bool on) { if (engine_) engine_->setEarlyReflections(on); }
 
 bool SoundRoomAudio::is_room_settled() { return engine_ && engine_->roomSettled(); }
 float SoundRoomAudio::get_room_decay() const { return engine_ ? engine_->roomDecaySeconds() : 0.0f; }
@@ -891,7 +911,9 @@ void SoundRoomAudio::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_max_sources"), &SoundRoomAudio::get_max_sources);
     ClassDB::bind_method(D_METHOD("set_source_position", "id", "position"), &SoundRoomAudio::set_source_position);
     ClassDB::bind_method(D_METHOD("is_source_blocked", "id"), &SoundRoomAudio::is_source_blocked);
-    ClassDB::bind_method(D_METHOD("set_room", "size", "walls"), &SoundRoomAudio::set_room);
+    ClassDB::bind_method(D_METHOD("set_room", "size", "walls", "surfaces"), &SoundRoomAudio::set_room, DEFVAL(Dictionary()));
+    ClassDB::bind_method(D_METHOD("get_room_decay_bands"), &SoundRoomAudio::get_room_decay_bands);
+    ClassDB::bind_method(D_METHOD("set_early_reflections", "on"), &SoundRoomAudio::set_early_reflections);
     ClassDB::bind_method(D_METHOD("is_room_settled"), &SoundRoomAudio::is_room_settled);
     ClassDB::bind_method(D_METHOD("get_room_decay"), &SoundRoomAudio::get_room_decay);
     ClassDB::bind_method(D_METHOD("set_source_muted", "id", "muted"), &SoundRoomAudio::set_source_muted);

@@ -242,15 +242,25 @@ public:
     // The size also sets how long and how loudly the room rings: a bigger room rings longer but more quietly.
     // The walls take effect at once. The reverb is rebuilt on the calling thread and faded in, one change at a
     // time, so after a burst of changes it catches up over the following calls to setListener or roomSettled.
-    void setRoom(float width, float height, float depth, const std::vector<Wall>& walls);
+    // What its own surfaces are made of (its floor, its ceiling, its four walls) and the walls standing in it (each
+    // Wall's material) set how long it rings in each band and how loudly (materials.h), what leaks through the walls
+    // in it, and what the microphones hear off its surfaces.
+    void setRoom(float width, float height, float depth, const std::vector<Wall>& walls, const RoomSurfaces& surfaces = {});
     bool roomSettled();  // false while the reverb has yet to catch up with the room's size
-    float roomDecaySeconds() const { return wanted_rt60_; }  // the reverb time (RT60) that goes with the size
+    float roomDecaySeconds() const { return wanted_rt60_[1]; }  // the reverb time (RT60), in the middle band
+    const std::array<float, 3>& roomDecay() const { return wanted_rt60_; }  // and in each band: low, middle, high
+    // The microphones hear each sound again off each of the room's walls and its ceiling (its first reflections, from
+    // its images beyond them, round any wall in the way as much as one lets through), each surface's material taking
+    // its share of each band; the floor's bounce is setFloorReflection's. On to begin with.
+    void setEarlyReflections(bool on);
     // Overrides what the engine worked out for one source (used by the offline checks). `via` is the point the
     // sound arrives from (the source itself, or the wall edge it bends around), `extra_length` is the distance from
     // `via` on to the source, and `path_differences` lists how much longer each route around the wall is than the
     // straight line (one negative entry if the line of sight is clear: by how little it clears the nearest edge).
-    // It holds until the source or the listener next moves.
-    void setSourceDirectPath(int id, Vec3 via, float extra_length, const float* path_differences, int count, bool blocked);
+    // It holds until the source or the listener next moves. `through` is what of each band leaks through the walls in
+    // the way (none given: a light partition's).
+    void setSourceDirectPath(int id, Vec3 via, float extra_length, const float* path_differences, int count, bool blocked,
+                             const float* through = nullptr);
     void setSourceMuted(int id, bool muted);
     // Silenced by a solo elsewhere, as Pro Tools' implied mute: out of the mix, but (unlike a mute) still sounding in
     // the room, so a microphone still hears it.
@@ -282,13 +292,12 @@ public:
     // beaming, with its near field and its open back; and the cabinet heard by the listener from where they stand
     // against its baffle (its position should be the middle of the baffle). No cones: a point source again.
     void setSourceRadiator(int id, const Radiator& radiator);
-    // How much of a sound the floor sends back up (an amplitude: 0, none, as a thick carpet; 1, all of it): each mic
-    // hears each source again off the floor, from its image under it, a little duller, as a mic a little way off a
+    // How much of what the floor sends back up the microphones hear (1: all its material sends back, band by band; 0:
+    // none): each mic hears each source again off the floor, from its image under it, as a mic a little way off a
     // floor-standing amp hears its floor bounce (a comb filter: notches where the bounce arrives half a wave late).
-    // The microphones only: the listener has the room's reverb. A hard floor, to begin with.
+    // The microphones only: the listener has the room's reverb. All of it, to begin with.
     void setFloorReflection(float amount);
-    static constexpr float kFloorCutHz = 8000.0f;  // (what the floor takes of the highs)
-    static constexpr int kMaxWays = 2 * kMaxRadiatedPaths;
+    static constexpr int kMaxWays = 2 * kMaxRadiatedPaths + 5;  // its own, off the floor, and off the walls and the ceiling
     static constexpr float kSpeedOfSound = 343.0f;  // metres a second
     static constexpr float kMicNearest = 0.1f;      // metres: no closer than this, for the level
     static constexpr float kProximityNearest = 0.02f;  // and for the proximity effect
@@ -592,6 +601,7 @@ private:
         void* data = nullptr;  // TrackSet: the track's timeline; RecordStart: the recorder
         // Compensation: the delays its output (v[0]) and its sends (v[1] on) are held back by, these delay lines.
         CompensationDelay* lines[1 + kMaxSends] = {};
+        float bands[3] = {1.0f, 1.0f, 1.0f};  // MicCone: what the surface it comes off leaves of each band
     };
 
     void push(const Command& c);
@@ -618,8 +628,8 @@ private:
     void updateMicPaths(Source& source);  // how its sound reaches each microphone (or, a microphone, how each reaches it)
     void updateMicPath(const Source& mic, const Source& source);
     void updateFacing(Source& s);  // a loudspeaker as the listener hears it from where they are
-    static Radiator mirrored(const Radiator& r);  // its image under the floor
-    float floor_reflection_ = 0.9f;  // (the game thread's)
+    static Radiator mirrored(const Radiator& r, int axis = 1, float plane = 0.0f);  // its image beyond a surface (the floor: y = 0)
+    float floor_reflection_ = 1.0f;  // (the game thread's)
     void playSource(size_t index, float binaural_from, float glide, float wall_glide, float mute_coef);
     void playClips(Source& source, int from);  // a track's audio clips this block, into its playback
     void soundAs(Source& mic, int capsule, int model_index, int pattern_index);  // a microphone capsule's model, ready to play
@@ -672,8 +682,13 @@ private:
     RoomGeometry geometry_;
     Vec3 ear_{0, 1.65f, 0};     // where the listener was last put
     // The reverb the room's size calls for, and the one that has been handed to the audio thread so far.
-    float wanted_rt60_, wanted_size_ = 1.0f, wanted_level_;
-    float room_rt60_, room_size_ = 1.0f, room_level_;
+    std::array<float, 3> wanted_rt60_;
+    float wanted_size_ = 1.0f, wanted_level_;
+    std::array<float, 3> room_rt60_;
+    float room_size_ = 1.0f, room_level_;
+    std::array<float, 3> room_dims_{14.0f, 4.0f, 10.0f};  // width, height, depth (the game thread's)
+    RoomSurfaces surfaces_;
+    bool early_reflections_ = true;
     int reverb_spare_ = 1;      // which of the two reverbs the audio thread is not using
 
     // MIDI thread → audio thread

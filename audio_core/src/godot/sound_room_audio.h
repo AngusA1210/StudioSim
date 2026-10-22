@@ -58,11 +58,17 @@ public:
     void set_source_gain(int id, float gain);  // its level within the reference distance; 1 = as it was added
     void set_source_volume(int id, float gain);  // its own volume, after its inserts and before its fader (a Speaker's)
     // The room's inside size (width, height, depth) in metres and the walls standing in it, each
-    // {a: Vector2, b: Vector2, thickness: float, height: float} with a and b on the floor plan (x, z).
-    // The audio core works out how sound gets round the walls, and how long and loudly a room that size rings.
-    void set_room(const Vector3& size, const Array& walls);
+    // {a: Vector2, b: Vector2, thickness: float, height: float, material: String} with a and b on the floor plan (x,
+    // z); and what its own surfaces are made of, {floor, ceiling, north, south, east, west}: materials.h's ids
+    // ("concrete", "brick", "plaster", "drywall", "wood", "glass", "curtain", "foam", "acoustic_panel", "carpet", "rug",
+    // "wood_floor", "tile", "ceiling_tile"), each left out as a room starts. The audio core works out how sound gets
+    // round the walls and through them, how long and loudly the room rings, and what the microphones hear off it.
+    void set_room(const Vector3& size, const Array& walls, const Dictionary& surfaces = Dictionary());
     bool is_room_settled();          // false while the reverb is still changing over to a new size
-    float get_room_decay() const;    // the reverb time (RT60) that goes with the room's size, in seconds
+    float get_room_decay() const;    // the reverb time (RT60) in the middle band (800 Hz to 8 kHz), in seconds
+    PackedFloat32Array get_room_decay_bands() const;  // and in each band: below 800 Hz, the middle, above 8 kHz
+    // The microphones hear the first reflection off each wall and the ceiling (on to begin with).
+    void set_early_reflections(bool on);
     void set_source_muted(int id, bool muted);
     void set_source_solo_muted(int id, bool silenced);
     // Microphones: the models there are ([{id, name, about, sensitivity_db, patterns: [{name, pressure: [3], gradient:
@@ -81,7 +87,7 @@ public:
     // A PA speaker's horn covers `coverage_deg` either side of its axis above `crossover_hz` (0: a plain cone).
     void set_source_radiator(int id, const PackedVector3Array& cones, const Vector3& facing, float inches, bool open_back,
                              const Vector3& back, float width, float coverage_deg = 0.0f, float crossover_hz = 1800.0f);
-    // How much of a sound the floor sends back up to the microphones (0 none, 1 all of it).
+    // How much of what the floor's material sends back up the microphones hear (0 none, 1 all of it).
     void set_floor_reflection(float amount);
     void set_source_output(int id, int bus);  // a bus's id (a source added as "bus"), or -1 for the master
     void set_source_input_channel(int id, int channel);  // live sources: 0-based hardware input, or -1 for all

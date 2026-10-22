@@ -77,6 +77,7 @@ add_library(sr_core STATIC
     src/core/instruments.cpp
     src/core/mix.cpp
     src/core/room_geometry.cpp
+    src/core/materials.cpp
     src/core/amp.cpp
     src/core/looper.cpp
     src/core/pedals.cpp

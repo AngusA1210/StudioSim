@@ -368,7 +368,7 @@ func room_data() -> Dictionary:
 		instruments.append(entry)
 	var walls := []
 	for wall in app.room.walls:
-		walls.append([wall.a.x, wall.a.y, wall.b.x, wall.b.y, wall.height])
+		walls.append([wall.a.x, wall.a.y, wall.b.x, wall.b.y, wall.height, wall.get("material", app.room.DEFAULT_WALL_MATERIAL)])
 	var size: Vector3 = app.room.size
 	var stood: Vector3 = app.player.global_position
 	var folders := []
@@ -389,7 +389,7 @@ func room_data() -> Dictionary:
 			"automation": master.automation.duplicate(true), "auto_mode": master.auto_mode, "lanes": master.lanes.duplicate()}
 	return {"soundroom": "room", "version": VERSION, "mode": app.timeline.mode, "timeline": app.timeline.to_data(),
 		"tempo": app.tempo, "swing": app.swing, "master_db": app.master_volume_db, "room_master_db": app.room_volume_db, "reverb_db": app.reverb_db,
-		"room": {"size": [size.x, size.y, size.z], "walls": walls, "floor": app.room.floor_kind},
+		"room": {"size": [size.x, size.y, size.z], "walls": walls, "surfaces": app.room.surfaces.duplicate()},
 		"player": {"position": [stood.x, stood.z], "yaw": app.player.yaw}, "instruments": instruments, "folders": folders, "auxes": auxes,
 		"masters": masters}
 
@@ -492,11 +492,16 @@ func apply_room_data(data: Dictionary, carry := {}, size = null, mode := "") -> 
 	while not room.walls.is_empty():
 		room.remove_wall(0)
 	room.set_size(size if size is Vector3 else size_of(data))
-	room.set_floor(str(room_part.get("floor", "hard")))
+	var surfaces: Dictionary = room_part.get("surfaces", {})
+	if not surfaces.has("floor") and room_part.has("floor"):  # (a room from before materials: its floor as it was)
+		surfaces.floor = {"hard": "wood_floor", "rug": "rug", "carpet": "carpet"}.get(str(room_part.floor), "wood_floor")
+	for surface in room.SURFACES:
+		room.set_surface(surface, str(surfaces.get(surface, room.DEFAULT_SURFACES[surface])))
 	if keep.call("walls"):
 		for wall in room_part.get("walls", []):
 			if wall is Array and wall.size() >= 5:
-				room.add_wall(Vector2(float(wall[0]), float(wall[1])), Vector2(float(wall[2]), float(wall[3])), float(wall[4]))
+				room.add_wall(Vector2(float(wall[0]), float(wall[1])), Vector2(float(wall[2]), float(wall[3])), float(wall[4]),
+					str(wall[5]) if wall.size() >= 6 else room.DEFAULT_WALL_MATERIAL)
 	var with_tempo: bool = keep.call("tempo")
 	app.set_tempo(float(data.get("tempo", app.DEFAULT_TEMPO)) if with_tempo else app.DEFAULT_TEMPO)
 	app.set_swing(float(data.get("swing", app.DEFAULT_SWING)) if with_tempo else app.DEFAULT_SWING)
