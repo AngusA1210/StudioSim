@@ -16,7 +16,7 @@ tools/build.sh
 godot --path game
 ```
 
-**Windows** needs Visual Studio 2022 (its C++ workload), CMake, Python, Git for Windows (whose Git Bash runs the
+**Windows** needs Visual Studio 2022 or newer (its C++ workload), CMake, Python, Git for Windows (whose Git Bash runs the
 build script), and Godot 4.5 or newer. In Git Bash:
 
 ```bash
