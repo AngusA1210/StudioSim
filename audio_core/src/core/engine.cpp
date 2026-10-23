@@ -3505,12 +3505,13 @@ void AudioEngine::readReflection(const Source& s, float late_from, float late_to
             const auto add = [&](const float* g_from, const float* g_to, float* __restrict o) {
                 if (steady(g_from, g_to)) {
                     const float l = g_from[0] - g_from[1], b = g_from[1] - g_from[2], w = g_from[2];
-                    const float l0 = l * c[0], l1 = l * c[1], l2 = l * c[2], l3 = l * c[3];
-                    const float b0 = b * c[0], b1 = b * c[1], b2 = b * c[2], b3 = b * c[3];
-                    const float w0 = w * c[0], w1 = w * c[1], w2 = w * c[2], w3 = w * c[3];
-                    for (int i = 0; i < block_; ++i)
-                        o[i] += l0 * lo0[i] + l1 * lo0[i + 1] + l2 * lo0[i + 2] + l3 * lo0[i + 3] + b0 * bh0[i] + b1 * bh0[i + 1] +
-                                b2 * bh0[i + 2] + b3 * bh0[i + 3] + w0 * x0[i] + w1 * x0[i + 1] + w2 * x0[i + 2] + w3 * x0[i + 3];
+                    for (int t = 0; t < 4; ++t) {  // (tap by tap down the block: a loop simple enough for any compiler)
+                        const float lt = l * c[t], bt = b * c[t], wt = w * c[t];
+                        const float* __restrict lot = lo0 + t;
+                        const float* __restrict bht = bh0 + t;
+                        const float* __restrict xt = x0 + t;
+                        for (int i = 0; i < block_; ++i) o[i] += lt * lot[i] + bt * bht[i] + wt * xt[i];
+                    }
                     return;
                 }
                 const float g0 = g_from[0], g1 = g_from[1], g2 = g_from[2];
