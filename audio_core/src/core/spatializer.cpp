@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <complex>
 #include <cstring>
 #include <vector>
 
@@ -9,6 +10,31 @@ namespace sr {
 namespace {
 
 IPLVector3 ipl(Vec3 v) { return IPLVector3{v.x, v.y, v.z}; }
+
+// A complex FFT in place, of a power-of-two length (the inverse scaled by 1 / length). Only ever run setting up.
+void fft(std::vector<std::complex<double>>& a, bool inverse) {
+    const size_t n = a.size();
+    for (size_t i = 1, j = 0; i < n; ++i) {
+        size_t bit = n >> 1;
+        for (; j & bit; bit >>= 1) j ^= bit;
+        j ^= bit;
+        if (i < j) std::swap(a[i], a[j]);
+    }
+    for (size_t len = 2; len <= n; len <<= 1) {
+        const double angle = 2.0 * 3.14159265358979323846 / double(len) * (inverse ? 1.0 : -1.0);
+        const std::complex<double> step(std::cos(angle), std::sin(angle));
+        for (size_t i = 0; i < n; i += len) {
+            std::complex<double> w(1.0, 0.0);
+            for (size_t k = 0; k < len / 2; ++k, w *= step) {
+                const std::complex<double> u = a[i + k], v = a[i + k + len / 2] * w;
+                a[i + k] = u + v;
+                a[i + k + len / 2] = u - v;
+            }
+        }
+    }
+    if (inverse)
+        for (auto& x : a) x /= double(n);
+}
 
 }  // namespace
 
@@ -114,6 +140,110 @@ void ReflectionField::decode(IPLAmbisonicsDecodeEffect effect, bool binaural, fl
     p.orientation.ahead = IPLVector3{0.0f, 0.0f, -1.0f};
     p.binaural = binaural ? IPL_TRUE : IPL_FALSE;
     iplAmbisonicsDecodeEffectApply(effect, &p, &in_buf, &out_buf);
+    if (binaural && !eq_.empty()) equalize(l, r);
+}
+
+void ReflectionField::equalize(float* l, float* r) {
+    const int taps = int(eq_.size());
+    for (int side = 0; side < 2; ++side) {
+        float* io = side == 0 ? l : r;
+        std::vector<float>& held = eq_held_[size_t(side)];  // the last taps - 1 samples in, then this block's
+        std::copy(io, io + frame_, held.begin() + (taps - 1));
+        std::fill(io, io + frame_, 0.0f);
+        const float* x = held.data() + (taps - 1);
+        for (int t = 0; t < taps; ++t) {
+            const float h = eq_[size_t(t)];
+            const float* xt = x - t;
+            for (int i = 0; i < frame_; ++i) io[i] += h * xt[i];
+        }
+        std::copy(held.begin() + frame_, held.begin() + frame_ + (taps - 1), held.begin());
+    }
+}
+
+void ReflectionField::resetEqualizer() {
+    for (auto& held : eq_held_) std::fill(held.begin(), held.end(), 0.0f);
+}
+
+// The field's binaural rendering, against a source's own, the same way round: Ambisonics this coarse, through the HRTF,
+// comes out 5 to 9 dB too full below 800 Hz and some 4 dB short around 3 kHz. Averaged over 32 ways all round, the
+// difference is made good by a filter of its own (minimum phase, so it comes no later), after the decoder.
+void ReflectionField::designEqualizer(IPLBinauralEffect direct) {
+    eq_.clear();
+    constexpr int n = 4096, kWays = 32, kTaps = 256;
+    std::vector<double> field_power(n / 2 + 1, 0.0), own_power(n / 2 + 1, 0.0);
+    const size_t frame = size_t(frame_);
+    std::vector<float> in(frame), l(frame), r(frame);
+    std::vector<std::complex<double>> fl(n), fr(n), ol(n), orr(n);
+    for (int w = 0; w < kWays; ++w) {  // (spread evenly round, on a Fibonacci spiral)
+        const double y = 1.0 - 2.0 * (w + 0.5) / kWays, ring = std::sqrt(1.0 - y * y), turn = 2.39996322972865332 * w;
+        const Vec3 way{float(ring * std::cos(turn)), float(y), float(ring * std::sin(turn))};
+        const std::array<float, 9> gains = ambisonicGains(way);
+        iplAmbisonicsDecodeEffectReset(binaural_);
+        iplBinauralEffectReset(direct);
+        for (int f = 0; f * frame_ < n; ++f) {
+            clear();
+            std::fill(in.begin(), in.end(), 0.0f);
+            if (f == 0) {
+                in[0] = 1.0f;
+                for (int c = 0; c < kChannels; ++c) field_[size_t(c)][0] = gains[size_t(c)];
+            }
+            decode(binaural_, true, l.data(), r.data());
+            for (int i = 0; i < frame_ && f * frame_ + i < n; ++i) {
+                fl[size_t(f * frame_ + i)] = l[size_t(i)];
+                fr[size_t(f * frame_ + i)] = r[size_t(i)];
+            }
+            float* in_ch[1] = {in.data()};
+            float* out_ch[2] = {l.data(), r.data()};
+            IPLAudioBuffer in_buf{1, frame_, in_ch}, out_buf{2, frame_, out_ch};
+            IPLBinauralEffectParams bp{};
+            bp.direction = ipl(way);
+            bp.interpolation = IPL_HRTFINTERPOLATION_BILINEAR;
+            bp.spatialBlend = 1.0f;
+            bp.hrtf = steam_->hrtf();
+            iplBinauralEffectApply(direct, &bp, &in_buf, &out_buf);
+            for (int i = 0; i < frame_ && f * frame_ + i < n; ++i) {
+                ol[size_t(f * frame_ + i)] = l[size_t(i)];
+                orr[size_t(f * frame_ + i)] = r[size_t(i)];
+            }
+        }
+        for (auto* x : {&fl, &fr, &ol, &orr}) fft(*x, false);
+        for (int k = 0; k <= n / 2; ++k) {
+            field_power[size_t(k)] += std::norm(fl[size_t(k)]) + std::norm(fr[size_t(k)]);
+            own_power[size_t(k)] += std::norm(ol[size_t(k)]) + std::norm(orr[size_t(k)]);
+        }
+    }
+    // Each smoothed over a third of an octave; what the field needs, within -20 and +12 dB, its lowest bins as at 40 Hz.
+    std::vector<double> field_sum(n / 2 + 2, 0.0), own_sum(n / 2 + 2, 0.0);
+    for (int k = 0; k <= n / 2; ++k) {
+        field_sum[size_t(k + 1)] = field_sum[size_t(k)] + field_power[size_t(k)];
+        own_sum[size_t(k + 1)] = own_sum[size_t(k)] + own_power[size_t(k)];
+    }
+    const double bin_hz = double(steam_->settings().samplingRate) / n;
+    const int lowest = std::max(1, int(40.0 / bin_hz));
+    std::vector<double> want(n / 2 + 1, 1.0);
+    for (int k = 0; k <= n / 2; ++k) {
+        const int at = std::max(k, lowest);
+        const int from = std::max(1, int(std::floor(at / std::pow(2.0, 1.0 / 6.0)))), to = std::min(n / 2, int(std::ceil(at * std::pow(2.0, 1.0 / 6.0))));
+        const double field = field_sum[size_t(to + 1)] - field_sum[size_t(from)], own = own_sum[size_t(to + 1)] - own_sum[size_t(from)];
+        want[size_t(k)] = field > 0.0 && own > 0.0 ? std::clamp(std::sqrt(own / field), 0.1, 4.0) : 1.0;
+    }
+    // Minimum phase, from the cepstrum: the log of the response, folded onto positive times, and back.
+    std::vector<std::complex<double>> c(n);
+    for (int k = 0; k < n; ++k) c[size_t(k)] = std::log(want[size_t(k <= n / 2 ? k : n - k)]);
+    fft(c, true);
+    for (int k = 1; k < n / 2; ++k) {
+        c[size_t(k)] *= 2.0;
+        c[size_t(n - k)] = 0.0;
+    }
+    fft(c, false);
+    for (auto& x : c) x = std::exp(x);
+    fft(c, true);
+    eq_.assign(kTaps, 0.0f);
+    for (int t = 0; t < kTaps; ++t) {  // (its last 32 taps faded out)
+        const double fade = t < kTaps - 32 ? 1.0 : 0.5 + 0.5 * std::cos(3.14159265358979323846 * (t - (kTaps - 32)) / 32.0);
+        eq_[size_t(t)] = float(c[size_t(t)].real() * fade);
+    }
+    for (auto& held : eq_held_) held.assign(size_t(kTaps - 1 + frame_), 0.0f);
 }
 
 bool ReflectionField::init(const SteamAudio& steam, std::string* error) {
@@ -139,6 +269,7 @@ bool ReflectionField::init(const SteamAudio& steam, std::string* error) {
     bs.hrtf = steam.hrtf();
     IPLBinauralEffect direct = nullptr;
     if (iplBinauralEffectCreate(steam.context(), &settings, &bs, &direct) != IPL_STATUS_SUCCESS) return true;  // (as it is)
+    designEqualizer(direct);
     const Vec3 ways[] = {{0, 0, -1}, {1, 0, 0}, {-1, 0, 0}, {0, 0, 1}, {0, 1, 0}, {0.6f, 0.0f, -0.8f}};
     double field_energy = 0.0, own_energy = 0.0, panned_energy = 0.0, first_field = 0.0, first_panned = 0.0;
     const size_t frame = size_t(frame_);
@@ -147,6 +278,7 @@ bool ReflectionField::init(const SteamAudio& steam, std::string* error) {
         iplBinauralEffectReset(direct);
         iplAmbisonicsDecodeEffectReset(binaural_);
         iplAmbisonicsDecodeEffectReset(panning_);
+        resetEqualizer();
         const std::array<float, 9> gains = ambisonicGains(way);
         std::vector<float> heard_field, heard_own;
         for (int f = 0; f * frame_ < 8192 + frame_; ++f) {
@@ -181,6 +313,7 @@ bool ReflectionField::init(const SteamAudio& steam, std::string* error) {
         // channels carried.
         iplAmbisonicsDecodeEffectReset(binaural_);
         iplAmbisonicsDecodeEffectReset(panning_);
+        resetEqualizer();
         for (int f = 0; f * frame_ < 8192 + frame_; ++f) {
             clear();
             if (f == 0)
@@ -210,6 +343,7 @@ bool ReflectionField::init(const SteamAudio& steam, std::string* error) {
         first_order_gain_ = float(std::sqrt(0.5 * (field_energy / first_field + panned_energy / first_panned)));
     iplAmbisonicsDecodeEffectReset(binaural_);
     iplAmbisonicsDecodeEffectReset(panning_);
+    resetEqualizer();
     clear();
     return true;
 }

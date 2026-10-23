@@ -18,6 +18,7 @@
 #include "amp.h"
 #include "disk_stream.h"
 #include "instruments.h"
+#include "interpolation.h"
 #include "looper.h"
 #include "microphones.h"
 #include "midi_input.h"
@@ -658,6 +659,12 @@ private:
     void playReflections(float binaural_from);  // and heard (audio thread)
     void readReflection(const Source& source, float late_from, float late_to, const float* from, const float* to, float* out,
                         const float* spread_from = nullptr, const float* spread_to = nullptr, float* spread_out = nullptr) const;
+    // Every microphone hears this many samples later than the sound reaches it, so that the sinc it hears through
+    // (Sinc16) has the samples after where it reads already played: 0.17 ms at 48 kHz, the same for every microphone and
+    // every way the sound comes, so that they line up with each other as their distances have it.
+    static constexpr int kMicLead = Sinc16::kAfter;
+    void readHistory(const float* history, double late_from, double late_to, float* out) const;
+    std::vector<float> read_;  // (a block of one way to a microphone, read)
     float split_lows_ = 0.0f, split_highs_ = 0.0f;  // the history's band split, at the engine's rate
     void updatePaths();
     void updateMicPaths(Source& source);  // how its sound reaches each microphone (or, a microphone, how each reaches it)

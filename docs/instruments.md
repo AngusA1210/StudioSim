@@ -68,13 +68,14 @@ to another in its panel:
 
 - **What it hears** follows the physics: each instrument's sound arrives as late as it takes to travel there at 343 m/s
   (two mics at different distances from a drum hear it at different times, as real ones do, with the same phase
-  effects between them), 6 dB quieter for each doubling of the distance (and louder closer than 1.5 m, the distance
-  an instrument is heard at its own level, down to 10 cm), dulled a little by the air and more by a wall it has to
-  bend round, with the room's reverb on top, as diffuse there as anywhere. Moving a mic (or an instrument) while it
-  plays bends the pitch a touch, as moving a real one would. A muted instrument is silent in the room, so a mic hears
-  nothing of it; but a solo only takes the others out of the mix, so soloing a mic's track lets you hear just what it
-  hears, every instrument still playing in the room. A microphone isn't heard in the room itself, so no mic hears
-  another (nor itself).
+  effects between them). The timing is exact to a fraction of a sample, and its top end doesn't change with the
+  fraction, so a mic moved a few millimetres sounds no duller or brighter. It is 6 dB quieter for each doubling of
+  the distance (and louder closer than 1.5 m, the distance an instrument is heard at its own level, down to 10 cm),
+  dulled a little by the air and more by a wall it has to bend round, with the room's reverb on top, as diffuse there
+  as anywhere. Moving a mic (or an instrument) while it plays bends the pitch a touch, as moving a real one would. A
+  muted instrument is silent in the room, so a mic hears nothing of it; but a solo only takes the others out of the
+  mix, so soloing a mic's track lets you hear just what it hears, every instrument still playing in the room. A
+  microphone isn't heard in the room itself, so no mic hears another (nor itself).
 - **Its pattern** decides how much it hears from each way round, the way the sound arrives (straight, or from the edge
   of a wall it bends round) against the way the mic points: an omni hears all round alike, a cardioid little from
   behind, a supercardioid less from the sides, a figure-8 its front and its back alike (the back in reverse polarity)

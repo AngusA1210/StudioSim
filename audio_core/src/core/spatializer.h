@@ -101,6 +101,9 @@ public:
 
 private:
     void decode(IPLAmbisonicsDecodeEffect effect, bool binaural, float* l, float* r);
+    void designEqualizer(IPLBinauralEffect direct);
+    void equalize(float* l, float* r);
+    void resetEqualizer();
 
     const SteamAudio* steam_ = nullptr;
     IPLAmbisonicsDecodeEffect binaural_ = nullptr, panning_ = nullptr;
@@ -109,6 +112,9 @@ private:
     int frame_ = 0, late_ = 0;
     float binaural_gain_ = 1.0f, panning_gain_ = 1.0f;
     float first_order_gain_ = 1.0f;  // what the first order alone needs to come out as loud as the second does
+    // The binaural rendering's own equalizer (designEqualizer), and what each ear's last block left in it.
+    std::vector<float> eq_;
+    std::array<std::vector<float>, 2> eq_held_;
     bool added_ = false;  // anything put in the field this block
     int quiet_ = 0;       // blocks since anything was (its renderings' tails die away in a few)
 };

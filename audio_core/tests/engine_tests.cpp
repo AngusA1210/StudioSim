@@ -488,6 +488,31 @@ int main(int argc, char** argv) {
         const double listener_secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - l0).count();
         check(all_heard.finite && listener_secs < 10.43 / 4, "the listener hearing every instrument's reflections too, well faster than real time",
               fmt("%.1fx real time", 10.43 / listener_secs));
+        // As the game plays it, every reflection heard: louder (the room adds its own, the lows most, as they come back
+        // in step), but the limiter still untouched.
+        const double all_rms = std::sqrt((all_heard.rms_l * all_heard.rms_l + all_heard.rms_r * all_heard.rms_r) / 2);
+        check(all_heard.peak < 0.63 && all_rms < 0.1, "with every reflection heard, as the game plays it, still headroom: the limiter isn't touched",
+              fmt("%.1f dBFS RMS, ", db(all_rms)) + fmt("peaks %.1f dBFS", db(all_heard.peak)));
+        // And the reflections come out as loud binaurally as in plain stereo, the lows as much as the rest: the drums (mostly
+        // lows) as much louder for them either way.
+        auto drums_with_reflections = [](bool binaural) {
+            double level[2];
+            for (int heard_off = 0; heard_off < 2; ++heard_off) {
+                Room solo;
+                solo.soloOnly(solo.drums);
+                solo.engine.setReverb(false);
+                solo.engine.setBinaural(binaural);
+                solo.engine.setFloorReflection(1.0f);
+                solo.engine.setEarlyReflections(heard_off == 0);
+                const Render r = renderSeconds(solo.engine, 10.43);
+                level[heard_off] = db(std::sqrt((r.rms_l * r.rms_l + r.rms_r * r.rms_r) / 2));
+            }
+            return level[0] - level[1];
+        };
+        const double binaural_more = drums_with_reflections(true), stereo_more = drums_with_reflections(false);
+        check(std::fabs(binaural_more - stereo_more) < 1.5,
+              "the reflections are as loud binaurally as in plain stereo, the lows too: the drums as much louder for them either way",
+              fmt("%+.1f dB binaurally, ", binaural_more) + fmt("%+.1f dB in plain stereo", stereo_more));
         check(with_walls.first && with_walls.second < 10.43 && with_walls.second < 4.0 * floor_only.second,
               "with eight microphones hearing the room's reflections too (and what the walls scatter), still faster than real time (the walls costing no more than three times again)",
               fmt("%.1fx real time (", 10.43 / with_walls.second) + fmt("%.1fx with the floor's bounce alone)", 10.43 / floor_only.second));
@@ -3530,6 +3555,46 @@ int main(int argc, char** argv) {
         check(walled.peak > 1e-5 && db(walled.peak) < db(gained.peak) - 3.0, "a wall between them shadows the drums from it",
               fmt("%.1f dB quieter", db(gained.peak) - db(walled.peak)));
         room.engine.setRoom(12.0f, 4.0f, 12.0f, {});
+
+        // Its top end is the same wherever it stands: white noise from a speaker 280 samples of air away (2.0008 m), then
+        // 280.5 (half a sample further, 3.6 mm): the highs against the middle the same at both, though reading the
+        // sound halfway between two samples with a straight line between them would take 5 dB off at 15 kHz.
+        {
+            Room noisy;
+            noisy.hearMix();
+            noisy.quietRoom(noisy.speaker);
+            noisy.engine.setLimiter(false);
+            noisy.engine.setSourceMuted(noisy.speaker, true);  // (its own track out of the mix: the mic's alone)
+            noisy.engine.setSourceInput(noisy.speaker, true);
+            noisy.engine.setSourcePosition(noisy.speaker, {0.0f, 1.2f, 0.0f});
+            const int listening = noisy.engine.addSource(InstrumentKind::Mic, {2.0f, 1.2f, 0.0f}, 1.0f, 0.0f);
+            noisy.engine.setSourceInput(listening, true);
+            auto top_against_middle = [&](double samples) {
+                noisy.engine.setSourcePosition(listening, {float(samples * 343.0 / 48000.0), 1.2f, 0.0f});
+                uint32_t seed = 12345u;
+                const auto noise = [&seed](int64_t) {
+                    seed = seed * 1664525u + 1013904223u;
+                    return 0.25f * (float(seed >> 8) / 8388608.0f - 1.0f);
+                };
+                renderSeconds(noisy.engine, 0.5, noise);  // (the way there glides over a moment)
+                const Render r = renderSeconds(noisy.engine, 1.0, noise);
+                const auto band = [&](float low, float high) {
+                    Biquad hp[2], lp[2];
+                    for (auto& f : hp) f.set(Biquad::Highpass, 48000.0f, low, 0.707f);
+                    for (auto& f : lp) f.set(Biquad::Lowpass, 48000.0f, high, 0.707f);
+                    double e = 0.0;
+                    for (size_t i = 0; i < r.l.size(); ++i) {
+                        const float y = lp[1].process(lp[0].process(hp[1].process(hp[0].process(r.l[i]))));
+                        if (i > 2000) e += double(y) * y;
+                    }
+                    return e;
+                };
+                return 10.0 * std::log10(band(12000.0f, 18000.0f) / band(1000.0f, 4000.0f));
+            };
+            const double whole = top_against_middle(280.0), half = top_against_middle(280.5);
+            check(std::fabs(whole - half) < 0.25, "its top end is the same a whole number of samples away or half a sample further",
+                  fmt("12-18 kHz against 1-4 kHz: %.2f dB, ", whole) + fmt("%.2f dB half a sample further", half));
+        }
 
         // Armed and recording, it records what it hears, as an amp records its input.
         const auto folder = std::filesystem::temp_directory_path() / "soundroom-mic-tests";

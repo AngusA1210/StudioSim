@@ -918,7 +918,7 @@ func _run() -> void:
 		"Tab opens the mix window: a strip for each instrument, at 0 dB", "%d strips" % mix._strips.size())
 	await seconds(0.5)
 	check(mix._master.meter.held_db() > -40.0 and mix._master.peak.text.begins_with("-") and mix._status.text == "Limiter idle",
-		"the master meter beside the master fader is reading the output, with its peak beneath", mix._master.peak.text)
+		"the master meter beside the master fader is reading the output, with its peak beneath", "%s (meter %.1f dB, %s)" % [mix._master.peak.text, mix._master.meter.held_db(), mix._status.text])
 	var drums_strip: Dictionary = mix._strips[0]
 	check(drums.peak_hold > 0.01 and drums_strip.peak.text.begins_with("-") and drums_strip.peak.text != "-inf" and mix._strips[0].meter.held_db() > -40.0,
 		"each strip has its own peak readout under the fader", drums_strip.peak.text)

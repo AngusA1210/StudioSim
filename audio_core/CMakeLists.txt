@@ -87,6 +87,7 @@ add_library(sr_core STATIC
     src/core/disk_stream.cpp
     src/core/microphones.cpp
     src/core/radiation.cpp
+    src/core/interpolation.cpp
     src/core/plugin_category.cpp
     src/core/plugin_host.cpp
     src/core/plugin_host_vst3.cpp

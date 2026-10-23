@@ -38,6 +38,7 @@ audio_core/
     sequencer.*            the clock (tempo, swing, playing from a step, loop playback), pattern notes, and the default groove
     recorder.* wav.*       recording: what armed tracks take in, written to WAV files on a thread of its own; reading them
     disk_stream.*          the recordings read from disk as they play: in chunks, a few seconds ahead, by a thread of its own
+    interpolation.*        reading a sound between its samples, as late as it reaches a microphone, without dulling its top end
     spatializer.*          Steam Audio: distance, air absorption, wall filtering, binaural (HRTF), the reflections' Ambisonic field
     room_geometry.*        the walls: which way round them sound reaches the listener, how much further that is, and their faces as mirrors
     materials.*            what each material absorbs, scatters and lets through, band by band, and the reverb a room of them has

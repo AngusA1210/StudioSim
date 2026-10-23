@@ -38,8 +38,9 @@ it goes.
   heard scattered off the second.
 
 They are rendered together as one Ambisonic field (the second reflections at its first order, among so many), binaurally
-with the HRTF (lined up with the direct sound, whatever the buffer) or in plain stereo, so they cost little however
-many instruments there are. Each microphone hears its own reflections the same way, by its pattern.
+with the HRTF (lined up with the direct sound, whatever the buffer, and evened out to sound as an instrument's own
+binaural rendering does: Ambisonics this coarse would otherwise come out boomy) or in plain stereo, so they cost
+little however many instruments there are. Each microphone hears its own reflections the same way, by its pattern.
 
 A material also **scatters** a share of what it sends back rather than mirroring it: a flat wall little, brick and a
 curtain's folds more as the waves get shorter, bookshelves much of it, and **diffuser panels** (wooden wells of

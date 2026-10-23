@@ -8,6 +8,7 @@
 #include <miniaudio.h>
 
 #include "acoustics.h"
+#include "interpolation.h"
 
 #ifdef __APPLE__
 #include <CoreAudio/CoreAudio.h>
@@ -23,7 +24,9 @@ namespace {
 // gives the old level exactly.
 constexpr float kDefaultFalloffDb = 6.0f;
 const float kStage = std::sqrt(SourceSpatializer::kRefDistance / 7.0f);
-const float kMasterGain = 1.9f * kStage;  // about -28 dBFS RMS at the spawn point, peaks around -12
+// About -28 dBFS RMS at the spawn point from the instruments alone, peaks around -12; with the room's reflections, as
+// the game has them, about -23 dBFS and -6 (the room adds its own, the lows most, as they come back in step).
+const float kMasterGain = 1.9f * kStage;
 const float kReverbLevel = 0.16f;
 const float kClickLevel = 0.13f;  // the metronome peaks about 10 dB above the mix's average level
 // The room the reverb was tuned in, with its surfaces as a room starts (materials.h: RoomSurfaces): its reverb is
@@ -388,6 +391,7 @@ AudioEngine::AudioEngine(const EngineConfig& config)
     for (auto& l : levels_) l.store(0.0f);
     for (auto* meters : {&peaks_, &pre_levels_, &pre_peaks_})
         for (auto& p : *meters) p.store(0.0f);
+    Sinc16::prepare();  // (its table, before the audio thread wants it)
     allocateBuffers();
     sequencer_.setSampleRate(sr_);
     for (auto& reverb : reverbs_) buildReverb(reverb, float(sr_), room_rt60_, room_size_);
@@ -402,7 +406,7 @@ AudioEngine::~AudioEngine() {
 
 void AudioEngine::allocateBuffers() {
     for (auto* buf : {&mix_l_, &mix_r_, &send_, &rev_l_, &rev_r_, &rev2_l_, &rev2_r_, &click_, &room_l_, &room_r_, &out_l_, &out_r_,
-                      &mix_tap_l_, &mix_tap_r_, &room_tap_l_, &room_tap_r_, &comp_l_, &comp_r_, &echo_})
+                      &mix_tap_l_, &mix_tap_r_, &room_tap_l_, &room_tap_r_, &comp_l_, &comp_r_, &echo_, &read_})
         buf->assign(size_t(block_), 0.0f);
     for (auto& bus : echo_scatter_) bus.assign(size_t(block_), 0.0f);
     for (auto& smear : echo_smear_) smear.init(float(sr_));
@@ -3282,9 +3286,10 @@ void AudioEngine::applyParams(Source& s, double at) {
     }
 }
 
-// One reflection of a source, read from its split history: `late` samples behind the clock, gliding from `late_from`
-// to `late_to` over the block, each band at a gain gliding from `from[b]` to `to[b]`, added into `out`; and if
-// `spread_out`, its scattered part likewise into that.
+// One reflection of a source, read from its split history: `late` samples behind the clock (2 at least, for the cubic
+// to have the samples after where it reads already played), gliding from `late_from` to `late_to` over the block,
+// between samples through Lagrange's cubic; each band at a gain gliding from `from[b]` to `to[b]`, added into `out`;
+// and if `spread_out`, its scattered part likewise into that.
 void AudioEngine::readReflection(const Source& s, float late_from, float late_to, const float* from, const float* to, float* out,
                                  const float* spread_from, const float* spread_to, float* spread_out) const {
     const float* x = s.history.data();
@@ -3293,14 +3298,15 @@ void AudioEngine::readReflection(const Source& s, float late_from, float late_to
     constexpr size_t mask = Source::kHistory - 1;
     const float n = float(block_);
     // Still (as most are, most of the time), and not running off the end of the history: each band read straight
-    // through at one fraction between samples. Its level steady too, the bands and the fraction fold into six gains on
+    // through at one fraction between samples. Its level steady too, the bands and the cubic fold into twelve gains on
     // the three histories, sample by sample, which any compiler can do several samples at a time.
     if (late_to == late_from) {
         const double start = double(clock_) - double(late_from);
         const int64_t k = int64_t(std::floor(start));
-        const float f = float(start - double(k));
-        const size_t first = size_t(k) & mask;
-        if (first + size_t(block_) + 1 <= Source::kHistory) {
+        float c[4];
+        lagrange4(float(start - double(k)), c);
+        const size_t first = size_t(k - 1) & mask;
+        if (first + size_t(block_) + 3 <= Source::kHistory) {
             const float* __restrict x0 = x + first;
             const float* __restrict lo0 = lo + first;
             const float* __restrict bh0 = bh + first;
@@ -3313,16 +3319,20 @@ void AudioEngine::readReflection(const Source& s, float late_from, float late_to
             const auto add = [&](const float* g_from, const float* g_to, float* __restrict o) {
                 if (steady(g_from, g_to)) {
                     const float l = g_from[0] - g_from[1], b = g_from[1] - g_from[2], w = g_from[2];
-                    const float l0 = l * (1.0f - f), l1 = l * f, b0 = b * (1.0f - f), b1 = b * f, w0 = w * (1.0f - f), w1 = w * f;
+                    const float l0 = l * c[0], l1 = l * c[1], l2 = l * c[2], l3 = l * c[3];
+                    const float b0 = b * c[0], b1 = b * c[1], b2 = b * c[2], b3 = b * c[3];
+                    const float w0 = w * c[0], w1 = w * c[1], w2 = w * c[2], w3 = w * c[3];
                     for (int i = 0; i < block_; ++i)
-                        o[i] += l0 * lo0[i] + l1 * lo0[i + 1] + b0 * bh0[i] + b1 * bh0[i + 1] + w0 * x0[i] + w1 * x0[i + 1];
+                        o[i] += l0 * lo0[i] + l1 * lo0[i + 1] + l2 * lo0[i + 2] + l3 * lo0[i + 3] + b0 * bh0[i] + b1 * bh0[i + 1] +
+                                b2 * bh0[i + 2] + b3 * bh0[i + 3] + w0 * x0[i] + w1 * x0[i + 1] + w2 * x0[i + 2] + w3 * x0[i + 3];
                     return;
                 }
                 const float g0 = g_from[0], g1 = g_from[1], g2 = g_from[2];
                 const float d0 = (g_to[0] - g0) / n, d1 = (g_to[1] - g1) / n, d2 = (g_to[2] - g2) / n;
                 for (int i = 0; i < block_; ++i) {
-                    const float whole = x0[i] + (x0[i + 1] - x0[i]) * f, low = lo0[i] + (lo0[i + 1] - lo0[i]) * f;
-                    const float below = bh0[i] + (bh0[i + 1] - bh0[i]) * f;
+                    const float whole = c[0] * x0[i] + c[1] * x0[i + 1] + c[2] * x0[i + 2] + c[3] * x0[i + 3];
+                    const float low = c[0] * lo0[i] + c[1] * lo0[i + 1] + c[2] * lo0[i + 2] + c[3] * lo0[i + 3];
+                    const float below = c[0] * bh0[i] + c[1] * bh0[i + 1] + c[2] * bh0[i + 2] + c[3] * bh0[i + 3];
                     const float a = float(i + 1);
                     o[i] += low * (g0 + d0 * a) + (below - low) * (g1 + d1 * a) + (whole - below) * (g2 + d2 * a);
                 }
@@ -3346,10 +3356,12 @@ void AudioEngine::readReflection(const Source& s, float late_from, float late_to
     }
     for (int i = 0; i < block_; ++i, at += each) {
         const int64_t k = int64_t(std::floor(at));
-        const float f = float(at - double(k));
-        const size_t i0 = size_t(k) & mask, i1 = size_t(k + 1) & mask;
-        const float whole = x[i0] + (x[i1] - x[i0]) * f, low = lo[i0] + (lo[i1] - lo[i0]) * f;
-        const float below = bh[i0] + (bh[i1] - bh[i0]) * f;
+        float c[4];
+        lagrange4(float(at - double(k)), c);
+        const size_t i0 = size_t(k - 1) & mask, i1 = size_t(k) & mask, i2 = size_t(k + 1) & mask, i3 = size_t(k + 2) & mask;
+        const float whole = c[0] * x[i0] + c[1] * x[i1] + c[2] * x[i2] + c[3] * x[i3];
+        const float low = c[0] * lo[i0] + c[1] * lo[i1] + c[2] * lo[i2] + c[3] * lo[i3];
+        const float below = c[0] * bh[i0] + c[1] * bh[i1] + c[2] * bh[i2] + c[3] * bh[i3];
         const float mid = below - low, high = whole - below;
         for (int b = 0; b < 3; ++b) g[b] += dg[b];
         out[i] += low * g[0] + mid * g[1] + high * g[2];
@@ -3357,6 +3369,42 @@ void AudioEngine::readReflection(const Source& s, float late_from, float late_to
             for (int b = 0; b < 3; ++b) sg[b] += dsg[b];
             spread_out[i] += low * sg[0] + mid * sg[1] + high * sg[2];
         }
+    }
+}
+
+// A source's sound as it reaches a microphone: read from its history `late` samples behind the clock (gliding from
+// `late_from` to `late_to` across the block), and kMicLead more, between samples through the sinc, into `out`.
+void AudioEngine::readHistory(const float* history, double late_from, double late_to, float* out) const {
+    constexpr size_t mask = Source::kHistory - 1;
+    float w[Sinc16::kTaps];
+    if (late_from == late_to) {  // still: one set of weights for the block, tap by tap down it where it doesn't wrap round
+        const double start = double(clock_) - late_from - double(kMicLead);
+        const int64_t k = int64_t(std::floor(start));
+        Sinc16::weights(float(start - double(k)), w);
+        const size_t first = size_t(k - Sinc16::kBefore) & mask;
+        std::fill(out, out + block_, 0.0f);
+        if (first + size_t(block_ + Sinc16::kTaps) <= Source::kHistory) {
+            const float* __restrict x = history + first;
+            float* __restrict o = out;
+            for (int t = 0; t < Sinc16::kTaps; ++t) {
+                const float wt = w[t];
+                for (int i = 0; i < block_; ++i) o[i] += wt * x[i + t];
+            }
+            return;
+        }
+        for (int i = 0; i < block_; ++i)
+            for (int t = 0; t < Sinc16::kTaps; ++t) out[i] += w[t] * history[(first + size_t(i + t)) & mask];
+        return;
+    }
+    for (int i = 0; i < block_; ++i) {  // gliding: each sample its own weights
+        const double late = late_from + (late_to - late_from) * double(i + 1) / double(block_);
+        const double at = double(clock_ + i) - late - double(kMicLead);
+        const int64_t k = int64_t(std::floor(at));
+        Sinc16::weights(float(at - double(k)), w);
+        const size_t first = size_t(k - Sinc16::kBefore) & mask;
+        float y = 0.0f;
+        for (int t = 0; t < Sinc16::kTaps; ++t) y += w[t] * history[(first + size_t(t)) & mask];
+        out[i] = y;
     }
 }
 
@@ -3409,7 +3457,7 @@ void AudioEngine::playReflections(float binaural_from) {
                 continue;
             }
             const float reflected = length(sub(e.image, listener_pos_)), straight = length(sub(e.source, listener_pos_));
-            const float late_to = std::clamp((reflected - straight) / kSpeedOfSound * rate - sooner_to, 1.0f, furthest);
+            const float late_to = std::clamp((reflected - straight) / kSpeedOfSound * rate - sooner_to, 2.0f, furthest);
             const bool fresh = e.late < 0.0f;
             const float late_from = fresh ? late_to : e.late;
             e.late = late_to;
@@ -3482,7 +3530,7 @@ void AudioEngine::hearCapsule(Source& mic, int capsule_index, float* out, float 
     const double rate = double(sr_);
     const float lows = 1.0f - std::exp(-2.0f * float(kPi) * SourceSpatializer::kBandEdges[0] / float(sr_));
     const float highs = 1.0f - std::exp(-2.0f * float(kPi) * SourceSpatializer::kBandEdges[1] / float(sr_));
-    const double furthest = double(Source::kHistory - size_t(block_) - 4);  // samples late it can hear at most
+    const double furthest = double(Source::kHistory - size_t(block_) - 4 - kMicLead - Sinc16::kBefore);  // samples late it can hear at most
     auto loudness = [&](float d) { return std::pow(SourceSpatializer::kRefDistance / std::max(d, kMicNearest), falloff_); };
     const Vec3 aim_from = capsule.aim;  // which way it points, glided as it turns
     capsule.aim = turnToward(capsule.aim, capsule.aim_target, glide);
@@ -3507,16 +3555,12 @@ void AudioEngine::hearCapsule(Source& mic, int capsule_index, float* out, float 
         float& below_high_s = state[1];
         float& near_in = state[2];
         float& near_out = state[3];
-        // How late it is heard (samples), gliding straight from one end of the block to the other.
-        const double late_from = double(from_m) / kSpeedOfSound * rate, late_step = (double(to_m) - double(from_m)) / kSpeedOfSound * rate / block_;
+        // As late as it is heard (samples), gliding straight from one end of the block to the other, read between samples.
+        readHistory(heard, std::clamp(double(from_m) / kSpeedOfSound * rate, 0.0, furthest),
+                    std::clamp(double(to_m) / kSpeedOfSound * rate, 0.0, furthest), read_.data());
         for (int i = 0; i < block_; ++i) {
             const float a = float(i + 1) / float(block_);
-            const double late = std::clamp(late_from + late_step * double(i + 1), 1.0, furthest);
-            const double at = double(clock_ + i) - late;
-            const int64_t n = int64_t(std::floor(at));
-            const float frac = float(at - double(n));
-            const float x0 = heard[size_t(n) & (Source::kHistory - 1)], x1 = heard[size_t(n + 1) & (Source::kHistory - 1)];
-            float x = x0 + (x1 - x0) * frac;
+            float x = read_[size_t(i)];
             for (int f = 0; f < filter_count; ++f) x = filters[f].process(x);
             low_s += (x - low_s) * lows;
             below_high_s += (x - below_high_s) * highs;
@@ -3558,7 +3602,7 @@ void AudioEngine::hearCapsule(Source& mic, int capsule_index, float* out, float 
                     way.scatter[b] += (way.scatter_target[b] - way.scatter[b]) * glide;
                 }
             }
-            late[end] = std::clamp(way.distance / kSpeedOfSound * float(rate), 1.0f, furthest_late);
+            late[end] = std::clamp(way.distance / kSpeedOfSound * float(rate), 0.0f, furthest_late) + float(kMicLead);
             const float level = way.gain * distanceLaw(way.nearness);
             const float off = dot(way.from, end == 0 ? aim_from : capsule.aim);
             const std::array<float, 3> beam = way.filtered ? beamingBands(way.cut) : std::array<float, 3>{1.0f, 1.0f, 1.0f};
