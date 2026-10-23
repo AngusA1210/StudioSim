@@ -116,6 +116,11 @@ endif()
 # ── Offline tests ───────────────────────────────────────────────────────────────────────────────────────────
 add_executable(engine_tests tests/engine_tests.cpp)
 target_link_libraries(engine_tests PRIVATE sr_core)
+# Its checks each make a room of their own (an engine, some 13 KB) in main's blocks, which Visual Studio doesn't always
+# lay over one another: more than Windows' 1 MB stack holds. (macOS gives a program 8 MB.)
+if(MSVC)
+    target_link_options(engine_tests PRIVATE /STACK:16777216)
+endif()
 # A VST3 plug-in of the checks' own (tests/vst3_test_plugin.cpp), so that they never load anyone's: a bundle on macOS,
 # a .vst3 file on Windows, in the build's vst3 folder, which is where the checks look for plug-ins.
 set(TEST_VST3_DIR "${CMAKE_BINARY_DIR}/vst3")
