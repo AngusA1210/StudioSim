@@ -14,8 +14,11 @@
 #include "plugin_formats.h"
 #include "plugin_window.h"
 
+#include <array>
 #include <atomic>
 #include <cctype>
+#include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -255,6 +258,12 @@ public:
             dirty_[i].store(false);
         }
         changes_ = std::make_unique<ParameterChanges>(int32(ids_.size()) + kMaxMapped);
+        out_changes_ = std::make_unique<ParameterChanges>(int32(ids_.size()) + 1);  // (what it says back: its meters)
+        for (const ParameterInfo& info : infos_)  // its gain reduction meters, if it has any
+            if ((info.flags & ParameterInfo::kIsReadOnly) && reduction_count_ < kMaxReduction && isGainReductionName(utf8(info.title))) {
+                reduction_ids_[size_t(reduction_count_)] = info.id;
+                reduction_[size_t(reduction_count_++)].store(-1.0f);
+            }
         events_.setMaxSize(512);
     }
 
@@ -326,7 +335,7 @@ public:
             return false;
         }
         data_.inputParameterChanges = changes_.get();
-        data_.outputParameterChanges = nullptr;
+        data_.outputParameterChanges = out_changes_.get();
         data_.inputEvents = description_.instrument ? &events_ : nullptr;
         data_.processContext = &context_;
         if (component_->setActive(true) != kResultOk) {
@@ -646,9 +655,32 @@ private:
         context_.projectTimeSamples = position_;
         context_.tempo = bpm;
         context_.projectTimeMusic = double(position_) / (sample_rate_ * 60.0 / bpm);
+        out_changes_->clearQueue();
         processor_->process(data_);
         events_.clear();
         position_ += n;
+        for (int32 i = 0; reduction_count_ > 0 && i < out_changes_->getParameterCount(); ++i) {  // (its gain reduction, as it last said)
+            IParamValueQueue* q = out_changes_->getParameterData(i);
+            int32 offset = 0;
+            ParamValue value = 0.0;
+            if (!q || q->getPointCount() <= 0 || q->getPoint(q->getPointCount() - 1, offset, value) != kResultOk) continue;
+            for (int r = 0; r < reduction_count_; ++r)
+                if (q->getParameterId() == reduction_ids_[size_t(r)]) reduction_[size_t(r)].store(float(value), std::memory_order_relaxed);
+        }
+    }
+
+    // Its gain reduction, in dB, as its own text for the value its meter last said has it ("-4.5 dB", "4.5").
+    float gainReductionDb() const override {
+        float most = -1.0f;
+        for (int r = 0; r < reduction_count_; ++r) {
+            const float value = reduction_[size_t(r)].load(std::memory_order_relaxed);
+            if (value < 0.0f) continue;
+            const std::string text = parameterText(reduction_ids_[size_t(r)], value);
+            const size_t at = text.find_first_of("+-.0123456789");
+            if (at == std::string::npos) continue;
+            most = std::max(most, std::fabs(std::strtof(text.c_str() + at, nullptr)));
+        }
+        return most;
     }
 
     void mapped(ParamID id, int32 offset, float value) {
@@ -682,7 +714,11 @@ private:
     Handler handler_;
     Frame frame_;
     HostProcessData data_;
-    std::unique_ptr<ParameterChanges> changes_;
+    std::unique_ptr<ParameterChanges> changes_, out_changes_;
+    static constexpr int kMaxReduction = 4;
+    std::array<ParamID, kMaxReduction> reduction_ids_{};
+    std::array<std::atomic<float>, kMaxReduction> reduction_{};  // (normalized; -1: not said yet)
+    int reduction_count_ = 0;
     EventList events_;
     ProcessContext context_{};
     std::vector<ParamID> ids_;

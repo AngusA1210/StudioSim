@@ -32,6 +32,7 @@ extends CanvasLayer
 
 const Fader := preload("res://scripts/fader.gd")
 const LevelMeter := preload("res://scripts/level_meter.gd")
+const ReductionMeter := preload("res://scripts/reduction_meter.gd")
 const Hints := preload("res://scripts/hints.gd")
 const PresetMenu := preload("res://scripts/preset_menu.gd")
 const TrackMenu := preload("res://scripts/track_menu.gd")
@@ -346,7 +347,7 @@ func _build_master_strip(master) -> PanelContainer:
 	var plate := _name_plate(master.display_name, master.color, master)
 	box.add_child(plate)
 	var delay := _delay_row(box)
-	var made := {"inst": master, "fader": pair.fader, "meter": pair.meter, "value": readouts.value, "peak": readouts.peak,
+	var made := {"inst": master, "fader": pair.fader, "meter": pair.meter, "reduction": pair.reduction, "value": readouts.value, "peak": readouts.peak,
 		"limiter": limiter, "gap": gap, "inserts": inserts, "output": output, "hear": hear, "plate": plate, "outputs": -1, "delay": delay}
 	if which == "room":
 		_room = made
@@ -458,7 +459,7 @@ func _build_strip(inst) -> Dictionary:
 	box.add_child(plate)
 	var delay := _delay_row(box)
 	_strip_parent.add_child(strip)
-	return {"inst": inst, "fader": pair.fader, "meter": pair.meter, "value": readouts.value, "peak": readouts.peak, "input": input,
+	return {"inst": inst, "fader": pair.fader, "meter": pair.meter, "reduction": pair.reduction, "value": readouts.value, "peak": readouts.peak, "input": input,
 		"mute": mute, "solo": solo, "source": source, "output": output, "inserts": inserts, "sends": sends, "plate": plate,
 		"frame": strip.get_theme_stylebox("panel"), "panel": strip, "small": small_label, "pan": pan, "room": room, "delay": delay}
 
@@ -558,7 +559,7 @@ func _build_folder_strip(folder) -> Dictionary:
 	Hints.give(solo, "Solo: its tracks are soloed  ·  Option-click: every track; Shift-Option-click: the chosen ones")
 	solo.toggled.connect(_on_solo_toggled.bind(folder))
 	buttons.add_child(solo)
-	var pair := _fader_and_meter(box, 1, folder)
+	var pair := _fader_and_meter(box, 1 if folder.mono else 2, folder)
 	pair.fader.value_changed.connect(func(db: float) -> void: app.set_folder_level(folder, db))
 	var readouts := _readouts(box, folder)
 	_foot(box)
@@ -566,7 +567,7 @@ func _build_folder_strip(folder) -> Dictionary:
 	box.add_child(plate)
 	var delay := _delay_row(box)
 	_strip_parent.add_child(strip)
-	return {"inst": folder, "fader": pair.fader, "meter": pair.meter, "value": readouts.value, "peak": readouts.peak, "input": null,
+	return {"inst": folder, "fader": pair.fader, "meter": pair.meter, "reduction": pair.reduction, "value": readouts.value, "peak": readouts.peak, "input": null,
 		"mute": mute, "solo": solo, "source": count, "output": output, "inserts": inserts, "sends": sends, "plate": plate,
 		"frame": strip.get_theme_stylebox("panel"), "panel": strip, "pan": pan, "room": {}, "delay": delay}
 
@@ -943,7 +944,17 @@ func _fader_and_meter(box: VBoxContainer, channels: int, inst) -> Dictionary:
 	meter.custom_minimum_size = Vector2(8 * channels + 2 * (channels - 1), 60)
 	meter.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	row.add_child(meter)
-	return {"fader": fader, "meter": meter}
+	if inst is String and inst == "reverb":
+		return {"fader": fader, "meter": meter}
+	# Beside it, its gain reduction, as Pro Tools shows it: thin and orange, falling from the top.
+	var reduction := ReductionMeter.new()
+	reduction.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	var whose := "its limiter and its inserts' compressors" if inst is String and inst == "mix" else (
+		"its limiter" if inst is String else "its compressors and limiters (its inserts' plug-ins that show it, an amp's pedals)")
+	Hints.give(reduction, func() -> String: return "Gain reduction: how far %s are turning it down, %.1f dB just now (24 dB down its height)" % [
+		whose, reduction.shown])
+	row.add_child(reduction)
+	return {"fader": fader, "meter": meter, "reduction": reduction}
 
 
 ## Under the fader, side by side as in Pro Tools: the fader's level, and the peak readout, which holds the highest
@@ -1097,7 +1108,12 @@ func _refresh() -> void:
 		strip.solo.set_pressed_no_signal(inst.soloed)
 		strip.plate.text = inst.display_name  # a plug-in instrument takes its plug-in's name
 		strip.frame.border_color = Color(1, 1, 1, 0.85) if app.chosen_tracks.has(inst) else Color(0, 0, 0, 0.6)  # chosen
-		strip.meter.feed([inst.meter_peak], [inst.meter_rms])
+		if inst.is_folder:  # (a folder's, an aux's: each of its channels, one if it is mono)
+			strip.meter.feed(inst.meter_peaks, inst.meter_levels)
+			strip.meter.custom_minimum_size.x = 8 * inst.meter_peaks.size() + 2 * (inst.meter_peaks.size() - 1)
+		else:
+			strip.meter.feed([inst.meter_peak], [inst.meter_rms])
+		strip.reduction.feed(inst.reduction_db)
 		_show_peak(strip.peak, inst.peak_hold)
 		_show_inserts(strip.inserts, inst.inserts)
 		_show_sends(strip)
@@ -1146,6 +1162,7 @@ func _refresh() -> void:
 		var master = strip.inst
 		var which: String = master.which
 		strip.meter.feed([m.get(which + "_peak_l", 0.0), m.get(which + "_peak_r", 0.0)], [m.get(which + "_rms_l", 0.0), m.get(which + "_rms_r", 0.0)])
+		strip.reduction.feed(master.reduction_db)
 		var master_held: bool = strip.fader._dragging
 		if master_held != strip.get("held", false):  # (Touch and Latch write while it is held, as a track's)
 			strip.held = master_held
@@ -1176,7 +1193,7 @@ func _refresh() -> void:
 	elif app.meter_reduction_db > 0.1:
 		_status.text = "Limiting %.1f dB" % app.meter_reduction_db
 		_status.add_theme_color_override("font_color", WARN)
-		Hints.give(_status, "The limiter is holding the mix (or the room) at its ceiling. It comes after the master faders: bring the master or an instrument down to ease it")
+		Hints.give(_status, "The limiter on the master you're hearing is holding it at its ceiling. It comes after the master fader: bring the master or an instrument down to ease it")
 	else:
 		_status.text = "Limiter idle" if app.limiter_on(settings.monitor) else "Limiter off"
 		_status.add_theme_color_override("font_color", DIM)

@@ -2455,7 +2455,9 @@ MeterReading AudioEngine::readMeter() {
     m.peak_r = meter_peak_r_.exchange(0.0f, std::memory_order_relaxed);
     m.rms_l = meter_rms_l_.load(std::memory_order_relaxed);
     m.rms_r = meter_rms_r_.load(std::memory_order_relaxed);
-    m.limiter_gain = meter_gain_.exchange(1.0f, std::memory_order_relaxed);
+    m.mix_limiter_gain = mix_limiter_gain_.exchange(1.0f, std::memory_order_relaxed);
+    m.room_limiter_gain = room_limiter_gain_.exchange(1.0f, std::memory_order_relaxed);
+    m.limiter_gain = heard_ == Monitor::Mix ? m.mix_limiter_gain : m.room_limiter_gain;
     m.clipped = meter_clipped_.exchange(0, std::memory_order_relaxed);
     m.reverb_peak_l = reverb_peak_l_.exchange(0.0f, std::memory_order_relaxed);
     m.reverb_peak_r = reverb_peak_r_.exchange(0.0f, std::memory_order_relaxed);
@@ -2507,6 +2509,33 @@ float AudioEngine::sourceLevel(int id, bool pre_fader) const {
 float AudioEngine::sourcePeak(int id, bool pre_fader) {
     if (id < 0 || id >= kSourceSlots) return 0.0f;
     return (pre_fader ? pre_peaks_ : peaks_)[size_t(id)].exchange(0.0f, std::memory_order_relaxed);
+}
+
+void AudioEngine::sourceLevels(int id, bool pre_fader, float& left, float& right) const {
+    left = right = 0.0f;
+    if (id < 0 || id >= kSourceSlots) return;
+    const auto& levels = pre_fader ? bus_pre_levels_ : bus_levels_;
+    left = levels[0][size_t(id)].load(std::memory_order_relaxed);
+    right = levels[1][size_t(id)].load(std::memory_order_relaxed);
+}
+
+void AudioEngine::sourcePeaks(int id, bool pre_fader, float& left, float& right) {
+    left = right = 0.0f;
+    if (id < 0 || id >= kSourceSlots) return;
+    auto& peaks = pre_fader ? bus_pre_peaks_ : bus_peaks_;
+    left = peaks[0][size_t(id)].exchange(0.0f, std::memory_order_relaxed);
+    right = peaks[1][size_t(id)].exchange(0.0f, std::memory_order_relaxed);
+}
+
+float AudioEngine::sourceReduction(int id) {
+    Source* s = owned(id);
+    if (!s) return 0.0f;
+    float total = 0.0f;  // (one after another, what each takes off adds up)
+    for (auto& slot : s->inserts)
+        if (slot.pedal && slot.on) total += slot.pedal->takeReductionDb();
+    for (auto& slot : s->pedals)
+        if (slot.pedal && slot.on) total += slot.pedal->takeReductionDb();
+    return total;
 }
 
 float AudioEngine::sourceRoomLevel(int id) const {
@@ -4256,9 +4285,16 @@ void AudioEngine::renderBlock() {
         Source* s = sources_[index];
         float* l = s->bus_l.data();
         float* r = s->bus_r.data();
+        // A mono one: what reaches it summed to one channel (equal power: a track in the middle keeps its level), for
+        // its inserts to play (in both their channels alike) and its meter to show, as one.
+        const auto to_mono = [&](float scale) {
+            for (int i = 0; i < block_; ++i) l[i] = r[i] = (l[i] + r[i]) * scale;
+        };
+        if (s->bus_mono) to_mono(kDryPan);
         if (s->insert_board.count > 0) {
             const PedalTiming timing{double(bar_timing_[1]) / 4.0, bar_timing_[0], bar_timing_[1]};
             for (int p = 0; p < s->insert_board.count; ++p) s->insert_board.pedals[size_t(p)]->processStereo(l, r, block_, timing);
+            if (s->bus_mono) to_mono(0.5f);  // (one still, whatever a plug-in did with its two)
         }
         bool sending = false, sending_pre = false;
         for (const auto& send : s->sends)
@@ -4269,14 +4305,18 @@ void AudioEngine::renderBlock() {
         Source* into = bus_at(s->output);
         float* to_l = into ? into->bus_l.data() : mix_l_.data();  // into the folder it is in, or the master
         float* to_r = into ? into->bus_r.data() : mix_r_.data();
-        double energy = 0.0, pre_energy = 0.0;
-        float peak = 0.0f, pre_peak = 0.0f;
+        double energy = 0.0, pre_energy = 0.0, side_energy[2] = {}, pre_side_energy[2] = {};
+        float peak = 0.0f, pre_peak = 0.0f, side_peak[2] = {}, pre_side_peak[2] = {};
         Automating automating(*this, *s);
         const float pan_from = s->pan;
         s->pan += (s->pan_target - s->pan) * wall_glide;
         for (int i = 0; i < block_; ++i) {
             pre_energy += 0.5 * (double(l[i]) * l[i] + double(r[i]) * r[i]);
             pre_peak = std::max(pre_peak, std::max(std::fabs(l[i]), std::fabs(r[i])));
+            pre_side_energy[0] += double(l[i]) * l[i];
+            pre_side_energy[1] += double(r[i]) * r[i];
+            pre_side_peak[0] = std::max(pre_side_peak[0], std::fabs(l[i]));
+            pre_side_peak[1] = std::max(pre_side_peak[1], std::fabs(r[i]));
             if (sending_pre) {  // (a bus keeps what reaches its fader where a track keeps its place in the room)
                 s->out_l[size_t(i)] = l[i];
                 s->out_r[size_t(i)] = r[i];
@@ -4289,8 +4329,12 @@ void AudioEngine::renderBlock() {
             // Its pan, after its fader: a mono folder's sound summed and placed as a mono track's (equal power, so the
             // middle of it keeps its level), a stereo one's balanced as a stereo track's (the other side turned down).
             const float pan = pan_from + (s->pan - pan_from) * float(i + 1) / float(block_);
-            if (s->bus_mono) {
-                const float m = (l[i] + r[i]) * kDryPan, angle = (pan + 1.0f) * 0.25f * float(kPi);
+            side_energy[0] += double(l[i]) * l[i];  // (its own channels, metered before its pan, as a track's is)
+            side_energy[1] += double(r[i]) * r[i];
+            side_peak[0] = std::max(side_peak[0], std::fabs(l[i]));
+            side_peak[1] = std::max(side_peak[1], std::fabs(r[i]));
+            if (s->bus_mono) {  // (its one channel, in both)
+                const float m = l[i], angle = (pan + 1.0f) * 0.25f * float(kPi);
                 l[i] = m * std::cos(angle);
                 r[i] = m * std::sin(angle);
             } else if (pan != 0.0f) {
@@ -4299,6 +4343,13 @@ void AudioEngine::renderBlock() {
             }
             energy += 0.5 * (double(l[i]) * l[i] + double(r[i]) * r[i]);
             peak = std::max(peak, std::max(std::fabs(l[i]), std::fabs(r[i])));
+        }
+        for (int side = 0; side < 2; ++side) {  // (as dBFS, as the rest of its metering below)
+            bus_levels_[size_t(side)][index].store(float(std::sqrt(side_energy[side] / block_)) * kMasterGain, std::memory_order_relaxed);
+            bus_pre_levels_[size_t(side)][index].store(float(std::sqrt(pre_side_energy[side] / block_)) * kMasterGain, std::memory_order_relaxed);
+            for (auto [peaks, value] : {std::make_pair(&bus_peaks_, side_peak[side]), std::make_pair(&bus_pre_peaks_, pre_side_peak[side])})
+                if (value * kMasterGain > (*peaks)[size_t(side)][index].load(std::memory_order_relaxed))
+                    (*peaks)[size_t(side)][index].store(value * kMasterGain, std::memory_order_relaxed);
         }
         playOut(*s, l, r, to_l, to_r);
         if (sending) {  // its sends: after its fader, or before it (muted with it, as a track's); each held back to meet the rest
@@ -4377,10 +4428,13 @@ void AudioEngine::renderBlock() {
         room_l_[size_t(i)] *= room_volume_;
         room_r_[size_t(i)] *= room_volume_;
     }
-    float lowest = 1.0f;
-    if (limiter_on_[size_t(Monitor::Mix)]) lowest = std::min(lowest, limiter_.process(mix_l_.data(), mix_r_.data(), block_));
-    if (limiter_on_[size_t(Monitor::Room)]) lowest = std::min(lowest, room_limiter_.process(room_l_.data(), room_r_.data(), block_));
-    if (lowest < meter_gain_.load(std::memory_order_relaxed)) meter_gain_.store(lowest, std::memory_order_relaxed);
+    // Each master's limiter, each metered on its own (what the mix window shows is the master heard's).
+    const auto limit = [](Limiter& limiter, float* l, float* r, int n, std::atomic<float>& lowest) {
+        const float gain = limiter.process(l, r, n);
+        if (gain < lowest.load(std::memory_order_relaxed)) lowest.store(gain, std::memory_order_relaxed);
+    };
+    if (limiter_on_[size_t(Monitor::Mix)]) limit(limiter_, mix_l_.data(), mix_r_.data(), block_, mix_limiter_gain_);
+    if (limiter_on_[size_t(Monitor::Room)]) limit(room_limiter_, room_l_.data(), room_r_.data(), block_, room_limiter_gain_);
     // Each mix metered as it leaves its master; the main outputs play the one monitored (and the click, which is for the
     // player, not part of either), and whatever they play over full scale is cut off and counted. Each also goes to
     // its own outputs, if it has some.

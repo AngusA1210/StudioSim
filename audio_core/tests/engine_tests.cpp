@@ -4585,10 +4585,87 @@ int main(int argc, char** argv) {
         mix.engine.setLimiterCeiling(Limiter::kDefaultCeilingDb);
         check(db(under.peak) <= -6.0 + 1e-3 && db(under.peak) > -6.5, "its ceiling can be set lower: at -6 dBFS the peaks stop there",
               fmt("peak %.2f dBFS", db(under.peak)));
+        // Each master has its own limiter, and what is shown as limiting is the master heard's: hearing the room while
+        // only the mix is pushed, nothing, though the mix's limiter works as hard as ever.
+        mix.engine.setMonitor(AudioEngine::Monitor::Room);
+        MeterReading heard_room;
+        cycle(heard_room);
+        mix.engine.setMonitor(AudioEngine::Monitor::Mix);
+        check(heard_room.limiter_gain == 1.0f && heard_room.room_limiter_gain == 1.0f && heard_room.mix_limiter_gain < 0.6f,
+              "each master's limiting is its own: hearing the room, the mix's limiting isn't shown as the room's",
+              fmt("the room's %.1f dB, ", -db(heard_room.room_limiter_gain)) + fmt("the mix's %.1f dB", -db(heard_room.mix_limiter_gain)));
         mix.engine.setLimiter(false);
         Render raw = cycle(clipped);
         check(raw.peak == 1.0 && clipped.clipped > 0 && clipped.limiter_gain == 1.0f, "with the limiter off the mix is left alone, and the meter counts what is cut off at full scale",
               fmt("%.0f samples over", double(clipped.clipped)));
+    }
+
+    {
+        std::printf("\nGain reduction meters\n");
+        // The stock compressor says how far it is turning the sound down: a loud sine squashed, then nothing once asked.
+        auto squeeze = Pedal::make(PedalKind::Compressor, 48000.0f);
+        squeeze->setControl(0, 10.0f);  // Sustain all the way
+        std::vector<float> tone(128);
+        for (int b = 0; b < 100; ++b) {
+            for (int i = 0; i < 128; ++i) tone[size_t(i)] = 0.8f * std::sin(2.0f * 3.14159265f * 220.0f * float(b * 128 + i) / 48000.0f);
+            squeeze->process(tone.data(), 128, {});
+        }
+        const float squeezed = squeeze->takeReductionDb(), asked_again = squeeze->takeReductionDb();
+        check(squeezed > 6.0f && asked_again == 0.0f, "the compressor pedal says how far it turns the sound down, as a gain reduction meter shows",
+              fmt("%.1f dB on a loud note", squeezed));
+
+        // A dynamics plug-in on a track's insert says it too, as its own meter does (the checks' own limiter, SR Test
+        // Squash, as a VST3: its threshold at -24 dBFS, the keys played loud through it); bypassed, nothing.
+        Room room;
+        room.hearMix();
+        room.quietRoom(room.keys);
+        std::string squash;
+        for (const PluginDescription& p : PluginInstance::available())
+            if (p.name == "SR Test Squash") squash = p.id;
+        std::string error;
+        const bool put = !squash.empty() && room.engine.setInsert(room.keys, 0, squash, &error);
+        room.engine.setPluginParameter(room.keys, PluginPlace::Insert, 0, 0, 0.5f);
+        renderSeconds(room.engine, 0.2);
+        room.engine.sourceReduction(room.keys);
+        float most = 0.0f;
+        for (int beat = 0; beat < 4; ++beat) {
+            room.engine.noteOn(room.keys, 60 + 4 * beat, 1.0f);
+            renderSeconds(room.engine, 0.1);
+            most = std::max(most, room.engine.sourceReduction(room.keys));
+            room.engine.noteOff(room.keys, 60 + 4 * beat);
+        }
+        room.engine.setInsertOn(room.keys, 0, false);
+        renderSeconds(room.engine, 0.2);
+        room.engine.sourceReduction(room.keys);
+        room.engine.noteOn(room.keys, 64, 1.0f);
+        renderSeconds(room.engine, 0.1);
+        const float bypassed = room.engine.sourceReduction(room.keys);
+        room.engine.noteOff(room.keys, 64);
+        check(put && most > 3.0f && bypassed == 0.0f, "a dynamics plug-in on a track's insert shows its gain reduction there, and bypassed, none",
+              error + fmt("%.1f dB taken off the keys", most));
+
+        // A mono folder: what reaches it summed to its one channel, metered as one (alike in both its readings); a stereo
+        // one, its two (the keys panned hard left: all but nothing on its right).
+        const int folder = room.engine.addSource(InstrumentKind::Bus, {0.0f, 0.0f, 0.0f}, 1.0f, 0.0f);
+        room.engine.setInsertOn(room.keys, 0, true);
+        room.engine.setInsert(room.keys, 0, "", &error);
+        room.engine.setSourceOutput(room.keys, folder);
+        room.engine.setSourcePan(room.keys, -1.0f);
+        const auto sides = [&](bool mono) {
+            room.engine.setBusMono(folder, mono);
+            renderSeconds(room.engine, 0.2);
+            float l = 0.0f, r = 0.0f;
+            room.engine.sourcePeaks(folder, false, l, r);
+            room.engine.noteOn(room.keys, 60, 0.9f);
+            renderSeconds(room.engine, 0.3);
+            room.engine.noteOff(room.keys, 60);
+            room.engine.sourcePeaks(folder, false, l, r);
+            return std::make_pair(l, r);
+        };
+        const auto stereo = sides(false), mono = sides(true);
+        check(stereo.first > 0.005f && stereo.second < 0.03f * stereo.first && mono.first > 0.005f && std::fabs(mono.first - mono.second) < 1e-6f,
+              "a stereo folder is metered in its two channels, a mono one in its one",
+              fmt("stereo: left %.1f dBFS, ", db(stereo.first)) + fmt("right %.1f; ", db(stereo.second)) + fmt("mono: %.1f dBFS", db(mono.first)));
     }
 
     {

@@ -19,11 +19,11 @@ Each instrument is a track, in the mix window and (in a Record room) the edit wi
   comes over its tracks', which are set in under it; its arrow shows or hides them (and all in them). A track's menu
   moves it **into** another folder or **out of** its own (into the one that is in), and so does its output in the
   mix window; only folders it can go in are offered (never itself, or one its own sound already reaches, which would
-  go round in a circle). Cmd-G puts the chosen tracks, folders and aux tracks among them, in a new folder where the
-  first of them was. A folder's menu takes it away, what was in it going where the folder went. Soloing a track lets
+  go round in a circle). Cmd-G puts the chosen tracks, folders and aux tracks among them, in a new stereo folder where
+  the first of them was; a track's menu makes a new mono one as well. A folder's menu takes it away, what was in it going where the folder went. Soloing a track lets
   everything its sound goes through be heard: the folders it is in, and the aux tracks it sends to.
-- **Aux tracks and sends**, as in Pro Tools: **New aux track** (in a track's menu, or an empty send's) makes an aux
-  track, a bus with its own inserts (a reverb or a delay, say), mute, solo and fader, playing to the master. A
+- **Aux tracks and sends**, as in Pro Tools: **New stereo aux track** or **New mono aux track** (in a track's menu;
+  an empty send's makes a stereo one) makes an aux track, a bus with its own inserts (a reverb or a delay, say), mute, solo and fader, playing to the master. A
   track's **sends**, A to E, play a copy of it into an aux: after the track's fader, the track as heard in the room
   (it follows the fader and mute), or **before the fader**, its own sound straight (it doesn't), at a level of its
   own. A send dragged sideways onto another send (on its strip or another) moves there with its automation (Option:
@@ -93,6 +93,10 @@ in Touch, Latch or Write, holding one writes it.
 - **Metering**: the channel meters read before the fader (after the inserts), as with Pro Tools' pre-fader
   metering, so a fader pulled down or a mute doesn't hide what the channel is doing. Right-click any fader or meter
   to have them read after the fader instead; the choice is remembered. The masters' meters read what leaves them.
+- **Gain reduction**: beside each meter, as in Pro Tools, a thin orange meter falls from the top as far as the
+  strip's compressors and limiters are turning it down (24 dB down its height; hover over it for the figure): a
+  track's insert plug-ins that show their gain reduction (most compressors and limiters do, among their controls), an
+  amp's compressor pedal, and on the masters their limiter (and the Mix Master's inserts).
 - **Delay compensation**: plug-ins that look ahead (a limiter, a linear-phase EQ) make their tracks late, and say by
   how much. At the foot of each strip, as Pro Tools shows it, **dly** is how late its plug-ins make it (in samples:
   its inserts', a plug-in instrument's, an amp's plug-in pedals') and **cmp** how far it is held back to meet the
@@ -107,10 +111,12 @@ in Touch, Latch or Write, holding one writes it.
   you click it, and turns red once anything reaches full scale. Clicking a meter clears it too; Alt-click clears
   every one, the master's included.
 - **Folders**: a routing folder's strip comes before its tracks', in a frame of the folder's colour that holds them
-  all (a folder in it framed within): its inserts (plug-ins in stereo, on what its tracks play into it), its pan, mute
-  and solo, and its fader and meter. Its pan comes after its fader: a stereo folder's is a balance, as a stereo track's;
-  right-click its name for Mono, which sums its sound and places it, as a mono track's pan does. In the edit window its
-  colour runs down beside its tracks' headers. See Tracks and folders.
+  all (a folder in it framed within): its inserts (plug-ins, on what its tracks play into it), its pan, mute and solo,
+  and its fader and meter. A folder is **stereo** or **mono**, as made (a track's menu offers a new stereo folder or a
+  new mono one, and likewise aux tracks) or changed by right-clicking its name. A stereo one has two channels, its
+  inserts in stereo, its meter two bars, and its pan is a balance, as a stereo track's; a mono one sums what reaches it
+  to one channel as it arrives, its inserts and its meter that one, and its pan places it, as a mono track's does. In
+  the edit window its colour runs down beside its tracks' headers. See Tracks and folders.
 - **Room Reverb**: the room's reverb return, a fader with a stereo meter of its own beside the room's master, as an
   aux return sits beside the master on a desk. 0 dB is the room's own reverb; down to the bottom there is none, up to
   +12 dB it is wetter than the room. It is the room's: the mix has none unless a track sends to an aux with a reverb on
@@ -122,7 +128,8 @@ in Touch, Latch or Write, holding one writes it.
   outputs of its own as well), LIMIT, its fader with a stereo meter and peak readout, and HEAR. Both master faders
   start at 0 dB and go no higher. The limiter comes last, after the fader, as an output limiter does: with it on,
   neither the mix nor the room gets past its ceiling (-1 dBFS to begin with; Settings changes it), and the window says
-  by how many decibels it is being held back whenever it is. Bringing the master down eases it. With it off, the mix is
+  by how many decibels the master you are hearing is being held back whenever it is (each master's own limiting shows
+  on its gain reduction meter). Bringing the master down eases it. With it off, the mix is
   the plain sum of the tracks, and whatever the main outputs play over full scale is cut off and reported as clipping.
 
 Rather than instructions written across it, the line at the foot of the window says what the mouse is over: an

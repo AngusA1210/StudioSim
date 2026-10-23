@@ -38,6 +38,9 @@ struct PluginParameter {
 std::string guessPluginCategory(const std::string& name, const std::string& maker, const std::vector<std::string>& tags);
 std::string guessInstrumentCategory(const std::string& name, const std::string& maker, const std::vector<std::string>& tags);
 std::string vst3Category(const std::vector<std::string>& subcategories, bool instrument);  // "" if it doesn't say
+// Whether a plug-in's read-only control is its gain reduction meter, by its name ("Gain Reduction", "GR", "Comp
+// Amount"...), as compressors and limiters publish theirs.
+bool isGainReductionName(const std::string& name);
 
 // Where VST3 plug-ins are looked for: the system's folders (none given), or only these (the checks' own test plug-in).
 void setVst3SearchPaths(const std::vector<std::string>& paths);
@@ -94,6 +97,10 @@ public:
     virtual void notifyParameter(uint32_t /*id*/) {}
     // A value of a control as the plug-in writes it ("-6.0 dB", "Hall"), or "" if it doesn't say (game thread).
     virtual std::string parameterText(uint32_t /*id*/, float /*value*/) const { return ""; }
+    // What a dynamics plug-in (a compressor, a limiter) is taking off just now, in dB, where it says: most show it on a
+    // meter of their own, which they publish as a read-only control ("Gain Reduction", "GR", "Compression Amount").
+    // Negative if it has none (game thread, polled as a meter is).
+    virtual float gainReductionDb() const { return -1.0f; }
     // The presets the plug-in comes with, by name, and switching to one (game thread).
     virtual std::vector<std::string> factoryPresets() const = 0;
     virtual bool loadFactoryPreset(int index) = 0;

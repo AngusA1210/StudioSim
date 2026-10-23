@@ -135,6 +135,7 @@ protected:
     void run(float* io, int n, const PedalTiming&) override {
         constexpr float kKnee = 6.0f;
         const float slope = 1.0f - 1.0f / ratio_;
+        float most = 0.0f;
         for (int i = 0; i < n; ++i) {
             const float x = io[i], a = std::fabs(x);
             env_ = a > env_ ? a + (env_ - a) * attack_ : a + (env_ - a) * release_;
@@ -144,7 +145,9 @@ protected:
             else if (over > -kKnee / 2) reduce = slope * (over + kKnee / 2) * (over + kKnee / 2) / (2.0f * kKnee);
             const float squashed = x * dbToGain(makeup_ - reduce);
             io[i] = (blend_ * squashed + (1.0f - blend_) * x) * level_;
+            most = std::max(most, reduce);
         }
+        reducing(most * blend_);  // (as much as is heard of it)
     }
 
 private:
@@ -785,6 +788,8 @@ void LooperPedal::runTrails(float* io, int n, float, float, const PedalTiming& t
 // ── The plug-in pedal ──────────────────────────────────────────────────────────────────────────────────────
 
 PluginPedal::PluginPedal(std::unique_ptr<PluginInstance> plugin) : Pedal(PedalKind::Plugin), plugin_(std::move(plugin)) {}
+
+float PluginPedal::takeReductionDb() { return plugin_ && ready_ ? std::max(plugin_->gainReductionDb(), 0.0f) : 0.0f; }
 
 PluginPedal::~PluginPedal() = default;
 

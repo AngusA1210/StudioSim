@@ -24,6 +24,7 @@ var armed := false
 var input_on := false
 var source_id := -1
 var inserts: Array = []
+var reduction_db := 0.0  # what its limiter and its inserts' compressors took off since the last frame
 var sends: Array = []
 
 

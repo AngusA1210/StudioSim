@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <thread>
@@ -207,7 +208,43 @@ public:
         if (AudioUnitGetProperty(unit_, kAudioUnitProperty_Latency, kAudioUnitScope_Global, 0, &latency, &size) == noErr)
             latency_ = int(std::lround(latency * sample_rate));
         sample_time_ = 0.0;
+        findReductionMeters();
         return true;
+    }
+
+    // Its gain reduction meters, if it has any: read-only controls by that name, in dB or as a gain.
+    void findReductionMeters() {
+        reduction_.clear();
+        UInt32 size = 0;
+        Boolean writable = false;
+        if (AudioUnitGetPropertyInfo(unit_, kAudioUnitProperty_ParameterList, kAudioUnitScope_Global, 0, &size, &writable) != noErr || size == 0)
+            return;
+        std::vector<AudioUnitParameterID> ids(size / sizeof(AudioUnitParameterID));
+        if (AudioUnitGetProperty(unit_, kAudioUnitProperty_ParameterList, kAudioUnitScope_Global, 0, ids.data(), &size) != noErr) return;
+        for (AudioUnitParameterID id : ids) {
+            AudioUnitParameterInfo info{};
+            UInt32 info_size = sizeof(info);
+            if (AudioUnitGetProperty(unit_, kAudioUnitProperty_ParameterInfo, kAudioUnitScope_Global, id, &info, &info_size) != noErr) continue;
+            std::string name = info.name;
+            if ((info.flags & kAudioUnitParameterFlag_HasCFNameString) && info.cfNameString) {
+                name = toString(info.cfNameString);
+                if (info.flags & kAudioUnitParameterFlag_CFNameRelease) CFRelease(info.cfNameString);
+            }
+            const bool meter = (info.flags & kAudioUnitParameterFlag_MeterReadOnly) || !(info.flags & kAudioUnitParameterFlag_IsWritable);
+            const bool db = info.unit == kAudioUnitParameterUnit_Decibels, gain = info.unit == kAudioUnitParameterUnit_LinearGain;
+            if (meter && (db || gain) && isGainReductionName(name)) reduction_.push_back({id, gain});
+        }
+    }
+
+    float gainReductionDb() const override {
+        if (!initialized_ || reduction_.empty()) return -1.0f;
+        float most = 0.0f;
+        for (const auto& [id, gain] : reduction_) {  // (some say it as a negative number of dB, some as positive)
+            AudioUnitParameterValue value = 0.0f;
+            AudioUnitGetParameter(unit_, id, kAudioUnitScope_Global, 0, &value);
+            most = std::max(most, gain ? -20.0f * std::log10(std::max(value, 1e-4f)) : std::fabs(value));
+        }
+        return most;
     }
 
     void midi(uint8_t status, uint8_t data1, uint8_t data2, int offset) override {
@@ -584,6 +621,7 @@ private:
     std::vector<float> input_, input_right_, output_[2];
     bool stereo_in_ = false;  // processing a bus's two channels: the second buffer it asks for is the right
     std::vector<uint8_t> list_;  // an AudioBufferList with room for two buffers
+    std::vector<std::pair<AudioUnitParameterID, bool>> reduction_;  // its gain reduction meters (and whether each is a gain)
     NSWindow* window_ = nil;
     NSViewController* view_controller_ = nil;
     id resize_observer_ = nil;

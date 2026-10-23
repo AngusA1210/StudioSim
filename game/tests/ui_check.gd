@@ -2606,7 +2606,24 @@ func _run() -> void:
 	var folder_entry: Dictionary = main.library.room_data().folders[0]
 	check(new_folder_strip.pan != null and is_equal_approx(the_folder.pan, -0.5) and the_folder.mono and is_equal_approx(float(folder_entry.pan), -0.5) and
 		bool(folder_entry.mono), "a folder has its own pan, and can be stereo (its pan a balance) or mono (its name's menu): kept with the room")
+	await frames(3)
+	var mono_meter_bars: int = new_folder_strip.meter._bars.size()
+	var menu_check := PopupMenu.new()
+	TrackMenu.add_items(menu_check, main, the_folder, PopupMenu.new())
+	var offered := []
+	for i in menu_check.item_count:
+		offered.append(menu_check.get_item_text(i))
+	menu_check.free()
 	TrackMenu.chosen(main, the_folder, TrackMenu.STEREO)
+	await frames(3)
+	check(mono_meter_bars == 1 and new_folder_strip.meter._bars.size() == 2 and "Stereo" in offered and "Mono" in offered and
+		offered.any(func(item: String) -> bool: return item.begins_with("New mono folder")) and
+		offered.any(func(item: String) -> bool: return item.begins_with("New stereo folder")) and "New mono aux track" in offered,
+		"its menu offers stereo or mono for it, and new folders and aux tracks of either; a mono one's meter shows its one channel, a stereo one's its two",
+		str(offered))
+	check(not new_folder_strip.get("reduction") == null and new_folder_strip.reduction is Control and main.mixer._master.reduction is Control and
+		main.mixer._strips.all(func(strip: Dictionary) -> bool: return strip.get("reduction") is Control),
+		"every strip, the masters' too, has a gain reduction meter beside its meter")
 	main.set_pan(the_folder, 0.0)
 	var problem_on_bus: String = main.set_insert(the_folder, 0, "AU:61756678:64656c79:6170706c")
 	check(problem_on_bus == "" and str(the_folder.inserts[0].plugin_name) == "AUDelay", "a folder takes plug-ins on its inserts, as a track does", problem_on_bus)

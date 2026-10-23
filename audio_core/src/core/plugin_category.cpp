@@ -144,4 +144,15 @@ std::string guessInstrumentCategory(const std::string& name, const std::string& 
     return "Other";
 }
 
+bool isGainReductionName(const std::string& name) {
+    std::string n;
+    for (char c : name) n += char(std::tolower(static_cast<unsigned char>(c)));
+    for (const char* word : {"gain reduction", "gain red", "reduction", "compression amount", "comp amount", "attenuation"})
+        if (n.find(word) != std::string::npos) return true;
+    // "GR" on its own, or as a word ("GR Meter", "Comp GR")
+    const size_t at = n.find("gr");
+    return at != std::string::npos && (at == 0 || !std::isalpha(static_cast<unsigned char>(n[at - 1]))) &&
+           (at + 2 == n.size() || !std::isalpha(static_cast<unsigned char>(n[at + 2])));
+}
+
 }  // namespace sr

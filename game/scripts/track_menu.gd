@@ -2,7 +2,8 @@ extends RefCounted
 ## What a track's menu offers (a right-click on its name, in the mix window or the edit window), whatever else that
 ## window adds: renaming it, its colour (from Pro Tools' kind of palette), and its folder: the tracks chosen in a new
 ## one (Cmd-G), into another folder, out of its own (an instrument's track, an aux track, or a folder with all in it);
-## a new aux track; and for a folder or an aux, stereo or mono, and taking it away. These are the ids it uses.
+## a new aux track; and for a folder or an aux, stereo or mono, and taking it away. A new folder or aux track can be
+## stereo or mono, as in Pro Tools' New Track dialog. These are the ids it uses.
 
 const RENAME := 500
 const NEW_FOLDER := 501
@@ -12,6 +13,8 @@ const NEW_AUX := 504
 const REMOVE_AUX := 505
 const STEREO := 506
 const MONO := 507
+const NEW_MONO_FOLDER := 508
+const NEW_MONO_AUX := 509
 const INTO := 600  # and on, a folder each
 
 
@@ -46,15 +49,22 @@ static func add_items(menu: PopupMenu, app, track, colors: PopupMenu, modes: Pop
 	menu.add_separator()
 	if track.get("is_master"):
 		return
-	if track.is_folder:  # its format: its pan a balance, or its sound summed to mono and placed
-		menu.add_radio_check_item("Stereo (its pan a balance)", STEREO)
+	if track.is_folder:  # its format: two channels, its pan a balance; or one, its pan placing it
+		var kind := "aux track" if track.is_aux else "folder"
+		menu.add_radio_check_item("Stereo", STEREO)
 		menu.set_item_checked(menu.get_item_index(STEREO), not track.mono)
-		menu.add_radio_check_item("Mono (summed, its pan placing it)", MONO)
+		menu.set_item_tooltip(menu.get_item_index(STEREO), "A stereo %s: two channels, its inserts in stereo, its pan a balance" % kind)
+		menu.add_radio_check_item("Mono", MONO)
 		menu.set_item_checked(menu.get_item_index(MONO), track.mono)
+		menu.set_item_tooltip(menu.get_item_index(MONO),
+			"A mono %s: what reaches it summed to one channel (its inserts and meter that one), its pan placing it in the mix" % kind)
 		menu.add_separator()
-	menu.add_item("New aux track", NEW_AUX)
+	menu.add_item("New stereo aux track", NEW_AUX)
+	menu.add_item("New mono aux track", NEW_MONO_AUX)
 	var chosen: int = app.chosen_tracks.size() if app.chosen_tracks.has(track) else 1
-	menu.add_item("New folder with %s  (%s)" % ["the %d chosen tracks" % chosen if chosen > 1 else "it", app.bindings.label("group")], NEW_FOLDER)
+	var with := "the %d chosen tracks" % chosen if chosen > 1 else "it"
+	menu.add_item("New stereo folder with %s  (%s)" % [with, app.bindings.label("group")], NEW_FOLDER)
+	menu.add_item("New mono folder with %s" % with, NEW_MONO_FOLDER)
 	var own = app.folder_of(track)
 	for i in app.folders.size():  # (those it can go in: not itself, nor one its own sound reaches)
 		if app.folders[i] != own and app.can_put_in(track, app.folders[i]):
@@ -79,10 +89,10 @@ static func chosen(app, track, id: int) -> bool:
 	match id:
 		RENAME:
 			app.ask_track_name(track)
-		NEW_FOLDER:
+		NEW_FOLDER, NEW_MONO_FOLDER:
 			if not app.chosen_tracks.has(track):
 				app.choose_track(track)
-			app.group_chosen()
+			app.group_chosen(id == NEW_MONO_FOLDER)
 		OUT:  # (out of the folder it is in, into the one that one is in)
 			for t in tracks:
 				var own = app.folder_of(t)
@@ -90,8 +100,8 @@ static func chosen(app, track, id: int) -> bool:
 					app.put_in_folder(t, app.folder_of(own), own)
 		REMOVE_FOLDER:
 			app.remove_folder(track)
-		NEW_AUX:
-			app.add_aux()
+		NEW_AUX, NEW_MONO_AUX:
+			app.add_aux("", id == NEW_MONO_AUX)
 		REMOVE_AUX:
 			app.remove_aux(track)
 		STEREO, MONO:

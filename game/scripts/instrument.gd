@@ -54,6 +54,7 @@ var volume_db := 0.0   # a Speaker's own volume (its panel), before the fader
 # since its peak readout was last cleared (read by the game each frame; see main.gd).
 var meter_peak := 0.0
 var meter_rms := 0.0
+var reduction_db := 0.0  # what its compressors and limiters (its inserts', an amp's pedals') took off since the last frame
 var peak_hold := 0.0
 var is_amp := false    # a guitar or bass amp, with knobs and a loop pedal
 var drum_kit := false  # each key plays a drum (the drums, the garage kit)

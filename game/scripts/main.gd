@@ -379,11 +379,19 @@ func _read_meter(delta: float) -> void:
 		inst.peak_hold = maxf(inst.peak_hold, inst.meter_peak)
 		inst.room_meter_peak = audio.get_source_room_peak(inst.source_id) * CHANNEL_TRIM  # (in the room, at its level there)
 		inst.room_meter_rms = audio.get_source_room_level(inst.source_id) * CHANNEL_TRIM
-	for folder in folders + auxes:  # (its bus's meters read dBFS as it reaches the master already)
-		var peaks := [audio.get_source_peak(folder.source_id, false), audio.get_source_peak(folder.source_id, true)]
-		folder.meter_peak = peaks[int(pre)]
-		folder.meter_rms = audio.get_source_level(folder.source_id, pre)
+		inst.reduction_db = audio.get_source_reduction(inst.source_id)
+	for folder in folders + auxes:  # (its bus's meters read dBFS as it reaches the master already), each of its channels
+		var peaks := [audio.get_source_peaks(folder.source_id, false), audio.get_source_peaks(folder.source_id, true)]
+		var sides: PackedFloat32Array = peaks[int(pre)]
+		var levels: PackedFloat32Array = audio.get_source_levels(folder.source_id, pre)
+		folder.meter_peaks = [sides[0]] if folder.mono else [sides[0], sides[1]]
+		folder.meter_levels = [levels[0]] if folder.mono else [levels[0], levels[1]]
+		folder.meter_peak = maxf(sides[0], sides[1])
+		folder.meter_rms = sqrt((levels[0] * levels[0] + levels[1] * levels[1]) / 2.0)
 		folder.peak_hold = maxf(folder.peak_hold, folder.meter_peak)
+		folder.reduction_db = audio.get_source_reduction(folder.source_id)
+	for master in master_tracks():  # its limiter, and its inserts' compressors (the mix master's)
+		master.reduction_db = -linear_to_db(maxf(meter.get(master.which + "_limiter_gain", 1.0), 0.001)) + audio.get_source_reduction(master.source_id)
 	var reduction := -linear_to_db(maxf(meter.get("limiter_gain", 1.0), 0.001))
 	_reduction_age += delta
 	if reduction >= meter_reduction_db or _reduction_age > 1.5:
@@ -1080,7 +1088,7 @@ func set_folder_level(folder, db: float) -> void:
 
 ## A new aux track, as Pro Tools' aux input: a bus that the tracks' sends play into (a reverb or a delay on its
 ## inserts, say), and from there through its fader to the master. Null if the room's channels are all in use.
-func add_aux(the_name := ""):
+func add_aux(the_name := "", mono := false):
 	var id: int = audio.add_source("bus", Vector3.ZERO, 1.0, 0.0)
 	if id < 0:
 		return null
@@ -1094,6 +1102,8 @@ func add_aux(the_name := ""):
 		number += 1
 	aux.display_name = the_name if the_name != "" else "Aux %d" % number
 	auxes.append(aux)
+	if mono:
+		set_folder_mono(aux, true)
 	_apply_channels()
 	return aux
 
@@ -1176,7 +1186,7 @@ func apply_master_gain(gain: float, which := "mix") -> void:
 
 ## Cmd-G: the tracks chosen, in a new folder: instruments' tracks, aux tracks and folders (with all that is in them),
 ## in their order. The new folder goes where the first of them was (in the folder it was in, if any).
-func group_chosen() -> void:
+func group_chosen(mono := false) -> void:
 	var tracks: Array = track_order().filter(func(t): return chosen_tracks.has(t) and not folders_around(t).any(func(f): return chosen_tracks.has(f)))
 	if tracks.is_empty():
 		session.notice.emit("Choose the tracks for a folder first: click their names (Shift or Cmd-click for more), then %s" % bindings.label("group"))
@@ -1188,8 +1198,10 @@ func group_chosen() -> void:
 	if folder == null:
 		session.notice.emit("There's no room for another folder")
 		return
+	if mono:
+		set_folder_mono(folder, true)
 	chosen_tracks = [folder]
-	session.notice.emit("%s, with %d track%s" % [folder.display_name, tracks.size(), "" if tracks.size() == 1 else "s"])
+	session.notice.emit("%s (%s), with %d track%s" % [folder.display_name, "mono" if mono else "stereo", tracks.size(), "" if tracks.size() == 1 else "s"])
 
 
 ## Choosing tracks by their names, as Pro Tools does: "only" this one, "toggle" (Cmd-click) one more or one fewer,

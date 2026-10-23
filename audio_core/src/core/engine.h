@@ -96,7 +96,8 @@ struct TransportState {
 struct MeterReading {
     float peak_l = 0, peak_r = 0;  // the highest sample on each side
     float rms_l = 0, rms_r = 0;    // the average level over the last third of a second or so
-    float limiter_gain = 1;        // the lowest gain the limiter applied (1 = it did nothing)
+    float limiter_gain = 1;        // the lowest gain the limiter of the master heard applied (1 = it did nothing)
+    float mix_limiter_gain = 1, room_limiter_gain = 1;  // and each master's limiter's, whichever is heard
     uint32_t clipped = 0;          // samples that went over full scale and were cut off
     float reverb_peak_l = 0, reverb_peak_r = 0, reverb_rms_l = 0, reverb_rms_r = 0;  // the room reverb's return alone
     // The two mixes, each after its master: the room (as you hear it standing there) and the mix (the tracks' outputs).
@@ -566,6 +567,13 @@ public:
     float sourcePeak(int id, bool pre_fader = false);
     float sourceRoomLevel(int id) const;  // its level in the room (at its room level), likewise
     float sourceRoomPeak(int id);
+    // A bus's (a folder's, an aux track's) two channels, likewise: its left and right levels and peaks (a mono one's
+    // are alike: its one channel, before its pan places it).
+    void sourceLevels(int id, bool pre_fader, float& left, float& right) const;
+    void sourcePeaks(int id, bool pre_fader, float& left, float& right);
+    // How much its compressors and limiters have turned it down at most since this was last asked (dB; 0: nothing):
+    // its inserts' (the plug-ins that say, as a DAW's gain reduction meter shows them) and an amp's pedals'.
+    float sourceReduction(int id);
     EngineStats stats() const;
     int sampleRate() const { return sr_; }
     int blockSize() const { return block_; }
@@ -803,6 +811,8 @@ private:
 
     // Shared between threads
     std::array<std::atomic<float>, kSourceSlots> levels_{}, peaks_{}, pre_levels_{}, pre_peaks_{}, room_levels_{}, room_peaks_{};
+    // A bus's two channels: left and right levels and peaks, after its fader and before it.
+    std::array<std::array<std::atomic<float>, kSourceSlots>, 2> bus_levels_{}, bus_peaks_{}, bus_pre_levels_{}, bus_pre_peaks_{};
     std::atomic<int> mix_out_left_{-1}, mix_out_right_{-1}, room_out_left_{-1}, room_out_right_{-1};
     std::atomic<float> room_peak_l_{0.0f}, room_peak_r_{0.0f}, room_rms_l_{0.0f}, room_rms_r_{0.0f};
     std::atomic<float> mix_peak_l_{0.0f}, mix_peak_r_{0.0f}, mix_rms_l_{0.0f}, mix_rms_r_{0.0f};
@@ -810,7 +820,8 @@ private:
     std::atomic<uint64_t> blocks_{0};
     std::atomic<int> out_left_{0}, out_right_{1};
     std::atomic<int64_t> step_{-1};
-    std::atomic<float> meter_peak_l_{0.0f}, meter_peak_r_{0.0f}, meter_rms_l_{0.0f}, meter_rms_r_{0.0f}, meter_gain_{1.0f};
+    std::atomic<float> meter_peak_l_{0.0f}, meter_peak_r_{0.0f}, meter_rms_l_{0.0f}, meter_rms_r_{0.0f};
+    std::atomic<float> mix_limiter_gain_{1.0f}, room_limiter_gain_{1.0f};  // the lowest each master's limiter applied
     std::atomic<float> reverb_peak_l_{0.0f}, reverb_peak_r_{0.0f}, reverb_rms_l_{0.0f}, reverb_rms_r_{0.0f};
     float reverb_ms_l_ = 0.0f, reverb_ms_r_ = 0.0f;
     std::atomic<uint32_t> meter_clipped_{0};

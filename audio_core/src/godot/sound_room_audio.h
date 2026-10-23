@@ -229,6 +229,13 @@ public:
     // call. After its fader, or with pre_fader before it (after its inserts).
     float get_source_level(int id, bool pre_fader = false) const;
     float get_source_peak(int id, bool pre_fader = false);
+    // A bus's (a folder's, an aux track's) two channels: [left, right] (a mono one's alike), as get_source_level and
+    // get_source_peak have its one.
+    PackedFloat32Array get_source_levels(int id, bool pre_fader = false) const;
+    PackedFloat32Array get_source_peaks(int id, bool pre_fader = false);
+    // How much its compressors and limiters have turned it down at most since this was last asked (dB): its inserts'
+    // plug-ins that say, and an amp's pedals'.
+    float get_source_reduction(int id);
     Dictionary get_stats() const;
 
     // ── The sequencer ────────────────────────────────────────────────────────────────────────────────────

@@ -94,8 +94,14 @@ public:
     void process(float* io, int n, const PedalTiming& timing);  // in place, n up to kMaxPedalBlock
     // Two channels, in place (a bus's insert): a Plug-in pedal plays them as two; a stock pedal, as one, in both.
     void processStereo(float* left, float* right, int n, const PedalTiming& timing);
+    // How much it has turned the sound down at most since this was last asked (dB: 0, nothing), as a compressor's gain
+    // reduction is shown (game thread). A plug-in's, as the plug-in says, if it does.
+    virtual float takeReductionDb() { return deepest_.exchange(0.0f, std::memory_order_relaxed); }
 
 protected:
+    void reducing(float db) {  // (audio thread: what it is taking off just now)
+        if (db > deepest_.load(std::memory_order_relaxed)) deepest_.store(db, std::memory_order_relaxed);
+    }
     explicit Pedal(PedalKind kind);
     float control(int index) const { return controls_[size_t(index)]; }
     virtual void update() {}  // the controls changed: work out what they mean (audio thread, before the next block)
@@ -119,6 +125,7 @@ private:
     bool on_ = true, changed_ = true, started_ = false;
     float share_ = 1.0f;  // how much of the effect is heard: glides between 0 and 1 when it is switched
     std::atomic<int> latency_{0};
+    std::atomic<float> deepest_{0.0f};
     std::unique_ptr<CompensationDelay> held_;           // what it hears, held back (made on the game thread when first needed)
     std::atomic<CompensationDelay*> held_rt_{nullptr};  // and the audio thread's hold of it
 };
@@ -190,6 +197,7 @@ public:
     bool stereo() const { return stereo_; }
     bool ready() const { return ready_; }
     const std::string& error() const { return error_; }  // why it isn't ready
+    float takeReductionDb() override;
 
 protected:
     void run(float* io, int n, const PedalTiming& timing) override;

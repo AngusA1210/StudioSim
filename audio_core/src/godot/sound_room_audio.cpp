@@ -636,6 +636,8 @@ Dictionary SoundRoomAudio::read_meter() {
     d["rms_l"] = m.rms_l;
     d["rms_r"] = m.rms_r;
     d["limiter_gain"] = m.limiter_gain;
+    d["mix_limiter_gain"] = m.mix_limiter_gain;
+    d["room_limiter_gain"] = m.room_limiter_gain;
     d["clipped"] = int64_t(m.clipped);
     d["reverb_peak_l"] = m.reverb_peak_l;
     d["reverb_peak_r"] = m.reverb_peak_r;
@@ -654,6 +656,23 @@ Dictionary SoundRoomAudio::read_meter() {
 void SoundRoomAudio::set_source_volume(int id, float gain) { if (engine_) engine_->setSourceVolume(id, gain); }
 float SoundRoomAudio::get_source_level(int id, bool pre_fader) const { return engine_ ? engine_->sourceLevel(id, pre_fader) : 0.0f; }
 float SoundRoomAudio::get_source_peak(int id, bool pre_fader) { return engine_ ? engine_->sourcePeak(id, pre_fader) : 0.0f; }
+PackedFloat32Array SoundRoomAudio::get_source_levels(int id, bool pre_fader) const {
+    float l = 0.0f, r = 0.0f;
+    if (engine_) engine_->sourceLevels(id, pre_fader, l, r);
+    PackedFloat32Array out;
+    out.push_back(l);
+    out.push_back(r);
+    return out;
+}
+PackedFloat32Array SoundRoomAudio::get_source_peaks(int id, bool pre_fader) {
+    float l = 0.0f, r = 0.0f;
+    if (engine_) engine_->sourcePeaks(id, pre_fader, l, r);
+    PackedFloat32Array out;
+    out.push_back(l);
+    out.push_back(r);
+    return out;
+}
+float SoundRoomAudio::get_source_reduction(int id) { return engine_ ? engine_->sourceReduction(id) : 0.0f; }
 
 Dictionary SoundRoomAudio::get_stats() const {
     Dictionary d;
@@ -1018,6 +1037,9 @@ void SoundRoomAudio::_bind_methods() {
     ClassDB::bind_method(D_METHOD("read_meter"), &SoundRoomAudio::read_meter);
     ClassDB::bind_method(D_METHOD("get_source_level", "id", "pre_fader"), &SoundRoomAudio::get_source_level, DEFVAL(false));
     ClassDB::bind_method(D_METHOD("get_source_peak", "id", "pre_fader"), &SoundRoomAudio::get_source_peak, DEFVAL(false));
+    ClassDB::bind_method(D_METHOD("get_source_levels", "id", "pre_fader"), &SoundRoomAudio::get_source_levels, DEFVAL(false));
+    ClassDB::bind_method(D_METHOD("get_source_peaks", "id", "pre_fader"), &SoundRoomAudio::get_source_peaks, DEFVAL(false));
+    ClassDB::bind_method(D_METHOD("get_source_reduction", "id"), &SoundRoomAudio::get_source_reduction);
     ClassDB::bind_method(D_METHOD("set_source_volume", "id", "gain"), &SoundRoomAudio::set_source_volume);
     ClassDB::bind_method(D_METHOD("get_stats"), &SoundRoomAudio::get_stats);
 
