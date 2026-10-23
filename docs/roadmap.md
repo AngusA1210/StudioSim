@@ -20,10 +20,9 @@ each with its master (the mix's with inserts), either one on the main outputs.
 To do, roughly in this order:
 
 1. **Drums miked as in a studio** (begun: an acoustic kit is heard drum by drum, each head and cymbal from its own
-   place, with the heads' polarity, near field and bleed). Next: a mic inside the kick (through its port), where across
-   a head a mic points (its middle's attack against its edge's ring, as a cone's dust cap against its edge), the
-   cymbals' own patterns (the ride's bell against its edge, the hi-hat's chick between its cymbals), drum-miking
-   setups placed in one go, and the mic panel showing each drum's distance and bleed.
+   place, with the heads' polarity, near field and bleed; where across a head a mic is placed; the kick's port, and a
+   mic inside it). Next: the cymbals' own patterns (the ride's bell against its edge, the hi-hat's chick between its
+   cymbals), drum-miking setups placed in one go, and the mic panel showing each drum's distance and bleed.
 2. **Windows, played**: built and checked on every change; next, played and listened to on a Windows machine, and
    ASIO for interfaces whose Windows drivers want it.
 3. **You in the room**: an avatar whose height you can set (the ears and eyes go with it; the view is a little tall

@@ -39,11 +39,14 @@ const KIT_FLOOR := {"radius": 0.2, "depth": 0.34, "at": Vector3(0.5, 0.45, 0.16)
 const KIT_HATS := {"radius": 0.18, "at": Vector3(-0.6, 0.925, 0.1), "turn": Vector3.ZERO}  # (the top cymbal)
 const KIT_CRASH := {"radius": 0.23, "at": Vector3(-0.47, 1.33, -0.29), "turn": Vector3(0.35, 0, 0.2)}
 const KIT_RIDE := {"radius": 0.26, "at": Vector3(0.71, 1.09, -0.1), "turn": Vector3(0.22, 0, -0.25)}
+const KIT_PORT := {"radius": 0.057, "across": Vector2(0.1, -0.07)}  # the kick's port: a 4.5" hole in its front head, off its middle
 
 
 ## An acoustic kit's parts as the audio core hears them (instruments.h: KitPart, in its order): the kick's front and
 ## batter heads, the snare's top and bottom heads, the rack tom's and the floor tom's, the hi-hat, the crash and the
-## ride. Each {at (its middle, from the floor under the kit's middle), facing, radius, plate (a cymbal)}.
+## ride, then the kick's port and its inside (its batter head from within, heard only inside its shell). Each {at (its
+## middle, from the floor under the kit's middle), facing, radius, plate (a cymbal), drum (which drum it is part of,
+## -1 for a cymbal), inside (an inside's depth: how far into the drum it is heard; 0 otherwise)}.
 static func kit_parts() -> Array:
 	var out := []
 	var drums := [KIT_KICK, KIT_SNARE, KIT_RACK, KIT_FLOOR]
@@ -51,12 +54,19 @@ static func kit_parts() -> Array:
 		var drum: Dictionary = drums[d]
 		var up := Basis.from_euler(drum.turn) * Vector3.UP
 		var head: float = drum.radius * 0.97
-		var top := {"at": drum.at + up * drum.depth / 2, "facing": up, "radius": head, "plate": false}
-		var under := {"at": drum.at - up * drum.depth / 2, "facing": -up, "radius": head, "plate": false}
+		var top := {"at": drum.at + up * drum.depth / 2, "facing": up, "radius": head, "plate": false, "drum": d, "inside": 0.0}
+		var under := {"at": drum.at - up * drum.depth / 2, "facing": -up, "radius": head, "plate": false, "drum": d, "inside": 0.0}
 		# (the kick lies on its side, its turned up towards the stool: its batter head; its front head away from it)
 		out.append_array([under, top] if d == 0 else [top, under])
 	for cymbal: Dictionary in [KIT_HATS, KIT_CRASH, KIT_RIDE]:
-		out.append({"at": cymbal.at, "facing": Basis.from_euler(cymbal.turn) * Vector3.UP, "radius": cymbal.radius, "plate": true})
+		out.append({"at": cymbal.at, "facing": Basis.from_euler(cymbal.turn) * Vector3.UP, "radius": cymbal.radius, "plate": true,
+			"drum": -1, "inside": 0.0})
+	var front: Dictionary = out[0]
+	var batter: Dictionary = out[1]
+	out.append({"at": front.at + Vector3(KIT_PORT.across.x, KIT_PORT.across.y, 0), "facing": front.facing, "radius": KIT_PORT.radius,
+		"plate": false, "drum": 0, "inside": 0.0})
+	out.append({"at": batter.at - batter.facing * 0.005, "facing": -batter.facing, "radius": batter.radius, "plate": false, "drum": 0,
+		"inside": KIT_KICK.depth - 0.01})
 	return out
 
 
@@ -180,6 +190,8 @@ static func _drum_kit(node: Node3D, accent: Material, style := "machine") -> voi
 	_cylinder(node, KIT_KICK.radius, KIT_KICK.depth, accent, KIT_KICK.at, KIT_KICK.turn)
 	_cylinder(node, 0.262, 0.006, head, Vector3(0, 0.29, -0.364), Vector3(PI / 2, 0, 0))
 	_cylinder(node, 0.262, 0.006, head, Vector3(0, 0.29, 0.064), Vector3(PI / 2, 0, 0))
+	if style != "machine":  # its port, a hole in its front head
+		_cylinder(node, KIT_PORT.radius, 0.008, black, Vector3(KIT_PORT.across.x, 0.29 + KIT_PORT.across.y, -0.368), Vector3(PI / 2, 0, 0))
 	for z in [-0.36, 0.06]:
 		_ring(node, 0.262, 0.285, black, Vector3(0, 0.29, z), Vector3(PI / 2, 0, 0))
 	for side in [-1.0, 1.0]:

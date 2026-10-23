@@ -42,8 +42,18 @@ from where they stand on the kit, so the microphones hear a kit as a studio's do
 - Each head has a near field, as a speaker's cone does: close up its level levels off and its lows are fuller. Off
   its axis it loses some of its highs, and behind it, where the shell is in the way, more. A cymbal sounds from both
   its faces, quieter edge on.
+- **Where across a head** a close mic is placed matters, as where across a speaker's cone does: over its middle it hears
+  the drum's note and the stick (the whole head moving together, and struck there); out towards the edge, its
+  overtones and ring, which are still at the middle and strongest further out. Further off, the head is heard whole.
+- **The kick has a port**, a hole in its front head off its middle, and an inside. Just outside the port a mic hears
+  more of the beater's click and the air rushing out with the boom than on the head. Lower a mic to the kick's height
+  and put it in through the port, and it is **inside the kick**: the beater close and loud, the drum from within, and
+  the rest of the kit (and the room) through the shell, far quieter and duller in the mids and highs, though the lows
+  get through. Inside and out front the kick is in the same polarity (the batter pushes the air out through both), so
+  line those two up by time, not by flipping one.
 - Heard from a distance, a drum's two heads add up to the kit as it was tuned, so the kit sounds as it did from
-  across the room, and from any side.
+  across the room, and from any side. You hear each part as late as it is further than the nearest, as the mics do, so
+  a drum's two heads add and cancel as they would.
 - A close mic on a drum is very loud: turn its gain down, as you would pad a mic in a studio. **Point it at** aims a
   mic at the nearest drum head or cymbal.
 

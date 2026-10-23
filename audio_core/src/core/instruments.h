@@ -42,8 +42,12 @@ public:
 
     // An instrument heard from several places at once (an acoustic kit: each drum's two heads, each cymbal) has parts,
     // each sounding on its own, for the room to hear each from where it is. renderParts adds its own sound into `out`
-    // (as render does: its track's sound) and each part's into `parts[p]`.
+    // (as render does: its track's sound) and each part's into `parts[p]`. A part can sound in layers (a drum head's
+    // middle and its rim, which a close mic hears as it is placed across the head): layer k of part p into
+    // `parts[k * parts() + p]`.
     virtual int parts() const { return 0; }
+    virtual int partLayers() const { return 1; }
+    virtual bool partInside(int /*part*/) const { return false; }  // a drum's inside, heard only within its shell
     virtual void renderParts(float* out, float* const* /*parts*/, int n) { render(out, n); }
 
     // Played live. The note sounds from the start of the next block.
@@ -218,9 +222,19 @@ struct KitVoicing {
 // hit on) and its resonant head (the other), and each cymbal. A drum's two heads move together when it is hit (the
 // air inside pushes the far one out as the stick pushes the near one in), so what both carry of the drum is in
 // opposite polarity either side, as a mic under a snare hears it against one over it; the resonant head carries less
-// of the stick, and the snare's wires, stretched across its resonant head, are heard most from under it.
+// of the stick, and the snare's wires, stretched across its resonant head, are heard most from under it. The kick has
+// a port in its front head, through which some of what is inside it gets out (a mic at the port hears more of the
+// beater than one on the head), and the inside of its shell: what a mic put in through the port hears, the batter
+// head from behind, the beater's click and the drum loud and close, everything else through the shell. Inside and
+// out front the kick is in the same polarity (the batter pushes the air in it out through both), so the mics there
+// are lined up in time, not flipped, as in a studio.
+//
+// Each head sounds in two layers: its middle (the drum's fundamental, where every part of the head moves together, and
+// the stick or beater, which strikes there) and its rim (its overtones and ring, whose modes are still at the middle
+// and strongest out towards the edge). A mic close to a head hears them as it is placed across it.
 enum class KitPart : int {
-    KickFront, KickBatter, SnareTop, SnareBottom, RackTop, RackBottom, FloorTop, FloorBottom, HiHat, Crash, Ride, kCount
+    KickFront, KickBatter, SnareTop, SnareBottom, RackTop, RackBottom, FloorTop, FloorBottom, HiHat, Crash, Ride,
+    KickPort, KickInside, kCount
 };
 constexpr int kKitParts = int(KitPart::kCount);
 
@@ -244,29 +258,40 @@ public:
     float velocityJitter() const override { return 0.06f; }
     void render(float* out, int n) override { renderParts(out, nullptr, n); }
     int parts() const override { return kKitParts; }
+    int partLayers() const override { return 2; }
+    bool partInside(int part) const override { return part == int(KitPart::KickInside); }
     void renderParts(float* out, float* const* parts, int n) override;
 
 private:
-    // Which parts a voice sounds from, and how much of it each carries (negative: in opposite polarity).
+    // Which parts a voice sounds from (up to four), how much of it each carries (negative: in opposite polarity), and in
+    // which layer of theirs (0 their middle, 1 their rim).
     struct PartMix {
-        KitPart a = KitPart::SnareTop, b = KitPart::kCount;  // (kCount: none)
-        float to_a = 1.0f, to_b = 0.0f;
+        std::array<KitPart, 4> part{KitPart::kCount, KitPart::kCount, KitPart::kCount, KitPart::kCount};  // (kCount: none)
+        std::array<float, 4> gain{};
+        int layer = 0;
     };
     void from(KitPart a, float to_a, KitPart b = KitPart::kCount, float to_b = 0.0f) {
-        mix_ = {a, b, to_a, to_b};
+        mix_ = {};
+        mix_.part[0] = a;
+        mix_.part[1] = b;
+        mix_.gain = {to_a, to_b, 0.0f, 0.0f};
         sharing_ = false;
     }
-    // Or a drum's two heads: its batter head, and its resonant head moving `against` as much in opposite polarity, the
-    // two `depth` metres apart; each voice shared between them by its frequency (share).
-    void drum(KitPart batter, KitPart resonant, float against, float depth) {
-        mix_ = {batter, resonant, 1.0f, -against};
+    // Or a drum's two heads: the head that drives it, and the other moving `against` as much in opposite polarity, the
+    // two `depth` metres apart; each voice shared between them by its frequency (share). The kick's (`kick`): its port
+    // and its inside too.
+    void drum(KitPart driven, KitPart other, float against, float depth, bool kick = false) {
+        from(driven, 1.0f, other, -against);
         depth_ = depth;
+        kick_ = kick;
         sharing_ = true;
     }
+    void rim(bool on) { layer_ = on ? 1 : 0; }  // the voices started next: in the heads' rims, or their middles
     PartMix share(float hz) const;
     PartMix mix_;  // what the voices started next sound from
     float depth_ = 0.0f;
-    bool sharing_ = false;
+    bool sharing_ = false, kick_ = false;
+    int layer_ = 0;
     std::array<PartMix, 48> mode_parts_{};
     std::array<PartMix, 24> noise_parts_{};
     std::array<PartMix, 12> metal_parts_{};

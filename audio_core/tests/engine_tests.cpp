@@ -3525,15 +3525,21 @@ int main(int argc, char** argv) {
                               {at(-0.04f, 0.8f, -0.08f), turned_up(0.3f, 0.024f), 0.15f, 0.18f},
                               {at(0.5f, 0.45f, 0.16f), {0.0f, 1.0f, 0.0f}, 0.2f, 0.34f}};
         for (const Drum& d : drums) {
+            const int drum = int(&d - drums);
             const Vec3 down{-d.up.x, -d.up.y, -d.up.z};
-            const SoundingPart top{plus(d.middle, d.up, 0.5f * d.depth), d.up, 0.97f * d.radius, false};
-            const SoundingPart under{plus(d.middle, down, 0.5f * d.depth), down, 0.97f * d.radius, false};
-            if (&d == &drums[0]) parts.insert(parts.end(), {under, top});  // (the kick: its front head, then its batter head)
+            const SoundingPart top{plus(d.middle, d.up, 0.5f * d.depth), d.up, 0.97f * d.radius, false, drum};
+            const SoundingPart under{plus(d.middle, down, 0.5f * d.depth), down, 0.97f * d.radius, false, drum};
+            if (drum == 0) parts.insert(parts.end(), {under, top});  // (the kick: its front head, then its batter head)
             else parts.insert(parts.end(), {top, under});
         }
         parts.push_back({at(-0.6f, 0.925f, 0.1f), {0.0f, 1.0f, 0.0f}, 0.18f, true});
         parts.push_back({at(-0.47f, 1.33f, -0.29f), turned_up(0.35f, 0.2f), 0.23f, true});
         parts.push_back({at(0.71f, 1.09f, -0.1f), turned_up(0.22f, -0.25f), 0.26f, true});
+        // The kick's port (a 4.5" hole in its front head, off its middle) and its inside (its batter head from within).
+        const SoundingPart front_head = parts[0], batter_head = parts[1];
+        parts.push_back({{front_head.centre.x + 0.1f, front_head.centre.y - 0.07f, front_head.centre.z}, front_head.facing, 0.057f, false, 0});
+        parts.push_back({plus(batter_head.centre, batter_head.facing, -0.005f), {-batter_head.facing.x, -batter_head.facing.y, -batter_head.facing.z},
+                         batter_head.radius, false, 0, true, 0.41f});
         room.engine.setSourceParts(kit, parts);
         const SoundingPart& snare_top = parts[size_t(KitPart::SnareTop)];
         const SoundingPart& snare_under = parts[size_t(KitPart::SnareBottom)];
@@ -3660,6 +3666,69 @@ int main(int argc, char** argv) {
         check(std::fabs(later - expected) < 12.0, "the snare reaches an overhead as much later than its close mic as it is further",
               fmt("%.0f samples later, ", later) + fmt("%.0f for the distance", expected));
         release(timing);
+
+        // Where across a head a close mic is placed: over the floor tom's middle its fundamental leads; out towards its
+        // edge (four fifths of the way) its overtones and ring come forward, as a drummer's engineer moves a tom mic for.
+        const SoundingPart& floor_top = parts[size_t(KitPart::FloorTop)];
+        const auto band_energy = [](const std::vector<float>& x, float low, float high) {
+            Biquad hp[2], lp[2];
+            for (auto& f : hp) f.set(Biquad::Highpass, 48000.0f, low, 0.707f);
+            for (auto& f : lp) f.set(Biquad::Lowpass, 48000.0f, high, 0.707f);
+            double e = 0.0;
+            for (float v : x) {
+                const float y = lp[1].process(lp[0].process(hp[1].process(hp[0].process(v))));
+                e += double(y) * y;
+            }
+            return e;
+        };
+        const Vec3 over_middle = plus(floor_top.centre, floor_top.facing, 0.04f);
+        const Vec3 over_edge{over_middle.x + 0.8f * floor_top.radius, over_middle.y, over_middle.z};
+        const auto across = pair(over_middle, over_edge);
+        const Render tom = hit(Drums::TomLow);
+        release(across);
+        const auto ring_on_body = [&](const std::vector<float>& x) {  // (its overtones, 1.6 to 2.7 times its note, on its note)
+            return 10.0 * std::log10(band_energy(x, 145.0f, 280.0f) / band_energy(x, 70.0f, 125.0f));
+        };
+        const double middle_ring = ring_on_body(tom.l), edge_ring = ring_on_body(tom.r);
+        check(edge_ring - middle_ring > 4.0, "a close mic over a head's middle hears its note; out towards its edge, its overtones and ring",
+              fmt("overtones on the note: %.1f dB over the middle, ", middle_ring) + fmt("%.1f dB near the edge", edge_ring));
+
+        // A mic put into the kick through its port, 10 cm from its batter head, against one 10 cm out from its front head:
+        // inside, the shell keeps the rest of the kit out (the snare far further below the kick), and the beater is close
+        // and loud; the two are in the same polarity (the batter pushes the air out through both), lined up by time.
+        const SoundingPart& inside = parts[size_t(KitPart::KickInside)];
+        const auto kick_pair = pair(plus(inside.centre, inside.facing, 0.1f), plus(kick_front.centre, kick_front.facing, 0.1f));
+        const Render kick_in = hit(Drums::Kick), snare_in = hit(Drums::Snare);
+        release(kick_pair);
+        const double in_held = 10.0 * std::log10(energy(kick_in.l) / energy(snare_in.l));
+        const double out_held = 10.0 * std::log10(energy(kick_in.r) / energy(snare_in.r));
+        const std::vector<float> in_low = lowpassed(kick_in.l, 200.0f), out_low = lowpassed(kick_in.r, 200.0f);
+        double strongest = 0.0;
+        for (int lag = -400; lag <= 400; ++lag) {  // (the out-front mic's sound, lined up with the inside one's)
+            double c = 0.0;
+            for (size_t i = 500; i + 500 < in_low.size(); ++i) c += double(in_low[i]) * out_low[size_t(int(i) + lag)];
+            if (std::fabs(c) > std::fabs(strongest)) strongest = c;
+        }
+        const double lined_up = strongest / std::sqrt(energy(in_low) * energy(out_low));
+        check(in_held - out_held > 10.0 && lined_up > 0.5,
+              "a mic inside the kick hears it with the rest of the kit kept out by its shell, in the same polarity as one out front",
+              fmt("the kick %.1f dB further over the snare inside, ", in_held - out_held) + fmt("correlated %+.2f lined up", lined_up));
+
+        // And a mic just outside its port hears more of what comes out of it than one on its head beside it: the
+        // beater's click (in the first 20 ms, before the snare's wires have buzzed along much), and the air rushing out
+        // with the boom, as an engineer puts a kick mic at the port for.
+        const SoundingPart& port = parts[size_t(KitPart::KickPort)];
+        const Vec3 beside{kick_front.centre.x - 0.1f, kick_front.centre.y - 0.07f, kick_front.centre.z};
+        const auto port_pair = pair(plus(port.centre, port.facing, 0.05f), plus(beside, kick_front.facing, 0.05f));
+        const Render ported = hit(Drums::Kick);
+        release(port_pair);
+        const auto click = [&](const std::vector<float>& x) {
+            return 10.0 * std::log10(band_energy(std::vector<float>(x.begin(), x.begin() + 960), 1500.0f, 5000.0f));
+        };
+        const auto boom = [&](const std::vector<float>& x) { return 10.0 * std::log10(band_energy(x, 30.0f, 150.0f)); };
+        const double more_click = click(ported.l) - click(ported.r), more_boom = boom(ported.l) - boom(ported.r);
+        check(more_click > 3.0 && more_boom > 6.0, "just outside the kick's port a mic hears more of its beater's click, and more of its boom, than on its head",
+              fmt("%+.1f dB of click, ", more_click) + fmt("%+.1f dB of boom", more_boom));
 
         // And the listener, standing at the stool facing the kit, hears each piece from where it stands: the hi-hat on
         // the left, the floor tom on the right.

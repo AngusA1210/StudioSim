@@ -262,7 +262,8 @@ void SoundRoomAudio::set_source_radiator(int id, const PackedVector3Array& cones
     engine_->setSourceRadiator(id, r);
 }
 void SoundRoomAudio::set_source_parts(int id, const PackedVector3Array& centres, const PackedVector3Array& facings,
-                                      const PackedFloat32Array& radii, const PackedByteArray& plates) {
+                                      const PackedFloat32Array& radii, const PackedByteArray& plates, const PackedInt32Array& drums,
+                                      const PackedFloat32Array& insides) {
     if (!engine_) return;
     std::vector<sr::SoundingPart> parts(size_t(centres.size()));
     for (int64_t i = 0; i < centres.size(); ++i) {
@@ -272,6 +273,9 @@ void SoundRoomAudio::set_source_parts(int id, const PackedVector3Array& centres,
         p.facing = vec(n);
         p.radius = i < radii.size() ? std::max(radii[i], 0.01f) : 0.15f;
         p.plate = i < plates.size() && plates[i] != 0;
+        p.drum = i < drums.size() ? int(drums[i]) : -1;
+        p.depth = i < insides.size() ? std::max(insides[i], 0.0f) : 0.0f;
+        p.inside = p.depth > 0.0f;
     }
     engine_->setSourceParts(id, parts);
 }
@@ -960,7 +964,8 @@ void SoundRoomAudio::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_mic_noise", "model"), &SoundRoomAudio::get_mic_noise);
     ClassDB::bind_method(D_METHOD("set_source_pan", "id", "pan"), &SoundRoomAudio::set_source_pan);
     ClassDB::bind_method(D_METHOD("set_bus_mono", "id", "mono"), &SoundRoomAudio::set_bus_mono);
-    ClassDB::bind_method(D_METHOD("set_source_parts", "id", "centres", "facings", "radii", "plates"), &SoundRoomAudio::set_source_parts);
+    ClassDB::bind_method(D_METHOD("set_source_parts", "id", "centres", "facings", "radii", "plates", "drums", "insides"),
+                         &SoundRoomAudio::set_source_parts, DEFVAL(PackedInt32Array()), DEFVAL(PackedFloat32Array()));
     ClassDB::bind_method(D_METHOD("set_source_radiator", "id", "cones", "facing", "inches", "open_back", "back", "width", "coverage_deg",
                                   "crossover_hz"), &SoundRoomAudio::set_source_radiator, DEFVAL(0.0f), DEFVAL(1800.0f));
     ClassDB::bind_method(D_METHOD("set_floor_reflection", "amount"), &SoundRoomAudio::set_floor_reflection);

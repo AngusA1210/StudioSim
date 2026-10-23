@@ -99,7 +99,22 @@ struct SoundingPart {
     Vec3 facing{0.0f, 1.0f, 0.0f};  // the way the head faces, out of the drum (a cymbal's: up, as it is mounted)
     float radius = 0.15f;           // metres
     bool plate = false;             // a cymbal
+    int drum = -1;                  // which drum it is part of (its parts share its shell), or -1 (a cymbal)
+    // A drum's inside (the kick's, heard through its port): a head facing into the drum, heard only within its shell,
+    // `depth` metres deep from the head and as wide as it; and a mic in there hears everything else through the shell.
+    bool inside = false;
+    float depth = 0.0f;
+    bool contains(Vec3 at) const;  // (whether `at` is within an inside's shell)
 };
+// What a drum's shell (and its heads, and the port it has) lets through to a mic inside it, of each band, as amplitudes.
+constexpr std::array<float, 3> kShellThrough{0.3f, 0.06f, 0.02f};
+// How much a mic at `at` hears of a head's middle (its fundamental and the stick) and of its rim (its overtones and
+// ring): as it is placed across the head (how far from its axis, against its radius), the closer it is the more so;
+// far off it hears the two as they are.
+struct HeadLayers {
+    float middle = 1.0f, rim = 1.0f;
+};
+HeadLayers headLayers(const SoundingPart& part, Vec3 at);
 RadiatedPath radiatePart(const SoundingPart& part, Vec3 at, float ref_distance);
 Facing facingFromPart(const SoundingPart& part, Vec3 at);
 

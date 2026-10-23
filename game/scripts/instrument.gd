@@ -389,22 +389,26 @@ func _sync_parts() -> void:
 	var facings := PackedVector3Array()
 	var radii := PackedFloat32Array()
 	var plates := PackedByteArray()
+	var drums := PackedInt32Array()
+	var insides := PackedFloat32Array()
 	for part: Dictionary in parts_in_room():
 		centres.append(part.at)
 		facings.append(part.facing)
 		radii.append(part.radius)
 		plates.append(1 if part.plate else 0)
+		drums.append(part.drum)
+		insides.append(part.inside)
 	_audio.set_source_position(source_id, global_position)
-	_audio.set_source_parts(source_id, centres, facings, radii, plates)
+	_audio.set_source_parts(source_id, centres, facings, radii, plates, drums, insides)
 
 
-## Its parts (Models.kit_parts) where they are in the room: each {at, facing, radius, plate}.
+## Its parts (Models.kit_parts) where they are in the room: each {at, facing, radius, plate, drum, inside}.
 func parts_in_room() -> Array:
 	var lift := Vector3(0, source_height, 0)  # (the model is drawn from the floor up)
 	var out := []
 	for part: Dictionary in Models.kit_parts():
 		out.append({"at": global_transform * (part.at - lift), "facing": (global_transform.basis * part.facing).normalized(),
-			"radius": part.radius, "plate": part.plate})
+			"radius": part.radius, "plate": part.plate, "drum": part.drum, "inside": part.inside})
 	return out
 
 

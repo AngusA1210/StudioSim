@@ -601,7 +601,7 @@ private:
             TimelinePlay, TimelineLoop, TrackSet, RecordArm, RecordStart, RecordStop, SourceOutput, AutomationRead, SendSet,
             MasterAutomation, MasterRead, SourceSoloMuted, MicPath, MicCone, SourceFacing, MicModelSet, MicAim, SourcePan, MicMidSide,
             SourceRoomGain, SourceRoomMuted, RoomVolume, MonitorSet, MasterInserts, AmpLoopMix, LimiterCeiling, BusMono,
-            Compensation, CompensationTotal, AmpLoopDelay, Echo, ScatterWall, PartPath,
+            Compensation, CompensationTotal, AmpLoopDelay, Echo, ScatterWall, PartPath, MicShell,
         } type = AddSource;
         int id = 0;
         float v[9] = {};
@@ -677,7 +677,7 @@ private:
     // every way the sound comes, so that they line up with each other as their distances have it.
     static constexpr int kMicLead = Sinc16::kAfter;
     void readHistory(const float* history, double late_from, double late_to, float* out) const;
-    std::vector<float> read_;  // (a block of one way to a microphone, read)
+    std::vector<float> read_, read_rim_;  // (a block of one way to a microphone, read; and a head's rim's)
     float split_lows_ = 0.0f, split_highs_ = 0.0f;  // the history's band split, at the engine's rate
     void updatePaths();
     void updateMicPaths(Source& source);  // how its sound reaches each microphone (or, a microphone, how each reaches it)

@@ -155,6 +155,34 @@ RadiatedPath radiatePart(const SoundingPart& part, Vec3 at, float ref_distance) 
     return p;
 }
 
+bool SoundingPart::contains(Vec3 at) const {
+    if (!inside) return false;
+    const Vec3 to = minus(at, centre);
+    const float along = dotOf(to, facing);
+    if (along <= 0.0f || along >= depth) return false;
+    const Vec3 out{to.x - facing.x * along, to.y - facing.y * along, to.z - facing.z * along};
+    return lengthOf(out) < radius;
+}
+
+// The middle: as the drum's fundamental is (all the head moving together, most at its middle, nothing at its edge),
+// and the stick or beater striking there. The rim: as its overtones are (still at the middle, strongest out towards
+// the edge, so they and the ring come forward the further out a mic is placed). Close up only: further off, the head
+// is heard as a whole.
+HeadLayers headLayers(const SoundingPart& part, Vec3 at) {
+    HeadLayers out;
+    if (part.plate) return out;
+    const Vec3 to = minus(at, part.centre);
+    const float along = dotOf(to, part.facing);
+    if (along <= 0.0f) return out;  // (behind it: as a whole)
+    const Vec3 off{to.x - part.facing.x * along, to.y - part.facing.y * along, to.z - part.facing.z * along};
+    const float a = part.radius, across = std::min(lengthOf(off) / a, 1.0f);
+    const float near = a * a / (a * a + along * along);
+    const float middle = std::clamp(1.0f - across * across, 0.2f, 1.0f), rim = 0.35f + 1.6f * across * (1.2f - across);
+    out.middle = 1.0f + near * (middle - 1.0f);
+    out.rim = 1.0f + near * (rim - 1.0f);
+    return out;
+}
+
 Facing facingFromPart(const SoundingPart& part, Vec3 at) {
     Facing f;
     const Vec3 to = minus(at, part.centre);
