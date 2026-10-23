@@ -47,8 +47,9 @@ RadiatedPath piston(const Radiator& cab, Vec3 centre, Vec3 facing, float a, floa
     const float d = dotOf(to, facing);                               // along its axis
     const float x = std::sqrt(std::max(r * r - d * d, 0.0f));        // and out from it
     const float angle = std::atan2(x, d);
-    // How far from the cone's face it is (out to its edge), and so how far into its near field.
-    const float rho = std::sqrt(d * d + std::max(x - a, 0.0f) * std::max(x - a, 0.0f));
+    // How far from the cone's face it is, and so how far into its near field: in front of it, its distance from the face;
+    // out past its edge, more and more its distance from its middle, as a sound spreading from there.
+    const float rho = std::sqrt(std::max(d * d + x * x - std::min(x, a) * std::min(x, a), 0.0f));
     const float behind = d >= 0.0f ? 1.0f : std::clamp(1.0f + d / (0.5f * a), 0.0f, 1.0f);  // (no near field behind the box)
     const float near = a * a / (a * a + rho * rho) * behind;
     // The level: on a baffled piston's axis, 2 (sqrt(d^2 + a^2) - d) / a^2, which is 1 / d far off and levels off close up.
@@ -115,5 +116,57 @@ Facing facingFrom(const Radiator& r, Vec3 centre, Vec3 at) {
 }
 
 float powerCutHz(const Radiator& r) { return std::min(beamCut(coneRadius(r.inches), 50.0f * kPiF / 180.0f), 20000.0f); }
+
+namespace {
+
+// How loud a cymbal is `cosine` off its axis (either face): half as loud edge on.
+float plateGain(float cosine) { return 0.5f + 0.5f * std::fabs(cosine); }
+
+// What a drum's head keeps of its highs `angle` off its axis (dB): a little less the further off, and behind it (the
+// shell in the way) less again.
+constexpr float kHeadEdgeDb = 6.0f;
+float headHighDb(float angle) {
+    if (angle <= 0.5f * kPiF) return -kHeadEdgeDb * std::sin(angle) * std::sin(angle);
+    return -kHeadEdgeDb * (1.0f + (angle - 0.5f * kPiF) / (0.5f * kPiF));
+}
+
+}  // namespace
+
+RadiatedPath radiatePart(const SoundingPart& part, Vec3 at, float ref_distance) {
+    const Radiator plain;  // (no horn; a head has no dust cap, and doesn't break up as a cone does)
+    if (!part.plate) {
+        RadiatedPath p = piston(plain, part.centre, part.facing, part.radius, 2.0f * kFullRangeHz, at, ref_distance);
+        const Vec3 to = minus(at, part.centre);
+        const float r = lengthOf(to);
+        p.gain = 1.0f;  // (the lows bend round a drum: behind it, only its highs are lost)
+        p.cut_hz = 20000.0f;
+        p.high_db = headHighDb(r > 1e-6f ? std::acos(std::clamp(dotOf(to, part.facing) / r, -1.0f, 1.0f)) : 0.0f);
+        return p;
+    }
+    // A cymbal: from whichever face is towards `at`, its highs all round.
+    const Vec3 to = minus(at, part.centre);
+    const float r = lengthOf(to), cosine = r > 1e-6f ? dotOf(to, part.facing) / r : 1.0f;
+    const Vec3 face = cosine >= 0.0f ? part.facing : Vec3{-part.facing.x, -part.facing.y, -part.facing.z};
+    RadiatedPath p = piston(plain, part.centre, face, part.radius, 2.0f * kFullRangeHz, at, ref_distance);
+    p.gain = plateGain(cosine);
+    p.cut_hz = 20000.0f;
+    p.low_db = 0.0f;
+    p.high_db = 0.0f;
+    return p;
+}
+
+Facing facingFromPart(const SoundingPart& part, Vec3 at) {
+    Facing f;
+    const Vec3 to = minus(at, part.centre);
+    const float n = lengthOf(to);
+    if (n < 1e-6f) return f;
+    const float cosine = std::clamp(dotOf(to, part.facing) / n, -1.0f, 1.0f);
+    if (part.plate) {
+        f.gain = plateGain(cosine);
+        return f;
+    }
+    f.high_db = headHighDb(std::acos(cosine));
+    return f;
+}
 
 }  // namespace sr

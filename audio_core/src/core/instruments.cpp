@@ -450,6 +450,12 @@ constexpr KitVoicing kStudio{50.0f, 1.9f, 0.42f, 0.08f, 0.48f,
                              0.22f, 10000.0f, 0.42f,
                              0.02f, 0.005f, 0.04f, 1.0f, 0.0f};
 
+// How much a drum's resonant head moves against its batter head (and so what it carries of the drum, in opposite
+// polarity), and of the stick on the batter head; how much of the snare's wires are heard from under it and over it
+// (through the drum: between them as loud as the wires were); and how much of the beater gets out of the kick's front
+// head (and its port).
+constexpr float kOtherHead = 0.6f, kStickThrough = 0.15f, kWiresUnder = 0.92f, kWiresOver = 0.39f, kBeaterThrough = 0.25f;
+
 // The garage's first reflections: walls, floor and ceiling a few metres off, in milliseconds, and how loud each comes back.
 constexpr float kEchoMs[5] = {3.7f, 6.1f, 9.4f, 12.8f, 17.5f};
 constexpr float kEchoGain[5] = {0.55f, 0.45f, 0.36f, 0.28f, 0.2f};
@@ -466,16 +472,35 @@ int AcousticKit::noteFor(Piece piece) { return piece == Ride ? 51 : Drums::noteF
 
 const char* AcousticKit::pieceName(Piece piece) { return piece == Ride ? "Ride" : Drums::pieceName(piece); }
 
+// A voice at `hz` between a drum's two heads: as much the batter head's as the resonant head's in opposite polarity,
+// times `against`, the two together, heard from a distance, carrying the drum's sound as it was tuned (as loud, every
+// way round, as the kit is heard as one). Two sources a depth d apart, one -against times the other, sound in all
+// (1 + against^2 - 2 against sin(kd) / kd) times as loud as the one alone: in the lows, where the wave is long against
+// the drum, the heads mostly cancel at a distance, so each carries more; in the highs, less.
+AcousticKit::PartMix AcousticKit::share(float hz) const {
+    if (!sharing_) return mix_;
+    const float kd = 2.0f * kPi * hz / 343.0f * depth_, sinc = kd > 1e-4f ? std::sin(kd) / kd : 1.0f;
+    const float against = -mix_.to_b;
+    const float batter = 1.0f / std::sqrt(std::max(1.0f + against * against - 2.0f * against * sinc, 0.05f));
+    return {mix_.a, mix_.b, batter, -against * batter};
+}
+
 void AcousticKit::mode(int delay, float freq, float sharp, float glide, float level, float decay) {
-    pickVoice(modes_).start(sr_, delay, freq, sharp, glide, level, decay);
+    auto& v = pickVoice(modes_);
+    v.start(sr_, delay, freq, sharp, glide, level, decay);
+    mode_parts_[size_t(&v - modes_.data())] = share(freq);
 }
 
 void AcousticKit::noise(int delay, Biquad::Type type, float freq, float q, float level, float decay) {
-    pickVoice(noises_).start(sr_, delay, type, freq, q, level, decay);
+    auto& v = pickVoice(noises_);
+    v.start(sr_, delay, type, freq, q, level, decay);
+    noise_parts_[size_t(&v - noises_.data())] = share(type == Biquad::Lowpass ? 0.5f * freq : freq);
 }
 
 void AcousticKit::metal(int delay, float base, float band, float high, float level, float decay, float noise_share, int group) {
-    pickVoice(metals_).start(sr_, delay, base, band, high, level, decay, noise_share, group);
+    auto& v = pickVoice(metals_);
+    v.start(sr_, delay, base, band, high, level, decay, noise_share, group);
+    metal_parts_[size_t(&v - metals_.data())] = mix_;
 }
 
 void AcousticKit::wash(voice::MetalHit& ring, int delay, float base, float band, float high, float level, float decay, float noise_share) {
@@ -489,28 +514,37 @@ void AcousticKit::hit(Piece piece, float velocity, int delay) {
     const float bright = 0.55f + 0.45f * v;                    // harder hits are brighter...
     const float tune = 1.0f + k.tune_jitter * rng_.next();      // ...and no two land quite the same
     const float l = v * (1.0f + k.level_jitter * rng_.next());
-    const auto buzz = [&](float decay) {  // the snare's wires, set going by whatever else is hit
+    const auto buzz = [&](float decay) {  // the snare's wires, set going by whatever else is hit (heard from the snare)
+        from(KitPart::SnareBottom, kWiresUnder, KitPart::SnareTop, kWiresOver);
         noise(delay, Biquad::Bandpass, 3800.0f, 0.6f, k.buzz * l, decay);
     };
+    // (the drums' depths, as the game draws them, game/scripts/instrument_models.gd)
+    constexpr float kKickDepth = 0.42f, kSnareDepth = 0.13f, kRackDepth = 0.18f, kFloorDepth = 0.34f;
     switch (piece) {
         case Drums::Kick:
+            drum(KitPart::KickBatter, KitPart::KickFront, kOtherHead, kKickDepth);  // the drum, from both heads
             mode(delay, k.kick_hz * tune, k.kick_sharp, 0.012f, 0.95f * l, k.kick_decay);
-            mode(delay, k.kick_hz * 1.78f * tune, 1.15f, 0.02f, k.kick_boom * l, k.kick_decay * 0.45f);
             mode(delay, k.kick_hz * 3.1f * tune, 1.05f, 0.02f, 0.10f * l, 0.16f);
-            noise(delay, Biquad::Bandpass, 2600.0f * bright, 0.8f, k.kick_beater * l * bright, 0.03f);  // the beater
             noise(delay, Biquad::Lowpass, 900.0f, kLowpassQ, 0.28f * l, 0.05f);
+            drum(KitPart::KickFront, KitPart::KickBatter, kOtherHead, kKickDepth);  // the boom a barely damped front head keeps
+            mode(delay, k.kick_hz * 1.78f * tune, 1.15f, 0.02f, k.kick_boom * l, k.kick_decay * 0.45f);
+            drum(KitPart::KickBatter, KitPart::KickFront, kBeaterThrough, kKickDepth);  // the beater, on the batter head
+            noise(delay, Biquad::Bandpass, 2600.0f * bright, 0.8f, k.kick_beater * l * bright, 0.03f);
             buzz(0.22f);
             break;
         case Drums::Snare: {
             const float f = k.snare_hz * tune;
+            drum(KitPart::SnareTop, KitPart::SnareBottom, kOtherHead, kSnareDepth);
             mode(delay, f, 1.04f, 0.03f, 0.42f * l, k.snare_decay);
             mode(delay, f * 1.59f, 1.04f, 0.03f, 0.30f * l, k.snare_decay * 0.75f);
             mode(delay, f * 2.14f, 1.03f, 0.03f, 0.20f * l, k.snare_decay * 0.6f);
             mode(delay, f * 2.30f, 1.03f, 0.03f, 0.14f * l, k.snare_decay * 0.5f);
             mode(delay, f * 2.72f, 1.0f, 0.01f, k.snare_ring * l, k.snare_ring_decay);  // the ring a head keeps
             mode(delay, 890.0f * tune, 1.0f, 0.01f, 0.07f * l, 0.06f);                 // the shell
+            drum(KitPart::SnareTop, KitPart::SnareBottom, kStickThrough, kSnareDepth);
             noise(delay, Biquad::Bandpass, 2500.0f + 4500.0f * v, 0.5f, 0.6f * l * bright * bright, 0.012f);  // the stick
             // The wires: brighter, as the stick is, the harder the head is hit.
+            from(KitPart::SnareBottom, kWiresUnder, KitPart::SnareTop, kWiresOver);
             noise(delay, Biquad::Bandpass, 3000.0f + 1800.0f * v, 0.6f, k.snare_wires * l, k.snare_wire_decay);
             noise(delay, Biquad::Highpass, 6500.0f, 0.7f, 0.20f * l * bright * bright, k.snare_wire_decay * 0.5f);
             noise(delay, Biquad::Bandpass, 2400.0f, 1.0f, 0.08f * l, k.snare_wire_decay * 1.3f);
@@ -522,10 +556,13 @@ void AcousticKit::hit(Piece piece, float velocity, int delay) {
             const float f = (floor ? k.floor_hz : k.rack_hz) * tune;
             const float sharp = 1.04f + k.tom_sharp * v;  // a hard hit stretches the head more, so it starts sharper
             const float ring = floor ? k.floor_decay : k.rack_decay;
+            const KitPart top = floor ? KitPart::FloorTop : KitPart::RackTop, under = floor ? KitPart::FloorBottom : KitPart::RackBottom;
+            drum(top, under, kOtherHead, floor ? kFloorDepth : kRackDepth);
             mode(delay, f, sharp, 0.05f, 0.80f * l, ring);
             mode(delay, f * 1.59f, sharp, 0.05f, 0.34f * l, ring * 0.5f);
             mode(delay, f * 2.14f, sharp, 0.05f, 0.16f * l, ring * 0.3f);
             mode(delay, f * 2.65f, sharp, 0.05f, 0.07f * l, ring * 0.18f);
+            drum(top, under, kStickThrough, floor ? kFloorDepth : kRackDepth);
             noise(delay, Biquad::Bandpass, 1800.0f * bright, 0.8f, 0.24f * l * bright, 0.025f);
             buzz(0.25f);
             break;
@@ -533,6 +570,7 @@ void AcousticKit::hit(Piece piece, float velocity, int delay) {
         case Drums::HatClosed:
         case Drums::HatOpen: {
             const bool open = piece == Drums::HatOpen;
+            from(KitPart::HiHat, 1.0f);
             if (!open)
                 for (auto& m : metals_)
                     if (m.active && m.group == 1) m.choke(0.04f);
@@ -541,12 +579,14 @@ void AcousticKit::hit(Piece piece, float velocity, int delay) {
             break;
         }
         case Ride:  // a ping on top of a wash that builds and hangs
+            from(KitPart::Ride, 1.0f);
             metal(delay, 523.0f * tune, 5200.0f, 3000.0f, 0.30f * l * bright, 0.4f, 0.15f, 0);
             wash(ride_wash_, delay, 391.0f, 7000.0f, 4200.0f, 0.13f * l, 5.0f, k.cymbal_noise * 0.85f);
             mode(delay, 3150.0f * tune, 1.0f, 0.01f, 0.05f * l, 1.2f);
             noise(delay, Biquad::Bandpass, 3600.0f, 1.5f, 0.12f * l, 0.01f);
             break;
         case Drums::Crash:
+            from(KitPart::Crash, 1.0f);
             wash(crash_wash_, delay, 347.0f, 6500.0f, 3200.0f, 0.42f * l * bright, 3.5f, k.cymbal_noise);
             noise(delay, Biquad::Highpass, 4500.0f, 0.7f, 0.22f * l * bright, 2.8f);
             noise(delay, Biquad::Bandpass, 2000.0f, 0.8f, 0.12f * l, 0.05f);
@@ -556,19 +596,28 @@ void AcousticKit::hit(Piece piece, float velocity, int delay) {
     }
 }
 
-void AcousticKit::render(float* out, int n) {
+void AcousticKit::renderParts(float* out, float* const* parts, int n) {
     float* x = scratch_.data();
     for (int start = 0; start < n; start += int(scratch_.size())) {
         const int len = std::min(n - start, int(scratch_.size()));
         std::fill(x, x + len, 0.0f);
-        for (auto& v : modes_)
-            if (v.active) for (int i = 0; i < len && v.active; ++i) x[i] += v.next();
-        for (auto& v : noises_)
-            if (v.active) for (int i = 0; i < len && v.active; ++i) x[i] += v.next(rng_);
-        for (auto& v : metals_)
-            if (v.active) for (int i = 0; i < len && v.active; ++i) x[i] += v.next(rng_);
-        for (auto* ring : {&ride_wash_, &crash_wash_})
-            if (ring->active) for (int i = 0; i < len && ring->active; ++i) x[i] += ring->next(rng_);
+        // Each voice, into the kit as one and into the parts it sounds from.
+        const auto play = [&](auto& v, const PartMix& m, auto next) {
+            if (!v.active) return;
+            float* a = parts ? parts[int(m.a)] + start : nullptr;
+            float* b = parts && m.b != KitPart::kCount ? parts[int(m.b)] + start : nullptr;
+            for (int i = 0; i < len && v.active; ++i) {
+                const float y = next(v);
+                x[i] += y;
+                if (a) a[i] += m.to_a * y;
+                if (b) b[i] += m.to_b * y;
+            }
+        };
+        for (size_t j = 0; j < modes_.size(); ++j) play(modes_[j], mode_parts_[j], [](voice::ModeHit& v) { return v.next(); });
+        for (size_t j = 0; j < noises_.size(); ++j) play(noises_[j], noise_parts_[j], [&](voice::NoiseHit& v) { return v.next(rng_); });
+        for (size_t j = 0; j < metals_.size(); ++j) play(metals_[j], metal_parts_[j], [&](voice::MetalHit& v) { return v.next(rng_); });
+        play(ride_wash_, PartMix{KitPart::Ride}, [&](voice::MetalHit& v) { return v.next(rng_); });
+        play(crash_wash_, PartMix{KitPart::Crash}, [&](voice::MetalHit& v) { return v.next(rng_); });
         const size_t size = echoes_.size();
         for (int i = 0; i < len; ++i) {
             float y = x[i];

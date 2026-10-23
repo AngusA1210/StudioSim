@@ -21,7 +21,7 @@ const KINDS := {
 	"keys": {"name": "Keys", "about": "An electric piano. A sustain pedal works on it.", "color": Color(1.0, 0.48, 0.82),
 		"top": 0.98, "footprint": Vector2(1.2, 0.55), "height": 0.95, "gain": 0.20, "send": 0.9},
 	# The acoustic kits, with the drum machine's pieces and keys (a ride on the clap's). As loud played as the drums.
-	"garage_drums": {"name": "Garage Kit", "about": "A rock kit in a garage, played loud: ringing, loose and raw, the walls slapping back.",
+	"garage_drums": {"name": "Garage Kit", "about": "A rock kit played loud: ringing, loose and raw; its own track has a garage's crunch and slap.",
 		"color": Color(0.88, 0.16, 0.14), "top": 1.45, "footprint": Vector2(1.6, 1.3), "height": 0.9, "gain": 0.38, "send": 0.6,
 		"drum_kit": true},
 	"studio_drums": {"name": "Studio Kit", "about": "The same kit in a studio, tuned and damped: punchy, tight and clean.",

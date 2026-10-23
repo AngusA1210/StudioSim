@@ -29,6 +29,36 @@ const CABINETS := {
 }
 const CONE_DEPTH := 0.04  # how far behind the grille a cone's dust cap is
 
+## Where an acoustic kit's pieces stand (as _drum_kit draws them, and the audio core hears them, kit_parts): each drum's
+## radius, depth, middle and turn (its heads face along its turned up, half its depth either side); each cymbal's
+## radius, middle and turn. The kick lies on its side, its batter head towards the stool (+z).
+const KIT_KICK := {"radius": 0.27, "depth": 0.42, "at": Vector3(0, 0.29, -0.15), "turn": Vector3(PI / 2, 0, 0)}
+const KIT_SNARE := {"radius": 0.18, "depth": 0.13, "at": Vector3(-0.28, 0.62, 0.22), "turn": Vector3(0.12, 0, 0)}
+const KIT_RACK := {"radius": 0.15, "depth": 0.18, "at": Vector3(-0.04, 0.8, -0.08), "turn": Vector3(0.3, 0, 0.024)}
+const KIT_FLOOR := {"radius": 0.2, "depth": 0.34, "at": Vector3(0.5, 0.45, 0.16), "turn": Vector3.ZERO}
+const KIT_HATS := {"radius": 0.18, "at": Vector3(-0.6, 0.925, 0.1), "turn": Vector3.ZERO}  # (the top cymbal)
+const KIT_CRASH := {"radius": 0.23, "at": Vector3(-0.47, 1.33, -0.29), "turn": Vector3(0.35, 0, 0.2)}
+const KIT_RIDE := {"radius": 0.26, "at": Vector3(0.71, 1.09, -0.1), "turn": Vector3(0.22, 0, -0.25)}
+
+
+## An acoustic kit's parts as the audio core hears them (instruments.h: KitPart, in its order): the kick's front and
+## batter heads, the snare's top and bottom heads, the rack tom's and the floor tom's, the hi-hat, the crash and the
+## ride. Each {at (its middle, from the floor under the kit's middle), facing, radius, plate (a cymbal)}.
+static func kit_parts() -> Array:
+	var out := []
+	var drums := [KIT_KICK, KIT_SNARE, KIT_RACK, KIT_FLOOR]
+	for d in drums.size():
+		var drum: Dictionary = drums[d]
+		var up := Basis.from_euler(drum.turn) * Vector3.UP
+		var head: float = drum.radius * 0.97
+		var top := {"at": drum.at + up * drum.depth / 2, "facing": up, "radius": head, "plate": false}
+		var under := {"at": drum.at - up * drum.depth / 2, "facing": -up, "radius": head, "plate": false}
+		# (the kick lies on its side, its turned up towards the stool: its batter head; its front head away from it)
+		out.append_array([under, top] if d == 0 else [top, under])
+	for cymbal: Dictionary in [KIT_HATS, KIT_CRASH, KIT_RIDE]:
+		out.append({"at": cymbal.at, "facing": Basis.from_euler(cymbal.turn) * Vector3.UP, "radius": cymbal.radius, "plate": true})
+	return out
+
 
 ## A cabinet's speakers, as the audio core hears them: each cone's middle (its dust cap, a little behind the grille), the
 ## middle of its grille, the middle of its open back (or null), from the floor under the middle of the cabinet, its
@@ -147,7 +177,7 @@ static func _drum_kit(node: Node3D, accent: Material, style := "machine") -> voi
 		var rug := Color(0.36, 0.12, 0.1) if style == "garage" else Color(0.1, 0.1, 0.12)
 		_box(node, Vector3(2.0, 0.008, 1.8), _plain(rug), Vector3(0, 0.004, 0.1))
 	# The kick, on its side: its batter head towards you, its front head (and its spurs) away.
-	_cylinder(node, 0.27, 0.42, accent, Vector3(0, 0.29, -0.15), Vector3(PI / 2, 0, 0))
+	_cylinder(node, KIT_KICK.radius, KIT_KICK.depth, accent, KIT_KICK.at, KIT_KICK.turn)
 	_cylinder(node, 0.262, 0.006, head, Vector3(0, 0.29, -0.364), Vector3(PI / 2, 0, 0))
 	_cylinder(node, 0.262, 0.006, head, Vector3(0, 0.29, 0.064), Vector3(PI / 2, 0, 0))
 	for z in [-0.36, 0.06]:
@@ -160,29 +190,31 @@ static func _drum_kit(node: Node3D, accent: Material, style := "machine") -> voi
 	_sphere(node, 0.025, _finish("head"), Vector3(0.04, 0.3, 0.095))
 	# The toms over the kick, tilted towards you.
 	_rod(node, Vector3(0, 0.55, -0.12), Vector3(0, 0.74, -0.1), 0.012, chrome)
-	for x in ([-0.17, 0.17] if style == "machine" else [-0.04]):
-		_drum(node, 0.14 if style == "machine" else 0.15, 0.17 if style == "machine" else 0.18, Vector3(x, 0.8, -0.08),
-			Vector3(0.3, 0, -x * 0.6), accent, head)
+	if style == "machine":
+		for x in [-0.17, 0.17]:
+			_drum(node, 0.14, 0.17, Vector3(x, 0.8, -0.08), Vector3(0.3, 0, -x * 0.6), accent, head)
+	else:
+		_drum(node, KIT_RACK.radius, KIT_RACK.depth, KIT_RACK.at, KIT_RACK.turn, accent, head)
 	# The snare between your knees, a little to the left.
-	_drum(node, 0.18, 0.13, Vector3(-0.28, 0.62, 0.22), Vector3(0.12, 0, 0), accent, head)
+	_drum(node, KIT_SNARE.radius, KIT_SNARE.depth, KIT_SNARE.at, KIT_SNARE.turn, accent, head)
 	_tripod(node, Vector3(-0.28, 0.55, 0.22), 0.22, chrome)
 	# The floor tom on three legs, to your right.
-	_drum(node, 0.2, 0.34, Vector3(0.5, 0.45, 0.16), Vector3.ZERO, accent, head)
+	_drum(node, KIT_FLOOR.radius, KIT_FLOOR.depth, KIT_FLOOR.at, KIT_FLOOR.turn, accent, head)
 	for i in 3:
 		var a := TAU * i / 3.0 + 0.4
 		_rod(node, Vector3(0.5 + cos(a) * 0.2, 0.5, 0.16 + sin(a) * 0.2), Vector3(0.5 + cos(a) * 0.26, 0.0, 0.16 + sin(a) * 0.26), 0.008, chrome)
 	# The hi-hat on your left, its pedal under your left foot.
 	_tripod(node, Vector3(-0.6, 0.9, 0.1), 0.24, chrome)
-	for y in [0.9, 0.925]:
-		_cylinder(node, 0.18, 0.006, bronze, Vector3(-0.6, y, 0.1))
+	for y in [KIT_HATS.at.y - 0.025, KIT_HATS.at.y]:
+		_cylinder(node, KIT_HATS.radius, 0.006, bronze, Vector3(KIT_HATS.at.x, y, KIT_HATS.at.z))
 	_box(node, Vector3(0.09, 0.02, 0.25), black, Vector3(-0.56, 0.03, 0.32), Vector3(0.12, 0, 0))
 	# The crash behind on your left and the ride on your right, on boom stands, tilted towards you.
 	_tripod(node, Vector3(-0.62, 1.18, -0.42), 0.26, chrome)
 	_rod(node, Vector3(-0.62, 1.18, -0.42), Vector3(-0.48, 1.32, -0.3), 0.01, chrome)
-	_cylinder(node, 0.23, 0.006, bronze, Vector3(-0.47, 1.33, -0.29), Vector3(0.35, 0, 0.2))
+	_cylinder(node, KIT_CRASH.radius, 0.006, bronze, KIT_CRASH.at, KIT_CRASH.turn)
 	_tripod(node, Vector3(0.82, 1.0, -0.22), 0.24, chrome)
 	_rod(node, Vector3(0.82, 1.0, -0.22), Vector3(0.72, 1.08, -0.12), 0.01, chrome)
-	_cylinder(node, 0.26, 0.007, bronze, Vector3(0.71, 1.09, -0.1), Vector3(0.22, 0, -0.25))
+	_cylinder(node, KIT_RIDE.radius, 0.007, bronze, KIT_RIDE.at, KIT_RIDE.turn)
 	# The stool, on your side.
 	_cylinder(node, 0.17, 0.08, black, Vector3(0, 0.52, 0.66))
 	_tripod(node, Vector3(0, 0.48, 0.66), 0.22, chrome)

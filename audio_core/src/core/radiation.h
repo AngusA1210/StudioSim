@@ -81,10 +81,26 @@ RadiatedPath radiate(const Radiator& r, int path, Vec3 at, float ref_distance);
 struct Facing {
     float cut_hz = 20000.0f;
     float gain = 1.0f;
+    float high_db = 0.0f;  // (a part's: its highs, above kCapHighHz, off its axis)
 };
 Facing facingFrom(const Radiator& r, Vec3 centre, Vec3 at);
 // What the room's reverb hears of it: its sound all round (its power response), which beaming leaves duller than what
 // is heard on its axis: a one-pole low-pass's corner.
 float powerCutHz(const Radiator& r);
+
+// A part of an instrument that sounds on its own, from its own place, with a sound of its own (an acoustic kit's,
+// instruments.h: KitPart). A drum's head is a disc with a near field close up (its level levelling off within about its
+// radius, the lows fuller); it is no rigid cone, though: its many modes, and the stick, radiate widely, so off its axis
+// it loses only some of its highs (6 dB edge on), and behind it, where the drum's shell is in the way, more (12 dB
+// straight behind; its lows bend round). A cymbal is a plate: heard from both its faces, its sound mostly high, so all
+// round alike but quieter edge on, with a near field of its own size.
+struct SoundingPart {
+    Vec3 centre{};
+    Vec3 facing{0.0f, 1.0f, 0.0f};  // the way the head faces, out of the drum (a cymbal's: up, as it is mounted)
+    float radius = 0.15f;           // metres
+    bool plate = false;             // a cymbal
+};
+RadiatedPath radiatePart(const SoundingPart& part, Vec3 at, float ref_distance);
+Facing facingFromPart(const SoundingPart& part, Vec3 at);
 
 }  // namespace sr

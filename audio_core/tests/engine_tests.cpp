@@ -3502,6 +3502,218 @@ int main(int argc, char** argv) {
     }
 
     {
+        std::printf("\nAn acoustic kit, drum by drum\n");
+        // A studio kit standing with its middle 2 m north of the room's, its stool to the south, each of its parts where
+        // the game draws it (game/scripts/instrument_models.gd: kit_parts), the rest of the room silent.
+        Room room;
+        room.hearMix();
+        room.quietRoom(-1);
+        room.engine.setLimiter(false);
+        const Vec3 floor_at{0.0f, 0.0f, -2.0f};
+        const int kit = room.engine.addSource(InstrumentKind::StudioDrums, {floor_at.x, 0.6f, floor_at.z}, 1.0f, 0.0f);
+        room.engine.setSourceMuted(kit, true);  // (its own track out of the mix: the mics' alone)
+        const auto turned_up = [](float x, float z) {  // a turn's up (YXZ, as Godot's): about z, then about x
+            const Vec3 a{-std::sin(z), std::cos(z), 0.0f};
+            return Vec3{a.x, a.y * std::cos(x), a.y * std::sin(x)};
+        };
+        const auto at = [&](float x, float y, float z) { return Vec3{floor_at.x + x, floor_at.y + y, floor_at.z + z}; };
+        const auto plus = [](Vec3 a, Vec3 b, float k) { return Vec3{a.x + b.x * k, a.y + b.y * k, a.z + b.z * k}; };
+        std::vector<SoundingPart> parts;
+        struct Drum { Vec3 middle, up; float radius, depth; };
+        const Drum drums[] = {{at(0.0f, 0.29f, -0.15f), {0.0f, 0.0f, 1.0f}, 0.27f, 0.42f},
+                              {at(-0.28f, 0.62f, 0.22f), turned_up(0.12f, 0.0f), 0.18f, 0.13f},
+                              {at(-0.04f, 0.8f, -0.08f), turned_up(0.3f, 0.024f), 0.15f, 0.18f},
+                              {at(0.5f, 0.45f, 0.16f), {0.0f, 1.0f, 0.0f}, 0.2f, 0.34f}};
+        for (const Drum& d : drums) {
+            const Vec3 down{-d.up.x, -d.up.y, -d.up.z};
+            const SoundingPart top{plus(d.middle, d.up, 0.5f * d.depth), d.up, 0.97f * d.radius, false};
+            const SoundingPart under{plus(d.middle, down, 0.5f * d.depth), down, 0.97f * d.radius, false};
+            if (&d == &drums[0]) parts.insert(parts.end(), {under, top});  // (the kick: its front head, then its batter head)
+            else parts.insert(parts.end(), {top, under});
+        }
+        parts.push_back({at(-0.6f, 0.925f, 0.1f), {0.0f, 1.0f, 0.0f}, 0.18f, true});
+        parts.push_back({at(-0.47f, 1.33f, -0.29f), turned_up(0.35f, 0.2f), 0.23f, true});
+        parts.push_back({at(0.71f, 1.09f, -0.1f), turned_up(0.22f, -0.25f), 0.26f, true});
+        room.engine.setSourceParts(kit, parts);
+        const SoundingPart& snare_top = parts[size_t(KitPart::SnareTop)];
+        const SoundingPart& snare_under = parts[size_t(KitPart::SnareBottom)];
+        const SoundingPart& kick_front = parts[size_t(KitPart::KickFront)];
+        // Two microphones (flat omnis), the first heard on the left and the second on the right, each padded 20 dB (a
+        // snare 4 cm from a mic is far louder than anything else in the room, as an engineer setting gains knows).
+        const auto pair = [&](Vec3 left, Vec3 right) {
+            const int a = room.engine.addSource(InstrumentKind::Mic, left, 1.0f, 0.0f);
+            const int b = room.engine.addSource(InstrumentKind::Mic, right, 1.0f, 0.0f);
+            room.engine.setSourcePan(a, -1.0f);
+            room.engine.setSourcePan(b, 1.0f);
+            room.engine.setSourceVolume(a, 0.1f);
+            room.engine.setSourceVolume(b, 0.1f);
+            room.engine.setSourceInput(a, true);
+            room.engine.setSourceInput(b, true);
+            renderSeconds(room.engine, 0.3);
+            return std::make_pair(a, b);
+        };
+        const auto hit = [&](Drums::Piece piece) {
+            room.engine.noteOn(kit, Drums::noteFor(piece), 0.9f);
+            const Render r = renderSeconds(room.engine, 0.5);
+            renderSeconds(room.engine, 0.7);
+            return r;
+        };
+        const auto energy = [](const std::vector<float>& x) {
+            double e = 0.0;
+            for (float v : x) e += double(v) * v;
+            return e;
+        };
+        const auto lowpassed = [](const std::vector<float>& x, float hz) {
+            Biquad lp[2];
+            for (auto& f : lp) f.set(Biquad::Lowpass, 48000.0f, hz, 0.707f);
+            std::vector<float> y(x.size());
+            for (size_t i = 0; i < x.size(); ++i) y[i] = lp[1].process(lp[0].process(x[i]));
+            return y;
+        };
+        const auto release = [&](std::pair<int, int> mics) {
+            room.engine.removeSource(mics.first);
+            room.engine.removeSource(mics.second);
+            renderSeconds(room.engine, 0.2);
+        };
+
+        // A mic 4 cm over the snare, and one 10 cm out from the kick's front head, against an overhead 1.75 m up: each
+        // holds its own drum further above what bleeds into it than the overhead does, in its own drum's band: the
+        // snare's above 150 Hz, against the hi-hat 40 cm away (a kick sets the snare's wires buzzing, which the snare's
+        // mic rightly hears, so the kick is no measure of it); the kick's below, against the snare (a kick's front head
+        // is nearly all boom).
+        const auto close = pair(plus(snare_top.centre, snare_top.facing, 0.04f), plus(kick_front.centre, kick_front.facing, 0.1f));
+        const Render snare_hit = hit(Drums::Snare), kick_hit = hit(Drums::Kick), hats_hit = hit(Drums::HatClosed);
+        release(close);
+        const auto reference = pair(at(-0.5f, 1.75f, -0.1f), at(0.5f, 1.75f, -0.1f));
+        const Render snare_over = hit(Drums::Snare), kick_over = hit(Drums::Kick), hats_over = hit(Drums::HatClosed);
+        release(reference);
+        const auto band = [](const std::vector<float>& x, bool highs) {
+            Biquad f[2];
+            for (auto& each : f) each.set(highs ? Biquad::Highpass : Biquad::Lowpass, 48000.0f, 150.0f, 0.707f);
+            double e = 0.0;
+            for (float v : x) {
+                const float y = f[1].process(f[0].process(v));
+                e += double(y) * y;
+            }
+            return e;
+        };
+        const auto apart = [&](const std::vector<float>& own, const std::vector<float>& other, bool highs) {
+            return 10.0 * std::log10(band(own, highs) / band(other, highs));
+        };
+        const double snare_held = apart(snare_hit.l, hats_hit.l, true) - apart(snare_over.l, hats_over.l, true);
+        const double kick_held = apart(kick_hit.r, snare_hit.r, false) - apart(kick_over.l, snare_over.l, false);
+        check(snare_held > 10.0 && kick_held > 10.0, "close mics keep their drums apart: each holds its own drum far further above what bleeds into it than an overhead does",
+              fmt("the snare %.1f dB further over the hi-hat at its mic, ", snare_held) + fmt("the kick %.1f dB further over the snare at its", kick_held));
+
+        // Over the snare and under it, 5 cm from each head: the drum itself in opposite polarity (its heads move together),
+        // and the wires stretched across its bottom head heard most from under it.
+        const auto snare_pair = pair(plus(snare_top.centre, snare_top.facing, 0.05f), plus(snare_under.centre, snare_under.facing, 0.05f));
+        const Render both = hit(Drums::Snare);
+        const std::vector<float> over_low = lowpassed(both.l, 600.0f), under_low = lowpassed(both.r, 600.0f);
+        double cross = 0.0;
+        for (size_t i = 0; i < over_low.size(); ++i) cross += double(over_low[i]) * under_low[i];
+        const double correlation = cross / std::sqrt(energy(over_low) * energy(under_low));
+        double over_low_e, over_high_e, under_low_e, under_high_e;
+        bandEnergy(both.l, 48000.0f, over_low_e, over_high_e);
+        bandEnergy(both.r, 48000.0f, under_low_e, under_high_e);
+        const double wires = 10.0 * std::log10((under_high_e / under_low_e) / (over_high_e / over_low_e));
+        check(correlation < -0.5 && wires > 3.0,
+              "a mic under the snare hears the drum in opposite polarity to one over it, and more of its wires",
+              fmt("below 600 Hz, correlated %+.2f; ", correlation) + fmt("the top end %.1f dB stronger under it", wires));
+        release(snare_pair);
+
+        // Spaced overheads 1.75 m up, a metre apart across the kit: the hi-hat (on the drummer's left) louder in the left
+        // one, the floor tom (on the right) in the right one; and the snare as much later in the left one than at a mic
+        // over it as it is further.
+        const auto overheads = pair(at(-0.5f, 1.75f, -0.1f), at(0.5f, 1.75f, -0.1f));
+        const Render hats = hit(Drums::HatClosed), floor_tom = hit(Drums::TomLow), snared = hit(Drums::Snare);
+        const double hats_left = 10.0 * std::log10(energy(hats.l) / energy(hats.r));
+        const double floor_right = 10.0 * std::log10(energy(floor_tom.r) / energy(floor_tom.l));
+        check(hats_left > 2.0 && floor_right > 2.0, "spaced overheads hear the hi-hat on the left and the floor tom on the right, as they stand",
+              fmt("the hi-hat %.1f dB louder on the left, ", hats_left) + fmt("the floor tom %.1f dB on the right", floor_right));
+        release(overheads);
+        const Vec3 overhead = at(-0.5f, 1.75f, -0.1f), over_snare = plus(snare_top.centre, snare_top.facing, 0.05f);
+        const auto timing = pair(over_snare, overhead);
+        const Render timed = hit(Drums::Snare);
+        const auto distance = [](Vec3 a, Vec3 b) { return std::sqrt((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y) + (a.z - b.z) * (a.z - b.z)); };
+        // (how much later, from where the stick's crack lines up best, above 2 kHz)
+        const auto crack = [](const std::vector<float>& x) {
+            Biquad hp[2];
+            for (auto& f : hp) f.set(Biquad::Highpass, 48000.0f, 2000.0f, 0.707f);
+            std::vector<float> y(std::min<size_t>(x.size(), 4800));
+            for (size_t i = 0; i < y.size(); ++i) y[i] = hp[1].process(hp[0].process(x[i]));
+            return y;
+        };
+        const std::vector<float> near_crack = crack(timed.l), far_crack = crack(timed.r);
+        double best = -1e30;
+        int lag = 0;
+        for (int d = 0; d < 600; ++d) {
+            double c = 0.0;
+            for (size_t i = 0; i + size_t(d) < far_crack.size(); ++i) c += double(near_crack[i]) * far_crack[i + size_t(d)];
+            if (c > best) {
+                best = c;
+                lag = d;
+            }
+        }
+        const double later = double(lag);
+        const double expected = (distance(overhead, snare_top.centre) - distance(over_snare, snare_top.centre)) / 343.0 * 48000.0;
+        check(std::fabs(later - expected) < 12.0, "the snare reaches an overhead as much later than its close mic as it is further",
+              fmt("%.0f samples later, ", later) + fmt("%.0f for the distance", expected));
+        release(timing);
+
+        // And the listener, standing at the stool facing the kit, hears each piece from where it stands: the hi-hat on
+        // the left, the floor tom on the right.
+        room.engine.setSourceMuted(kit, false);
+        room.engine.setMonitor(AudioEngine::Monitor::Room);
+        room.engine.setBinaural(false);
+        room.engine.setListener(at(0.0f, 1.2f, 0.75f), {0.0f, 0.0f, -1.0f}, {0.0f, 1.0f, 0.0f});
+        renderSeconds(room.engine, 0.3);
+        const Render heard_hats = hit(Drums::HatClosed), heard_floor = hit(Drums::TomLow);
+        const double hats_heard = 10.0 * std::log10(energy(heard_hats.l) / energy(heard_hats.r));
+        const double floor_heard = 10.0 * std::log10(energy(heard_floor.r) / energy(heard_floor.l));
+        check(hats_heard > 3.0 && floor_heard > 3.0, "sitting at the kit, the hi-hat is heard on the left and the floor tom on the right",
+              fmt("the hi-hat %.1f dB louder on the left, ", hats_heard) + fmt("the floor tom %.1f dB on the right", floor_heard));
+
+        // Heard from 3 m off, in front, behind or beside it, either kit is about as loud as the drum machine there, as
+        // their starting levels have it (game/scripts/catalog.gd: the drums 0.50, the garage kit 0.38, the studio kit
+        // 0.45): its heads share each drum between them so that, together, from a distance, they are the kit as tuned.
+        const auto heard_from = [&](InstrumentKind kind, float gain, Vec3 ear, Vec3 look) {
+            AudioEngine engine;
+            std::string err;
+            engine.init(&err);
+            const int id = engine.addSource(kind, {floor_at.x, 0.6f, floor_at.z}, gain, 0.0f);
+            if (kind != InstrumentKind::Drums) engine.setSourceParts(id, parts);
+            engine.setReverb(false);
+            engine.setSequencerRunning(false);
+            engine.setEarlyReflections(false);
+            engine.setFloorReflection(0.0f);
+            engine.setLimiter(false);
+            engine.setListener(ear, look, {0.0f, 1.0f, 0.0f});
+            renderSeconds(engine, 0.3);
+            double e = 0.0;
+            for (int beat = 0; beat < 16; ++beat) {  // kick, hat, snare, hat
+                engine.noteOn(id, beat % 4 == 0 ? 36 : beat % 4 == 2 ? 38 : 42, 0.9f);
+                const Render r = renderSeconds(engine, 0.25);
+                e += energy(r.l) + energy(r.r);
+            }
+            return 10.0 * std::log10(e);
+        };
+        double furthest_apart = 0.0;
+        std::string sides;
+        const std::pair<Vec3, Vec3> spots[] = {{at(0.0f, 1.65f, -3.0f), {0.0f, 0.0f, 1.0f}}, {at(0.0f, 1.65f, 3.0f), {0.0f, 0.0f, -1.0f}},
+                                               {at(3.0f, 1.65f, 0.0f), {-1.0f, 0.0f, 0.0f}}};
+        for (const auto& [ear, look] : spots) {
+            const double machine = heard_from(InstrumentKind::Drums, 0.50f, ear, look);
+            const double garage = heard_from(InstrumentKind::GarageDrums, 0.38f, ear, look) - machine;
+            const double studio = heard_from(InstrumentKind::StudioDrums, 0.45f, ear, look) - machine;
+            furthest_apart = std::max({furthest_apart, std::fabs(garage), std::fabs(studio)});
+            sides += fmt("%+.1f/", garage) + fmt("%+.1f ", studio);
+        }
+        check(furthest_apart < 3.5, "heard from 3 m off on any side, either kit is about as loud as the drum machine",
+              "garage/studio against it, in front, behind and beside: " + sides);
+    }
+
+    {
         std::printf("\nMicrophones\n");
         // A flat omni microphone beside the drums, then three times as far. The drums are taken out of the mix by a
         // solo elsewhere (so what is heard is the microphone's track alone), but they still sound in the room.

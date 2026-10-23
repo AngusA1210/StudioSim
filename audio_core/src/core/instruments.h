@@ -40,6 +40,12 @@ public:
     // Adds the next `n` samples of this instrument into `out` (mono).
     virtual void render(float* out, int n) = 0;
 
+    // An instrument heard from several places at once (an acoustic kit: each drum's two heads, each cymbal) has parts,
+    // each sounding on its own, for the room to hear each from where it is. renderParts adds its own sound into `out`
+    // (as render does: its track's sound) and each part's into `parts[p]`.
+    virtual int parts() const { return 0; }
+    virtual void renderParts(float* out, float* const* /*parts*/, int n) { render(out, n); }
+
     // Played live. The note sounds from the start of the next block.
     virtual void noteOn(int /*note*/, float /*velocity*/) {}
     virtual void noteOff(int /*note*/) {}
@@ -208,10 +214,22 @@ struct KitVoicing {
     float room;                       // a small hard room's first reflections, heard with the kit (0: none)
 };
 
+// The parts of an acoustic kit that sound on their own, as the room hears them: each drum's batter head (the one it is
+// hit on) and its resonant head (the other), and each cymbal. A drum's two heads move together when it is hit (the
+// air inside pushes the far one out as the stick pushes the near one in), so what both carry of the drum is in
+// opposite polarity either side, as a mic under a snare hears it against one over it; the resonant head carries less
+// of the stick, and the snare's wires, stretched across its resonant head, are heard most from under it.
+enum class KitPart : int {
+    KickFront, KickBatter, SnareTop, SnareBottom, RackTop, RackBottom, FloorTop, FloorBottom, HiHat, Crash, Ride, kCount
+};
+constexpr int kKitParts = int(KitPart::kCount);
+
 // An acoustic drum kit. Each drum is its head's modes, settling in pitch after the hit, with the stick or beater on
 // top; the snare's wires buzz along with the kick and toms; the hats choke when closed; the crash's and ride's washes
 // build when hit again; harder hits are brighter, and no two hits are quite alike. The same eight pieces and keys as
-// the drum machine, except that the clap's key (D#, as General MIDI's ride at 51) plays a ride.
+// the drum machine, except that the clap's key (D#, as General MIDI's ride at 51) plays a ride. Its parts (KitPart)
+// are heard in the room each from its own place, as the kit itself is, untouched; its own sound (its track's) is the
+// kit as one, with its voicing's drive and room.
 class AcousticKit : public Instrument {
 public:
     using Piece = Drums::Piece;
@@ -224,9 +242,35 @@ public:
     void noteOn(int note, float velocity) override { hit(Drums::pieceFor(note), velocity, 0); }
     void play(int note, float /*dur_sec*/, float velocity, int delay) override { hit(Drums::pieceFor(note), velocity, delay); }
     float velocityJitter() const override { return 0.06f; }
-    void render(float* out, int n) override;
+    void render(float* out, int n) override { renderParts(out, nullptr, n); }
+    int parts() const override { return kKitParts; }
+    void renderParts(float* out, float* const* parts, int n) override;
 
 private:
+    // Which parts a voice sounds from, and how much of it each carries (negative: in opposite polarity).
+    struct PartMix {
+        KitPart a = KitPart::SnareTop, b = KitPart::kCount;  // (kCount: none)
+        float to_a = 1.0f, to_b = 0.0f;
+    };
+    void from(KitPart a, float to_a, KitPart b = KitPart::kCount, float to_b = 0.0f) {
+        mix_ = {a, b, to_a, to_b};
+        sharing_ = false;
+    }
+    // Or a drum's two heads: its batter head, and its resonant head moving `against` as much in opposite polarity, the
+    // two `depth` metres apart; each voice shared between them by its frequency (share).
+    void drum(KitPart batter, KitPart resonant, float against, float depth) {
+        mix_ = {batter, resonant, 1.0f, -against};
+        depth_ = depth;
+        sharing_ = true;
+    }
+    PartMix share(float hz) const;
+    PartMix mix_;  // what the voices started next sound from
+    float depth_ = 0.0f;
+    bool sharing_ = false;
+    std::array<PartMix, 48> mode_parts_{};
+    std::array<PartMix, 24> noise_parts_{};
+    std::array<PartMix, 12> metal_parts_{};
+
     void mode(int delay, float freq, float sharp, float glide, float level, float decay);
     void noise(int delay, Biquad::Type type, float freq, float q, float level, float decay);
     void metal(int delay, float base, float band, float high, float level, float decay, float noise_share, int group);

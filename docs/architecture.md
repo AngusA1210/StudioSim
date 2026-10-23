@@ -23,7 +23,7 @@ game/                      Godot project: the room, player, instruments, HUD, me
 audio_core/
   src/core/                the audio engine, plain C++ with no Godot dependency
     engine.*               device, command queue, the room and the mix, the shared clock; microphones hearing the room
-    radiation.*            how a cabinet's cones radiate: beaming, the near field, open and closed backs
+    radiation.*            how a cabinet's cones radiate (beaming, the near field, open and closed backs), and a kit's heads and cymbals
     plugin_host*           plug-ins: which format a plug-in is in, Audio Units (macOS), VST3 (everywhere)
     plugin_window_*        a plug-in's own window, on each platform
     midi_input_*           MIDI keyboards, on each platform (CoreMIDI, WinMM)

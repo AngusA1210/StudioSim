@@ -82,6 +82,10 @@ public:
     float get_mic_noise(const String& model) const;  // its noise and its preamp's, as a sound level (dB SPL)
     void set_source_pan(int id, float pan);
     void set_bus_mono(int id, bool mono);  // a folder's bus: summed to mono (its pan places it), or stereo (its pan a balance)
+    // An acoustic kit's parts (each drum's heads, each cymbal), in its own order: where each is, the way it faces, how
+    // big it is, and whether it is a cymbal.
+    void set_source_parts(int id, const PackedVector3Array& centres, const PackedVector3Array& facings, const PackedFloat32Array& radii,
+                          const PackedByteArray& plates);
     // An amp's cabinet in the room (AudioEngine::setSourceRadiator): its cones' middles, the way its baffle faces, the
     // speakers' size in inches, its open back's middle (if open), the baffle's width. No cones: a point source again.
     // A PA speaker's horn covers `coverage_deg` either side of its axis above `crossover_hz` (0: a plain cone).

@@ -38,9 +38,10 @@ recording, mixing, room acoustics, and how the code is put together.
 
 ## Roadmap
 
-1. Windows played and listened to on a real machine, with ASIO.
-2. An avatar of adjustable height, and a free camera.
-3. Multiplayer: a session server, a shared clock, and low-latency audio between players.
+1. Drums miked as in a studio: begun, with each drum's heads and each cymbal heard from its own place.
+2. Windows played and listened to on a real machine, with ASIO.
+3. An avatar of adjustable height, and a free camera.
+4. Multiplayer: a session server, a shared clock, and low-latency audio between players.
 
 The full list is in [docs/roadmap.md](docs/roadmap.md).
 

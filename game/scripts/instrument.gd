@@ -93,7 +93,7 @@ var _normal_gain := 1.0  # what 0 dB on its fader means to the audio core
 var _sent_position := Vector3.INF  # where the audio core last heard this instrument was
 var _sent_aim := Vector3.INF       # and, a microphone, which way it points
 var _capsules_moved := false       # a stereo mic set up afresh: its capsules sent again
-var _sent_speakers := ""           # an amp: where its cabinet was, and which, when the audio core was last told
+var _sent_speakers := ""           # an amp: where its cabinet was, and which (a kit: where it was), when the audio core was last told
 var _labels_shown := true          # (the title screen hides the names)
 var _model: Node3D
 var _accent: StandardMaterial3D  # the parts in its own colour, which light up as it plays
@@ -322,6 +322,8 @@ func _show_looper() -> void:
 func sync_position() -> void:
 	if radiates():
 		_sync_speakers()
+	elif has_parts():
+		_sync_parts()
 	elif not global_position.is_equal_approx(_sent_position):
 		_sent_position = global_position
 		_audio.set_source_position(source_id, global_position)
@@ -369,8 +371,51 @@ func speakers_in_room() -> Dictionary:
 		"facing": global_transform.basis.z.normalized(), "inches": local.inches, "width": local.width, "coverage": local.coverage}
 
 
-## Where its sound comes from, as `from` has it: a loudspeaker's nearest cone, or anything else's middle.
+## Whether it is heard part by part (an acoustic kit: each drum's heads, each cymbal, each from its own place).
+func has_parts() -> bool:
+	return kind == "garage_drums" or kind == "studio_drums"
+
+
+## An acoustic kit, as the audio core hears it: each part where it is in the room, told again whenever the kit moves or
+## turns (and the kit itself from its middle, where the walls reflect it from).
+func _sync_parts() -> void:
+	var signature := str(global_transform)
+	if signature == _sent_speakers:
+		return
+	_sent_speakers = signature
+	_sent_position = global_position
+	var centres := PackedVector3Array()
+	var facings := PackedVector3Array()
+	var radii := PackedFloat32Array()
+	var plates := PackedByteArray()
+	for part: Dictionary in parts_in_room():
+		centres.append(part.at)
+		facings.append(part.facing)
+		radii.append(part.radius)
+		plates.append(1 if part.plate else 0)
+	_audio.set_source_position(source_id, global_position)
+	_audio.set_source_parts(source_id, centres, facings, radii, plates)
+
+
+## Its parts (Models.kit_parts) where they are in the room: each {at, facing, radius, plate}.
+func parts_in_room() -> Array:
+	var lift := Vector3(0, source_height, 0)  # (the model is drawn from the floor up)
+	var out := []
+	for part: Dictionary in Models.kit_parts():
+		out.append({"at": global_transform * (part.at - lift), "facing": (global_transform.basis * part.facing).normalized(),
+			"radius": part.radius, "plate": part.plate})
+	return out
+
+
+## Where its sound comes from, as `from` has it: a loudspeaker's nearest cone, a kit's nearest drum head or cymbal, or
+## anything else's middle.
 func sound_point(from: Vector3) -> Vector3:
+	if has_parts():
+		var nearest := Vector3.INF
+		for part: Dictionary in parts_in_room():
+			if nearest == Vector3.INF or part.at.distance_to(from) < nearest.distance_to(from):
+				nearest = part.at
+		return nearest
 	if not radiates():
 		return global_position
 	var best := Vector3.INF

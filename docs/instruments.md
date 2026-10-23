@@ -23,10 +23,32 @@ boom stand. The parts in the instrument's colour light up as it plays.
 drum is its head's modes settling in pitch after the hit, the snare's wires buzz along with the kick and toms,
 closing the hats chokes an open one, the crash's and ride's wash builds when hit again, harder hits are brighter, and
 no two hits are quite alike. The garage kit is raw: barely damped, a ringing snare with loose wires, toms left to
-ring (about 136 Hz and 85 Hz), trashy hats, a little crunch from being played loud, and the concrete walls slapping
-back. The studio kit is tuned and damped: a punchy kick with a clear beater, a tight snare, toms (about 146 Hz and
-96 Hz) that sing and stop, clean hats and smooth cymbals. All three kits are on the same keys, following the General
-MIDI drum map, except that the acoustic kits have a ride (D#, as at 51) where the drum machine has a clap.
+ring (about 136 Hz and 85 Hz), trashy hats, and in its own track a little crunch from being played loud and a garage's
+concrete walls slapping back. The studio kit is tuned and damped: a punchy kick with a clear beater, a tight snare,
+toms (about 146 Hz and 96 Hz) that sing and stop, clean hats and smooth cymbals. All three kits are on the same keys,
+following the General MIDI drum map, except that the acoustic kits have a ride (D#, as at 51) where the drum machine
+has a clap.
+
+**An acoustic kit in the room is heard drum by drum**, as a real one is: each drum's two heads and each cymbal sound
+from where they stand on the kit, so the microphones hear a kit as a studio's do.
+
+- A mic close to a drum hears that drum far above the rest, with the others bleeding in as much as their distance
+  has it (the hi-hat into the snare's mic, the kick's lows into everything), and each as late as it is far: an
+  overhead hears the snare as much later than the snare's own mic as it is further, and a spaced pair of overheads
+  hears the hi-hat on one side and the floor tom on the other.
+- A drum's heads move together when it is hit, so a mic under the snare hears it in opposite polarity to one over it
+  (flip the bottom mic's polarity, as in a studio), and far more of its wires, which are stretched across its bottom
+  head. Out in front, the kick is mostly boom; its beater's click is on its batter side.
+- Each head has a near field, as a speaker's cone does: close up its level levels off and its lows are fuller. Off
+  its axis it loses some of its highs, and behind it, where the shell is in the way, more. A cymbal sounds from both
+  its faces, quieter edge on.
+- Heard from a distance, a drum's two heads add up to the kit as it was tuned, so the kit sounds as it did from
+  across the room, and from any side.
+- A close mic on a drum is very loud: turn its gain down, as you would pad a mic in a studio. **Point it at** aims a
+  mic at the nearest drum head or cymbal.
+
+The kit's own track (its notes' sound, in the mix) is still the kit as one; the room hears the kit itself, and so do
+the mics and you.
 
 A **Plug-in Instrument** plays one of the instrument plug-ins on your Mac (Audio Unit synthesizers, samplers,
 pianos), chosen from the plug-in browser when you pick it, and takes that plug-in's name. MIDI controllers, the

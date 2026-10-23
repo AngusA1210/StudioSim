@@ -294,13 +294,18 @@ public:
     // beaming, with its near field and its open back; and the cabinet heard by the listener from where they stand
     // against its baffle (its position should be the middle of the baffle). No cones: a point source again.
     void setSourceRadiator(int id, const Radiator& radiator);
+    // An instrument with parts (an acoustic kit's drums' heads and cymbals, instruments.h: KitPart), in the room: where
+    // each is and how it faces, in the instrument's own order. Each is heard on its own, from its own place, by the
+    // listener and the microphones alike; its position should be the middle of the kit, where the walls reflect it from.
+    void setSourceParts(int id, const std::vector<SoundingPart>& parts);
     // How much of what the floor sends back up the microphones hear (1: all its material sends back, band by band; 0:
     // none): each mic hears each source again off the floor, from its image under it, as a mic a little way off a
     // floor-standing amp hears its floor bounce (a comb filter: notches where the bounce arrives half a wave late).
     // The microphones only: the listener has the room's reverb. All of it, to begin with.
     void setFloorReflection(float amount);
     // Its own ways, each again off the floor, and its reflections off the rest of the room (Reflections below).
-    static constexpr int kMaxWays = 2 * kMaxRadiatedPaths + 5 + 18 + 2 * RoomGeometry::kMaxWalls;
+    static constexpr int kMaxOwnWays = kKitParts > kMaxRadiatedPaths ? kKitParts : kMaxRadiatedPaths;  // (a cabinet's, a kit's)
+    static constexpr int kMaxWays = 2 * kMaxOwnWays + 5 + 18 + 2 * RoomGeometry::kMaxWalls;
     static constexpr float kSpeedOfSound = 343.0f;  // metres a second
     static constexpr float kMicNearest = 0.1f;      // metres: no closer than this, for the level
     static constexpr float kProximityNearest = 0.02f;  // and for the proximity effect
@@ -588,7 +593,7 @@ private:
             TimelinePlay, TimelineLoop, TrackSet, RecordArm, RecordStart, RecordStop, SourceOutput, AutomationRead, SendSet,
             MasterAutomation, MasterRead, SourceSoloMuted, MicPath, MicCone, SourceFacing, MicModelSet, MicAim, SourcePan, MicMidSide,
             SourceRoomGain, SourceRoomMuted, RoomVolume, MonitorSet, MasterInserts, AmpLoopMix, LimiterCeiling, BusMono,
-            Compensation, CompensationTotal, AmpLoopDelay, Echo, ScatterWall,
+            Compensation, CompensationTotal, AmpLoopDelay, Echo, ScatterWall, PartPath,
         } type = AddSource;
         int id = 0;
         float v[9] = {};

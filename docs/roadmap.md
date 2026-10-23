@@ -19,12 +19,17 @@ each with its master (the mix's with inserts), either one on the main outputs.
 
 To do, roughly in this order:
 
-1. **Windows, played**: built and checked on every change; next, played and listened to on a Windows machine, and
+1. **Drums miked as in a studio** (begun: an acoustic kit is heard drum by drum, each head and cymbal from its own
+   place, with the heads' polarity, near field and bleed). Next: a mic inside the kick (through its port), where across
+   a head a mic points (its middle's attack against its edge's ring, as a cone's dust cap against its edge), the
+   cymbals' own patterns (the ride's bell against its edge, the hi-hat's chick between its cymbals), drum-miking
+   setups placed in one go, and the mic panel showing each drum's distance and bleed.
+2. **Windows, played**: built and checked on every change; next, played and listened to on a Windows machine, and
    ASIO for interfaces whose Windows drivers want it.
-2. **You in the room**: an avatar whose height you can set (the ears and eyes go with it; the view is a little tall
+3. **You in the room**: an avatar whose height you can set (the ears and eyes go with it; the view is a little tall
    for some now), which multiplayer will show to the others; and a free camera, detached from the avatar, that flies
    about the room with nothing in its way.
-3. **Multiplayer**, the final goal: a session server, a networked clock, note events and low-latency audio streams.
+4. **Multiplayer**, the final goal: a session server, a networked clock, note events and low-latency audio streams.
 
 Also wanted along the way: MIDI on Linux, and VR through OpenXR. Perhaps later a free version with Jam rooms
 only, Record rooms coming with the full one.
