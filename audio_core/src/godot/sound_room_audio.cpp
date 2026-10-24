@@ -697,6 +697,7 @@ Dictionary SoundRoomAudio::get_stats() const {
     if (!engine_) return d;
     const sr::EngineStats s = engine_->stats();
     d["device_running"] = s.device_running;
+    d["device_reset"] = s.device_reset;
     d["backend"] = str(s.backend);
     d["output_device"] = str(s.output_device);
     d["output_channels"] = s.output_channels;

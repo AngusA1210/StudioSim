@@ -355,6 +355,8 @@ func _process(delta: float) -> void:
 	if _midi_poll > 2.0:  # the system tells us about new controllers too; this is the fallback
 		_midi_poll = 0.0
 		audio.poll_midi()
+		if audio.get_stats().get("device_reset", false):  # an ASIO driver changed in its own control panel
+			open_audio()
 	if options.has("screenshot") and _frames == int(options.get("frames", "90")):
 		var image := get_viewport().get_texture().get_image()
 		image.save_png(options.screenshot)

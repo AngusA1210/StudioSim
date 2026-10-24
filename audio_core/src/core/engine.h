@@ -55,9 +55,9 @@ struct AudioDeviceInfo {
 // Which devices to open and how, in the spirit of a DAW's playback-engine and I/O setup.
 struct DeviceConfig {
     DeviceMode mode = DeviceMode::Hardware;
-    std::string output_device;  // empty = the system default
+    std::string output_device;  // empty = the system default; "ASIO: <driver>" for an ASIO driver (Windows)
     bool input_enabled = false;
-    std::string input_device;   // empty = the system default
+    std::string input_device;   // empty = the system default; with an ASIO driver as the output, its own inputs
     int buffer_size = 128;      // frames: the hardware buffer and the engine's block size
     int output_left = 0, output_right = 1;  // which of the device's outputs carry the stereo mix
 };
@@ -65,6 +65,7 @@ struct DeviceConfig {
 struct EngineStats {
     bool device_running = false;
     bool live_input = false;       // the audio input (microphone, interface) is open
+    bool device_reset = false;     // the device wants reopening (an ASIO driver whose buffer size or rate was changed)
     std::string backend, output_device, input_device;
     int sample_rate = 0, block_size = 0, device_period = 0;
     int output_channels = 0, input_channels = 0;
@@ -597,6 +598,7 @@ public:
 private:
     struct Source;
     struct Device;
+    bool openAsio(const DeviceConfig& config, std::string* error);  // (Windows, with the ASIO SDK)
     struct Command {
         enum Type : uint8_t {
             AddSource, RemoveSource, SourcePosition, SourceDirectPath, SourceMuted, SourceInputChannel, Listener,

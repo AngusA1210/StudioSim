@@ -658,9 +658,11 @@ func _refresh_devices() -> void:
 
 	# How many inputs the speaker can choose from: what is open, or what the chosen device says it has.
 	_input_channels = int(s.get("input_channels", 0)) if app.live_input else 0
+	# (an ASIO driver as the output brings its own inputs, whichever input is chosen)
+	var input_name: String = app.settings.output_device if _is_asio(app.settings.output_device) else app.settings.input_device
 	if _input_channels == 0:
 		for device in inputs:
-			if device.name == app.settings.input_device or (app.settings.input_device == "" and device.is_default):
+			if device.name == input_name or (input_name == "" and device.is_default):
 				_input_channels = device.channels
 
 
@@ -738,6 +740,8 @@ func _refresh_live() -> void:
 		note = "Audio is not running."
 	elif settings.output_device != "" and s.output_device != settings.output_device:
 		note = "%s is not connected, so the system default is playing until it is." % settings.output_device
+	elif s.get("backend", "") == "ASIO" and int(s.get("device_period", 0)) != settings.buffer_size:
+		note = "The driver runs with a buffer of %d samples: the sizes it allows are set in its own control panel." % int(s.device_period)
 	elif float(s.device_ms) > 40.0:
 		note = "This device adds %.0f ms by itself, which is typical of Bluetooth. Wired headphones avoid it." % float(s.device_ms)
 	_engine_note.text = note
@@ -765,7 +769,8 @@ func _refresh_live() -> void:
 		_input_note.text = "%s is live: %.1f ms in, %.1f ms out. Wear headphones, or the microphone will pick up the speakers and feed back." % [
 			s.input_device, s.input_latency_ms, s.output_latency_ms]
 	else:
-		_input_note.text = "Switch a Speaker's input on (I when facing it, or its I button in the mix window) to hear a microphone or instrument through it. This switch does it for every Speaker. Inputs always start switched off. Wear headphones, or it will feed back."
+		_input_note.text = ("The ASIO driver's own inputs are the input, whichever is chosen here. " if _is_asio(settings.output_device) else "") + \
+			"Switch a Speaker's input on (I when facing it, or its I button in the mix window) to hear a microphone or instrument through it. This switch does it for every Speaker. Inputs always start switched off. Wear headphones, or it will feed back."
 	_input_note.add_theme_color_override("font_color", DIM)
 
 	# MIDI
@@ -1084,9 +1089,15 @@ func _fill_devices(option: OptionButton, devices: Array, unit: String) -> Array:
 			default_name = device.name
 	option.add_item("System default  (%s)" % default_name)
 	for device in devices:
-		option.add_item("%s   ·   %d %s" % [device.name, device.channels, unit])
+		# (an ASIO driver says how many channels it has only once it has been opened)
+		option.add_item("%s   ·   %d %s" % [device.name, device.channels, unit] if device.channels > 0 else device.name)
 		names.append(device.name)
 	return names
+
+
+## An ASIO driver (Windows), as the device lists name one.
+func _is_asio(device_name: String) -> bool:
+	return device_name.begins_with("ASIO: ")
 
 
 func _select(option: OptionButton, names: Array, wanted: String) -> void:

@@ -9,6 +9,9 @@
 
 #include "acoustics.h"
 #include "interpolation.h"
+#ifdef SR_ASIO
+#include "asio_device.h"
+#endif
 
 #ifdef __APPLE__
 #include <CoreAudio/CoreAudio.h>
@@ -123,6 +126,14 @@ std::vector<AudioDeviceInfo> listDevices(ma_device_type type) {
         }
     }
     ma_context_uninit(&context);
+#ifdef SR_ASIO
+    for (const AsioDriverInfo& driver : asioDrivers()) {  // each is an output and an input both
+        AudioDeviceInfo d;
+        d.name = driver.name;
+        d.channels = type == ma_device_type_playback ? driver.outputs : driver.inputs;
+        out.push_back(d);
+    }
+#endif
     return out;
 }
 
@@ -404,6 +415,9 @@ struct AudioEngine::Device {
     ma_context context{};
     ma_device device{};
     bool context_ok = false, device_ok = false;
+#ifdef SR_ASIO
+    std::unique_ptr<AsioStream> asio;  // an ASIO driver instead of miniaudio's device
+#endif
 
     ~Device() {
         if (device_ok) ma_device_uninit(&device);
@@ -584,8 +598,15 @@ bool AudioEngine::openDevice(const DeviceConfig& config, std::string* error) {
         return false;
     }
     stopDevice();
-    auto dev = std::make_unique<Device>();
     const bool null_mode = config.mode == DeviceMode::Null;
+#ifdef SR_ASIO
+    if (!null_mode && isAsioDevice(config.output_device)) return openAsio(config, error);
+    if (!null_mode && config.input_enabled && isAsioDevice(config.input_device)) {
+        if (error) *error = "an ASIO driver's inputs only work with its own outputs: choose " + config.input_device + " as the output too";
+        return false;
+    }
+#endif
+    auto dev = std::make_unique<Device>();
 
     ma_context_config cc = ma_context_config_init();
     ma_backend null_backend[] = {ma_backend_null};
@@ -684,6 +705,62 @@ bool AudioEngine::openDevice(const DeviceConfig& config, std::string* error) {
     device_ = std::move(dev);
     return true;
 }
+
+#ifdef SR_ASIO
+// An ASIO driver: the engine at its rate and buffer size, its inputs for the live input, rendered on its own thread.
+bool AudioEngine::openAsio(const DeviceConfig& config, std::string* error) {
+    auto dev = std::make_unique<Device>();
+    dev->asio = std::make_unique<AsioStream>();
+    AsioStream& asio = *dev->asio;
+    if (!asio.open(config.output_device, std::clamp(config.buffer_size, 16, 4096), config.input_enabled, error)) return false;
+    if (config.input_enabled && asio.inputs() == 0) {
+        if (error) *error = config.output_device + " has no inputs";
+        return false;
+    }
+    if (asio.sampleRate() < 22050 || asio.sampleRate() > 192000) {
+        if (error) *error = config.output_device + " is running at " + std::to_string(asio.sampleRate()) + " Hz; set it between 44.1 and 192 kHz";
+        return false;
+    }
+    if (!configure(asio.sampleRate(), std::clamp(asio.bufferSize(), 16, 4096), error)) return false;
+
+    EngineStats s;
+    s.backend = "ASIO";
+    s.output_device = config.output_device;
+    s.output_channels = asio.outputs();
+    s.sample_rate = asio.sampleRate();
+    s.block_size = block_;
+    s.device_period = asio.bufferSize();
+    s.buffer_ms = 1000.0 * s.device_period / s.sample_rate;
+    // The driver's output latency counts its buffer; what is left is its own (converters, the USB or Thunderbolt link).
+    s.device_ms = 1000.0 * std::max(asio.outputLatency() - asio.bufferSize(), 0) / s.sample_rate;
+    s.live_input = config.input_enabled;
+    if (config.input_enabled) {
+        s.input_device = config.output_device;
+        s.input_channels = asio.inputs();
+        s.input_latency_ms = 1000.0 * asio.inputLatency() / s.sample_rate;
+    }
+    s.device_running = true;
+
+    device_config_ = config;
+    device_config_.buffer_size = block_;
+    const int last = std::max(s.output_channels - 1, 0);
+    device_config_.output_left = std::clamp(config.output_left, 0, last);
+    device_config_.output_right = std::clamp(config.output_right, 0, last);
+    setOutputChannels(device_config_.output_left, device_config_.output_right);
+
+    realtime_.store(true, std::memory_order_release);
+    const auto callback = [](void* user, const float* input, int inputs, float* output, int outputs, int frames) {
+        static_cast<AudioEngine*>(user)->renderDevice(input, inputs, output, outputs, frames);
+    };
+    if (!asio.start(callback, this, error)) {
+        realtime_.store(false, std::memory_order_release);
+        return false;
+    }
+    device_stats_ = s;
+    device_ = std::move(dev);
+    return true;
+}
+#endif
 
 void AudioEngine::stopDevice() {
     device_.reset();
@@ -2624,6 +2701,9 @@ EngineStats AudioEngine::stats() const {
         s.sample_rate = sr_;
         s.block_size = block_;
     }
+#ifdef SR_ASIO
+    s.device_reset = device_ && device_->asio && device_->asio->resetWanted();
+#endif
     // The binaural rendering's delay is the engine's own, not the device's: it comes and goes with the setting.
     s.binaural_ms = binaural_wanted_ ? 1000.0 * steam_.binauralDelay() / sr_ : 0.0;
     s.compensation_ms = 1000.0 * compensation_total_ / sr_;
