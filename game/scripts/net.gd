@@ -10,8 +10,8 @@ extends Node
 ## The session's clock is the host's: each player reckons how far theirs is from it by asking the time, as NTP does
 ## (the reply that came back soonest is the truest). Starting the patterns sets the moment they start on it, a little
 ## ahead so that it reaches everyone first; each player starts theirs then, less their own output's latency, so the
-## first beat is heard at the same moment everywhere, and every half second each nudges theirs (by a few milliseconds
-## at most) to keep to where the session says the music is. Live notes are heard as soon as they arrive, as late as the
+## first beat is heard at the same moment everywhere, and every half second each nudges theirs (a few milliseconds
+## at a time) to keep to where the session says the music is. Live notes are heard as soon as they arrive, as late as the
 ## network makes them (as a player standing further off would be).
 
 signal changed  # a player came or went; hosting, joining or leaving
