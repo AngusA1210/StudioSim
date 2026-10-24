@@ -238,6 +238,9 @@ public:
     // The instrument's own volume in the room, after its inserts and before its fader: a Speaker's level knob, as on a
     // powered PA speaker. 1 = as it comes in.
     void setSourceVolume(int id, float gain);
+    // A microphone's polarity, inverted (Ø) or as it is, at its preamp with its gain: before it is recorded, as a
+    // console's polarity button. (The bottom snare mic's, against the top one's.)
+    void setSourcePolarity(int id, bool inverted);
 
     // ── The room ─────────────────────────────────────────────────────────────────────────────────────────
     // The room's inside dimensions in metres and the walls standing in it. The engine works out how each source's
@@ -598,7 +601,7 @@ private:
         enum Type : uint8_t {
             AddSource, RemoveSource, SourcePosition, SourceDirectPath, SourceMuted, SourceInputChannel, Listener,
             NoteOn, NoteOff, AllNotesOff, Binaural, Reverb, MasterVolume, SourceInput,
-            PatternNoteSet, PatternNoteRemove, PatternClear, PatternSteps, SourceLoop, SourceVolume,
+            PatternNoteSet, PatternNoteRemove, PatternClear, PatternSteps, SourceLoop, SourceVolume, SourcePolarity,
             SequencerRunning, Tempo, Swing, Click, ClickVolume, Reverb2, SourceGain, Falloff, LimiterOn,
             AmpKnob, AmpHeadSet, AmpCabinetSet, AmpSpeakerSet, LooperMemory, LooperAct, PedalBoardSet, PedalOn, PedalControl, SynthPlugin,
             TimelinePlay, TimelineLoop, TrackSet, RecordArm, RecordStart, RecordStop, SourceOutput, AutomationRead, SendSet,

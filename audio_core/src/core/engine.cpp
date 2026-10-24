@@ -176,6 +176,7 @@ struct AudioEngine::Source {
     int output = -1;                  // where it plays (the audio thread's): a bus's id, or -1 for the master
     float gain = 1.0f, gain_target = 1.0f, send = 1.0f;
     float volume = 1.0f, volume_target = 1.0f;  // its own volume, before the fader (setSourceVolume)
+    float polarity = 1.0f;                      // a microphone's: -1 inverted, at its preamp (setSourcePolarity)
     float mute_target = 1.0f, mute_gain = 1.0f;
     int input_channel = LiveInput::kAllInputs;
     bool input_on = false;  // see setSourceInput; kept by both threads (the game's copy survives a reconfigure)
@@ -1637,6 +1638,10 @@ void AudioEngine::setSourceVolume(int id, float gain) {
     Command c; c.type = Command::SourceVolume; c.id = id; c.v[0] = std::clamp(gain, 0.0f, 100.0f); push(c);
 }
 
+void AudioEngine::setSourcePolarity(int id, bool inverted) {
+    Command c; c.type = Command::SourcePolarity; c.id = id; c.v[0] = inverted ? -1.0f : 1.0f; push(c);
+}
+
 void AudioEngine::setSourceGain(int id, float gain) {
     Command c; c.type = Command::SourceGain; c.id = id; c.v[0] = std::clamp(gain, 0.0f, 100.0f); push(c);
 }
@@ -3085,6 +3090,9 @@ void AudioEngine::drainCommands() {
             case Command::SourceVolume:
                 if (s) s->volume_target = c.v[0];
                 break;
+            case Command::SourcePolarity:
+                if (s) s->polarity = c.v[0];
+                break;
             case Command::Falloff:
                 falloff_target_ = c.v[0];
                 if (clock_ == 0) falloff_ = falloff_target_;  // set before anything has played: nothing to glide from
@@ -3961,7 +3969,8 @@ void AudioEngine::hearCapsule(Source& mic, int capsule_index, float* out, float 
         shell_from[b] = capsule.shell[b];
         capsule.shell[b] += (capsule.shell_target[b] - capsule.shell[b]) * glide;
     }
-    if (capsule_index == 0) mic.volume += (mic.volume_target - mic.volume) * (1.0f - std::pow(1.0f - coef, float(block_)));
+    if (capsule_index == 0)  // (turned over, through nothing in 10 ms: no click)
+        mic.volume += (mic.volume_target * mic.polarity - mic.volume) * (1.0f - std::pow(1.0f - coef, float(block_)));
     for (int i = 0; i < block_; ++i) {
         const float r = (mic.capsule_count == 1 ? (rev_a[size_t(i)] + rev_b[size_t(i)]) * kDryPan
                                                  : (rev_a[size_t(i)] * 0.9f + rev_b[size_t(i)] * 0.1f) * 1.104f) * reverb_level;

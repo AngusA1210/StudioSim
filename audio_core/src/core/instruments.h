@@ -231,7 +231,9 @@ struct KitVoicing {
 //
 // Each head sounds in two layers: its middle (the drum's fundamental, where every part of the head moves together, and
 // the stick or beater, which strikes there) and its rim (its overtones and ring, whose modes are still at the middle
-// and strongest out towards the edge). A mic close to a head hears them as it is placed across it.
+// and strongest out towards the edge). A mic close to a head hears them as it is placed across it. A cymbal too: its
+// middle the stick's attack and ping, its rim the wash and sizzle at its edge (and a closed hi-hat's chick, the air its
+// two cymbals push out between them as they close).
 enum class KitPart : int {
     KickFront, KickBatter, SnareTop, SnareBottom, RackTop, RackBottom, FloorTop, FloorBottom, HiHat, Crash, Ride,
     KickPort, KickInside, kCount

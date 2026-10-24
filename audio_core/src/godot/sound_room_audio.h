@@ -57,6 +57,7 @@ public:
     bool is_source_blocked(int id) const;  // a wall stands between it and the listener
     void set_source_gain(int id, float gain);  // its level within the reference distance; 1 = as it was added
     void set_source_volume(int id, float gain);  // its own volume, after its inserts and before its fader (a Speaker's)
+    void set_source_polarity(int id, bool inverted);  // a microphone's, at its preamp (Ø)
     // The room's inside size (width, height, depth) in metres and the walls standing in it, each
     // {a: Vector2, b: Vector2, thickness: float, height: float, material: String} with a and b on the floor plan (x,
     // z); and what its own surfaces are made of, {floor, ceiling, north, south, east, west}: materials.h's ids

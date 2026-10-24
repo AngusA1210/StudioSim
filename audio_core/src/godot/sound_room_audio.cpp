@@ -671,6 +671,7 @@ Dictionary SoundRoomAudio::read_meter() {
     return d;
 }
 void SoundRoomAudio::set_source_volume(int id, float gain) { if (engine_) engine_->setSourceVolume(id, gain); }
+void SoundRoomAudio::set_source_polarity(int id, bool inverted) { if (engine_) engine_->setSourcePolarity(id, inverted); }
 float SoundRoomAudio::get_source_level(int id, bool pre_fader) const { return engine_ ? engine_->sourceLevel(id, pre_fader) : 0.0f; }
 float SoundRoomAudio::get_source_peak(int id, bool pre_fader) { return engine_ ? engine_->sourcePeak(id, pre_fader) : 0.0f; }
 PackedFloat32Array SoundRoomAudio::get_source_levels(int id, bool pre_fader) const {
@@ -1060,6 +1061,7 @@ void SoundRoomAudio::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_source_peaks", "id", "pre_fader"), &SoundRoomAudio::get_source_peaks, DEFVAL(false));
     ClassDB::bind_method(D_METHOD("get_source_reduction", "id"), &SoundRoomAudio::get_source_reduction);
     ClassDB::bind_method(D_METHOD("set_source_volume", "id", "gain"), &SoundRoomAudio::set_source_volume);
+    ClassDB::bind_method(D_METHOD("set_source_polarity", "id", "inverted"), &SoundRoomAudio::set_source_polarity);
     ClassDB::bind_method(D_METHOD("get_stats"), &SoundRoomAudio::get_stats);
 
     ClassDB::bind_method(D_METHOD("load_default_pattern", "id"), &SoundRoomAudio::load_default_pattern);

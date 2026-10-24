@@ -3645,6 +3645,17 @@ int main(int argc, char** argv) {
         check(correlation < -0.5 && wires > 3.0,
               "a mic under the snare hears the drum in opposite polarity to one over it, and more of its wires",
               fmt("below 600 Hz, correlated %+.2f; ", correlation) + fmt("the top end %.1f dB stronger under it", wires));
+        // Its polarity turned over at its preamp (Ø), as an engineer does, the two are together again.
+        room.engine.setSourcePolarity(snare_pair.second, true);
+        renderSeconds(room.engine, 0.2);
+        const Render turned = hit(Drums::Snare);
+        const std::vector<float> turned_over = lowpassed(turned.l, 600.0f), turned_under = lowpassed(turned.r, 600.0f);
+        double turned_cross = 0.0;
+        for (size_t i = 0; i < turned_over.size(); ++i) turned_cross += double(turned_over[i]) * turned_under[i];
+        const double together = turned_cross / std::sqrt(energy(turned_over) * energy(turned_under));
+        check(together > 0.5 && std::fabs(10.0 * std::log10(energy(turned.r) / energy(both.r))) < 0.5,
+              "the mic under the snare, its polarity inverted, is with the one over it, as loud as it was",
+              fmt("below 600 Hz, correlated %+.2f", together));
         release(snare_pair);
 
         // Spaced overheads 1.75 m up, a metre apart across the kit: the hi-hat (on the drummer's left) louder in the left
@@ -3748,6 +3759,26 @@ int main(int argc, char** argv) {
         const double more_click = click(ported.l) - click(ported.r), more_boom = boom(ported.l) - boom(ported.r);
         check(more_click > 3.0 && more_boom > 6.0, "just outside the kick's port a mic hears more of its beater's click, and more of its boom, than on its head",
               fmt("%+.1f dB of click, ", more_click) + fmt("%+.1f dB of boom", more_boom));
+
+        // A cymbal likewise: a close mic over the ride's bell hears the stick's ping on it; out at its edge (four fifths of
+        // the way), its wash, ringing on long after the ping has gone (a second on, against the first 50 ms).
+        const SoundingPart& ride = parts[size_t(KitPart::Ride)];
+        Vec3 out{1.0f - ride.facing.x * ride.facing.x, -ride.facing.x * ride.facing.y, -ride.facing.x * ride.facing.z};
+        const float out_length = std::sqrt(out.x * out.x + out.y * out.y + out.z * out.z);
+        out = {out.x / out_length, out.y / out_length, out.z / out_length};
+        const Vec3 over_bell = plus(ride.centre, ride.facing, 0.05f), over_rim = plus(over_bell, out, 0.8f * ride.radius);
+        const auto ride_pair = pair(over_bell, over_rim);
+        room.engine.noteOn(kit, 51, 0.9f);
+        const Render ridden = renderSeconds(room.engine, 1.4);
+        renderSeconds(room.engine, 0.5);
+        release(ride_pair);
+        const auto wash_on_ping = [&](const std::vector<float>& x) {
+            const std::vector<float> ping(x.begin(), x.begin() + 2400), wash(x.begin() + 48000, x.begin() + 67200);
+            return 10.0 * std::log10(band_energy(wash, 2000.0f, 16000.0f) / band_energy(ping, 2000.0f, 16000.0f));
+        };
+        const double bell_wash = wash_on_ping(ridden.l), rim_wash = wash_on_ping(ridden.r);
+        check(rim_wash - bell_wash > 4.0, "a close mic over the ride's bell hears the stick's ping; out at its edge, its wash",
+              fmt("the wash on the ping: %.1f dB over the bell, ", bell_wash) + fmt("%.1f dB near the edge", rim_wash));
 
         // And the listener, standing at the stool facing the kit, hears each piece from where it stands: the hi-hat on
         // the left, the floor tom on the right.

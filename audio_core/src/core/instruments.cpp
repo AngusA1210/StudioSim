@@ -520,7 +520,9 @@ void AcousticKit::noise(int delay, Biquad::Type type, float freq, float q, float
 void AcousticKit::metal(int delay, float base, float band, float high, float level, float decay, float noise_share, int group) {
     auto& v = pickVoice(metals_);
     v.start(sr_, delay, base, band, high, level, decay, noise_share, group);
-    metal_parts_[size_t(&v - metals_.data())] = mix_;
+    PartMix m = mix_;
+    m.layer = layer_;
+    metal_parts_[size_t(&v - metals_.data())] = m;
 }
 
 void AcousticKit::wash(voice::MetalHit& ring, int delay, float base, float band, float high, float level, float decay, float noise_share) {
@@ -600,22 +602,27 @@ void AcousticKit::hit(Piece piece, float velocity, int delay) {
             if (!open)
                 for (auto& m : metals_)
                     if (m.active && m.group == 1) m.choke(0.04f);
+            rim(true);  // (its sizzle, out at the edge where the two meet)
             metal(delay, 412.0f * tune, k.hat_band, 6200.0f, 0.55f * l * bright, open ? 0.75f : 0.075f, k.hat_noise, 1);
+            if (!open) noise(delay, Biquad::Bandpass, 1300.0f, 1.4f, 0.12f * l, 0.012f);  // the chick, as they close
+            rim(false);
             noise(delay, Biquad::Bandpass, 3200.0f, 1.2f, 0.18f * l, 0.008f);  // the stick's tick
             break;
         }
         case Ride:  // a ping on top of a wash that builds and hangs
             from(KitPart::Ride, 1.0f);
-            metal(delay, 523.0f * tune, 5200.0f, 3000.0f, 0.30f * l * bright, 0.4f, 0.15f, 0);
-            wash(ride_wash_, delay, 391.0f, 7000.0f, 4200.0f, 0.13f * l, 5.0f, k.cymbal_noise * 0.85f);
+            metal(delay, 523.0f * tune, 5200.0f, 3000.0f, 0.30f * l * bright, 0.4f, 0.15f, 0);  // (its ping and bell: its middle)
+            wash(ride_wash_, delay, 391.0f, 7000.0f, 4200.0f, 0.13f * l, 5.0f, k.cymbal_noise * 0.85f);  // (its wash: its rim)
             mode(delay, 3150.0f * tune, 1.0f, 0.01f, 0.05f * l, 1.2f);
             noise(delay, Biquad::Bandpass, 3600.0f, 1.5f, 0.12f * l, 0.01f);
             break;
         case Drums::Crash:
             from(KitPart::Crash, 1.0f);
             wash(crash_wash_, delay, 347.0f, 6500.0f, 3200.0f, 0.42f * l * bright, 3.5f, k.cymbal_noise);
+            rim(true);  // (its sizzle)
             noise(delay, Biquad::Highpass, 4500.0f, 0.7f, 0.22f * l * bright, 2.8f);
-            noise(delay, Biquad::Bandpass, 2000.0f, 0.8f, 0.12f * l, 0.05f);
+            rim(false);
+            noise(delay, Biquad::Bandpass, 2000.0f, 0.8f, 0.12f * l, 0.05f);  // (the stick)
             break;
         case Drums::kPieces:
             break;
@@ -643,10 +650,11 @@ void AcousticKit::renderParts(float* out, float* const* parts, int n) {
         for (size_t j = 0; j < modes_.size(); ++j) play(modes_[j], mode_parts_[j], [](voice::ModeHit& v) { return v.next(); });
         for (size_t j = 0; j < noises_.size(); ++j) play(noises_[j], noise_parts_[j], [&](voice::NoiseHit& v) { return v.next(rng_); });
         for (size_t j = 0; j < metals_.size(); ++j) play(metals_[j], metal_parts_[j], [&](voice::MetalHit& v) { return v.next(rng_); });
-        PartMix ride, crash;
+        PartMix ride, crash;  // (their washes: their rims)
         ride.part[0] = KitPart::Ride;
         crash.part[0] = KitPart::Crash;
         ride.gain[0] = crash.gain[0] = 1.0f;
+        ride.layer = crash.layer = 1;
         play(ride_wash_, ride, [&](voice::MetalHit& v) { return v.next(rng_); });
         play(crash_wash_, crash, [&](voice::MetalHit& v) { return v.next(rng_); });
         const size_t size = echoes_.size();

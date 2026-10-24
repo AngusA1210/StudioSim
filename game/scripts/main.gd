@@ -33,6 +33,7 @@ const AmpPanel := preload("res://scripts/amp_panel.gd")
 const PluginBrowser := preload("res://scripts/plugin_browser.gd")
 const SpeakerPanel := preload("res://scripts/speaker_panel.gd")
 const MicPanel := preload("res://scripts/mic_panel.gd")
+const KitMics := preload("res://scripts/kit_mics.gd")
 const Bindings := preload("res://scripts/bindings.gd")
 const Title := preload("res://scripts/title.gd")
 const Catalog := preload("res://scripts/catalog.gd")
@@ -1532,10 +1533,11 @@ func duplicate_instrument(inst, at = null):
 		audio.set_pattern_steps(copy.source_id, audio.get_pattern_steps(inst.source_id))
 		audio.set_pattern(copy.source_id, audio.get_pattern(inst.source_id))
 		copy.set_loop(inst.loop_on)
-	elif inst.is_mic:  # as high, as tilted, as loud, the same model (a stereo mic set up the same way), as panned
+	elif inst.is_mic:  # as high, as tilted, as loud (in the same polarity), the same model (a stereo mic set up the same way), as panned
 		set_mic_height(copy, inst.source_height)
 		set_mic_tilt(copy, inst.mic_tilt)
 		set_mic_gain(copy, inst.mic_gain_db)
+		set_mic_polarity(copy, inst.mic_inverted)
 		if inst.is_stereo_mic:
 			copy.mic_model = inst.mic_model
 			copy.mic_pattern = inst.mic_pattern
@@ -1845,10 +1847,31 @@ func set_mic_gain(mic, db: float) -> void:
 	mic.set_mic_gain(db)
 
 
+## An acoustic kit miked up in one go (kit_mics.gd's setups: "full", "close", "four"): its mics, in a folder of their
+## own, or [] (and a notice) if the room hasn't space for them.
+func mic_kit(kit, setup: String) -> Array:
+	var mics: Array = await KitMics.place(self, kit, setup)
+	if mics.is_empty():
+		session.notice.emit("There isn't space in the room for %d more microphones" % KitMics.plan(setup).size())
+	else:
+		session.notice.emit("%d microphones on %s, in a folder of their own (their inputs off)" % [mics.size(), kit.display_name])
+	return mics
+
+
+## A microphone's polarity inverted at its preamp (Ø), or put back: before it records, as a console's button.
+func set_mic_polarity(mic, inverted: bool) -> void:
+	mic.set_mic_polarity(inverted)
+
+
 ## Points a microphone (a stereo mic, between its two) at an instrument: at where its sound comes from (an amp's nearest
 ## cone's dust cap).
 func aim_mic(mic, at) -> void:
-	var to: Vector3 = at.sound_point(mic.global_position) - mic.global_position
+	aim_mic_at(mic, at.sound_point(mic.global_position))
+
+
+## Points a microphone at a point in the room.
+func aim_mic_at(mic, point: Vector3) -> void:
+	var to: Vector3 = point - mic.global_position
 	if Vector2(to.x, to.z).length() > 0.001:
 		mic.rotation.y = atan2(to.x, to.z)
 	mic.set_mic_tilt(rad_to_deg(atan2(-to.y, Vector2(to.x, to.z).length())))

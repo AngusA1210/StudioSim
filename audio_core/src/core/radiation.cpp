@@ -170,8 +170,18 @@ bool SoundingPart::contains(Vec3 at) const {
 // is heard as a whole.
 HeadLayers headLayers(const SoundingPart& part, Vec3 at) {
     HeadLayers out;
-    if (part.plate) return out;
     const Vec3 to = minus(at, part.centre);
+    if (part.plate) {  // a cymbal, from either face: its bell and bow (the stick's ping), and out to its edge (its wash)
+        const float along = std::fabs(dotOf(to, part.facing));
+        const Vec3 off{to.x - part.facing.x * dotOf(to, part.facing), to.y - part.facing.y * dotOf(to, part.facing),
+                       to.z - part.facing.z * dotOf(to, part.facing)};
+        const float a = part.radius, across = std::min(lengthOf(off) / a, 1.0f);
+        const float near = a * a / (a * a + along * along);
+        const float bell = across / 0.5f;
+        out.middle = 1.0f + near * (std::clamp(1.0f - bell * bell, 0.25f, 1.0f) - 1.0f);
+        out.rim = 1.0f + near * (0.45f + 0.9f * across - 1.0f);
+        return out;
+    }
     const float along = dotOf(to, part.facing);
     if (along <= 0.0f) return out;  // (behind it: as a whole)
     const Vec3 off{to.x - part.facing.x * along, to.y - part.facing.y * along, to.z - part.facing.z * along};

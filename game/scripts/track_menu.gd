@@ -3,7 +3,8 @@ extends RefCounted
 ## window adds: renaming it, its colour (from Pro Tools' kind of palette), and its folder: the tracks chosen in a new
 ## one (Cmd-G), into another folder, out of its own (an instrument's track, an aux track, or a folder with all in it);
 ## a new aux track; and for a folder or an aux, stereo or mono, and taking it away. A new folder or aux track can be
-## stereo or mono, as in Pro Tools' New Track dialog. These are the ids it uses.
+## stereo or mono, as in Pro Tools' New Track dialog. A microphone's track, its polarity (Ø); an acoustic kit's, its
+## microphones put up in one go. These are the ids it uses.
 
 const RENAME := 500
 const NEW_FOLDER := 501
@@ -15,7 +16,11 @@ const STEREO := 506
 const MONO := 507
 const NEW_MONO_FOLDER := 508
 const NEW_MONO_AUX := 509
+const POLARITY := 510
+const MIC_KIT := 520  # and on, a setup each (kit_mics.gd's)
 const INTO := 600  # and on, a folder each
+
+const KitMics := preload("res://scripts/kit_mics.gd")
 
 
 ## The colours, as a submenu of swatches: choosing one calls `on_color` with it.
@@ -58,6 +63,18 @@ static func add_items(menu: PopupMenu, app, track, colors: PopupMenu, modes: Pop
 		menu.set_item_checked(menu.get_item_index(MONO), track.mono)
 		menu.set_item_tooltip(menu.get_item_index(MONO),
 			"A mono %s: what reaches it summed to one channel (its inserts and meter that one), its pan placing it in the mix" % kind)
+		menu.add_separator()
+	elif track.get("is_mic"):
+		menu.add_check_item("Polarity inverted (Ø)", POLARITY)
+		menu.set_item_checked(menu.get_item_index(POLARITY), track.mic_inverted)
+		menu.set_item_tooltip(menu.get_item_index(POLARITY),
+			"Turns its signal over at its preamp, before it records: for a mic facing another the other way, as one under a snare against one over it")
+		menu.add_separator()
+	elif track.has_parts():
+		for i in KitMics.ORDER.size():
+			var setup: Dictionary = KitMics.SETUPS[KitMics.ORDER[i]]
+			menu.add_item(setup.name, MIC_KIT + i)
+			menu.set_item_tooltip(menu.get_item_index(MIC_KIT + i), setup.hint + ": each named, pointed and its gain set, in a folder of their own")
 		menu.add_separator()
 	menu.add_item("New stereo aux track", NEW_AUX)
 	menu.add_item("New mono aux track", NEW_MONO_AUX)
@@ -106,6 +123,10 @@ static func chosen(app, track, id: int) -> bool:
 			app.remove_aux(track)
 		STEREO, MONO:
 			app.set_folder_mono(track, id == MONO)
+		POLARITY:
+			app.set_mic_polarity(track, not track.mic_inverted)
+		MIC_KIT, MIC_KIT + 1, MIC_KIT + 2:
+			app.mic_kit(track, KitMics.ORDER[id - MIC_KIT])
 		_:
 			if id < INTO or id - INTO >= app.folders.size():
 				return false

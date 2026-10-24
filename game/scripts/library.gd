@@ -87,8 +87,10 @@ func instrument_settings(inst) -> Dictionary:
 	var out := {"kind": inst.kind, "family": family_of(inst), "inserts": inserts_data(inst)}
 	if family_of(inst) == "speaker":
 		out.volume_db = inst.volume_db
-	if inst.is_mic:  # its model and pattern, its gain and where its track sits in the stereo
+	if inst.is_mic:  # its model and pattern, its gain (and polarity) and where its track sits in the stereo
 		out.mic_gain_db = inst.mic_gain_db
+		if inst.mic_inverted:
+			out.mic_inverted = true
 		out.mic_model = inst.mic_model
 		out.mic_pattern = inst.mic_pattern
 		out.pan = inst.pan
@@ -171,6 +173,7 @@ func apply_instrument_settings(inst, settings: Dictionary, include := {}) -> Str
 				app.set_mic_model(inst, str(settings.mic_model), str(settings.get("mic_pattern", "")))
 		if settings.has("mic_gain_db"):
 			inst.set_mic_gain(float(settings.mic_gain_db))
+		inst.set_mic_polarity(bool(settings.get("mic_inverted", false)))
 		if settings.has("pan"):
 			inst.set_pan(float(settings.pan))
 	var problem := apply_inserts(inst, settings.get("inserts", []) if with_plugins else [])

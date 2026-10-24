@@ -37,14 +37,18 @@ from where they stand on the kit, so the microphones hear a kit as a studio's do
   overhead hears the snare as much later than the snare's own mic as it is further, and a spaced pair of overheads
   hears the hi-hat on one side and the floor tom on the other.
 - A drum's heads move together when it is hit, so a mic under the snare hears it in opposite polarity to one over it
-  (flip the bottom mic's polarity, as in a studio), and far more of its wires, which are stretched across its bottom
-  head. Out in front, the kick is mostly boom; its beater's click is on its batter side.
+  (invert the bottom mic's polarity, **Ø** in its panel or its track's menu, as in a studio), and far more of its
+  wires, which are stretched across its bottom head. Out in front, the kick is mostly boom; its beater's click is on
+  its batter side.
 - Each head has a near field, as a speaker's cone does: close up its level levels off and its lows are fuller. Off
   its axis it loses some of its highs, and behind it, where the shell is in the way, more. A cymbal sounds from both
   its faces, quieter edge on.
 - **Where across a head** a close mic is placed matters, as where across a speaker's cone does: over its middle it hears
   the drum's note and the stick (the whole head moving together, and struck there); out towards the edge, its
   overtones and ring, which are still at the middle and strongest further out. Further off, the head is heard whole.
+  A **cymbal** likewise, from either face: over the ride's bell a mic hears the stick's ping; out at its edge, its
+  wash, ringing on long after. Over the hi-hat's middle, the stick's tick; at its edge, its sizzle, and the chick of
+  the two closing (the air pushed out between them).
 - **The kick has a port**, a hole in its front head off its middle, and an inside. Just outside the port a mic hears
   more of the beater's click and the air rushing out with the boom than on the head. Lower a mic to the kick's height
   and put it in through the port, and it is **inside the kick**: the beater close and loud, the drum from within, and
@@ -56,6 +60,14 @@ from where they stand on the kit, so the microphones hear a kit as a studio's do
   a drum's two heads add and cancel as they would.
 - A close mic on a drum is very loud: turn its gain down, as you would pad a mic in a studio. **Point it at** aims a
   mic at the nearest drum head or cymbal.
+- **Mic the kit** (in the kit's track menu, a right-click on its name) puts a studio's mics up in one go, each a model
+  suited to it, named, on (or in) its drum, pointed at it, its gain set for how close it is (and how sensitive it
+  is), and panned where its piece sits between the overheads (the drummer's view, the hi-hat on the left): **close
+  mics, overheads and room** (Kick In through the port, Kick Out at it, Snare Top and Snare Bottom, its polarity
+  inverted, Rack Tom, Floor Tom, Hi-Hat, a spaced pair of overheads as far from the snare as each other, and a pair of
+  large condensers out in front, brought in as far as the room needs or left out of a small one), the same without
+  the room mics, or **four mics** as Glyn Johns set them (kick, snare, one overhead over the snare and one beside the
+  floor tom, as far from the snare as each other). They come in a folder of their own, their inputs off.
 
 The kit's own track (its notes' sound, in the mix) is still the kit as one; the room hears the kit itself, and so do
 the mics and you.
@@ -136,9 +148,11 @@ to another in its panel:
   its model and pattern (with its frequency response and its pattern drawn, the lows and highs fainter), where it
   stands, to the centimetre (across and along the room, from its middle), its capsule's height (where it hears
   from), which way it points (its bearing, clockwise from north, and how far down) or **Point it at** an instrument,
-  and its **gain**, which comes before it records, as a preamp's does. Under them, how far each instrument is from it,
-  how late its sound arrives, how loud it is there, and how far off its axis. Closing the panel puts the view back
-  where you stand. Its pan is the mix window's.
+  and its **gain**, which comes before it records, as a preamp's does, with **Ø** beside its input to invert its
+  polarity there (it is recorded so; its track's menu has it too). Under them, how far each instrument is from it,
+  how late its sound arrives, how loud it is there, and how far off its axis; a kit drum by drum under it, the nearest
+  first, so what bleeds into a close mic can be read off. Closing the panel puts the view back where you stand. Its
+  pan is the mix window's.
 - **Its track** is an audio track: arm it (R) and record, and it records what it hears (32-bit float, so a mic right up
   against a loud amp never clips the file); its input on (I) lets you hear it as it hears, and while it is armed it is
   heard while recording or stopped, its clips otherwise, as Pro Tools' Auto Input has a track. It plays through its

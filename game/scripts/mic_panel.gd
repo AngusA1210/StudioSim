@@ -58,6 +58,7 @@ var _spacing_label: Label
 var _width: SpinBox
 var _width_label: Label
 var _input_switch: CheckButton
+var _polarity: Button
 var _meter
 var _distances: GridContainer
 var _hint: Label
@@ -298,7 +299,8 @@ func _draw_cross() -> void:
 		return
 	var font := _cross.get_theme_default_font()
 	var target := on_axis(inst, app.instruments)
-	var text := "%s  ·  %.2f m  ·  %.0f° off axis" % [target.name, target.metres, target.off] if not target.is_empty() else "Nothing on its axis"
+	var named: String = "%s, %s" % [target.of, target.name.to_lower()] if target.has("of") else str(target.get("name", ""))
+	var text := "%s  ·  %.2f m  ·  %.0f° off axis" % [named, target.metres, target.off] if not target.is_empty() else "Nothing on its axis"
 	var at := middle + Vector2(-200, 40)
 	_cross.draw_string_outline(font, at, text, HORIZONTAL_ALIGNMENT_CENTER, 400, 14, 4, Color(0, 0, 0, 0.6))
 	_cross.draw_string(font, at, text, HORIZONTAL_ALIGNMENT_CENTER, 400, 14, ink)
@@ -347,6 +349,7 @@ func _refresh() -> void:
 		_width_label.visible = mid_side
 		_show(_width, inst.ms_width * 100.0)
 	_input_switch.set_pressed_no_signal(inst.input_on)
+	_polarity.set_pressed_no_signal(inst.mic_inverted)
 	_input_switch.text = "Input on" if inst.input_on else "Input off"
 	var level: float = app.audio.get_source_level(inst.source_id, true)
 	_meter.feed([level * sqrt(2.0)], [level])
@@ -355,25 +358,49 @@ func _refresh() -> void:
 
 ## Each instrument's distance from a microphone in a straight line (round a wall it is further), how late its sound
 ## arrives, how loud it is there against its level at 1.5 m, and how far off the mic's axis it is (degrees): [{name,
-## metres, ms, db, off}], the nearest first.
+## metres, ms, db, off}], the nearest first. A kit's row ("pieces": true) is followed by one for each of its pieces
+## ({..., of: the kit}), the nearest first, so what bleeds into a close mic can be read off drum by drum.
 static func distances(mic, instruments: Array) -> Array:
-	var out := []
-	var aim: Vector3 = mic.mic_aim()
+	var groups := []
 	for other in instruments:  # (an amp from its nearest cone)
 		if other == mic or other.is_mic:
 			continue
-		var to: Vector3 = other.sound_point(mic.global_position) - mic.global_position
-		var metres: float = to.length()
-		out.append({"name": other.display_name, "metres": metres, "ms": 1000.0 * metres / SPEED_OF_SOUND,
-			"db": 20.0 * log(REF_DISTANCE / maxf(metres, NEAREST)) / log(10.0), "off": rad_to_deg(aim.angle_to(to)) if metres > 0.001 else 0.0})
-	out.sort_custom(func(a, b): return a.metres < b.metres)
+		var group := [_row(mic, other.display_name, other.sound_point(mic.global_position))]
+		if other.has_parts():  # a kit: then each of its pieces, from its nearest head (or its port, or inside it)
+			var nearest := {}
+			for part: Dictionary in other.parts_in_room():
+				var was: Vector3 = nearest.get(part.piece, Vector3.INF)
+				if was == Vector3.INF or part.at.distance_to(mic.global_position) < was.distance_to(mic.global_position):
+					nearest[part.piece] = part.at
+			var pieces := []
+			for piece: String in nearest:
+				var row := _row(mic, piece, nearest[piece])
+				row["of"] = other.display_name
+				pieces.append(row)
+			pieces.sort_custom(func(a, b): return a.metres < b.metres)
+			group[0]["pieces"] = true
+			group.append_array(pieces)
+		groups.append(group)
+	groups.sort_custom(func(a, b): return a[0].metres < b[0].metres)
+	var out := []
+	for group in groups:
+		out.append_array(group)
 	return out
 
 
-## What a microphone points at: the instrument nearest its axis, if one is within 25° of it ({} if none).
+static func _row(mic, name: String, point: Vector3) -> Dictionary:
+	var to: Vector3 = point - mic.global_position
+	var metres: float = to.length()
+	return {"name": name, "metres": metres, "ms": 1000.0 * metres / SPEED_OF_SOUND, "db": 20.0 * log(REF_DISTANCE / maxf(metres, NEAREST)) / log(10.0),
+		"off": rad_to_deg(mic.mic_aim().angle_to(to)) if metres > 0.001 else 0.0}
+
+
+## What a microphone points at: the instrument nearest its axis (a kit's piece), if one is within 25° of it ({} if none).
 static func on_axis(mic, instruments: Array) -> Dictionary:
 	var best := {}
 	for row in distances(mic, instruments):
+		if row.get("pieces", false):
+			continue
 		if row.off <= ON_AXIS and (best.is_empty() or row.off < best.off):
 			best = row
 	return best
@@ -382,11 +409,13 @@ static func on_axis(mic, instruments: Array) -> Dictionary:
 const COLUMNS := 5
 
 
-## The table of distances: a row for each instrument, its name, then its numbers lined up on the right.
+## The table of distances: a row for each instrument, its name, then its numbers lined up on the right (a kit's
+## pieces under it, set in).
 func _show_distances(rows: Array) -> void:
 	var cells: Array = []
 	for row in rows:
-		cells.append_array([row.name, "%.2f m" % row.metres, "%.1f ms" % row.ms, "%+.1f dB" % row.db, "%.0f°" % row.off])
+		cells.append_array([("    " if row.has("of") else "") + row.name, "%.2f m" % row.metres, "%.1f ms" % row.ms, "%+.1f dB" % row.db,
+			"%.0f°" % row.off])
 	while _distances.get_child_count() > cells.size():
 		var last := _distances.get_child(_distances.get_child_count() - 1)
 		_distances.remove_child(last)
@@ -621,6 +650,13 @@ func _build() -> void:
 	_input_switch.toggled.connect(func(on: bool) -> void: app.set_input(inst, on))
 	Hints.give(_input_switch, "Its input: on, you hear what it hears (through its track, where its pan puts it), rather than what it recorded")
 	input_row.add_child(_input_switch)
+	_polarity = Button.new()
+	_polarity.text = "Ø"
+	_polarity.toggle_mode = true
+	_polarity.custom_minimum_size.x = 34
+	_polarity.toggled.connect(func(on: bool) -> void: app.set_mic_polarity(inst, on))
+	Hints.give(_polarity, "Its polarity, inverted at its preamp before it records: for a mic facing another the other way (under a snare, against one over it), so the two add rather than cancel")
+	input_row.add_child(_polarity)
 	_meter = LevelMeter.new()
 	_meter.custom_minimum_size = Vector2(150, 12)
 	_meter.size_flags_vertical = Control.SIZE_SHRINK_CENTER

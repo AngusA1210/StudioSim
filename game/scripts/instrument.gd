@@ -62,6 +62,7 @@ var plays_plugin := false  # a plug-in instrument: it plays one of the instrumen
 var is_mic := false    # a microphone: it hears the room from where it stands, and its track records that
 var mic_tilt := 0.0    # a microphone: how far it points down (degrees; the way it faces is its aim round)
 var mic_gain_db := 0.0 # a microphone's gain, before it is recorded, as a preamp's
+var mic_inverted := false  # and its polarity there (Ø)
 var mic_model := ""    # which model it is (microphones.h: "flat", "dynamic", "kick", "condenser", "pencil", "ribbon")
 var mic_pattern := ""  # and which of its pickup patterns ("omni", "cardioid", "supercardioid", "figure8")
 var pan := 0.0         # where its track sits in the stereo (its direct output; a microphone's track): -1 left, 1 right
@@ -404,12 +405,16 @@ func _sync_parts() -> void:
 
 ## Its parts (Models.kit_parts) where they are in the room: each {at, facing, radius, plate, drum, inside}.
 func parts_in_room() -> Array:
-	var lift := Vector3(0, source_height, 0)  # (the model is drawn from the floor up)
 	var out := []
 	for part: Dictionary in Models.kit_parts():
-		out.append({"at": global_transform * (part.at - lift), "facing": (global_transform.basis * part.facing).normalized(),
-			"radius": part.radius, "plate": part.plate, "drum": part.drum, "inside": part.inside})
+		out.append({"at": to_room(part.at), "facing": (global_transform.basis * part.facing).normalized(),
+			"radius": part.radius, "plate": part.plate, "drum": part.drum, "inside": part.inside, "piece": part.piece})
 	return out
+
+
+## A point on its model (drawn from the floor up, its front towards +z), in the room.
+func to_room(local: Vector3) -> Vector3:
+	return global_transform * (local - Vector3(0, source_height, 0))
 
 
 ## Where a microphone can't be: inside it. `point` (in the room) moved out to just outside its nearest side, or as it
@@ -575,6 +580,11 @@ func set_mic_tilt(degrees: float) -> void:
 func set_mic_gain(db: float) -> void:
 	mic_gain_db = clampf(db, -20.0, 40.0)
 	_audio.set_source_volume(source_id, db_to_linear(mic_gain_db))
+
+
+func set_mic_polarity(inverted: bool) -> void:
+	mic_inverted = inverted
+	_audio.set_source_polarity(source_id, inverted)
 
 
 ## Its level: 0 dB is the level it was made at, heard from within a metre and a half.

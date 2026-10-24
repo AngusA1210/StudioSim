@@ -9,6 +9,8 @@ var main
 var view: SubViewport  # headless runs only get a 64-pixel window, so the game runs in a full-size off-screen one
 var failures := 0
 const TrackMenu := preload("res://scripts/track_menu.gd")
+const KitMics := preload("res://scripts/kit_mics.gd")
+const Models := preload("res://scripts/instrument_models.gd")
 
 
 func _initialize() -> void:
@@ -2296,6 +2298,70 @@ func _run() -> void:
 	check(outside_combo and stayed_over_snare and mic.global_position.is_equal_approx(in_kick),
 		"a microphone can't be put inside an amp (it is moved just outside it), but goes 4 cm over a snare, and into the kick through its port",
 		"%s from the amp's middle" % str(in_combo))
+	# A kit miked up in one go, from its track's menu: each mic named, on (or in) its drum, pointed at it, its gain set;
+	# the bottom snare mic in reverse polarity; all in a folder of their own, their inputs off.
+	var kit_menu := PopupMenu.new()
+	main.add_child(kit_menu)
+	TrackMenu.add_items(kit_menu, main, kit, PopupMenu.new())
+	var offers_setups: bool = range(KitMics.ORDER.size()).all(func(i): return kit_menu.get_item_index(TrackMenu.MIC_KIT + i) >= 0)
+	kit_menu.queue_free()
+	var before_miking: int = main.instruments.size()
+	var folders_before: int = main.folders.size()
+	TrackMenu.chosen(main, kit, TrackMenu.MIC_KIT)
+	for wait in 60:  # (one a frame, then their folder)
+		if main.folders.size() > folders_before:
+			break
+		await frames(1)
+	var kit_mics: Array = main.instruments.slice(before_miking)
+	var by_name := {}
+	for m in kit_mics:
+		by_name[m.display_name] = m
+	var kit_folder = main.folder_of(kit_mics[0]) if not kit_mics.is_empty() else null
+	var kit_lift := Vector3(0, kit.source_height, 0)
+	var in_its_kick := func(m) -> bool:  # (between its two heads, in the model)
+		var local: Vector3 = kit.global_transform.affine_inverse() * m.global_position + kit_lift
+		return local.z < Models.KIT_KICK.at.z + Models.KIT_KICK.depth / 2.0 and local.z > Models.KIT_KICK.at.z - Models.KIT_KICK.depth / 2.0 and \
+			Vector2(local.x - Models.KIT_KICK.at.x, local.y - Models.KIT_KICK.at.y).length() < Models.KIT_KICK.radius
+	check(offers_setups and kit_mics.size() >= 9 and kit_mics.all(func(m): return m.is_mic and not m.input_on and main.folder_of(m) == kit_folder) and
+		kit_folder != null and kit_folder.display_name == "%s Mics" % kit.display_name and
+		["Kick In", "Kick Out", "Snare Top", "Snare Bottom", "Rack Tom", "Floor Tom", "Hi-Hat", "OH L", "OH R"].all(func(n): return by_name.has(n)) and
+		by_name["Kick In"].mic_model == "kick" and by_name["Snare Top"].mic_model == "dynamic" and by_name["OH L"].mic_model == "pencil" and
+		in_its_kick.call(by_name["Kick In"]) and not in_its_kick.call(by_name["Kick Out"]) and
+		kit_mics.all(func(m): return kit.push_out(m.global_position).is_equal_approx(m.global_position)) and
+		kit_mics.all(func(m): return m.mic_inverted == (m.display_name == "Snare Bottom")) and
+		by_name["OH L"].pan < -0.9 and by_name["OH R"].pan > 0.9 and by_name["Hi-Hat"].pan < -0.5 and by_name["Floor Tom"].pan > 0.5 and
+		by_name["Hi-Hat"].mic_gain_db < by_name["OH L"].mic_gain_db - 6.0,  # (the same model: the closer, the less gain)
+		"a kit's track menu mics it up in one go: kick in and out, snare top and bottom (inverted), toms, hi-hat, overheads (and room mics, if there's space), in a folder",
+		"%d mics: %s" % [kit_mics.size(), ", ".join(kit_mics.map(func(m): return "%s %+.0f dB%s" % [m.display_name, m.mic_gain_db, " Ø" if m.mic_inverted else ""]))])
+	var snare_mic = by_name.get("Snare Top")
+	var snare_rows: Array = main.mic_panel.distances(snare_mic, main.instruments) if snare_mic != null else []
+	var kit_row: int = snare_rows.map(func(r): return r.name).find(kit.display_name)
+	var pointed: Dictionary = main.mic_panel.on_axis(snare_mic, main.instruments) if snare_mic != null else {}
+	check(kit_row >= 0 and snare_rows[kit_row].get("pieces", false) and snare_rows[kit_row + 1].name == "Snare" and
+		snare_rows.filter(func(r): return r.get("of", "") == kit.display_name).size() == Models.KIT_PIECES.size() and
+		pointed.get("name", "") == "Snare" and pointed.get("of", "") == kit.display_name,
+		"a mic's distances list a kit drum by drum (the snare's own mic, the snare nearest), so its bleed can be read off; and it points at the snare",
+		"; ".join(snare_rows.slice(maxi(kit_row, 0), maxi(kit_row, 0) + 4).map(func(r): return "%s %.2f m" % [r.name, r.metres])))
+	var own_pieces := {"Kick In": "Kick", "Kick Out": "Kick", "Snare Top": "Snare", "Snare Bottom": "Snare", "Rack Tom": "Rack tom",
+		"Floor Tom": "Floor tom", "Hi-Hat": "Hi-hat"}
+	var nearest_pieces := {}
+	for close_name in own_pieces:
+		var rows: Array = main.mic_panel.distances(by_name[close_name], main.instruments).filter(func(r): return r.get("of", "") == kit.display_name)
+		nearest_pieces[close_name] = rows[0].name if not rows.is_empty() else ""
+	check(own_pieces.keys().all(func(n): return nearest_pieces[n] == own_pieces[n]), "each close mic is nearest its own drum", str(nearest_pieces))
+	var under_mic = by_name.get("Snare Bottom")
+	var mic_menu := PopupMenu.new()
+	main.add_child(mic_menu)
+	TrackMenu.add_items(mic_menu, main, under_mic, PopupMenu.new())
+	var shows_turned: bool = mic_menu.get_item_index(TrackMenu.POLARITY) >= 0 and mic_menu.is_item_checked(mic_menu.get_item_index(TrackMenu.POLARITY))
+	mic_menu.queue_free()
+	var kept_turned: bool = main.library.instrument_settings(under_mic).get("mic_inverted", false)
+	TrackMenu.chosen(main, under_mic, TrackMenu.POLARITY)
+	check(shows_turned and kept_turned and not under_mic.mic_inverted and not main.library.instrument_settings(under_mic).has("mic_inverted"),
+		"a mic's polarity is in its track's menu (Ø), ticked while it is inverted, and kept with the room")
+	main.remove_folder(kit_folder)
+	for m in kit_mics:
+		main.remove_instrument(m)
 	main.remove_instrument(combo)
 	main.remove_instrument(kit)
 	main.set_mic_spot(mic, drums_heard.global_position.x + 2.0, drums_heard.global_position.z + 1.0)

@@ -40,6 +40,7 @@ const KIT_HATS := {"radius": 0.18, "at": Vector3(-0.6, 0.925, 0.1), "turn": Vect
 const KIT_CRASH := {"radius": 0.23, "at": Vector3(-0.47, 1.33, -0.29), "turn": Vector3(0.35, 0, 0.2)}
 const KIT_RIDE := {"radius": 0.26, "at": Vector3(0.71, 1.09, -0.1), "turn": Vector3(0.22, 0, -0.25)}
 const KIT_PORT := {"radius": 0.057, "across": Vector2(0.1, -0.07)}  # the kick's port: a 4.5" hole in its front head, off its middle
+const KIT_PIECES := ["Kick", "Snare", "Rack tom", "Floor tom", "Hi-hat", "Crash", "Ride"]
 
 
 ## An acoustic kit's parts as the audio core hears them (instruments.h: KitPart, in its order): the kick's front and
@@ -54,19 +55,23 @@ static func kit_parts() -> Array:
 		var drum: Dictionary = drums[d]
 		var up := Basis.from_euler(drum.turn) * Vector3.UP
 		var head: float = drum.radius * 0.97
-		var top := {"at": drum.at + up * drum.depth / 2, "facing": up, "radius": head, "plate": false, "drum": d, "inside": 0.0}
-		var under := {"at": drum.at - up * drum.depth / 2, "facing": -up, "radius": head, "plate": false, "drum": d, "inside": 0.0}
+		var top := {"at": drum.at + up * drum.depth / 2, "facing": up, "radius": head, "plate": false, "drum": d, "inside": 0.0,
+			"piece": KIT_PIECES[d]}
+		var under := {"at": drum.at - up * drum.depth / 2, "facing": -up, "radius": head, "plate": false, "drum": d, "inside": 0.0,
+			"piece": KIT_PIECES[d]}
 		# (the kick lies on its side, its turned up towards the stool: its batter head; its front head away from it)
 		out.append_array([under, top] if d == 0 else [top, under])
-	for cymbal: Dictionary in [KIT_HATS, KIT_CRASH, KIT_RIDE]:
+	var cymbals := [KIT_HATS, KIT_CRASH, KIT_RIDE]
+	for c in cymbals.size():
+		var cymbal: Dictionary = cymbals[c]
 		out.append({"at": cymbal.at, "facing": Basis.from_euler(cymbal.turn) * Vector3.UP, "radius": cymbal.radius, "plate": true,
-			"drum": -1, "inside": 0.0})
+			"drum": -1, "inside": 0.0, "piece": KIT_PIECES[4 + c]})
 	var front: Dictionary = out[0]
 	var batter: Dictionary = out[1]
 	out.append({"at": front.at + Vector3(KIT_PORT.across.x, KIT_PORT.across.y, 0), "facing": front.facing, "radius": KIT_PORT.radius,
-		"plate": false, "drum": 0, "inside": 0.0})
+		"plate": false, "drum": 0, "inside": 0.0, "piece": KIT_PIECES[0]})
 	out.append({"at": batter.at - batter.facing * 0.005, "facing": -batter.facing, "radius": batter.radius, "plate": false, "drum": 0,
-		"inside": KIT_KICK.depth - 0.01})
+		"inside": KIT_KICK.depth - 0.01, "piece": KIT_PIECES[0]})
 	return out
 
 

@@ -110,7 +110,8 @@ struct SoundingPart {
 constexpr std::array<float, 3> kShellThrough{0.3f, 0.06f, 0.02f};
 // How much a mic at `at` hears of a head's middle (its fundamental and the stick) and of its rim (its overtones and
 // ring): as it is placed across the head (how far from its axis, against its radius), the closer it is the more so;
-// far off it hears the two as they are.
+// far off it hears the two as they are. A cymbal's likewise, from either face: its middle the stick's ping on its bell
+// and bow, its rim the wash and sizzle out at its edge.
 struct HeadLayers {
     float middle = 1.0f, rim = 1.0f;
 };
