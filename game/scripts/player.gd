@@ -492,9 +492,11 @@ func _pick_target():
 func _grab_or_drop() -> void:
 	if carried != null:
 		carried.set_carried(false)
-		if carried.is_mic and app.nearest_instrument(carried) != null:  # a microphone put down points at what it is nearest
-			app.aim_mic(carried, app.nearest_instrument(carried))
+		var put = carried
 		carried = null
+		if put.is_mic and app.nearest_instrument(put) != null:  # a microphone put down points at what it is nearest
+			app.aim_mic(put, app.nearest_instrument(put))
+		app.keep_mics_clear()  # (no mic inside an instrument, nor an instrument put down over one)
 	elif target != null and target.locked:
 		app.session.notice.emit("%s is locked in place (%s unlocks it)" % [target.display_name, app.bindings.label("lock")])
 	elif target != null:
@@ -514,6 +516,8 @@ func _update_carry() -> void:
 	# Inside the room, and on your side of any wall, turned towards you.
 	carried.global_position = app.room.settle(p, 0.6, 0.5, global_position)
 	carried.face(global_position)
+	if carried.is_mic:  # (and never inside an instrument)
+		app.keep_mic_clear(carried)
 
 
 func _distance_to(inst) -> float:

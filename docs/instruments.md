@@ -98,6 +98,9 @@ to another in its panel:
 | **Ribbon** (side-address) | figure-8 | smooth and dark on top, its back as loud as its front | -6 dB |
 | **Measurement** | omni | flat from the lowest lows to the highest highs | 0 dB |
 
+- **It can't go inside an instrument**: put down in an amp's cabinet, a synth or its stand, it is moved just outside
+  (or over the top). A kit is its drums' shells, so a mic goes between them, close to a head, and into the kick through
+  its port.
 - **What it hears** follows the physics: each instrument's sound arrives as late as it takes to travel there at 343 m/s
   (two mics at different distances from a drum hear it at different times, as real ones do, with the same phase
   effects between them). The timing is exact to a fraction of a sample, and its top end doesn't change with the

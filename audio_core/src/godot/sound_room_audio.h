@@ -82,6 +82,7 @@ public:
     float get_mic_noise(const String& model) const;  // its noise and its preamp's, as a sound level (dB SPL)
     void set_source_pan(int id, float pan);
     void set_bus_mono(int id, bool mono);  // a folder's bus: summed to mono (its pan places it), or stereo (its pan a balance)
+    void set_bus_pans(int id, float left, float right);  // a stereo bus's two pans: its left side's and its right's
     // An acoustic kit's parts (each drum's heads, each cymbal), in its own order: where each is, the way it faces, how
     // big it is, whether it is a cymbal, which drum it is part of (-1: none), and, a drum's inside (the kick's), how
     // deep the shell it is heard within is (0: not an inside).

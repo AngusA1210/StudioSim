@@ -4,7 +4,9 @@ The Room page of the menu changes the room itself, while the music plays:
 
 - **Size**: width and length from 4 to 40 m, height from 2.4 to 12 m. The reverb follows: a bigger room rings for
   longer but more quietly, a small one is short and close. Instruments, walls and you are brought inside if the room
-  shrinks past them.
+  shrinks past them, but a **locked** instrument stays where it is: the room can't be made smaller than it needs (0.6 m
+  clear of each wall). The sliders move both of a pair of walls; on the floor plan each of the room's own walls can be
+  dragged on its own, in or out, the wall opposite staying where it is (and everything keeping its place against it).
 - **What it's made of**: its floor, its ceiling and each of its four walls (north is the way you first face), each a
   material from its menu: drywall, plaster, brick, concrete, wood panelling, glass, heavy curtain, acoustic foam,
   acoustic panels, diffuser panels or bookshelves for the walls; acoustic tiles and most of those for the ceiling; a
@@ -12,7 +14,7 @@ The Room page of the menu changes the room itself, while the music plays:
   acoustic-tile ceiling, and rings for about 0.7 s. Kept with the room.
 - **Walls**: a floor plan of the room, seen from above with the instruments and yourself marked on it (the room's own
   walls in their materials' colours). Drag on the floor to draw a wall, drag a wall to move it, drag the dot at either
-  end to turn and stretch it. Walls can stand at any angle and there can be up to 16. Each has its own height, and its
+  end to turn and stretch it. Drag one of the room's own walls to move that wall alone. Walls can stand at any angle and there can be up to 16. Each has its own height, and its
   own material (drywall to begin with): a glass booth window, a concrete partition, a curtain hung across the room, a
   gobo of acoustic panels.
 

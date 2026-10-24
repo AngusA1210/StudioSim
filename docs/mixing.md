@@ -114,7 +114,8 @@ in Touch, Latch or Write, holding one writes it.
   all (a folder in it framed within): its inserts (plug-ins, on what its tracks play into it), its pan, mute and solo,
   and its fader and meter. A folder is **stereo** or **mono**, as made (a track's menu offers a new stereo folder or a
   new mono one, and likewise aux tracks) or changed by right-clicking its name. A stereo one has two channels, its
-  inserts in stereo, its meter two bars, and its pan is a balance, as a stereo track's; a mono one sums what reaches it
+  inserts in stereo, its meter two bars, and two pans, one for each side, as a stereo track has in Pro Tools (hard left
+  and hard right to begin with, its stereo as it is); a mono one sums what reaches it
   to one channel as it arrives, its inserts and its meter that one, and its pan places it, as a mono track's does. In
   the edit window its colour runs down beside its tracks' headers. See Tracks and folders.
 - **Room Reverb**: the room's reverb return, a fader with a stereo meter of its own beside the room's master, as an

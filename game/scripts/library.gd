@@ -179,6 +179,17 @@ func apply_instrument_settings(inst, settings: Dictionary, include := {}) -> Str
 	return "; ".join(problems)
 
 
+
+## A stereo folder's (or aux track's) two pans, as kept; a room kept before it had them gave it a balance, which the
+## nearest pair stands for (turned right: its left side moved over towards the right).
+func _set_pans(folder, entry: Dictionary) -> void:
+	if entry.has("pan_left"):
+		app.set_folder_pans(folder, float(entry.get("pan_left", -1.0)), float(entry.get("pan_right", 1.0)))
+	elif not bool(entry.get("mono", false)):
+		var balance := float(entry.get("pan", 0.0))
+		app.set_folder_pans(folder, -1.0 + 2.0 * maxf(balance, 0.0), 1.0 - 2.0 * maxf(-balance, 0.0))
+
+
 ## A track's inserts (an instrument's or a folder's), as saved: each slot's plug-in with its settings, or null.
 func inserts_data(track) -> Array:
 	var out := []
@@ -375,12 +386,13 @@ func room_data() -> Dictionary:
 	for folder in app.folders:  # (its tracks: an instrument's by its place in the list, a folder's or an aux's as {"folder"} or {"aux"})
 		folders.append({"name": folder.display_name, "color": _color_data(folder.color), "level_db": folder.level_db, "muted": folder.muted,
 			"soloed": folder.soloed, "open": folder.open, "members": folder.members.map(_track_ref), "pan": folder.pan, "mono": folder.mono,
+			"pan_left": folder.pan_left, "pan_right": folder.pan_right,
 			"inserts": inserts_data(folder), "automation": folder.automation.duplicate(true), "auto_mode": folder.auto_mode, "lanes": folder.lanes.duplicate(),
 			"sends": _sends_data(folder)})
 	var auxes := []
 	for aux in app.auxes:
 		auxes.append({"name": aux.display_name, "color": _color_data(aux.color), "level_db": aux.level_db, "muted": aux.muted, "soloed": aux.soloed,
-			"pan": aux.pan, "mono": aux.mono,
+			"pan": aux.pan, "mono": aux.mono, "pan_left": aux.pan_left, "pan_right": aux.pan_right,
 			"inserts": inserts_data(aux), "automation": aux.automation.duplicate(true), "auto_mode": aux.auto_mode, "lanes": aux.lanes.duplicate(),
 			"sends": _sends_data(aux)})
 	var masters := {}
@@ -571,6 +583,7 @@ func apply_room_data(data: Dictionary, carry := {}, size = null, mode := "") -> 
 		if keep.call("mix"):
 			app.set_folder_level(folder, float(entry.get("level_db", 0.0)))
 			app.set_pan(folder, float(entry.get("pan", 0.0)))
+			_set_pans(folder, entry)
 			app.set_folder_mono(folder, bool(entry.get("mono", false)))
 			folder.muted = bool(entry.get("muted", false))
 			folder.soloed = bool(entry.get("soloed", false))
@@ -592,6 +605,7 @@ func apply_room_data(data: Dictionary, carry := {}, size = null, mode := "") -> 
 		if keep.call("mix"):
 			app.set_folder_level(aux, float(entry.get("level_db", 0.0)))
 			app.set_pan(aux, float(entry.get("pan", 0.0)))
+			_set_pans(aux, entry)
 			app.set_folder_mono(aux, bool(entry.get("mono", false)))
 			aux.muted = bool(entry.get("muted", false))
 			aux.soloed = bool(entry.get("soloed", false))

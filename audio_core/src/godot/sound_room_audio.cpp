@@ -2,6 +2,7 @@
 
 #include <algorithm>
 
+#include <godot_cpp/classes/os.hpp>
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
 
@@ -47,7 +48,16 @@ void SoundRoomAudio::_notification(int what) {
     if (what == NOTIFICATION_PREDELETE) stop();
 }
 
+// What each VST3 module holds, kept between sessions (see setVst3ScanRecord): read before plug-ins are first looked for.
+static void keepScanRecord() {
+    static bool kept = false;
+    if (kept) return;
+    kept = true;
+    sr::setVst3ScanRecord(str(OS::get_singleton()->get_user_data_dir() + "/vst3_scan.txt"));
+}
+
 bool SoundRoomAudio::ensureEngine() {
+    keepScanRecord();
     if (engine_) return true;
     auto engine = std::make_unique<sr::AudioEngine>();
     std::string err;
@@ -244,6 +254,7 @@ float SoundRoomAudio::get_mic_noise(const String& model) const {
 }
 void SoundRoomAudio::set_source_pan(int id, float pan) { if (engine_) engine_->setSourcePan(id, pan); }
 void SoundRoomAudio::set_bus_mono(int id, bool mono) { if (engine_) engine_->setBusMono(id, mono); }
+void SoundRoomAudio::set_bus_pans(int id, float left, float right) { if (engine_) engine_->setBusPans(id, left, right); }
 void SoundRoomAudio::set_floor_reflection(float amount) { if (engine_) engine_->setFloorReflection(amount); }
 void SoundRoomAudio::set_source_radiator(int id, const PackedVector3Array& cones, const Vector3& facing, float inches, bool open_back,
                                          const Vector3& back, float width, float coverage_deg, float crossover_hz) {
@@ -387,6 +398,7 @@ Dictionary SoundRoomAudio::get_tuner(int id) const {
 }
 
 Array SoundRoomAudio::get_plugins() const {
+    keepScanRecord();
     Array out;
     for (const sr::PluginDescription& p : sr::AudioEngine::effectPlugins()) {
         Dictionary d;
@@ -409,6 +421,7 @@ bool SoundRoomAudio::load_pedal_plugin(int id, int index, const String& plugin_i
 }
 
 Array SoundRoomAudio::get_instrument_plugins() const {
+    keepScanRecord();
     Array out;
     for (const sr::PluginDescription& p : sr::AudioEngine::instrumentPlugins()) {
         Dictionary d;
@@ -964,6 +977,7 @@ void SoundRoomAudio::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_mic_noise", "model"), &SoundRoomAudio::get_mic_noise);
     ClassDB::bind_method(D_METHOD("set_source_pan", "id", "pan"), &SoundRoomAudio::set_source_pan);
     ClassDB::bind_method(D_METHOD("set_bus_mono", "id", "mono"), &SoundRoomAudio::set_bus_mono);
+    ClassDB::bind_method(D_METHOD("set_bus_pans", "id", "left", "right"), &SoundRoomAudio::set_bus_pans);
     ClassDB::bind_method(D_METHOD("set_source_parts", "id", "centres", "facings", "radii", "plates", "drums", "insides"),
                          &SoundRoomAudio::set_source_parts, DEFVAL(PackedInt32Array()), DEFVAL(PackedFloat32Array()));
     ClassDB::bind_method(D_METHOD("set_source_radiator", "id", "cones", "facing", "inches", "open_back", "back", "width", "coverage_deg",

@@ -2561,6 +2561,25 @@ int main(int argc, char** argv) {
 
     {
         std::printf("\nVST3 plug-ins\n");
+        // What each module holds is kept between sessions, so a module is looked into once, not every session (some,
+        // loaded to be asked, put up windows of their own: licensed plug-ins' notices).
+        {
+            const auto record = std::filesystem::temp_directory_path() / "soundroom-vst3-scan.txt";
+            std::filesystem::remove(record);
+            setVst3ScanRecord(record.string());
+            setVst3SearchPaths({SR_TEST_VST3_DIR});  // (a fresh start: nothing known)
+            PluginInstance::available();
+            const int first = vst3ModulesScanned();
+            setVst3SearchPaths({SR_TEST_VST3_DIR});  // (as if SoundRoom were started again: only the record known)
+            setVst3ScanRecord(record.string());
+            const std::vector<PluginDescription> again = PluginInstance::available();
+            const bool kept = std::any_of(again.begin(), again.end(), [](const PluginDescription& p) { return p.name == "SR Test Gain"; });
+            check(first > 0 && vst3ModulesScanned() == first && kept,
+                  "what each VST3 module holds is kept between sessions: started again, nothing is looked into again",
+                  fmt("%.0f module(s) looked into the first time, none since", double(first)));
+            setVst3ScanRecord("");
+            std::filesystem::remove(record);
+        }
         // The checks' own plug-in (tests/vst3_test_plugin.cpp): a gain effect and a sine instrument.
         const std::vector<PluginDescription> effects = PluginInstance::available(), instruments = PluginInstance::availableInstruments();
         const auto gain_it = std::find_if(effects.begin(), effects.end(), [](const PluginDescription& p) { return p.name == "SR Test Gain"; });
@@ -4458,18 +4477,22 @@ int main(int argc, char** argv) {
             return renderSeconds(room.engine, 0.1);
         };
         const Render centred = hit(plain);
-        routed.engine.setSourcePan(bus, -1.0f);
-        const Render balanced = hit(routed);
+        const Render as_it_is = hit(routed);  // (its two pans hard left and hard right, as they start)
+        routed.engine.setBusPans(bus, -1.0f, -1.0f);
+        const Render both_left = hit(routed);
+        routed.engine.setBusPans(bus, -1.0f, 1.0f);
         routed.engine.setBusMono(bus, true);
         routed.engine.setSourcePan(bus, 1.0f);
         const Render placed = hit(routed);
         routed.engine.setSourcePan(bus, 0.0f);
         const Render middle = hit(routed);
-        check(balanced.rms_r < 1e-4 && std::fabs(balanced.rms_l / centred.rms_l - 1.0) < 0.05 && placed.rms_l < 1e-4 &&
+        check(std::fabs(as_it_is.rms_l / centred.rms_l - 1.0) < 0.05 && std::fabs(as_it_is.rms_r / centred.rms_r - 1.0) < 0.05 &&
+                  both_left.rms_r < 1e-4 && std::fabs(both_left.rms_l / centred.rms_l - 2.0) < 0.1 && placed.rms_l < 1e-4 &&
                   std::fabs(placed.rms_r / centred.rms_l - std::sqrt(2.0)) < 0.1 && std::fabs(middle.rms_l / centred.rms_l - 1.0) < 0.05,
-              "a folder has a pan of its own: in stereo a balance (turned left, only the left), in mono its sound summed and placed "
-              "(turned right, all of it there; in the middle as loud as it was)",
-              fmt("balanced left: right %.0f dBFS; ", db(balanced.rms_r)) + fmt("mono right: %+.1f dB against one side before; ", db(placed.rms_r / centred.rms_l)) +
+              "a folder has pans of its own: in stereo two, one for each side (hard apart, its stereo as it is; both hard left, all of "
+              "it there), in mono one, its sound summed and placed (turned right, all of it there; in the middle as loud as it was)",
+              fmt("both left: right %.0f dBFS, ", db(both_left.rms_r)) + fmt("left %+.1f dB; ", db(both_left.rms_l / centred.rms_l)) +
+                  fmt("mono right: %+.1f dB against one side before; ", db(placed.rms_r / centred.rms_l)) +
                   fmt("mono middle %+.1f dB", db(middle.rms_l / centred.rms_l)));
     }
 

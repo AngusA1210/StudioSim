@@ -45,6 +45,8 @@ const Timeline := preload("res://scripts/timeline.gd")
 const EditWindow := preload("res://scripts/edit_window.gd")
 const NamePrompt := preload("res://scripts/name_prompt.gd")
 
+const LOCKED_CLEARANCE := 0.6  # how near a wall of the room a locked instrument keeps it (as any instrument is kept)
+
 # The instruments the room starts with, each playing its part of the default groove and turned to face where the
 # player comes in. More can be added from the instrument menu; scripts/catalog.gd describes each kind.
 const DEFAULT_ROOM := [
@@ -466,6 +468,8 @@ func _physics_process(_delta: float) -> void:
 func _on_room_changed() -> void:
 	audio.set_room(room.size, room.audio_walls(), room.surfaces)  # (what it is made of, too: its floor's bounce among it)
 	for inst in instruments:
+		if inst.locked:  # (it stays where it is: the room is never made smaller than it needs)
+			continue
 		var at: Vector3 = inst.global_position
 		at.y = inst.source_height
 		inst.global_position = room.settle(at, 0.6, 0.5, at)
@@ -474,6 +478,56 @@ func _on_room_changed() -> void:
 		stood.y = 0.0
 		player.global_position = room.settle(stood, 0.5, 0.45, stood)
 	_apply_lighting()
+
+
+## How far out from the room's middle its walls must stay, either way across (x) and along (z), for the locked
+## instruments to stay where they are, as clear of the walls as an instrument is kept (0.6 m).
+func _locked_reach() -> Vector2:
+	var reach := Vector2.ZERO
+	for inst in instruments:
+		if inst.locked:
+			reach.x = maxf(reach.x, absf(inst.global_position.x) + LOCKED_CLEARANCE)
+			reach.y = maxf(reach.y, absf(inst.global_position.z) + LOCKED_CLEARANCE)
+	return reach
+
+
+## The room made this size (its walls moved in or out alike either side, as the Room page's sliders do), but never
+## smaller than its locked instruments need: they stay where they are.
+func resize_room(wanted: Vector3) -> void:
+	var reach := _locked_reach()
+	room.set_size(Vector3(maxf(wanted.x, 2.0 * reach.x), wanted.y, maxf(wanted.z, 2.0 * reach.y)))
+
+
+## One of the room's own walls ("north", "south", "east" or "west") moved out `by` metres (in, if negative), the wall
+## opposite it staying where it is: everything in the room (the instruments, the walls standing in it, you) keeps its
+## place against it. Never past a locked instrument, nor smaller or larger than a room can be. Returns how far it moved.
+func move_room_wall(side: String, by: float) -> float:
+	var axis := 2 if side in ["north", "south"] else 0
+	var outward := -1.0 if side in ["north", "west"] else 1.0  # (north is -z, the way you first face; east is +x)
+	var length: float = room.size[axis]
+	var least: float = room.MIN_SIZE[axis] - length
+	for inst in instruments:  # (no closer to a locked one than it is kept)
+		if inst.locked:
+			least = maxf(least, outward * inst.global_position[axis] + LOCKED_CLEARANCE - length / 2.0)
+	by = clampf(by, least, room.MAX_SIZE[axis] - length)
+	if absf(by) < 0.001:
+		return 0.0
+	var shift := Vector3.ZERO  # (the room stays centred where it is: everything in it moves the other way by half)
+	shift[axis] = -outward * by / 2.0
+	for inst in instruments:
+		inst.global_position += shift
+	if player != null:
+		player.global_position += shift
+	var flat := Vector2(shift.x, shift.z)
+	for i in room.walls.size():
+		room.walls[i].a += flat
+		room.walls[i].b += flat
+	var size: Vector3 = room.size
+	size[axis] = length + by
+	room.set_size(size)
+	for inst in instruments:
+		inst.sync_position()
+	return by
 
 
 # ── Playback engine and I/O ─────────────────────────────────────────────────────────────────────────────────
@@ -1741,11 +1795,38 @@ func set_locked(inst, on: bool) -> void:
 func set_mic_spot(mic, x: float, z: float) -> void:
 	var half: Vector3 = room.size / 2.0
 	mic.global_position = Vector3(clampf(x, -half.x + 0.05, half.x - 0.05), mic.source_height, clampf(z, -half.z + 0.05, half.z - 0.05))
+	keep_mic_clear(mic)
 	mic.sync_position()
 
 
 func set_mic_height(mic, height: float) -> void:
 	mic.set_mic_height(clampf(height, 0.05, room.size.y - 0.05))
+	keep_mic_clear(mic)
+
+
+## A microphone can't be inside an instrument (an amp's cabinet, a synth): moved out of any it is in, to just outside
+## it (a kit's drums are its shells: a mic goes between them, and into the kick through its port).
+func keep_mic_clear(mic) -> void:
+	if not mic.is_mic:
+		return
+	var at: Vector3 = mic.global_position
+	for pass_number in 2:  # (once more, in case leaving one put it in another)
+		for inst in instruments:
+			if inst != mic and not inst.is_mic and inst != player.carried:
+				at = inst.push_out(at)
+	if at.is_equal_approx(mic.global_position):
+		return
+	mic.global_position = Vector3(at.x, mic.global_position.y, at.z)
+	if not is_equal_approx(at.y, mic.source_height):
+		mic.set_mic_height(clampf(at.y, 0.05, room.size.y - 0.05))
+	mic.sync_position()
+
+
+## Each microphone kept clear of the instruments (one may have been put down on it).
+func keep_mics_clear() -> void:
+	for inst in instruments:
+		if inst.is_mic:
+			keep_mic_clear(inst)
 
 
 func set_mic_bearing(mic, degrees: float) -> void:
@@ -1805,15 +1886,22 @@ func set_mic_model(mic, model: String, pattern := "") -> void:
 ## Where a track sits in the stereo (-1 left, 1 right): an instrument's direct output, a microphone's track; a stereo
 ## mic's, its balance.
 func set_pan(track, pan: float) -> void:
-	if track is Folder:  # a folder's (or an aux track's), after its fader: a balance, or a mono one's place
+	if track is Folder:  # a mono folder's (or aux track's) place, after its fader
 		track.pan = clampf(pan, -1.0, 1.0)
 		audio.set_source_pan(track.source_id, track.pan)
 	else:
 		track.set_pan(pan)
 
 
-## A folder (or an aux track) in stereo, its pan a balance as a stereo track's, or summed to mono, its pan placing it
-## as a mono track's.
+## A stereo folder's (or aux track's) two pans, as a stereo track's in Pro Tools: where its left side sits, and its right.
+func set_folder_pans(folder, left: float, right: float) -> void:
+	folder.pan_left = clampf(left, -1.0, 1.0)
+	folder.pan_right = clampf(right, -1.0, 1.0)
+	audio.set_bus_pans(folder.source_id, folder.pan_left, folder.pan_right)
+
+
+## A folder (or an aux track) in stereo, each side placed by a pan of its own as a stereo track's, or summed to mono,
+## its one pan placing it as a mono track's.
 func set_folder_mono(folder, mono: bool) -> void:
 	folder.mono = mono
 	audio.set_bus_mono(folder.source_id, mono)

@@ -288,9 +288,12 @@ public:
     void setMicCapsule(int id, int capsule, Vec3 position);
     void setMicMidSide(int id, bool mid_side, float width = 1.0f);
     void setSourcePan(int id, float pan);  // (a microphone's track, or a folder: the instruments are placed by where they stand)
-    // A folder's bus: stereo (its pan a balance, as a stereo track's) or summed to mono (its pan placing it, as a mono
-    // track's). Stereo to begin with.
+    // A folder's bus: stereo (its two sides each placed by a pan of its own, setBusPans, as a stereo track's) or summed
+    // to mono (its pan, setSourcePan, placing it, as a mono track's). Stereo to begin with.
     void setBusMono(int id, bool mono);
+    // A stereo bus's two pans, as a stereo track's in Pro Tools: where its left channel and its right each sit in the
+    // stereo (-1 left to 1 right; hard left and hard right to begin with, as it is).
+    void setBusPans(int id, float left, float right);
     // A loudspeaker cabinet's cones (an amp's: radiation.h), in the room: each heard by the microphones on its own way,
     // beaming, with its near field and its open back; and the cabinet heard by the listener from where they stand
     // against its baffle (its position should be the middle of the baffle). No cones: a point source again.
@@ -601,7 +604,7 @@ private:
             TimelinePlay, TimelineLoop, TrackSet, RecordArm, RecordStart, RecordStop, SourceOutput, AutomationRead, SendSet,
             MasterAutomation, MasterRead, SourceSoloMuted, MicPath, MicCone, SourceFacing, MicModelSet, MicAim, SourcePan, MicMidSide,
             SourceRoomGain, SourceRoomMuted, RoomVolume, MonitorSet, MasterInserts, AmpLoopMix, LimiterCeiling, BusMono,
-            Compensation, CompensationTotal, AmpLoopDelay, Echo, ScatterWall, PartPath, MicShell,
+            Compensation, CompensationTotal, AmpLoopDelay, Echo, ScatterWall, PartPath, MicShell, BusPans,
         } type = AddSource;
         int id = 0;
         float v[9] = {};

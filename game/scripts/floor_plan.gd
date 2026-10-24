@@ -1,6 +1,7 @@
 extends Control
 ## The room seen from above: its outline, the walls in it, the instruments, and where you are standing.
-## Drag on the floor to draw a wall; drag a wall to move it, or one of its ends to turn and stretch it.
+## Drag on the floor to draw a wall; drag a wall to move it, or one of its ends to turn and stretch it. Drag one of the
+## room's own walls to move it alone, in or out, the wall opposite staying put (never past a locked instrument).
 ## North (the way you face when you first walk in) is up.
 
 signal selection_changed
@@ -13,8 +14,13 @@ const HANDLE := 7.0  # radius of the dots on a selected wall's ends, in pixels
 var app
 var selected := -1  # index into the room's walls, or -1
 
-var _drag := {}  # what the mouse is doing: {mode: "a" | "b" | "move" | "new", ...}
+var _drag := {}  # what the mouse is doing: {mode: "a" | "b" | "move" | "new" | "side", ...}
 var _hover := -1
+var _hover_side := ""  # one of the room's own walls under the mouse ("north"...), or ""
+# While one of the room's own walls is dragged, the plan holds still: its scale as it was, and shifted with what is in
+# the room (which moves by half as much the other way, the room staying centred), so the wall follows the mouse.
+var _held_scale := 0.0
+var _view := Vector2.ZERO
 
 
 func setup(the_app) -> void:
@@ -37,18 +43,20 @@ func _process(_delta: float) -> void:
 	queue_redraw()  # instruments and the player move
 
 
-## Pixels to a metre: as large as fits.
+## Pixels to a metre: as large as fits (or as it was, while one of the room's walls is dragged).
 func _scale() -> float:
+	if _held_scale > 0.0:
+		return _held_scale
 	var room_size: Vector3 = app.room.size
 	return maxf(minf((size.x - 2 * PAD) / room_size.x, (size.y - 2 * PAD) / room_size.z), 1.0)
 
 
 func to_screen(point: Vector2) -> Vector2:
-	return size / 2 + point * _scale()
+	return size / 2 + (point - _view) * _scale()
 
 
 func to_plan(pixel: Vector2) -> Vector2:
-	return (pixel - size / 2) / _scale()
+	return (pixel - size / 2) / _scale() + _view
 
 
 func _draw() -> void:
@@ -70,7 +78,9 @@ func _draw() -> void:
 	var corners := [to_screen(Vector2(-half.x, -half.y)), to_screen(Vector2(half.x, -half.y)), to_screen(Vector2(half.x, half.y)),
 		to_screen(Vector2(-half.x, half.y))]
 	for side in [["north", 0, 1], ["east", 1, 2], ["south", 2, 3], ["west", 3, 0]]:
-		draw_line(corners[side[1]], corners[side[2]], Room.material_color(room.surfaces[side[0]]).lightened(0.55), 3.0)
+		var dragged: bool = side[0] == _drag.get("side", "") or (_drag.is_empty() and side[0] == _hover_side)
+		draw_line(corners[side[1]], corners[side[2]], ACCENT if dragged else Room.material_color(room.surfaces[side[0]]).lightened(0.55),
+			5.0 if dragged else 3.0)
 
 	for i in room.walls.size():
 		var wall: Dictionary = room.walls[i]
@@ -108,6 +118,24 @@ func _outline(a: Vector2, b: Vector2) -> PackedVector2Array:
 		to_screen(a - along + across)])
 
 
+## Which of the room's own walls is under the mouse ("north", "south", "east", "west"), or "".
+func _side_at(pixel: Vector2) -> String:
+	var half := Vector2(app.room.size.x, app.room.size.z) / 2
+	var point := to_plan(pixel)
+	var reach := 6.0 / _scale()
+	if absf(point.x) <= half.x + reach:
+		if absf(point.y + half.y) <= reach:
+			return "north"
+		if absf(point.y - half.y) <= reach:
+			return "south"
+	if absf(point.y) <= half.y + reach:
+		if absf(point.x - half.x) <= reach:
+			return "east"
+		if absf(point.x + half.x) <= reach:
+			return "west"
+	return ""
+
+
 func _wall_at(pixel: Vector2) -> int:
 	var point := to_plan(pixel)
 	var reach := Room.WALL_THICKNESS / 2 + 5.0 / _scale()
@@ -128,6 +156,7 @@ func _gui_input(event: InputEvent) -> void:
 	elif event is InputEventMouseMotion:
 		if _drag.is_empty():
 			_hover = _wall_at(event.position)
+			_hover_side = _side_at(event.position) if _hover < 0 else ""
 		else:
 			_move(event.position)
 			accept_event()
@@ -146,6 +175,11 @@ func _press(pixel: Vector2) -> void:
 		_drag = {"mode": "move", "grab": to_plan(pixel), "a": room.walls[hit].a, "b": room.walls[hit].b}
 		return
 	select(-1)
+	var side := _side_at(pixel)
+	if side != "":  # one of the room's own walls: moved alone
+		_held_scale = _scale()
+		_drag = {"mode": "side", "side": side}
+		return
 	var start := Room.snap(to_plan(pixel))
 	if absf(start.x) <= room.size.x / 2 and absf(start.y) <= room.size.z / 2:
 		_drag = {"mode": "new", "from": start, "to": start}
@@ -169,6 +203,16 @@ func _move(pixel: Vector2) -> void:
 			room.set_wall(selected, a + shift, b + shift)
 		"new":
 			_drag.to = Room.snap(point)
+		"side":  # the wall to where the mouse is (in the plan as it was), everything else holding still
+			var at := Room.snap(to_plan(pixel))
+			var wall: float = {"north": -half.y, "south": half.y, "east": half.x, "west": -half.x}[_drag.side]
+			var wanted: float = at.y if _drag.side in ["north", "south"] else at.x
+			var outward := -1.0 if _drag.side in ["north", "west"] else 1.0
+			var moved: float = app.move_room_wall(_drag.side, outward * (wanted - wall))
+			if _drag.side in ["north", "south"]:
+				_view.y -= outward * moved / 2.0
+			else:
+				_view.x -= outward * moved / 2.0
 
 
 func _release() -> void:
@@ -177,3 +221,5 @@ func _release() -> void:
 		if made >= 0:
 			select(made)
 	_drag = {}
+	_held_scale = 0.0  # (fitted to the room again)
+	_view = Vector2.ZERO

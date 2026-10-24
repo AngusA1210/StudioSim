@@ -391,7 +391,7 @@ func _build_metronome_page(page: VBoxContainer) -> void:
 
 func _build_room_page(page: VBoxContainer) -> void:
 	page.get_parent().size_flags_vertical = Control.SIZE_EXPAND_FILL  # so the floor plan can take the page's height
-	_note(page, "The room from above, north (the way you first face) at the top. Drag on the floor to draw a wall. Drag a wall to move it, or the dot at either end to turn and stretch it.")
+	_note(page, "The room from above, north (the way you first face) at the top. Drag on the floor to draw a wall. Drag a wall to move it, or the dot at either end to turn and stretch it. Drag one of the room's own walls to move it alone (never past a locked instrument).")
 	var columns := HBoxContainer.new()
 	columns.add_theme_constant_override("separation", 18)
 	columns.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -909,7 +909,7 @@ func _on_meter_toggled(on: bool) -> void:
 
 
 func _on_size_changed(_value: float) -> void:
-	app.room.set_size(Vector3(_size_sliders.x.value, _size_sliders.y.value, _size_sliders.z.value))
+	app.resize_room(Vector3(_size_sliders.x.value, _size_sliders.y.value, _size_sliders.z.value))
 	_refresh_live()
 
 

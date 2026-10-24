@@ -465,23 +465,45 @@ func _build_strip(inst) -> Dictionary:
 
 
 ## Where a track sits in the mix's stereo, as Pro Tools' pan pot (an instrument's direct output, a microphone's track; a
-## stereo mic's balance between its two sides). A folder's and an aux's strips leave its space empty.
-func _pan_pot(box: VBoxContainer, track) -> Control:
+## stereo mic's balance between its two sides; a mono folder's or aux's place).
+func _pan_pot(box: Control, track) -> Control:
 	var pan := PanControl.new()
 	pan.custom_minimum_size = Vector2(STRIP_WIDTH - 24, PAN_HEIGHT)
 	pan.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	pan.ink = track.color.lightened(0.2)
 	pan.value_changed.connect(func(v: float) -> void: app.set_pan(track, v))
 	if track.is_folder:
-		Hints.give(pan, func() -> String: return (("Pan: where its sound, summed to mono, sits in the mix" if track.mono else
-			"Balance: its stereo, turned one way the other side turned down") + " (after its fader). Right-click its name for stereo or mono." +
-			"  Drag up or down (Shift: fine), double-click for the middle"))
+		Hints.give(pan, "Pan: where its sound, summed to mono, sits in the mix (after its fader). Right-click its name for stereo." +
+			"  Drag up or down (Shift: fine), double-click for the middle")
 	else:
 		Hints.give(pan, ("Balance: the stereo mic's two sides" if track.is_stereo_mic else ("Pan: where its track sits in the mix" if track.is_mic else
 			"Pan: where its direct output sits in the mix (in the room it is where it stands)")) +
 			".  Drag up or down (Shift: fine), double-click for the middle")
 	box.add_child(pan)
 	return pan
+
+
+## A stereo folder's or aux's two pans, side by side as on a Pro Tools stereo track: where its left side sits in the
+## mix and where its right does, hard left and hard right to begin with (its stereo as it is). In place of its one
+## pan, while it is stereo.
+func _pan_pair(box: VBoxContainer, folder) -> Dictionary:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 2)
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	row.custom_minimum_size.y = PAN_HEIGHT
+	box.add_child(row)
+	var made := {"row": row}
+	for side in ["left", "right"]:
+		var pan := PanControl.new()
+		pan.custom_minimum_size = Vector2((STRIP_WIDTH - 24) / 2.0 - 1.0, PAN_HEIGHT)
+		pan.ink = folder.color.lightened(0.2)
+		pan.value_changed.connect(func(v: float) -> void:
+			app.set_folder_pans(folder, v if side == "left" else folder.pan_left, v if side == "right" else folder.pan_right))
+		Hints.give(pan, "Pan, its %s side: where it sits in the mix (after its fader), %s to begin with.  Right-click its name for mono." % [
+			side, "hard left" if side == "left" else "hard right"] + "  Drag up or down (Shift: fine), double-click for the middle")
+		row.add_child(pan)
+		made[side] = pan
+	return made
 
 
 ## Apart, at the foot of an instrument's strip: the room, not the mix. Its level there (how loud it is where it stands,
@@ -546,6 +568,7 @@ func _build_folder_strip(folder) -> Dictionary:
 	box.add_child(count)
 	var output := _output_button(folder)
 	box.add_child(output)
+	var pans := _pan_pair(box, folder)
 	var pan := _pan_pot(box, folder)
 	var buttons := HBoxContainer.new()
 	buttons.add_theme_constant_override("separation", 3)
@@ -569,7 +592,7 @@ func _build_folder_strip(folder) -> Dictionary:
 	_strip_parent.add_child(strip)
 	return {"inst": folder, "fader": pair.fader, "meter": pair.meter, "reduction": pair.reduction, "value": readouts.value, "peak": readouts.peak, "input": null,
 		"mute": mute, "solo": solo, "source": count, "output": output, "inserts": inserts, "sends": sends, "plate": plate,
-		"frame": strip.get_theme_stylebox("panel"), "panel": strip, "pan": pan, "room": {}, "delay": delay}
+		"frame": strip.get_theme_stylebox("panel"), "panel": strip, "pan": pan, "pans": pans, "room": {}, "delay": delay}
 
 
 const INSERT_HEIGHT := 17.0
@@ -1122,11 +1145,11 @@ func _refresh() -> void:
 		if inst.is_aux:
 			var sending: int = (app.instruments + app.folders + app.auxes).filter(func(t): return t.sends.any(func(send): return send.get("aux") == inst)).size()
 			strip.source.text = "%d send%s in" % [sending, "" if sending == 1 else "s"]
+			_show_folder_pans(strip, inst)
 			continue
 		if inst.is_folder:
 			strip.source.text = "%d track%s" % [inst.members.size(), "" if inst.members.size() == 1 else "s"]
-			if not strip.pan._dragging:
-				strip.pan.set_value_no_signal(inst.pan)
+			_show_folder_pans(strip, inst)
 			continue
 		strip.input.set_pressed_no_signal(inst.input_on)
 		if inst.is_mic:  # its model and pattern
@@ -1198,6 +1221,17 @@ func _refresh() -> void:
 		_status.text = "Limiter idle" if app.limiter_on(settings.monitor) else "Limiter off"
 		_status.add_theme_color_override("font_color", DIM)
 		Hints.give(_status, "")
+
+
+## A folder's or aux's pan: its one while it is mono, its two while it is stereo.
+func _show_folder_pans(strip: Dictionary, folder) -> void:
+	strip.pan.visible = folder.mono
+	strip.pans.row.visible = not folder.mono
+	if not strip.pan._dragging:
+		strip.pan.set_value_no_signal(folder.pan)
+	for side in ["left", "right"]:
+		if not strip.pans[side]._dragging:
+			strip.pans[side].set_value_no_signal(folder.pan_left if side == "left" else folder.pan_right)
 
 
 ## A master's own outputs to choose from (listed again when the window opens, the hardware may have changed): none, the

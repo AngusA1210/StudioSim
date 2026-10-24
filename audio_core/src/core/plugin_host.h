@@ -44,6 +44,11 @@ bool isGainReductionName(const std::string& name);
 
 // Where VST3 plug-ins are looked for: the system's folders (none given), or only these (the checks' own test plug-in).
 void setVst3SearchPaths(const std::vector<std::string>& paths);
+// Where to keep what was found in each VST3 module between sessions (a file of the game's own). A module with no
+// moduleinfo.json has to be loaded to ask what it holds, and some (licensed plug-ins) put up windows of their own when
+// loaded: kept, it is asked once, and again only when it changes, not every time SoundRoom looks for plug-ins.
+void setVst3ScanRecord(const std::string& file);
+int vst3ModulesScanned();  // how many modules have been looked into (their moduleinfo.json read, or loaded) so far
 // Each VST3 module found at the last look that wouldn't load, and why ("<its path>: <the reason>").
 std::vector<std::string> vst3ScanProblems();
 

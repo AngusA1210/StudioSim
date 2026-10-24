@@ -10,8 +10,9 @@ its own window opens, floating over the room. Plug-ins get the room's tempo, for
 A VST3 is known by its class id, which is the same on a Mac and on Windows, so a room whose plug-ins are VST3s opens
 on either with its plug-ins and their settings. A room made with Audio Units, opened on Windows, gets the VST3 version
 of each where it is installed (its settings start fresh, as the two formats keep them differently), and says so.
-SoundRoom finds VST3s by reading the description in each plug-in's bundle, without loading it; one without loads once
-to be asked, and is remembered. A VST3's controls show their values as the plug-in writes them in automation lanes.
+SoundRoom finds VST3s by reading the description in each plug-in's bundle, without loading it; one without is loaded
+once to be asked, and what it holds is remembered between sessions (until it is updated), so a licensed plug-in that
+puts up a notice when loaded (an expired trial's, say) does so that once, not every time a room with plug-ins opens. A VST3's controls show their values as the plug-in writes them in automation lanes.
 
 Most plug-ins don't say what kind of effect they are (VST3s mostly do, and are grouped by what they say), so the types
 of the rest are worked out from their names: a good guess, not a certainty (`audio_core/build/engine_tests --plugins`

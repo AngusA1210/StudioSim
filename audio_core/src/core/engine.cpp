@@ -365,7 +365,8 @@ struct AudioEngine::Source {
     float width = 1.0f, width_target = 1.0f;  // (how much of the side, decoding)
     std::vector<float> mono_r, pre_r, playback_r;  // a stereo mic's second channel
     float pan = 0.0f, pan_target = 0.0f;  // a microphone's track: where it sits in the stereo (a stereo one's, its balance)
-    bool bus_mono = false;  // a folder's bus summed to mono, its pan placing it; else stereo, its pan a balance
+    bool bus_mono = false;  // a folder's bus summed to mono, its pan placing it; else stereo, each side placed by its own
+    float pan_left = -1.0f, pan_left_target = -1.0f, pan_right = 1.0f, pan_right_target = 1.0f;  // (a stereo bus's two pans)
     bool hear_input = false;  // a microphone, this block: what it hears (rather than its clips) is its track's sound
     bool auto_sustain = false;  // the sustain pedal down by automation
     Track* track_rt = nullptr;
@@ -1747,6 +1748,10 @@ void AudioEngine::setSourcePan(int id, float pan) {
     Command c; c.type = Command::SourcePan; c.id = id; c.v[0] = std::clamp(pan, -1.0f, 1.0f); push(c);
 }
 
+void AudioEngine::setBusPans(int id, float left, float right) {
+    Command c; c.type = Command::BusPans; c.id = id; c.v[0] = std::clamp(left, -1.0f, 1.0f); c.v[1] = std::clamp(right, -1.0f, 1.0f); push(c);
+}
+
 void AudioEngine::setBusMono(int id, bool mono) {
     Command c; c.type = Command::BusMono; c.id = id; c.v[0] = mono ? 1.0f : 0.0f; push(c);
 }
@@ -2717,6 +2722,12 @@ void AudioEngine::drainCommands() {
                 break;
             case Command::BusMono:
                 if (s) s->bus_mono = c.v[0] > 0.5f;
+                break;
+            case Command::BusPans:
+                if (s) {
+                    s->pan_left_target = c.v[0];
+                    s->pan_right_target = c.v[1];
+                }
                 break;
             case Command::Compensation:
                 if (s)
@@ -4431,8 +4442,10 @@ void AudioEngine::renderBlock() {
         double energy = 0.0, pre_energy = 0.0, side_energy[2] = {}, pre_side_energy[2] = {};
         float peak = 0.0f, pre_peak = 0.0f, side_peak[2] = {}, pre_side_peak[2] = {};
         Automating automating(*this, *s);
-        const float pan_from = s->pan;
+        const float pan_from = s->pan, left_from = s->pan_left, right_from = s->pan_right;
         s->pan += (s->pan_target - s->pan) * wall_glide;
+        s->pan_left += (s->pan_left_target - s->pan_left) * wall_glide;
+        s->pan_right += (s->pan_right_target - s->pan_right) * wall_glide;
         for (int i = 0; i < block_; ++i) {
             pre_energy += 0.5 * (double(l[i]) * l[i] + double(r[i]) * r[i]);
             pre_peak = std::max(pre_peak, std::max(std::fabs(l[i]), std::fabs(r[i])));
@@ -4449,8 +4462,8 @@ void AudioEngine::renderBlock() {
             const float g = s->gain * s->mute_gain * s->auto_mute;
             l[i] *= g;
             r[i] *= g;
-            // Its pan, after its fader: a mono folder's sound summed and placed as a mono track's (equal power, so the
-            // middle of it keeps its level), a stereo one's balanced as a stereo track's (the other side turned down).
+            // Its pan, after its fader: a mono folder's sound placed as a mono track's (equal power, so the middle of it
+            // keeps its level), a stereo one's two sides each placed by its own, as a stereo track's.
             const float pan = pan_from + (s->pan - pan_from) * float(i + 1) / float(block_);
             side_energy[0] += double(l[i]) * l[i];  // (its own channels, metered before its pan, as a track's is)
             side_energy[1] += double(r[i]) * r[i];
@@ -4460,9 +4473,13 @@ void AudioEngine::renderBlock() {
                 const float m = l[i], angle = (pan + 1.0f) * 0.25f * float(kPi);
                 l[i] = m * std::cos(angle);
                 r[i] = m * std::sin(angle);
-            } else if (pan != 0.0f) {
-                if (pan > 0.0f) l[i] *= std::cos(pan * 0.5f * float(kPi));
-                else r[i] *= std::cos(-pan * 0.5f * float(kPi));
+            } else {  // each side placed by its own pan (equal power: hard left and hard right leave it as it is)
+                const float a = float(i + 1) / float(block_);
+                const float left = (left_from + (s->pan_left - left_from) * a + 1.0f) * 0.25f * float(kPi);
+                const float right = (right_from + (s->pan_right - right_from) * a + 1.0f) * 0.25f * float(kPi);
+                const float from_l = l[i], from_r = r[i];
+                l[i] = from_l * std::cos(left) + from_r * std::cos(right);
+                r[i] = from_l * std::sin(left) + from_r * std::sin(right);
             }
             energy += 0.5 * (double(l[i]) * l[i] + double(r[i]) * r[i]);
             peak = std::max(peak, std::max(std::fabs(l[i]), std::fabs(r[i])));

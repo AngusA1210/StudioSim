@@ -82,6 +82,8 @@ std::mutex g_lock;                                 // what follows (the game thr
 std::vector<std::string> g_search;                 // where to look, if not the system's folders
 bool g_search_set = false;
 std::map<std::string, Scanned> g_scanned;          // each module found, by its path
+std::string g_record;                              // the file it is kept in between sessions (setVst3ScanRecord), if any
+int g_scans = 0;                                   // modules looked into so far
 std::map<std::string, Hosting::Module::Ptr> g_loaded;  // each module loaded (kept for as long as SoundRoom runs)
 
 bool isBundle(const std::filesystem::path& p) {
@@ -167,10 +169,66 @@ std::vector<Found> scanModule(const std::string& path, std::string* problem) {
     return out;
 }
 
-// Every plug-in class found, looking again at modules that are new or changed (with the lock held).
+// The record kept between sessions: a line for each module (its path, when it last changed, why it wouldn't load),
+// then one for each plug-in it holds (its id, name, maker, category, whether an instrument), tab-separated.
+std::string clean(std::string s) {
+    for (char& c : s)
+        if (c == '\t' || c == '\n' || c == '\r') c = ' ';
+    return s;
+}
+
+void readRecord() {
+    std::ifstream file(pathOf(g_record), std::ios::binary);
+    std::string line;
+    if (!file || !std::getline(file, line) || line != "SoundRoom VST3 scan 1") return;
+    Scanned* module = nullptr;
+    std::string path;
+    while (std::getline(file, line)) {
+        std::vector<std::string> f;
+        for (size_t at = 0;;) {
+            const size_t tab = line.find('\t', at);
+            f.push_back(line.substr(at, tab == std::string::npos ? std::string::npos : tab - at));
+            if (tab == std::string::npos) break;
+            at = tab + 1;
+        }
+        if (f[0] == "M" && f.size() >= 4) {
+            path = f[1];
+            module = &g_scanned[path];
+            module->when = std::filesystem::file_time_type(std::filesystem::file_time_type::duration(std::strtoll(f[2].c_str(), nullptr, 10)));
+            module->problem = f[3];
+            module->classes.clear();
+        } else if (f[0] == "C" && f.size() >= 6 && module) {
+            Found found;
+            found.path = path;
+            found.description.id = f[1];
+            found.description.format = "VST3";
+            found.description.name = f[2];
+            found.description.maker = f[3];
+            found.description.category = f[4];
+            found.description.instrument = f[5] == "1";
+            module->classes.push_back(std::move(found));
+        }
+    }
+}
+
+void writeRecord() {
+    std::ofstream file(pathOf(g_record), std::ios::binary | std::ios::trunc);
+    if (!file) return;
+    file << "SoundRoom VST3 scan 1\n";
+    for (const auto& [path, scanned] : g_scanned) {
+        file << "M\t" << clean(path) << '\t' << int64_t(scanned.when.time_since_epoch().count()) << '\t' << clean(scanned.problem) << '\n';
+        for (const Found& f : scanned.classes)
+            file << "C\t" << clean(f.description.id) << '\t' << clean(f.description.name) << '\t' << clean(f.description.maker) << '\t'
+                 << clean(f.description.category) << '\t' << (f.description.instrument ? 1 : 0) << '\n';
+    }
+}
+
+// Every plug-in class found, looking again at modules that are new or changed (with the lock held), and keeping the
+// record if anything was.
 std::vector<Found> everything() {
     std::vector<Found> out;
     std::map<std::string, Scanned> seen;
+    bool changed = false;
     for (const std::string& path : modulePaths()) {
         std::error_code ec;
         const auto when = std::filesystem::last_write_time(pathOf(path), ec);
@@ -181,11 +239,15 @@ std::vector<Found> everything() {
         } else {
             scanned.when = when;
             scanned.classes = scanModule(path, &scanned.problem);
+            changed = true;
+            ++g_scans;
         }
         out.insert(out.end(), scanned.classes.begin(), scanned.classes.end());
         seen[path] = std::move(scanned);
     }
+    changed = changed || seen.size() != g_scanned.size();
     g_scanned = std::move(seen);
+    if (changed && !g_record.empty()) writeRecord();
     return out;
 }
 
@@ -775,6 +837,17 @@ void setVst3SearchPaths(const std::vector<std::string>& paths) {
     g_search = paths;
     g_search_set = !paths.empty();
     g_scanned.clear();
+}
+
+void setVst3ScanRecord(const std::string& file) {
+    std::lock_guard<std::mutex> lock(g_lock);
+    g_record = file;
+    if (!g_record.empty()) readRecord();
+}
+
+int vst3ModulesScanned() {
+    std::lock_guard<std::mutex> lock(g_lock);
+    return g_scans;
 }
 
 std::vector<std::string> vst3ScanProblems() {

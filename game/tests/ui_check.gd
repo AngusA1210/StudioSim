@@ -1418,6 +1418,35 @@ func _run() -> void:
 	menu._wall_remove.pressed.emit()
 	await frames(2)
 	check(room.walls.size() == had and plan.selected == -1 and menu._wall_remove.disabled, "Remove takes the selected wall away")
+	# One of the room's own walls dragged moves alone: the north wall 2 m further north, the plan holding still as it goes
+	# (the mouse's pixels fixed), everything keeping its place against the south wall.
+	var size_before: Vector3 = room.size
+	var to_south: float = room.size.z / 2.0 - drums.global_position.z
+	var grab_at: Vector2 = plan.to_screen(Vector2(0.0, -room.size.z / 2.0))
+	var let_go_at: Vector2 = plan.to_screen(Vector2(0.0, -room.size.z / 2.0 - 2.0))
+	plan._press(grab_at)
+	plan._move(grab_at.lerp(let_go_at, 0.5))
+	plan._move(let_go_at)
+	plan._release()
+	await frames(2)
+	check(is_equal_approx(room.size.z, size_before.z + 2.0) and is_equal_approx(room.size.x, size_before.x) and
+		is_equal_approx(room.size.z / 2.0 - drums.global_position.z, to_south),
+		"dragging one of the room's own walls moves it alone: the north wall 2 m out, everything as far from the south wall as it was",
+		"%s to %s" % [size_before, room.size])
+	# A locked instrument stays where it is: the room can't be made smaller than it needs, nor a wall moved past it.
+	main.set_locked(drums, true)
+	var drums_at: Vector3 = drums.global_position
+	main.resize_room(Vector3(4.0, 6.0, 4.0))
+	await frames(2)
+	var kept_clear: bool = room.size.z / 2.0 >= absf(drums.global_position.z) + 0.59 and room.size.x / 2.0 >= absf(drums.global_position.x) + 0.59
+	main.move_room_wall("north", -30.0)
+	await frames(2)
+	check(kept_clear and drums.global_position.is_equal_approx(drums_at + Vector3(0, 0, drums.global_position.z - drums_at.z)) and
+		-room.size.z / 2.0 <= drums.global_position.z - 0.59,
+		"a locked instrument stays where it is: the room is made no smaller than it needs, nor its wall moved past it",
+		"%s, the drums at %s" % [room.size, drums.global_position])
+	main.set_locked(drums, false)
+	main.resize_room(Vector3(24.0, 6.0, 16.0))
 	check(not audio.is_source_blocked(bass.source_id), "and the bass is no longer hidden")
 	menu._wall_add.pressed.emit()
 	await frames(2)
@@ -2247,6 +2276,31 @@ func _run() -> void:
 	main.mixer.close()
 	check(mic != null and mic.is_mic and not mic.playable and not mic.is_live() and is_equal_approx(mic.global_position.y, 1.2) and mic_card == "FLAT · OMNI",
 		"a microphone stands in the room on its stand, its capsule 1.2 m up: an audio track, its strip saying what it is", mic_card)
+	# It can't be put inside an instrument: in an amp's cabinet it is moved out of it; but a kit is its drums' shells, so
+	# a mic goes 4 cm over a snare, and into the kick (through its port).
+	var combo = main.add_instrument("guitar_combo", Vector3(4.0, 0.0, -3.0))
+	var kit = main.add_instrument("studio_drums", Vector3(-4.0, 0.0, -3.0))
+	await frames(2)
+	main.set_mic_spot(mic, combo.global_position.x, combo.global_position.z)
+	main.set_mic_height(mic, 0.3)
+	var in_combo: Vector3 = combo.global_transform.affine_inverse() * mic.global_position + Vector3(0, combo.source_height, 0)
+	var outside_combo: bool = absf(in_combo.x) >= combo.footprint.x / 2.0 or absf(in_combo.z) >= combo.footprint.y / 2.0 or in_combo.y >= combo.top
+	var kit_parts: Array = kit.parts_in_room()
+	var over_snare: Vector3 = kit_parts[2].at + kit_parts[2].facing * 0.04
+	main.set_mic_spot(mic, over_snare.x, over_snare.z)
+	main.set_mic_height(mic, over_snare.y)
+	var stayed_over_snare: bool = mic.global_position.is_equal_approx(over_snare)
+	var in_kick: Vector3 = kit_parts[12].at + kit_parts[12].facing * 0.1
+	main.set_mic_height(mic, in_kick.y)  # (down first, under the snare: across at its height would go through the rack tom)
+	main.set_mic_spot(mic, in_kick.x, in_kick.z)
+	check(outside_combo and stayed_over_snare and mic.global_position.is_equal_approx(in_kick),
+		"a microphone can't be put inside an amp (it is moved just outside it), but goes 4 cm over a snare, and into the kick through its port",
+		"%s from the amp's middle" % str(in_combo))
+	main.remove_instrument(combo)
+	main.remove_instrument(kit)
+	main.set_mic_spot(mic, drums_heard.global_position.x + 2.0, drums_heard.global_position.z + 1.0)
+	main.set_mic_height(mic, 1.2)
+	await frames(2)
 	var mp = main.mic_panel
 	mp.open(mic)
 	await frames(2)
@@ -2621,6 +2675,14 @@ func _run() -> void:
 		offered.any(func(item: String) -> bool: return item.begins_with("New stereo folder")) and "New mono aux track" in offered,
 		"its menu offers stereo or mono for it, and new folders and aux tracks of either; a mono one's meter shows its one channel, a stereo one's its two",
 		str(offered))
+	var two_pans: bool = new_folder_strip.pans.row.visible and not new_folder_strip.pan.visible and new_folder_strip.pans.left.value == -1.0 and \
+		new_folder_strip.pans.right.value == 1.0
+	new_folder_strip.pans.left.value_changed.emit(-0.3)
+	var folder_kept: Dictionary = main.library.room_data().folders[0]
+	check(two_pans and is_equal_approx(the_folder.pan_left, -0.3) and is_equal_approx(the_folder.pan_right, 1.0) and
+		is_equal_approx(float(folder_kept.pan_left), -0.3),
+		"a stereo folder has two pans, one for each side, hard left and hard right to begin with, kept with the room")
+	main.set_folder_pans(the_folder, -1.0, 1.0)
 	check(not new_folder_strip.get("reduction") == null and new_folder_strip.reduction is Control and main.mixer._master.reduction is Control and
 		main.mixer._strips.all(func(strip: Dictionary) -> bool: return strip.get("reduction") is Control),
 		"every strip, the masters' too, has a gain reduction meter beside its meter")

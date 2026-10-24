@@ -412,6 +412,49 @@ func parts_in_room() -> Array:
 	return out
 
 
+## Where a microphone can't be: inside it. `point` (in the room) moved out to just outside its nearest side, or as it
+## was. Solid is the box it stands in (its footprint, from the floor up to its top: an amp's cabinet, a synth and its
+## stand); but a kit is its drums' shells, so a mic goes between them, and into the kick through its port.
+func push_out(point: Vector3, margin := 0.02) -> Vector3:
+	if is_mic:
+		return point
+	var lift := Vector3(0, source_height, 0)  # (the model is drawn from the floor up)
+	var local: Vector3 = global_transform.affine_inverse() * point + lift
+	if kind in ["drums", "garage_drums", "studio_drums"]:
+		for drum: Dictionary in [Models.KIT_SNARE, Models.KIT_RACK, Models.KIT_FLOOR]:
+			local = _out_of_drum(local, drum, margin)
+	else:
+		var half := Vector3(footprint.x / 2.0 + margin, 0.0, footprint.y / 2.0 + margin)
+		var over := top + margin - local.y
+		var out_x := half.x - absf(local.x)
+		var out_z := half.z - absf(local.z)
+		if out_x > 0.0 and out_z > 0.0 and over > 0.0:  # (inside: out through the nearest side, or over the top)
+			if over <= out_x and over <= out_z:
+				local.y += over
+			elif out_x <= out_z:
+				local.x += out_x * (1.0 if local.x >= 0.0 else -1.0)
+			else:
+				local.z += out_z * (1.0 if local.z >= 0.0 else -1.0)
+	return global_transform * (local - lift)
+
+
+## `local` (from the floor under the kit) moved out of a drum's shell, through its nearest head or its side.
+static func _out_of_drum(local: Vector3, drum: Dictionary, margin: float) -> Vector3:
+	var basis := Basis.from_euler(drum.turn)
+	var up := basis * Vector3.UP
+	var off: Vector3 = local - drum.at
+	var along := off.dot(up)
+	var across := off - up * along
+	var to_head: float = drum.depth / 2.0 + margin - absf(along)
+	var to_side: float = drum.radius + margin - across.length()
+	if to_head <= 0.0 or to_side <= 0.0:
+		return local
+	if to_head <= to_side:
+		return local + up * to_head * (1.0 if along >= 0.0 else -1.0)
+	var outward := across.normalized() if across.length() > 1e-4 else basis * Vector3.RIGHT
+	return local + outward * to_side
+
+
 ## Where its sound comes from, as `from` has it: a loudspeaker's nearest cone, a kit's nearest drum head or cymbal, or
 ## anything else's middle.
 func sound_point(from: Vector3) -> Vector3:
