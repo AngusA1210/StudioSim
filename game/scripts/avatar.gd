@@ -6,7 +6,7 @@ extends Node3D
 ## its hands hold it out; seated at a kit, its feet are on the pedals and its sticks over the hi-hat and the snare.
 ## It faces -z, as the player does; its left is -x.
 
-const LAYER := 19  # the 3D layer it is drawn on, which your own eyes leave out
+const LAYER := 19  # the 3D layer your own body is drawn on, which your own eyes leave out (another player's: the first)
 # Fractions of its height (D. A. Winter, Biomechanics and Motor Control of Human Movement).
 const EARS := 0.922  # the middle of the head, between the ears
 const EYES_UP := 0.0145  # the eyes, over the ears (about 2.5 cm)
@@ -25,8 +25,10 @@ const HEAD := 0.065  # its radius
 const SEAT_LEAN := 0.21  # seated, leaning a little in towards the kit (12°)
 const HIP_OVER_SEAT := 0.05  # (seated, the hip joints over the seat)
 const STICK := 0.4  # a drumstick's length, metres
+const STOOL_TOP := 0.56  # a kit's stool's top (instrument_models.gd)
 
 var height := 1.75
+var layer := LAYER
 var _name_text := ""
 var _tag: Label3D  # its name, over its head
 var _parts := {}  # name → MeshInstance3D
@@ -50,9 +52,10 @@ static func eyes_from_ears(tall: float) -> Vector3:
 	return Vector3(0.0, EYES_UP * tall, -EYES_AHEAD * tall)
 
 
-## Its bones, in proportion to `tall` (metres), in `color` (its shirt, and its headphones' rings).
-func build(tall: float, color: Color) -> void:
+## Its bones, in proportion to `tall` (metres), in `color` (its shirt, and its headphones' rings), drawn on `on_layer`.
+func build(tall: float, color: Color, on_layer := LAYER) -> void:
 	height = tall
+	layer = on_layer
 	for part in get_children():  # (gone at once, so the new pieces have their names)
 		remove_child(part)
 		part.queue_free()
@@ -65,7 +68,7 @@ func build(tall: float, color: Color) -> void:
 	_tag.outline_size = 12
 	_tag.modulate = Color(0.95, 0.96, 1.0)
 	_tag.outline_modulate = Color(0.02, 0.03, 0.05, 0.8)
-	_tag.layers = 1 << (LAYER - 1)
+	_tag.layers = 1 << (layer - 1)
 	add_child(_tag)
 	set_name_tag(_name_text)
 	var shirt := _material(color.darkened(0.15), 0.8)
@@ -218,6 +221,26 @@ func pose(state: Dictionary, delta: float) -> void:
 			stick.transform = _between(held - (tip - held).normalized() * 0.06, held + (tip - held).normalized() * (STICK - 0.06))
 
 
+## What a body is doing, as pose() takes it: standing at `at` (on the floor, facing its -z), `tall`, looking up or down
+## by `pitch`, going `going` (in its own frame, m/s), seated at `kit` (on its stool: its feet on its pedals, its
+## sticks over its hi-hat and snare) or not (null), and `holding` "carry" (its hands holding something out), "play"
+## (its hands on keys) or "".
+static func state_for(at: Transform3D, tall: float, pitch: float, going: Vector3, kit, holding: String) -> Dictionary:
+	var state := {"pitch": pitch, "move": going}
+	var k := tall / 1.75
+	if kit != null:
+		var mine := at.affine_inverse()
+		state.seat_top = STOOL_TOP
+		state.feet = [mine * kit.to_room(Vector3(-0.56, 0.09, 0.42)), mine * kit.to_room(Vector3(0.04, 0.09, 0.36))]
+		state.hands = [mine * kit.to_room(Vector3(-0.15, 0.85, 0.5)), mine * kit.to_room(Vector3(-0.22, 1.0, 0.38))]
+		state.sticks = [mine * kit.to_room(Vector3(-0.28, 0.69, 0.23)), mine * kit.to_room(Vector3(-0.47, 0.94, 0.15))]
+	elif holding == "carry":
+		state.hands = [Vector3(-0.17, 1.12, -0.42) * k, Vector3(0.17, 1.12, -0.42) * k]
+	elif holding == "play":
+		state.hands = [Vector3(-0.15, 0.98, -0.38) * k, Vector3(0.15, 0.98, -0.38) * k]
+	return state
+
+
 ## Where a two-bone limb's middle joint goes, from its root towards `end`, its bones `a` and `b` long, bending
 ## towards `bend`; and where its end gets to (as near `end` as it reaches): [joint, end].
 static func _bend(root: Vector3, end: Vector3, a: float, b: float, bend: Vector3) -> Array:
@@ -274,7 +297,7 @@ func _part(name: String, mesh: Mesh, material: Material, parent: Node3D = null) 
 	part.name = name
 	part.mesh = mesh
 	part.material_override = material
-	part.layers = 1 << (LAYER - 1)
+	part.layers = 1 << (layer - 1)
 	(parent if parent != null else self).add_child(part)
 	_parts[name] = part
 	return part

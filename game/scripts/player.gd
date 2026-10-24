@@ -11,7 +11,7 @@ const Avatar := preload("res://scripts/avatar.gd")
 const COLOR := Color(0.4, 0.62, 0.9)  # your shirt and headphones
 const MIN_HEIGHT := 1.4
 const MAX_HEIGHT := 2.1
-const STOOL := Vector3(0.0, 0.56, 0.66)  # the top of a kit's stool, on its model (instrument_models.gd)
+const STOOL := Vector3(0.0, Avatar.STOOL_TOP, 0.66)  # the top of a kit's stool, on its model (instrument_models.gd)
 const AT_A_KIT := -0.42  # sitting down at a kit, you look down at it
 const FLY_SPEED := 2.5
 const FLY_FAST := 7.0
@@ -323,7 +323,7 @@ func forget(inst) -> void:
 ## (unless something in it is being typed into).
 func _can_move() -> bool:
 	for panel in [app.title, app.menu, app.sequencer, app.amp_panel, app.speaker_panel, app.mic_panel, app.instrument_menu, app.name_prompt, app.rooms_page,
-			app.you_page]:
+			app.you_page, app.together_page]:
 		if panel != null and panel.is_open():
 			return false
 	if app.session != null and app.session.is_asking():  # "Save the changes?": the arrows are for its buttons
@@ -337,7 +337,7 @@ func _ui_open() -> bool:
 	if app.session != null and app.session.is_asking():
 		return true
 	for panel in [app.title, app.menu, app.sequencer, app.mixer, app.amp_panel, app.speaker_panel, app.mic_panel, app.instrument_menu, app.name_prompt, app.edit_window,
-			app.rooms_page, app.you_page]:
+			app.rooms_page, app.you_page, app.together_page]:
 		if panel != null and panel.is_open():
 			return true
 	return false
@@ -372,6 +372,7 @@ func _handle_key(event: InputEventKey) -> void:
 		if held.has(key):
 			for id in held[key][1]:
 				audio.note_off(id, held[key][0])
+				app.net.played(id, "off", held[key][0])
 			held.erase(key)
 		return
 	if key == KEY_ESCAPE:  # always backs out: a plug-in's window put away, the free camera back to you, up from an
@@ -498,6 +499,7 @@ func piano_up(key: int) -> void:
 	if held.has(key):
 		for id in held[key][1]:
 			audio.note_off(id, held[key][0])
+			app.net.played(id, "off", held[key][0])
 		held.erase(key)
 
 
@@ -510,6 +512,7 @@ func _note_on(key: int) -> void:
 			ids.append(inst.source_id)
 	for id in ids:
 		audio.note_on(id, note, 0.8)
+		app.net.played(id, "on", note, 0.8)
 	held[key] = [note, ids]
 
 
@@ -609,20 +612,9 @@ func _pose_avatar(delta: float) -> void:
 	var moved := (global_position - _last_position) / maxf(delta, 0.0001)
 	_last_position = global_position
 	var going := global_transform.basis.inverse() * Vector3(moved.x, 0.0, moved.z)
-	var state := {"pitch": pitch, "move": going.limit_length(RUN_SPEED)}
-	var k := height / 1.75
-	if seated_at != null and instruments.has(seated_at):
-		var mine := global_transform.affine_inverse()
-		var kit = seated_at
-		state.seat_top = STOOL.y
-		state.feet = [mine * kit.to_room(Vector3(-0.56, 0.09, 0.42)), mine * kit.to_room(Vector3(0.04, 0.09, 0.36))]
-		state.hands = [mine * kit.to_room(Vector3(-0.15, 0.85, 0.5)), mine * kit.to_room(Vector3(-0.22, 1.0, 0.38))]
-		state.sticks = [mine * kit.to_room(Vector3(-0.28, 0.69, 0.23)), mine * kit.to_room(Vector3(-0.47, 0.94, 0.15))]
-	elif carried != null:
-		state.hands = [Vector3(-0.17, 1.12, -0.42) * k, Vector3(0.17, 1.12, -0.42) * k]
-	elif playing != null or plugin_open != null:
-		state.hands = [Vector3(-0.15, 0.98, -0.38) * k, Vector3(0.15, 0.98, -0.38) * k]
-	avatar.pose(state, delta)
+	var holding := "carry" if carried != null else ("play" if playing != null or plugin_open != null else "")
+	var kit = seated_at if seated_at != null and instruments.has(seated_at) else null
+	avatar.pose(Avatar.state_for(global_transform, height, pitch, going.limit_length(RUN_SPEED), kit, holding), delta)
 
 
 func _process(_delta: float) -> void:
@@ -670,6 +662,7 @@ func release_keys() -> void:
 	for key in held:
 		for id in held[key][1]:
 			audio.note_off(id, held[key][0])
+			app.net.played(id, "off", held[key][0])
 	held.clear()
 
 
@@ -709,6 +702,8 @@ func _grab_or_drop() -> void:
 		if put.is_mic and app.nearest_instrument(put) != null:  # a microphone put down points at what it is nearest
 			app.aim_mic(put, app.nearest_instrument(put))
 		app.keep_mics_clear()  # (no mic inside an instrument, nor an instrument put down over one)
+	elif target != null and app.net.carried_by_another(target) != "":
+		app.session.notice.emit("%s is carrying %s" % [app.net.carried_by_another(target), target.display_name])
 	elif target != null and target.locked:
 		app.session.notice.emit("%s is locked in place (%s unlocks it)" % [target.display_name, app.bindings.label("lock")])
 	elif target != null:

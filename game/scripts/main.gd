@@ -43,6 +43,8 @@ const Library := preload("res://scripts/library.gd")
 const Session := preload("res://scripts/session.gd")
 const RoomsPage := preload("res://scripts/rooms_page.gd")
 const YouPage := preload("res://scripts/you_page.gd")
+const Net := preload("res://scripts/net.gd")
+const TogetherPage := preload("res://scripts/together_page.gd")
 const Timeline := preload("res://scripts/timeline.gd")
 const EditWindow := preload("res://scripts/edit_window.gd")
 const NamePrompt := preload("res://scripts/name_prompt.gd")
@@ -84,6 +86,8 @@ var library  # rooms' and templates' contents, presets, and settings copied to b
 var session  # the room that is open: its file, saving, backups
 var rooms_page  # making a new room, or opening one
 var you_page  # your name and height, from the title screen
+var net  # playing together
+var together_page  # hosting or joining, from the title screen
 var timeline  # the room's mode, and a Record room's transport, recording and clips
 var automation  # the tracks' automation, as the music plays (automation.gd)
 var edit_window  # a Record room's tracks and clips along the timeline
@@ -168,7 +172,11 @@ func _ready() -> void:
 	session = Session.new()
 	session.name = "Session"
 	add_child(session)
+	net = Net.new()
+	net.name = "Net"
+	add_child(net)
 	session.setup(self)
+	net.setup(self)
 	timeline = Timeline.new()
 	timeline.name = "Timeline"
 	add_child(timeline)
@@ -241,6 +249,9 @@ func _ready() -> void:
 	you_page = YouPage.new()
 	add_child(you_page)
 	you_page.setup(self)
+	together_page = TogetherPage.new()
+	add_child(together_page)
+	together_page.setup(self)
 	edit_window = EditWindow.new()
 	add_child(edit_window)
 	edit_window.setup(self)
@@ -284,7 +295,7 @@ func _notification(what: int) -> void:
 ## face. Undo and redo have two histories: in the room, the instruments' moves; in the mix and edit windows (a Record
 ## room), the edits to the clips. Space starts and stops the music in the mix and edit windows too.
 func _input(event: InputEvent) -> void:
-	if not (event is InputEventKey and event.pressed and not event.echo) or name_prompt.is_open() or rooms_page.is_open() or you_page.is_open():
+	if not (event is InputEventKey and event.pressed and not event.echo) or name_prompt.is_open() or rooms_page.is_open() or you_page.is_open() or together_page.is_open():
 		return
 	if get_viewport().gui_get_focus_owner() is LineEdit:  # being typed in (the edit window's counter, say)
 		return
@@ -1368,6 +1379,9 @@ func set_sequence_running(on: bool) -> void:
 		if on != timeline.playing:
 			timeline.toggle_play()
 		return
+	if net != null and net.is_playing_together():  # everyone's at once, when the session's clock says
+		net.request_running(on)
+		return
 	sequence_running = on
 	audio.set_sequencer_running(on)
 
@@ -1428,6 +1442,7 @@ func set_height(metres: float) -> void:
 	player.set_height(metres)
 	settings.height = player.height
 	settings.save_to_disk()
+	net.me_changed()
 
 
 ## Your name, over your body.
@@ -1435,6 +1450,7 @@ func set_player_name(text: String) -> void:
 	settings.player_name = text.strip_edges().left(24)
 	player.avatar.set_name_tag(settings.player_name)
 	settings.save_to_disk()
+	net.me_changed()
 
 
 ## While the free camera flies, the room is heard from the "camera" (as it goes) or "you" (your ears, where your body

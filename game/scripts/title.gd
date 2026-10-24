@@ -1,8 +1,9 @@
 extends CanvasLayer
 ## The title screen. A room is already alive behind it (the default room, until one is made or opened): a camera
 ## circles under the ceiling, and since the camera is also the listener, the music turns around you while you wait.
-## New room and Open room lead to the rooms page; You, to your name and height (set here, outside the room); once a room
-## is open, Back to it goes in, handing the camera and the listening over to the player.
+## New room and Open room lead to the rooms page; You, to your name and height (set here, outside the room); Play
+## together, to hosting the room or joining another player's; once a room is open, Back to it goes in, handing the
+## camera and the listening over to the player.
 
 const ACCENT := Color(0.49, 0.89, 0.82)
 const DIM := Color(0.62, 0.65, 0.74)
@@ -15,7 +16,7 @@ const TAGLINE := "A room of instruments, heard from where you stand."
 var app
 var audio: SoundRoomAudio
 var camera: Camera3D
-var buttons := {}  # "back" (into the open room), "new", "open", "you", "audio", "settings", "controls", "quit" → Button
+var buttons := {}  # "back" (into the open room), "new", "open", "together", "you", "audio", "settings", "controls", "quit" → Button
 
 var _open := false
 var _leaving := false
@@ -72,7 +73,7 @@ func _process(delta: float) -> void:
 		audio.set_listener(camera.global_transform)
 		# The menu and the rooms page cover the title while open; hiding the buttons also keeps Enter from reaching them.
 		var covered: bool = (app.menu != null and app.menu.is_open()) or (app.rooms_page != null and app.rooms_page.is_open()) or (
-			app.you_page != null and app.you_page.is_open())
+			app.you_page != null and app.you_page.is_open()) or (app.together_page != null and app.together_page.is_open())
 		if _ui.visible == covered and not _leaving:
 			_show_ui(not covered)
 	_layout()
@@ -163,8 +164,9 @@ func _build() -> void:
 	column.add_child(gap)
 
 	_button(column, "back", "Back to the room", enter)
-	_button(column, "new", "New room…", func() -> void: app.rooms_page.open_new())
-	_button(column, "open", "Open room…", func() -> void: app.rooms_page.open_existing())
+	_button(column, "new", "New room…", func() -> void: _away(app.rooms_page.open_new))
+	_button(column, "open", "Open room…", func() -> void: _away(app.rooms_page.open_existing))
+	_button(column, "together", "Play together…", func() -> void: app.together_page.open())
 	_button(column, "you", "You", func() -> void: app.you_page.open())
 	_button(column, "audio", "Audio setup", _on_menu_pressed.bind("ENGINE_TAB"))
 	_button(column, "settings", "Settings", _on_menu_pressed.bind("SETTINGS_TAB"))
@@ -269,6 +271,15 @@ func _finish() -> void:
 	_leaving = false
 	if not _open:
 		visible = false
+
+
+## Another room, while in someone else's: leaving theirs first.
+func _away(then: Callable) -> void:
+	if app.net.role == "guest":
+		app.together_page.open()
+		app.together_page.tell("You're in %s's room: leave it first, to make or open another." % app.net.host_name)
+		return
+	then.call()
 
 
 func _on_menu_pressed(page: String) -> void:

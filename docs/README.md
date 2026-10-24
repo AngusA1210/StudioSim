@@ -13,5 +13,6 @@ In-depth notes on each part of SoundRoom. The project's [README](../README.md) g
   delay compensation
 - [The room: size, walls and materials](room-acoustics.md): walls, materials, reverb, reflections and diffusers
 - [Playing, sequencing and the menu](playing-and-menu.md): patterns, the metronome, the menu's pages
+- [Playing together](playing-together.md): hosting a room and joining one, what is shared, the session's clock
 - [How it's put together](architecture.md): the source tree and the audio engine
 - [Roadmap](roadmap.md): what's done and what comes next

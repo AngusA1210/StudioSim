@@ -19,6 +19,10 @@ game/                      Godot project: the room, player, instruments, HUD, me
   scripts/session.gd       the open room: its file, saving, auto-save and backups
   scripts/rooms_page.gd    making a new room (from a template) and opening one
   scripts/you_page.gd      your name and height, from the title screen, your body turning beside them
+  scripts/net.gd           playing together: hosting and joining, the players and their bodies, the session's clock
+                           and the patterns kept in step with it, notes played
+  scripts/room_sync.gd     the room kept the same for everyone: what changed sent, what came applied, in the host's order
+  scripts/together_page.gd hosting or joining, from the title screen
   scripts/library.gd       what a room holds, templates, instrument and plug-in presets, and copied settings
   scripts/timeline.gd      a room's mode; a Record room's transport, recording and clips
   scripts/edit_window.gd   the edit window (its tracks and clips drawn by timeline_view.gd, a clip's notes by midi_editor.gd)
@@ -58,7 +62,8 @@ audio_core/
   src/godot/               the Godot extension wrapping the engine (SoundRoomAudio node)
   tests/engine_tests.cpp   offline checks: levels, binaural direction, walls, latency, MIDI, live input, sequencer, amps, pedals, plug-ins, loop pedal
 game/tests/ui_check.gd     the game driven by pretend keys and clicks: title, playing, patterns, instruments, amps, room, menus,
-                           presets, and rooms (making, saving, backups, opening)
+                           presets, and rooms (making, saving, backups, opening), and playing together
+game/tests/together_guest.gd  a second copy of the game that joins the room ui_check.gd hosts, and does what it asks
 prototypes/sound-room/     the original browser prototype, for reference
 tools/                     build and dependency scripts
 ```

@@ -3,7 +3,7 @@ extends Control
 ## Drag on the floor to draw a wall; drag a wall to move it, or one of its ends to turn and stretch it. Drag one of the
 ## room's own walls to move it alone, in or out, the wall opposite staying put (never past a locked instrument).
 ## North (the way you face when you first walk in) is up. You are the white arrowhead; the free camera, while it flies, an
-## outline.
+## outline; the other players, playing together, an arrowhead each in their colour.
 
 signal selection_changed
 
@@ -109,6 +109,16 @@ func _draw() -> void:
 		var side := Vector2(-ahead.y, ahead.x)
 		draw_colored_polygon(PackedVector2Array([here + ahead * 10.0, here - ahead * 6.0 + side * 6.0, here - ahead * 6.0 - side * 6.0]),
 			Color(1, 1, 1, 0.95))
+		for id in app.net.players:  # the other players, each an arrowhead in their colour
+			var body = app.net.body_of(int(id))
+			if body == null:
+				continue
+			var colour: Array = app.net.players[id].get("color", [0.8, 0.8, 0.8])
+			var them := to_screen(Vector2(body.global_position.x, body.global_position.z))
+			var faces := Vector2(-sin(body.rotation.y), -cos(body.rotation.y))
+			var aside := Vector2(-faces.y, faces.x)
+			draw_colored_polygon(PackedVector2Array([them + faces * 9.0, them - faces * 5.0 + aside * 5.0, them - faces * 5.0 - aside * 5.0]),
+				Color(float(colour[0]), float(colour[1]), float(colour[2])))
 		if player.flying:  # and the free camera, an outline, the way it looks
 			var at: Vector3 = player.fly_camera.global_position
 			var there := to_screen(Vector2(at.x, at.z))

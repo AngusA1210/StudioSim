@@ -758,6 +758,27 @@ void SoundRoomAudio::set_pattern_steps(int id, int steps) { if (engine_) engine_
 int SoundRoomAudio::get_pattern_steps(int id) const { return engine_ ? engine_->patternSteps(id) : 0; }
 void SoundRoomAudio::set_source_loop(int id, bool on) { if (engine_) engine_->setSourceLoop(id, on); }
 void SoundRoomAudio::set_sequencer_running(bool on) { if (engine_) engine_->setSequencerRunning(on); }
+void SoundRoomAudio::start_sequencer_in(double seconds, int from_step) { if (engine_) engine_->startSequencerIn(seconds, from_step); }
+void SoundRoomAudio::nudge_sequencer(double seconds) { if (engine_) engine_->nudgeSequencer(seconds); }
+double SoundRoomAudio::get_sequencer_step_now() const { return engine_ ? engine_->sequencerStepNow() : -1.0; }
+void SoundRoomAudio::set_sustain(int id, bool down) { if (engine_) engine_->setSustain(id, down); }
+void SoundRoomAudio::share_played_notes(bool on) { if (engine_) engine_->sharePlayedNotes(on); }
+
+Array SoundRoomAudio::take_played_notes() {
+    Array out;
+    if (!engine_) return out;
+    std::vector<sr::AudioEngine::PlayedNote> notes;
+    engine_->takePlayedNotes(notes);
+    for (const auto& n : notes) {
+        Array entry;
+        entry.push_back(n.id);
+        entry.push_back(String(n.type == sr::MidiEvent::NoteOn ? "on" : n.type == sr::MidiEvent::NoteOff ? "off" : "sustain"));
+        entry.push_back(n.note);
+        entry.push_back(n.velocity);
+        out.push_back(entry);
+    }
+    return out;
+}
 
 void SoundRoomAudio::play_from(double step) { if (engine_) engine_->playFrom(step); }
 void SoundRoomAudio::set_loop_range(bool on, double start_step, double end_step) { if (engine_) engine_->setLoopRange(on, start_step, end_step); }
@@ -1075,6 +1096,12 @@ void SoundRoomAudio::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_pattern_steps", "id"), &SoundRoomAudio::get_pattern_steps);
     ClassDB::bind_method(D_METHOD("set_source_loop", "id", "on"), &SoundRoomAudio::set_source_loop);
     ClassDB::bind_method(D_METHOD("set_sequencer_running", "on"), &SoundRoomAudio::set_sequencer_running);
+    ClassDB::bind_method(D_METHOD("start_sequencer_in", "seconds", "from_step"), &SoundRoomAudio::start_sequencer_in, DEFVAL(0));
+    ClassDB::bind_method(D_METHOD("nudge_sequencer", "seconds"), &SoundRoomAudio::nudge_sequencer);
+    ClassDB::bind_method(D_METHOD("get_sequencer_step_now"), &SoundRoomAudio::get_sequencer_step_now);
+    ClassDB::bind_method(D_METHOD("set_sustain", "id", "down"), &SoundRoomAudio::set_sustain);
+    ClassDB::bind_method(D_METHOD("share_played_notes", "on"), &SoundRoomAudio::share_played_notes);
+    ClassDB::bind_method(D_METHOD("take_played_notes"), &SoundRoomAudio::take_played_notes);
     ClassDB::bind_method(D_METHOD("play_from", "step"), &SoundRoomAudio::play_from);
     ClassDB::bind_method(D_METHOD("set_loop_range", "on", "start_step", "end_step"), &SoundRoomAudio::set_loop_range);
     ClassDB::bind_method(D_METHOD("get_timeline_position"), &SoundRoomAudio::get_timeline_position);

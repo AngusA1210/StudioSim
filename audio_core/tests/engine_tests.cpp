@@ -1028,6 +1028,30 @@ int main(int argc, char** argv) {
         const size_t played = onsets(renderSeconds(maybe.engine, 100.0), 1200).size();  // 200 chances
         check(played > 25 && played < 80, "a note with a one-in-four chance plays about a quarter of the time", fmt("%.0f of 200", double(played)));
 
+        // Playing together: the patterns started from the top a set time from now (when the session's clock says, as
+        // every player's are at once), moved a little later to keep in step with another's, and where they are just
+        // now, between steps.
+        Room together;
+        together.soloOnly(together.drums);
+        together.engine.setReverb(false);
+        together.engine.setSwing(0.0);
+        together.engine.setTempo(120.0);
+        together.engine.setPatternSteps(together.drums, 16);
+        together.engine.setPattern(together.drums, {{0, kick, 1, 1.0f, 1.0f}, {4, kick, 1, 1.0f, 1.0f}, {8, kick, 1, 1.0f, 1.0f}, {12, kick, 1, 1.0f, 1.0f}});
+        together.engine.setSequencerRunning(false);
+        renderSeconds(together.engine, 1.3);
+        together.engine.startSequencerIn(0.75);
+        const auto due = onsets(renderSeconds(together.engine, 2.0), 4000);
+        together.engine.nudgeSequencer(0.01);
+        const auto nudged = onsets(renderSeconds(together.engine, 1.0), 4000);
+        const double step_now = together.engine.sequencerStepNow(), step_due = (3.0 - 0.75 - 0.01) / 0.125;
+        // (a kick's onset is found a little after it starts: the beats are measured from one another)
+        check(due.size() == 3 && due[0] >= 36000 && due[0] - 36000 <= 96 && std::abs(due[1] - due[0] - 24000) <= 8 && nudged.size() >= 2 &&
+                  std::abs(nudged[0] + 96000 - due[2] - 24480) <= 8 && std::fabs(step_now - step_due) < 0.1,
+              "playing together, the patterns start from the top when told, move later when nudged, and say where they are",
+              due.empty() || nudged.empty() ? "" : fmt("first beat at %.0f samples, ", double(due[0])) +
+                  fmt("nudged 10 ms: %.0f; ", double(nudged[0])) + fmt("at step %.2f", step_now));
+
         // The Keys follow a pattern too, holding each note for its length.
         Room keys;
         keys.soloOnly(keys.keys);
@@ -4263,6 +4287,40 @@ int main(int argc, char** argv) {
         check(sustained.rms_l > 3.0 * let_go.rms_l + 1e-5 && stopped_after.rms_l < 0.3 * sustained.rms_l,
               "the sustain pedal automated holds a note on, and stopping lets it up",
               fmt("%.0f dBFS held, ", db(sustained.rms_l)) + fmt("%.0f dBFS let go", db(let_go.rms_l)));
+
+        // What a controller plays here is kept for the other players (while asked to), and their sustain pedal is put
+        // down on an instrument as theirs was.
+        keys_room.engine.setSourceInput(keys_room.keys, true);
+        keys_room.engine.sharePlayedNotes(true);
+        MidiEvent struck;
+        struck.type = MidiEvent::NoteOn;
+        struck.note = 64;
+        struck.velocity = 0.7f;
+        keys_room.engine.receiveMidi(struck);
+        renderSeconds(keys_room.engine, 0.05);
+        std::vector<AudioEngine::PlayedNote> shared;
+        keys_room.engine.takePlayedNotes(shared);
+        keys_room.engine.sharePlayedNotes(false);
+        MidiEvent lifted = struck;
+        lifted.type = MidiEvent::NoteOff;
+        keys_room.engine.receiveMidi(lifted);
+        renderSeconds(keys_room.engine, 0.05);
+        std::vector<AudioEngine::PlayedNote> after;
+        keys_room.engine.takePlayedNotes(after);
+        keys_room.engine.setSourceInput(keys_room.keys, false);
+        keys_room.engine.noteOn(keys_room.keys, 60, 0.8f);
+        keys_room.engine.setSustain(keys_room.keys, true);
+        renderSeconds(keys_room.engine, 0.1);
+        keys_room.engine.noteOff(keys_room.keys, 60);
+        renderSeconds(keys_room.engine, 0.4);
+        const Render held_on = renderSeconds(keys_room.engine, 0.2);
+        keys_room.engine.setSustain(keys_room.keys, false);
+        renderSeconds(keys_room.engine, 0.6);
+        const Render let_up = renderSeconds(keys_room.engine, 0.2);
+        check(shared.size() == 1 && shared[0].id == keys_room.keys && shared[0].type == MidiEvent::NoteOn && shared[0].note == 64 && after.empty() &&
+                  held_on.rms_l > 3.0 * let_up.rms_l + 1e-5,
+              "what a controller plays is kept for the other players while asked; their sustain pedal holds a note here",
+              fmt("%.0f kept, ", double(shared.size())) + fmt("held %.0f dBFS, ", db(held_on.rms_l)) + fmt("let up %.0f dBFS", db(let_up.rms_l)));
 
         // The pedal played while an instrument records: taken, where it went down and up.
         keys_room.engine.setTrack(keys_room.keys, {}, {}, &auto_error);

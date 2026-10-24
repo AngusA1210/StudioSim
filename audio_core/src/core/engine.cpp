@@ -20,6 +20,11 @@
 namespace sr {
 namespace {
 
+// Now on the steady clock, in microseconds (the game thread's and the audio thread's alike).
+int64_t steadyMicros() {
+    return std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
 // Sound falls 6 dB for each doubling of distance, as the inverse square law has it. The mix was first balanced to be
 // heard from about seven metres away, which left it 13 dB hotter right beside an instrument, enough to push the
 // output into the limiter. The whole output (the instruments, the reverb and the click alike, so the balance between
@@ -2304,6 +2309,9 @@ void AudioEngine::noteOff(int id, int note) {
 void AudioEngine::allNotesOff(int id) {
     Command c; c.type = Command::AllNotesOff; c.id = id; push(c);
 }
+void AudioEngine::setSustain(int id, bool down) {
+    Command c; c.type = Command::Sustain; c.id = id; c.v[0] = down ? 1.0f : 0.0f; push(c);
+}
 void AudioEngine::setBinaural(bool on) {
     binaural_wanted_ = on;
     Command c; c.type = Command::Binaural; c.v[0] = on ? 1.0f : 0.0f; push(c);
@@ -2626,6 +2634,23 @@ MeterReading AudioEngine::readMeter() {
 void AudioEngine::setSequencerRunning(bool on) {
     transport_.running = on;
     Command c; c.type = Command::SequencerRunning; c.v[0] = on ? 1.0f : 0.0f; push(c);
+}
+void AudioEngine::startSequencerIn(double seconds, int64_t from_step) {
+    transport_.running = true;
+    Command c; c.type = Command::SequencerStartIn; c.v[0] = float(seconds); c.v[1] = float(std::max<int64_t>(from_step, 0));
+    c.count = steadyMicros(); push(c);
+}
+void AudioEngine::nudgeSequencer(double seconds) {
+    Command c; c.type = Command::SequencerNudge; c.v[0] = float(seconds); push(c);
+}
+double AudioEngine::sequencerStepNow() const {
+    if (!sequencer_running_.load(std::memory_order_relaxed)) return -1.0;
+    const double since = double(steadyMicros() - rendered_at_us_.load(std::memory_order_relaxed)) / 1e6;
+    return position_.load(std::memory_order_relaxed) + since * steps_per_second_.load(std::memory_order_relaxed);
+}
+void AudioEngine::takePlayedNotes(std::vector<PlayedNote>& out) {
+    PlayedNote note;
+    while (played_.pop(note)) out.push_back(note);
 }
 void AudioEngine::setTempo(double bpm) {
     transport_.bpm = std::clamp(bpm, Sequencer::kMinBpm, Sequencer::kMaxBpm);
@@ -3091,9 +3116,10 @@ void AudioEngine::drainCommands() {
                 }
                 break;
             case Command::SequencerRunning:
-                if (c.v[0] > 0.5f) {
+            case Command::SequencerStartIn:
+                if (c.type == Command::SequencerRunning && c.v[0] > 0.5f) {
                     if (!sequencer_.running()) sequencer_.start(clock_);
-                } else {
+                } else {  // stopped (and, to start in step with the others, from the top when due)
                     sequencer_.stop(clock_);
                     step_.store(-1, std::memory_order_relaxed);
                     for (Source* each : sources_) {
@@ -3104,7 +3130,17 @@ void AudioEngine::drainCommands() {
                             each->instrument->sustain(false);
                         }
                     }
+                    if (c.type == Command::SequencerStartIn) {
+                        const double late = double(steadyMicros() - c.count) / 1e6;  // (on its way here)
+                        sequencer_.startAt(double(clock_) + std::max(0.0, double(c.v[0]) - late) * sr_, int64_t(c.v[1]));
+                    }
                 }
+                break;
+            case Command::SequencerNudge:
+                sequencer_.nudge(double(c.v[0]) * sr_);
+                break;
+            case Command::Sustain:
+                if (s) s->instrument->sustain(c.v[0] > 0.5f);
                 break;
             case Command::Tempo:
                 sequencer_.setTempo(c.v[0]);
@@ -3199,6 +3235,8 @@ void AudioEngine::drainMidi() {
         for (Source* s : sources_) {  // every instrument with its input on, or armed for recording (as Pro Tools' MIDI thru)
             if (!s || !(s->input_on || s->armed) || !playsNotes(s->kind)) continue;
             const bool take = s->armed && punchedIn();
+            if (share_played_.load(std::memory_order_relaxed) && e.type <= MidiEvent::Sustain)  // (for the other players)
+                played_.push({s->id, uint8_t(e.type), int(e.note), e.velocity});
             switch (e.type) {
                 case MidiEvent::NoteOn:
                     s->instrument->noteOn(e.note, e.velocity);
@@ -3354,6 +3392,9 @@ void AudioEngine::renderTimeline() {
     const bool playing = sequencer_.running();
     const double step_seconds = sequencer_.stepSamples() / sr_;
     position_.store(sequencer_.position(clock_), std::memory_order_relaxed);
+    rendered_at_us_.store(steadyMicros(), std::memory_order_relaxed);
+    steps_per_second_.store(step_seconds > 0.0 ? 1.0 / step_seconds : 0.0, std::memory_order_relaxed);
+    sequencer_running_.store(playing, std::memory_order_relaxed);
     streamer_.follow(sequencer_.position(clock_) * step_seconds, playing, sequencer_.looping(), sequencer_.loopStart() * step_seconds,
                      sequencer_.loopEnd() * step_seconds);  // (for the disk thread to read ahead of)
     for (int i = 0; i < block_; ++i) block_seconds_[size_t(i)] = playing ? sequencer_.position(clock_ + i) * step_seconds : -1.0;

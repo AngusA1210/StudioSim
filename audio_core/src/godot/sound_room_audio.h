@@ -255,6 +255,16 @@ public:
     int get_pattern_steps(int id) const;
     void set_source_loop(int id, bool on);      // whether the sequencer plays this source's pattern
     void set_sequencer_running(bool on);
+    // Playing together: the patterns started from the top `seconds` from now (the first step heard then, once the
+    // output's latency is taken off by the caller), nudged later or earlier to keep in step, and where they are just
+    // now in steps (-1 stopped); an instrument's sustain pedal; and what MIDI controllers play here, kept while asked
+    // ([[id, kind ("on", "off" or "sustain"), note (sustain: 1 down, 0 up), velocity]], taken in order).
+    void start_sequencer_in(double seconds, int from_step = 0);
+    void nudge_sequencer(double seconds);
+    double get_sequencer_step_now() const;
+    void set_sustain(int id, bool down);
+    void share_played_notes(bool on);
+    Array take_played_notes();
     // The timeline (a Record room): playing from a step (sixteenths from the start of bar 1), loop playback over a
     // range of steps, and where it is (in steps, as last rendered).
     void play_from(double step);

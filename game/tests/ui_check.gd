@@ -22,6 +22,7 @@ const TrackMenu := preload("res://scripts/track_menu.gd")
 const KitMics := preload("res://scripts/kit_mics.gd")
 const Avatar := preload("res://scripts/avatar.gd")
 const Models := preload("res://scripts/instrument_models.gd")
+const TogetherGuest := preload("res://tests/together_guest.gd")
 
 
 func _initialize() -> void:
@@ -3436,6 +3437,101 @@ func _run() -> void:
 	await tap(KEY_R)
 	var refused: String = timeline.toggle_record()
 	check(not edit.is_open() and refused.begins_with("recording is for Record rooms"), "a Jam room has no edit window, and doesn't record", refused)
+
+	print("Playing together")
+	# A second copy of the game (tests/together_guest.gd) joins the room hosted here, over the network on this computer,
+	# and does what it is asked, saying what it found.
+	var reports := []
+	main.net.reported.connect(func(_from: int, data: Dictionary) -> void: reports.append(data))
+	var wait_for := func(step: String, longest: float) -> Dictionary:
+		var until := Time.get_ticks_msec() + int(longest * 1000.0)
+		while Time.get_ticks_msec() < until:
+			for r in reports:
+				if r.get("step", "") == step:
+					reports.erase(r)
+					return r
+			await process_frame
+		return {}
+	var close_to := func(a: Array, b: Array) -> bool:  # (places, as each copy reckons them)
+		if a.size() != b.size():
+			return false
+		for i in a.size():
+			for k in a[i].size():
+				if absf(float(a[i][k]) - float(b[i][k])) > 0.003:
+					return false
+		return true
+	var sync = main.net.sync
+	var port := 48000 + randi() % 2000
+	var hosted: String = main.together_page.host(port, "127.0.0.1")  # (this computer alone: no firewall to ask)
+	check(hosted == "" and main.net.role == "host" and main.net.players.size() == 1 and main.instruments.all(func(i): return sync.id_of(i) != ""),
+		"the room is hosted, for others to join, each instrument named for the network", hosted)
+	var guest_run := OS.create_process(OS.get_executable_path(), ["--headless", "--path", ProjectSettings.globalize_path("res://"), "--script",
+		"res://tests/together_guest.gd", "--", "--silent", "--join=127.0.0.1:%d" % port])
+	var joined: Dictionary = await wait_for.call("joined", 45.0)
+	check(not joined.is_empty() and joined.ids == sync.ids() and joined.kinds == main.instruments.map(func(i): return i.kind) and
+		close_to.call(joined.places, main.instruments.map(func(i): return sync.place_of(i))) and hash(joined.room) == hash(sync.room_entry()) and
+		main.net.players.size() == 2 and str(main.net.players[int(joined.get("me", 0))].name) == "Guest",
+		"another player joins: their room a copy of this one, every instrument where it stands, the room as it is",
+		"%d instruments there, %d here" % [joined.get("ids", []).size(), main.instruments.size()])
+	var guest_id := int(joined.get("me", 0))
+	await seconds(0.6)
+	var guest_body = main.net.body_of(guest_id)
+	check(guest_body != null and Vector2(guest_body.global_position.x, guest_body.global_position.z).distance_to(
+		Vector2(float(joined.at[0]), float(joined.at[1]))) < 0.1 and guest_body.get_child(0).height > 1.6 and guest_body.get_child(0).height < 1.64,
+		"and their body stands where they do, as tall as they are, for this player to see", str(guest_body.global_position) if guest_body else "none")
+	# What they move moves here; what is changed here changes there.
+	var bells_shared = main.find_instrument("bells")
+	main.net.report({"ask": "move", "id": sync.id_of(bells_shared), "x": bells_shared.global_position.x + 1.0, "z": bells_shared.global_position.z - 0.5})
+	var moved: Dictionary = await wait_for.call("moved", 10.0)
+	await seconds(0.4)
+	check(not moved.is_empty() and close_to.call([moved.place], [sync.place_of(bells_shared)]), "an instrument they carry and put down moves here too",
+		"%s there, %s here" % [str(moved.get("place", [])), str(sync.place_of(bells_shared))])
+	var drums_shared = main.find_instrument("drums")
+	var bass_shared = main.find_instrument("bass")
+	main.set_room_level(bass_shared, -4.5)
+	audio.set_pattern_note(drums_shared.source_id, 7, 38, 1.0, 0.5, 1.0)
+	main.set_tempo(101.0)
+	main.room.set_surface("west", "curtain")
+	await seconds(1.0)
+	main.net.report({"ask": "state", "id": sync.id_of(drums_shared)})
+	var there: Dictionary = await wait_for.call("state", 10.0)
+	main.net.report({"ask": "state", "id": sync.id_of(bass_shared)})
+	var bass_there: Dictionary = await wait_for.call("state", 10.0)
+	check(not there.is_empty() and hash(there.state.pattern) == hash(audio.get_pattern(drums_shared.source_id)) and is_equal_approx(float(there.tempo), 101.0) and
+		str(there.room.surfaces.west) == "curtain" and not bass_there.is_empty() and is_equal_approx(float(bass_there.state.room_db), -4.5),
+		"a pattern edited here, a level in the room, the tempo and the room's walls change there too")
+	# A note they play is heard here.
+	var keys_shared = main.find_instrument("keys")
+	var keys_before: float = await average_level(keys_shared.source_id, 0.2)
+	main.net.report({"ask": "play", "id": sync.id_of(keys_shared), "note": 60})
+	await seconds(0.12)
+	var keys_during: float = await average_level(keys_shared.source_id, 0.25)
+	await wait_for.call("played", 10.0)
+	check(keys_during > 0.001 and keys_during > 4.0 * keys_before, "a note they play is heard here, from the instrument they play it on",
+		"%.4f before, %.4f while they play" % [keys_before, keys_during])
+	# The patterns, started here, start there at the same moment on the session's clock, and stay in step.
+	main.set_sequence_running(false)
+	await seconds(0.5)
+	main.set_sequence_running(true)
+	await seconds(3.5)
+	main.net.report({"ask": "step"})
+	var ahead_here: float = await TogetherGuest.ahead_of_session(main)
+	var stepped: Dictionary = await wait_for.call("step", 10.0)
+	var apart := float(stepped.get("ahead", 99.0)) - ahead_here
+	check(not stepped.is_empty() and bool(stepped.running) and absf(apart) < 3.0 and absf(ahead_here) < 3.0,
+		"started here, the patterns start there at the same moment on the session's clock, and stay in step",
+		"%+.1f ms apart (here %+.1f ms off the session's clock), %.1f ms there and back" % [apart, ahead_here, float(stepped.get("latency_ms", 0.0))])
+	# They leave: their body goes.
+	main.net.report({"ask": "leave"})
+	var left_until := Time.get_ticks_msec() + 8000
+	while main.net.players.size() > 1 and Time.get_ticks_msec() < left_until:
+		await process_frame
+	check(main.net.players.size() == 1 and main.net.body_of(guest_id) == null, "when they leave, their body goes")
+	main.net.leave()
+	await seconds(0.5)
+	if OS.is_process_running(guest_run):
+		OS.kill(guest_run)
+	check(main.net.role == "" and not main.net.is_playing_together(), "and the session ends")
 	timeline.set_mode("record")
 	main.show_title()
 	await frames(3)

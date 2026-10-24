@@ -9,6 +9,7 @@ const PANEL_BG := Color(0.05, 0.06, 0.09, 0.82)
 const DIM := Color(0.62, 0.65, 0.74)
 const WARN := Color(1.0, 0.61, 0.48)
 const FLYING := Color(0.49, 0.89, 0.82)
+const TOGETHER_TEAL := Color(0.49, 0.89, 0.82)
 const BINAURAL_BLUE := Color(0.55, 0.78, 1.0)
 const MONITOR_GREEN := Color(0.45, 0.9, 0.62)
 const FOLLOW_AMBER := Color(0.98, 0.76, 0.36)
@@ -39,6 +40,7 @@ var _modes_panel: PanelContainer
 var _binaural_chip: Label
 var _monitor_chip: Label  # what you hear (H switches): the room, or the mix (as headphones would have it)
 var _follow_chip: Label  # a Record room's insertion following playback, shown while it does
+var _together_chip: Label  # playing together: how many, and how far off the host is
 var _meter_panel: PanelContainer
 var _meter
 var _meter_text: Label
@@ -116,6 +118,13 @@ func setup(the_app) -> void:
 	_monitor_chip = _chip(modes)
 	_binaural_chip = _chip(modes)
 	_follow_chip = _chip(modes)
+	_together_chip = _chip(modes)
+	_together_chip.mouse_filter = Control.MOUSE_FILTER_PASS
+	Hints.give(_together_chip, func() -> String:
+		var net = app.net
+		var others: int = net.players.size() - 1
+		return ("Hosting: %d other player%s in the room" % [others, "" if others == 1 else "s"]) if net.role == "host" else (
+			"In %s's room: %.0f ms to the host and back" % [net.host_name, net.latency_ms]))
 
 	# The master meter, standing upright as on a mixing desk: the output level, and under it the recent peak, or a
 	# word when the limiter is working or the output is clipping.
@@ -211,6 +220,11 @@ func _process(_delta: float) -> void:
 	_light_chip(_monitor_chip, "HEADPHONE MIX" if hearing_mix else "ROOM", true, MONITOR_GREEN if hearing_mix else Color(0.78, 0.8, 0.86))
 	_follow_chip.visible = timeline.is_record() and app.settings.insertion_follows
 	_light_chip(_follow_chip, "FOLLOWS PLAYBACK", true, FOLLOW_AMBER)
+	var net = app.net
+	_together_chip.visible = net.is_playing_together()
+	if _together_chip.visible:
+		var others: int = net.players.size() - 1
+		_light_chip(_together_chip, ("TOGETHER · %d" % (others + 1)) + ("  ·  %.0f MS" % net.latency_ms if net.role == "guest" else ""), true, TOGETHER_TEAL)
 	_modes_panel.reset_size()
 	_modes_panel.position = Vector2(_beat_panel.position.x - _modes_panel.size.x - 8, 14)
 

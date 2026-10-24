@@ -17,6 +17,7 @@ const MAX_RECENT := 10
 var app
 var path := ""       # the room's file; "" while none is open
 var room_name := ""
+var copy := false    # a copy of another player's room (joined, or left): no file of its own until saved as one
 var saved_at := 0    # when it was last saved (Unix time), 0 if never
 var _saved := ""     # the room as it was when last saved or opened, to tell whether it has changed since
 var _backed_up := ""  # likewise for the last backup
@@ -47,7 +48,21 @@ func setup(the_app) -> void:
 
 
 func has_room() -> bool:
-	return path != ""
+	return path != "" or copy
+
+
+## Joined another player's room: its copy here, named for it, with no file (Save As keeps one).
+func begin_copy(the_name: String) -> void:
+	path = ""
+	copy = true
+	room_name = the_name
+	_mark_saved()
+	changed.emit()
+
+
+## Left it: the copy stays as it was, to go on with (or save).
+func end_copy() -> void:
+	changed.emit()
 
 
 ## Where new rooms go unless another folder is chosen: Rooms, in the SoundRoom folder (library.gd's home()).
@@ -92,6 +107,7 @@ func create(the_name: String, folder: String, template_path: String, carry := {}
 	if exists(folder, the_name):
 		return "there is a room called that in that folder already"
 	path = file_for(folder, the_name)
+	copy = false
 	room_name = the_name
 	var problem: String = app.library.apply_room_data(data, carry, size, mode)
 	var unsaved := save()
@@ -104,6 +120,7 @@ func open(file: String) -> String:
 	if data.is_empty():
 		return "it isn't a room SoundRoom can read"
 	path = file  # first, so that its recordings are found in its folder
+	copy = false
 	var problem: String = app.library.apply_room_data(data)
 	room_name = str(data.get("name", file.get_file().get_basename()))
 	saved_at = FileAccess.get_modified_time(file)
@@ -117,6 +134,8 @@ func open(file: String) -> String:
 func save() -> String:
 	if not has_room():
 		return "no room is open"
+	if path == "":
+		return "it is a copy of another player's room, with no file of its own: Save As keeps one"
 	var data: Dictionary = app.library.room_data()
 	data.name = room_name
 	data.saved = Time.get_datetime_string_from_system()
@@ -132,7 +151,7 @@ func save() -> String:
 
 ## Cmd-S: saves the room, or with none open asks for a name to save it under, as a new room.
 func save_or_ask() -> void:
-	if has_room():
+	if path != "":
 		var problem := save()
 		notice.emit("Saved %s" % room_name if problem == "" else "It couldn't be saved: %s" % problem)
 	else:
@@ -142,7 +161,8 @@ func save_or_ask() -> void:
 ## Saves the room under another name, in a folder of its own beside the first (or in the rooms folder), and carries on
 ## in that one, as a DAW's Save As does.
 func save_as(the_name: String) -> void:
-	path = file_for(folder_around(), the_name)
+	path = file_for(folder_around() if not copy else location(), the_name)
+	copy = false
 	room_name = the_name
 	var problem := save()
 	notice.emit("Saved as %s" % the_name if problem == "" else "It couldn't be saved: %s" % problem)
@@ -150,7 +170,7 @@ func save_as(the_name: String) -> void:
 
 ## Whether the room has changed since it was last saved or opened.
 func has_unsaved_changes() -> bool:
-	return has_room() and _signature() != _saved
+	return path != "" and _signature() != _saved
 
 
 ## The rooms there are to open: those in the rooms folder, and those opened lately from elsewhere, the latest first:
@@ -212,7 +232,7 @@ func _carry_on() -> void:
 # ── Auto-save and backups ────────────────────────────────────────────────────────────────────────────────────
 
 func _process(delta: float) -> void:
-	if not has_room():
+	if path == "":
 		return
 	var settings = app.settings
 	_since_save += delta

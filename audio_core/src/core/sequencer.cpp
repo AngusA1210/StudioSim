@@ -98,6 +98,18 @@ void Sequencer::start(int64_t now, double from_step) {
     before_loop_end_ = from_step < loop_end_;
 }
 
+void Sequencer::startAt(double at, int64_t from_step) {
+    running_ = true;
+    next_step_ = std::max<int64_t>(from_step, 0);
+    next_step_time_ = at;
+    wrapped_at_ = -1.0;
+    before_loop_end_ = loop_end_ > 0.0;
+}
+
+void Sequencer::nudge(double samples) {
+    if (running_) next_step_time_ += samples;
+}
+
 void Sequencer::stop(int64_t now) {
     if (running_) stopped_at_ = position(now);
     running_ = false;

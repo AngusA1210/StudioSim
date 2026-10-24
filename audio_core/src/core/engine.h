@@ -425,6 +425,7 @@ public:
     void noteOn(int id, int note, float velocity);
     void noteOff(int id, int note);
     void allNotesOff(int id);
+    void setSustain(int id, bool down);  // its sustain pedal, as a MIDI controller's (a player elsewhere's)
     // Binaural (HRTF) rendering, or plain stereo panning to compare it with. Binaural comes out about a quarter of a
     // block later (EngineStats::binaural_ms), and the reverb and the click with it. Switching crossfades between the two.
     void setBinaural(bool on);
@@ -477,6 +478,28 @@ public:
     int patternSteps(int id) const;
     void setSourceLoop(int id, bool on);  // whether the sequencer plays this source's pattern
     void setSequencerRunning(bool on);    // stopping silences the patterns; starting begins again from the top
+
+    // ── Playing together ─────────────────────────────────────────────────────────────────────────────────
+    // The patterns started `seconds` from now at step `from_step` (the top, to begin with; further on for a player who
+    // joins while they play), as everyone's are to start at once on the session's clock (the time a command takes to
+    // reach the audio thread taken off; the output's latency is the caller's to take off, so that the step is heard
+    // then); and moved later (or earlier, negative) by `seconds`, to keep in step.
+    void startSequencerIn(double seconds, int64_t from_step = 0);
+    void nudgeSequencer(double seconds);
+    // Where the patterns are at this moment, in steps since they started (between steps too), as rendered: the last
+    // block's place, carried on at the tempo; -1 while they are stopped.
+    double sequencerStepNow() const;
+    // What MIDI controllers play here (each note once for each instrument it plays, and the sustain pedal), kept for
+    // the other players while asked to, and taken in order. Type is MidiEvent's: NoteOn, NoteOff or Sustain (note
+    // non-zero: down).
+    struct PlayedNote {
+        int id = 0;
+        uint8_t type = 0;
+        int note = 0;
+        float velocity = 0.0f;
+    };
+    void sharePlayedNotes(bool on) { share_played_.store(on, std::memory_order_relaxed); }
+    void takePlayedNotes(std::vector<PlayedNote>& out);
 
     // ── The timeline (a Record room) ─────────────────────────────────────────────────────────────────────
     // Playing from a step (sixteenths from the start of bar 1: the patterns follow, each from its own start every time
@@ -610,6 +633,7 @@ private:
             MasterAutomation, MasterRead, SourceSoloMuted, MicPath, MicCone, SourceFacing, MicModelSet, MicAim, SourcePan, MicMidSide,
             SourceRoomGain, SourceRoomMuted, RoomVolume, MonitorSet, MasterInserts, AmpLoopMix, LimiterCeiling, BusMono,
             Compensation, CompensationTotal, AmpLoopDelay, Echo, ScatterWall, PartPath, MicShell, BusPans,
+            SequencerStartIn, SequencerNudge, Sustain,
         } type = AddSource;
         int id = 0;
         float v[9] = {};
@@ -731,6 +755,11 @@ private:
     bool recording_wanted_ = false;
     uint32_t record_epoch_ = 0;
     SpscQueue<Command> commands_{8192};
+    SpscQueue<PlayedNote> played_{2048};  // audio thread → game thread: what the controllers played, for the network
+    std::atomic<bool> share_played_{false};
+    std::atomic<int64_t> rendered_at_us_{0};  // when the last block was rendered (steady clock), and the patterns' pace then
+    std::atomic<double> steps_per_second_{0.0};
+    std::atomic<bool> sequencer_running_{false};
     std::unique_ptr<Device> device_;
     EngineStats device_stats_;
     DeviceConfig device_config_;

@@ -82,9 +82,10 @@ static func family_of(inst) -> String:
 # ── An instrument's settings ─────────────────────────────────────────────────────────────────────────────────
 
 ## An instrument's sound, without where it stands or what it plays: its inserts (plug-ins and their settings), an amp's
-## head, cabinet, knobs and pedals, a Speaker's volume, and a microphone's gain.
-func instrument_settings(inst) -> Dictionary:
-	var out := {"kind": inst.kind, "family": family_of(inst), "inserts": inserts_data(inst)}
+## head, cabinet, knobs and pedals, a Speaker's volume, and a microphone's gain. Not `with_states`, the plug-ins' own
+## settings (each read from the plug-in) are left out: what is shared a few times a second when playing together.
+func instrument_settings(inst, with_states := true) -> Dictionary:
+	var out := {"kind": inst.kind, "family": family_of(inst), "inserts": inserts_data(inst, with_states)}
 	if family_of(inst) == "speaker":
 		out.volume_db = inst.volume_db
 	if inst.is_mic:  # its model and pattern, its gain (and polarity) and where its track sits in the stereo
@@ -96,8 +97,9 @@ func instrument_settings(inst) -> Dictionary:
 		out.pan = inst.pan
 	var played: Dictionary = audio.get_instrument_plugin(inst.source_id) if inst.plays_plugin else {}
 	if str(played.get("plugin_id", "")) != "":  # a plug-in instrument's plug-in, which is the instrument itself
-		out.instrument_plugin = {"plugin_id": played.plugin_id, "plugin_name": played.plugin_name, "plugin_maker": played.plugin_maker,
-			"state": Marshalls.raw_to_base64(audio.get_plugin_state(inst.source_id, "instrument", 0))}
+		out.instrument_plugin = {"plugin_id": played.plugin_id, "plugin_name": played.plugin_name, "plugin_maker": played.plugin_maker}
+		if with_states:
+			out.instrument_plugin.state = Marshalls.raw_to_base64(audio.get_plugin_state(inst.source_id, "instrument", 0))
 	if inst.is_amp:
 		var pedals := []
 		var board: Array = audio.get_pedals(inst.source_id)
@@ -105,8 +107,9 @@ func instrument_settings(inst) -> Dictionary:
 			var p: Dictionary = board[i]
 			var pedal := {"kind": p.kind, "on": p.on, "controls": Array(p.controls), "in_loop": p.get("in_loop", false)}
 			if p.kind == "plugin" and p.plugin_id != "":
-				pedal.merge({"plugin_id": p.plugin_id, "plugin_name": p.plugin_name, "plugin_maker": p.plugin_maker,
-					"state": Marshalls.raw_to_base64(audio.get_plugin_state(inst.source_id, "pedal", i))})
+				pedal.merge({"plugin_id": p.plugin_id, "plugin_name": p.plugin_name, "plugin_maker": p.plugin_maker})
+				if with_states:
+					pedal.state = Marshalls.raw_to_base64(audio.get_plugin_state(inst.source_id, "pedal", i))
 			pedals.append(pedal)
 		out.amp = {"head": inst.amp_head, "head_on": inst.head_on, "cabinet": inst.amp_cabinet, "cabinet_on": inst.cabinet_on, "speaker": inst.amp_speaker,
 			"controls": inst.amp_controls.duplicate(), "pedals": pedals, "loop_mix": inst.loop_mix}
@@ -193,8 +196,9 @@ func _set_pans(folder, entry: Dictionary) -> void:
 		app.set_folder_pans(folder, -1.0 + 2.0 * maxf(balance, 0.0), 1.0 - 2.0 * maxf(-balance, 0.0))
 
 
-## A track's inserts (an instrument's or a folder's), as saved: each slot's plug-in with its settings, or null.
-func inserts_data(track) -> Array:
+## A track's inserts (an instrument's or a folder's), as saved: each slot's plug-in with its settings (unless not
+## `with_states`: what each plug-in keeps of itself, read from it), or null.
+func inserts_data(track, with_states := true) -> Array:
 	var out := []
 	var inserts: Array = audio.get_inserts(track.source_id)
 	for slot in inserts.size():
@@ -202,8 +206,10 @@ func inserts_data(track) -> Array:
 		if insert.plugin_id == "":
 			out.append(null)
 		else:
-			out.append({"plugin_id": insert.plugin_id, "plugin_name": insert.plugin_name, "plugin_maker": insert.plugin_maker,
-				"on": insert.on, "state": Marshalls.raw_to_base64(audio.get_plugin_state(track.source_id, "insert", slot))})
+			var entry := {"plugin_id": insert.plugin_id, "plugin_name": insert.plugin_name, "plugin_maker": insert.plugin_maker, "on": insert.on}
+			if with_states:
+				entry.state = Marshalls.raw_to_base64(audio.get_plugin_state(track.source_id, "insert", slot))
+			out.append(entry)
 	return out
 
 
