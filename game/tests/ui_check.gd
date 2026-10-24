@@ -394,7 +394,8 @@ func _run() -> void:
 		"on their stool, facing them: your ears where a seated drummer's are", "ears %.2f m up" % player.ear_position().y)
 	check(drums.input_on and drums._input_badge.visible and main.armed_instruments() == [drums],
 		"sitting down switches the drums' input on, and a green i shows under their name")
-	check(main.hud._piano_keys[KEY_A].piece.text == "Kick" and main.hud._piano_keys[KEY_T].piece.text == "CH" and main.hud._piano_keys[KEY_S].piece.text == "Snare",
+	check(main.hud._piano_keys[KEY_A].piece.text == "Kick" and main.hud._piano_keys[KEY_T].piece.text == "Hat\nclosed" and main.hud._piano_keys[KEY_S].piece.text == "Snare" and
+		main.hud._piano_keys[KEY_H].piece.text == "Tom 1" and main.hud._piano_keys[KEY_F].piece.text == "Tom 2",
 		"the keys are labelled with the drums they hit", "A %s, S %s, T %s" % [main.hud._piano_keys[KEY_A].piece.text, main.hud._piano_keys[KEY_S].piece.text, main.hud._piano_keys[KEY_T].piece.text])
 	key(KEY_A)
 	await frames(3)
@@ -1258,9 +1259,40 @@ func _run() -> void:
 	check(mix.is_open() and player.global_position.distance_to(standing) > 0.3, "you can walk about with the mix window open",
 		"%.2f m" % player.global_position.distance_to(standing))
 	player.place(standing, player.yaw)
-	# A strip's name opens the instrument's own window, and the mix window comes back when it closes.
+	# A click anywhere on a strip that isn't one of its controls chooses its track, as its name does; a double-click on
+	# its name opens the instrument's own window, and the mix window comes back when it closes.
+	main.chosen_tracks = []
+	await click(mix._strip_for(drums).small.get_global_rect().get_center())
+	var chosen_by_frame: bool = main.chosen_tracks == [drums] and mix.is_open() and not seq.is_open()
+	var next_strip: Dictionary = mix._strips[main.instruments.find(drums) + 1]
+	var shift_frame := InputEventMouseButton.new()
+	shift_frame.button_index = MOUSE_BUTTON_LEFT
+	shift_frame.position = next_strip.small.get_global_rect().get_center()
+	shift_frame.global_position = shift_frame.position
+	shift_frame.shift_pressed = true
+	shift_frame.pressed = true
+	view.push_input(shift_frame)
+	shift_frame = shift_frame.duplicate()
+	shift_frame.pressed = false
+	view.push_input(shift_frame)
+	await frames(2)
+	var chosen_more: bool = main.chosen_tracks.size() == 2 and main.chosen_tracks.has(next_strip.inst)
 	await click(mix._strip_for(drums).plate.get_global_rect().get_center())
-	check(seq.is_open() and seq.inst == drums and not mix.is_open(), "clicking a strip's name opens the instrument's window: the drums' pattern")
+	check(chosen_by_frame and chosen_more and main.chosen_tracks == [drums] and mix.is_open() and not seq.is_open(),
+		"clicking anywhere on a strip but its controls chooses its track (Shift-click for more), as its name does, without opening it")
+	var name_twice := InputEventMouseButton.new()
+	name_twice.button_index = MOUSE_BUTTON_LEFT
+	name_twice.position = mix._strip_for(drums).plate.get_global_rect().get_center()
+	name_twice.global_position = name_twice.position
+	name_twice.double_click = true
+	name_twice.pressed = true
+	view.push_input(name_twice)
+	name_twice = name_twice.duplicate()
+	name_twice.pressed = false
+	view.push_input(name_twice)
+	await frames(3)
+	check(seq.is_open() and seq.inst == drums and not mix.is_open(), "double-clicking a strip's name opens the instrument's window: the drums' pattern")
+	main.chosen_tracks = []
 	await tap(KEY_ESCAPE)
 	await frames(3)
 	check(not seq.is_open() and mix.is_open(), "and closing it comes back to the mix window")
@@ -1669,8 +1701,8 @@ func _run() -> void:
 	seq.open(garage)
 	await frames(3)
 	var lanes: Array = seq._rows().map(func(row): return row.label)
-	check(lanes == ["Crash", "Open hat", "Closed hat", "Ride", "High tom", "Low tom", "Snare", "Kick"],
-		"its pattern has a row for each of its pieces, a ride where the drum machine has its clap", str(lanes))
+	check(lanes == ["Crash", "Ride", "Open hat", "Closed hat", "Pedal hat", "Tom 1", "Floor tom", "Snare", "Kick"],
+		"its pattern has a row for each of its pieces: a ride beside its crash, its hi-hat's pedal, Tom 1 and its floor tom", str(lanes))
 	seq.close()
 	await frames(2)
 	audio.note_on(garage.source_id, 38, 0.9)
@@ -2328,18 +2360,34 @@ func _run() -> void:
 		absf(eyes_over_ears.y - 0.0145 * 1.75) < 0.005 and player.listener_transform().origin.is_equal_approx(player.ear_position()),
 		"1.75 m tall, you hear from the middle of your head, 1.61 m up, and see from 2.5 cm above and 8.5 cm in front of it",
 		"ears %.3f m up; eyes %.3f m ahead, %.3f m above" % [player.ear_position().y, eyes_over_ears.dot(facing), eyes_over_ears.y])
-	main.menu.open()
+	main.show_title()
+	await frames(3)
+	await click(title.buttons.you.get_global_rect().get_center())
 	await frames(2)
-	main.menu._height_slider.value = 160.0
+	var you_open: bool = main.you_page.is_open() and not title._ui.visible
+	main.you_page._height.value = 160.0
+	main.you_page._name.text = "Drummer"
+	main.you_page._name.text_changed.emit("Drummer")
 	await frames(2)
-	var height_said: String = main.menu._height_value.text
-	main.menu.close()
+	var height_said: String = main.you_page._height_value.text
+	var tag: Label3D = player.avatar._tag
+	check(you_open and main.settings.player_name == "Drummer" and tag.visible and tag.text == "Drummer" and tag.layers == body_layer and
+		main.you_page._body._tag.text == "Drummer", "the title screen's You page: your name, over your body where others see it", tag.text)
+	await tap(KEY_ESCAPE)
+	await frames(2)
+	var settings_page_heightless: bool = not main.menu.get("_height_slider")
+	title.enter()
+	await seconds(1.0)
 	var head_mesh: MeshInstance3D = player.avatar.find_child("head", true, false)
 	check(is_equal_approx(player.height, 1.6) and is_equal_approx(main.settings.height, 1.6) and absf(player.ear_position().y - 0.922 * 1.6) < 0.005 and
 		is_equal_approx((player._shape.shape as CapsuleShape3D).height, 1.6) and head_mesh != null and absf(head_mesh.position.y - 0.932 * 1.6) < 0.02 and
-		height_said == "160 cm  ·  5′ 3″", "Your height, in the menu: your eyes, ears and body go with it",
+		height_said == "160 cm  ·  5′ 3″" and settings_page_heightless and not main.you_page.is_open() and not title.is_open(),
+		"and your height there (not in the room's menu): your eyes, ears and body go with it",
 		"%s; ears %.3f m up, its head %.3f, %.2f m tall" % [height_said, player.ear_position().y, head_mesh.position.y if head_mesh else -1.0, player.height])
 	main.set_height(1.75)
+	main.set_player_name("")
+	main._sit_at("drums")
+	await frames(3)
 	# The free camera: off from your eyes, flying the way it looks, through anything, your body staying put.
 	var stood_at: Vector3 = player.global_position
 	await tap(KEY_F)
@@ -2360,12 +2408,13 @@ func _run() -> void:
 	await hold.call(KEY_E, 0.4)
 	var flown: Vector3 = player.fly_camera.global_position - flew_from
 	check(flown.dot(facing) > 0.8 and flown.y > 0.6 and player.global_position.distance_to(stood_at) < 0.01 and player.target == null and
-		player.listener_transform().origin.is_equal_approx(player.ear_position()) and player.seated_at == null and not player.playing,
-		"it flies the way it looks (W) and up (E), your body standing where it was, the room still heard from your ears",
+		player.listener_transform().origin.is_equal_approx(player.fly_camera.global_position) and player.seated_at == null and not player.playing,
+		"it flies the way it looks (W) and up (E), your body standing where it was, the room heard from the camera as it goes",
 		"%.2f m ahead, %.2f m up" % [flown.dot(facing), flown.y])
-	main.set_free_camera_hears("camera")
-	check(player.listener_transform().origin.is_equal_approx(player.fly_camera.global_position), "set to, the room is heard from the camera instead")
 	main.set_free_camera_hears("you")
+	check(player.listener_transform().origin.is_equal_approx(player.ear_position()) and main.menu._hears_option.get_item_text(0) == "The camera",
+		"set to (under Sound in the settings), the room is heard from your ears instead")
+	main.set_free_camera_hears("camera")
 	await hold.call(KEY_W, 4.0)  # (into the drums, and on to the wall behind them)
 	var half_room: Vector3 = main.room.size / 2.0
 	var cam_at: Vector3 = player.fly_camera.global_position

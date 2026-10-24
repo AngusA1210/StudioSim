@@ -93,6 +93,7 @@ func setup(the_app, room_instruments: Array) -> void:
 	fly_camera.near = 0.05
 	add_child(fly_camera)
 	set_height(app.settings.height)
+	avatar.set_name_tag(app.settings.player_name)
 	place(Vector3(0.0, 0.0, 3.6), 0.0)
 
 
@@ -321,7 +322,8 @@ func forget(inst) -> void:
 ## Walking about: with nothing open, or only the mix window, which docks along the bottom so the room stays in view
 ## (unless something in it is being typed into).
 func _can_move() -> bool:
-	for panel in [app.title, app.menu, app.sequencer, app.amp_panel, app.speaker_panel, app.mic_panel, app.instrument_menu, app.name_prompt, app.rooms_page]:
+	for panel in [app.title, app.menu, app.sequencer, app.amp_panel, app.speaker_panel, app.mic_panel, app.instrument_menu, app.name_prompt, app.rooms_page,
+			app.you_page]:
 		if panel != null and panel.is_open():
 			return false
 	if app.session != null and app.session.is_asking():  # "Save the changes?": the arrows are for its buttons
@@ -335,7 +337,7 @@ func _ui_open() -> bool:
 	if app.session != null and app.session.is_asking():
 		return true
 	for panel in [app.title, app.menu, app.sequencer, app.mixer, app.amp_panel, app.speaker_panel, app.mic_panel, app.instrument_menu, app.name_prompt, app.edit_window,
-			app.rooms_page]:
+			app.rooms_page, app.you_page]:
 		if panel != null and panel.is_open():
 			return true
 	return false

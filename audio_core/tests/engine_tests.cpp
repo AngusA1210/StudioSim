@@ -925,7 +925,7 @@ int main(int argc, char** argv) {
             if (r.peak < 0.02 || r.peak > 0.9 || !r.finite) all_sound = false;
             pieces += std::string(piece ? ", " : "") + Drums::pieceName(Drums::Piece(piece)) + fmt(" %.0f", db(r.peak));
         }
-        check(all_sound, "all eight drum pieces sound at a sensible level", "peak dBFS: " + pieces);
+        check(all_sound, "every drum piece sounds at a sensible level", "peak dBFS: " + pieces);
         check(low[Drums::Kick] > 10 * high[Drums::Kick] && high[Drums::HatClosed] > 10 * low[Drums::HatClosed] &&
                   low[Drums::TomLow] > high[Drums::TomLow] && high[Drums::Crash] > 10 * low[Drums::Crash],
               "kick and toms are low, hats and crash are high", "energy below 300 Hz against above 4 kHz");
@@ -2516,6 +2516,29 @@ int main(int argc, char** argv) {
         const auto crash = strike(k11, {{0.0, Drums::Crash}}, 0.9f, 2.5);
         check(rms(ride, 1.5, 2.0) > 0.01 * rms(ride, 0.0, 0.2) && rms(crash, 1.0, 1.5) > 0.01 * rms(crash, 0.0, 0.2),
               "the ride and the crash wash on", "");
+        // G# (General MIDI's 44) is the hi-hat closed by its pedal: the chick of the two cymbals meeting, quieter than a
+        // stick on them, and closing an open hat as it does; the drum machine has no pedal, so G# closes its hats.
+        GarageKit k12 = fresh(), k13 = fresh();
+        const auto pedal = strike(k12, {{0.0, Drums::HatPedal}}, 0.8f, 0.8);
+        const auto pedal_closing = strike(k13, {{0.0, Drums::HatOpen}, {0.12, Drums::HatPedal}}, 0.8f, 0.8);
+        const double under_stick = db(rms(pedal, 0.0, 0.1) / rms(closed, 0.0, 0.1));
+        check(GarageKit::pieceFor(44) == Drums::HatPedal && GarageKit::pieceFor(56) == Drums::HatPedal && Drums::pieceFor(44) == Drums::HatClosed &&
+                  GarageKit::noteFor(Drums::HatPedal) == 44 && under_stick < -3.0 && under_stick > -20.0 &&
+                  rms(pedal_closing, 0.3, 0.5) < 0.1 * rms(open, 0.3, 0.5),
+              "G# is the hi-hat closed by its pedal, quieter than a stick on it, and closing an open one", fmt("%.1f dB under a stick", under_stick));
+        check(std::string(GarageKit::pieceName(Drums::TomHigh)) == "Tom 1" && std::string(GarageKit::pieceName(Drums::TomLow)) == "Floor tom" &&
+                  std::string(Drums::pieceName(Drums::TomHigh)) == "Tom 1" && std::string(Drums::pieceName(Drums::TomLow)) == "Tom 2" &&
+                  std::string(GarageKit::pieceName(Drums::HatPedal)) == "Pedal hat",
+              "an acoustic kit's toms are Tom 1 (its rack tom, on the left) and its floor tom; the drum machine's, Tom 1 and Tom 2", "");
+        // Velocity, as General MIDI 2's curve has it: 40 log10 of it, in dB, so a hit half as hard (64) is 12 dB down from
+        // the hardest (127), and one at 32, 24 dB.
+        GarageKit k14 = fresh(), k15 = fresh(), k16 = fresh();
+        const auto hardest = strike(k14, {{0.0, Drums::Snare}}, 1.0f, 0.6), half_as = strike(k15, {{0.0, Drums::Snare}}, 64.0f / 127.0f, 0.6),
+                   quarter = strike(k16, {{0.0, Drums::Snare}}, 32.0f / 127.0f, 0.6);
+        const double at_64 = db(rms(half_as, 0.0, 0.3) / rms(hardest, 0.0, 0.3)), at_32 = db(rms(quarter, 0.0, 0.3) / rms(hardest, 0.0, 0.3));
+        check(std::fabs(at_64 - 40.0 * std::log10(64.0 / 127.0)) < 1.5 && std::fabs(at_32 - 40.0 * std::log10(32.0 / 127.0)) < 2.0,
+              "a hit's level follows its velocity as General MIDI 2's curve has it: half as hard, 12 dB down",
+              fmt("velocity 64: %+.1f dB, ", at_64) + fmt("32: %+.1f dB", at_32));
         // As loud, played as a groove, as the drum machine, so the two can sit at the same level in the room.
         auto groove = [&](Instrument& kit, bool garage) {
             std::vector<float> x(size_t(2.0 * kRate), 0.0f);
@@ -2542,8 +2565,8 @@ int main(int argc, char** argv) {
         Drums machine(kRate);
         const double garage_level = rms(groove(garage_kit, true), 0.0, 2.0), machine_level = rms(groove(machine, false), 0.0, 2.0);
         const double studio_level = rms(groove(studio_groove_kit, true), 0.0, 2.0);
-        // game/scripts/catalog.gd starts the drums at 0.50, the garage kit at 0.38 and the studio kit at 0.45.
-        const double garage_apart = db(garage_level * 0.38 / (machine_level * 0.50)), studio_apart = db(studio_level * 0.45 / (machine_level * 0.50));
+        // game/scripts/catalog.gd starts the drums at 0.50, the garage kit at 0.45 and the studio kit at 0.53.
+        const double garage_apart = db(garage_level * 0.45 / (machine_level * 0.50)), studio_apart = db(studio_level * 0.53 / (machine_level * 0.50));
         check(std::fabs(garage_apart) < 2.0 && std::fabs(studio_apart) < 2.0, "played as a groove, each kit starts about as loud as the drum machine",
               fmt("garage %+.1f dB, ", garage_apart) + fmt("studio %+.1f dB", studio_apart));
 
@@ -3794,8 +3817,8 @@ int main(int argc, char** argv) {
               fmt("the hi-hat %.1f dB louder on the left, ", hats_heard) + fmt("the floor tom %.1f dB on the right", floor_heard));
 
         // Heard from 3 m off, in front, behind or beside it, either kit is about as loud as the drum machine there, as
-        // their starting levels have it (game/scripts/catalog.gd: the drums 0.50, the garage kit 0.38, the studio kit
-        // 0.45): its heads share each drum between them so that, together, from a distance, they are the kit as tuned.
+        // their starting levels have it (game/scripts/catalog.gd: the drums 0.50, the garage kit 0.45, the studio kit
+        // 0.53): its heads share each drum between them so that, together, from a distance, they are the kit as tuned.
         const auto heard_from = [&](InstrumentKind kind, float gain, Vec3 ear, Vec3 look) {
             AudioEngine engine;
             std::string err;
@@ -3823,8 +3846,8 @@ int main(int argc, char** argv) {
                                                {at(3.0f, 1.65f, 0.0f), {-1.0f, 0.0f, 0.0f}}};
         for (const auto& [ear, look] : spots) {
             const double machine = heard_from(InstrumentKind::Drums, 0.50f, ear, look);
-            const double garage = heard_from(InstrumentKind::GarageDrums, 0.38f, ear, look) - machine;
-            const double studio = heard_from(InstrumentKind::StudioDrums, 0.45f, ear, look) - machine;
+            const double garage = heard_from(InstrumentKind::GarageDrums, 0.45f, ear, look) - machine;
+            const double studio = heard_from(InstrumentKind::StudioDrums, 0.53f, ear, look) - machine;
             furthest_apart = std::max({furthest_apart, std::fabs(garage), std::fabs(studio)});
             sides += fmt("%+.1f/", garage) + fmt("%+.1f ", studio);
         }

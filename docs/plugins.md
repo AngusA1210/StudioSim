@@ -7,6 +7,12 @@ the plug-in browser opens: your plug-ins grouped **by type** (EQ, dynamics, dela
 maker**, with a search box; a plug-in installed in both formats is listed twice, each marked AU or VST3. Choose one and
 its own window opens, floating over the room. Plug-ins get the room's tempo, for those that keep time.
 
+A plug-in's window leaves the keyboard with the room, so the computer keyboard goes on playing while you turn its
+knobs, except while something in it is being typed into: a box of the system's own, or one the plug-in draws itself
+(as JUCE plug-ins do, a preset's name, say), clicked or opened from one of its menus. Then the window has the keyboard
+until the typing is done, and gives it back. (On Windows a plug-in's window is an ordinary one: a click in it gives it
+the keyboard, and a click in the room takes it back.)
+
 A VST3 is known by its class id, which is the same on a Mac and on Windows, so a room whose plug-ins are VST3s opens
 on either with its plug-ins and their settings. A room made with Audio Units, opened on Windows, gets the VST3 version
 of each where it is installed (its settings start fresh, as the two formats keep them differently), and says so.

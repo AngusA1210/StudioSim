@@ -38,8 +38,7 @@ recording, mixing, room acoustics, and how the code is put together.
 
 ## Roadmap
 
-1. Windows played and listened to on a real machine, with ASIO.
-2. Multiplayer: a session server, a shared clock, and low-latency audio between players.
+1. Multiplayer: a session server, a shared clock, and low-latency audio between players.
 
 The full list is in [docs/roadmap.md](docs/roadmap.md).
 

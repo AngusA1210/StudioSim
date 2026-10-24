@@ -17,8 +17,10 @@ const SOMETIMES_CHANCE := 0.25
 const RANGES := {"bass": [28, 64], "pad": [43, 79], "bells": [60, 96], "keys": [36, 84]}
 const DEFAULT_LENGTH := {"drums": 1.0, "garage_drums": 1.0, "studio_drums": 1.0, "bass": 2.0, "pad": 16.0, "bells": 1.0, "keys": 2.0, "plugin_synth": 2.0}
 # A drum kit's rows, top to bottom, by its pieces' places in the audio core's list (Kick, Snare, Closed hat, Open hat,
-# Low tom, High tom, Clap or Ride, Crash): the cymbals on top, the kick at the foot.
+# Tom 2 or the floor tom, Tom 1, Clap or Ride, Crash, Pedal hat): the cymbals on top, the kick at the foot. The drum
+# machine's; and an acoustic kit's, its ride beside its crash and its hi-hat's pedal under its hats.
 const DRUM_ORDER := [7, 3, 2, 6, 5, 4, 1, 0]
+const KIT_ORDER := [7, 6, 3, 2, 8, 5, 4, 1, 0]
 const DRUM_ROW := 44.0
 const NOTE_ROW := 20.0
 const HELP := "Click a square to add a note, click a note to remove it. Right-click a note to change how hard it is hit. Click a name on the left to hear it."
@@ -323,7 +325,7 @@ func _rows() -> Array:
 	var rows := []
 	if inst.drum_kit:
 		var pieces: Array = audio.get_drum_pieces(inst.kind)
-		for index in DRUM_ORDER:
+		for index in (KIT_ORDER if inst.has_parts() else DRUM_ORDER):
 			rows.append({"note": pieces[index].note, "label": pieces[index].name, "dark": false})
 		return rows
 	var span: Array = RANGES.get(inst.kind, [36, 84])

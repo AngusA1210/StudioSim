@@ -22,10 +22,10 @@ const KINDS := {
 		"top": 0.98, "footprint": Vector2(1.2, 0.55), "height": 0.95, "gain": 0.20, "send": 0.9},
 	# The acoustic kits, with the drum machine's pieces and keys (a ride on the clap's). As loud played as the drums.
 	"garage_drums": {"name": "Garage Kit", "about": "A rock kit played loud: ringing, loose and raw; its own track has a garage's crunch and slap.",
-		"color": Color(0.88, 0.16, 0.14), "top": 1.45, "footprint": Vector2(1.6, 1.3), "height": 0.9, "gain": 0.38, "send": 0.6,
+		"color": Color(0.88, 0.16, 0.14), "top": 1.45, "footprint": Vector2(1.6, 1.3), "height": 0.9, "gain": 0.45, "send": 0.6,
 		"drum_kit": true},
 	"studio_drums": {"name": "Studio Kit", "about": "The same kit in a studio, tuned and damped: punchy, tight and clean.",
-		"color": Color(0.6, 0.3, 0.9), "top": 1.45, "footprint": Vector2(1.6, 1.3), "height": 0.9, "gain": 0.45, "send": 0.6,
+		"color": Color(0.6, 0.3, 0.9), "top": 1.45, "footprint": Vector2(1.6, 1.3), "height": 0.9, "gain": 0.53, "send": 0.6,
 		"drum_kit": true},
 	# One of the instrument plug-ins on the computer, chosen when it is made, and named after it.
 	"plugin_synth": {"name": "Plug-in Instrument", "about": "One of your instrument plug-ins: a synthesizer, a sampler, a piano.",

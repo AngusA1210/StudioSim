@@ -98,8 +98,10 @@ add_library(sr_core STATIC
 target_include_directories(sr_core PUBLIC src/core thirdparty/miniaudio)
 target_link_libraries(sr_core PUBLIC phonon vst3_hosting)
 if(APPLE)
-    target_sources(sr_core PRIVATE src/core/midi_input_coremidi.cpp src/core/plugin_host_mac.mm src/core/plugin_window_mac.mm)
-    set_source_files_properties(src/core/plugin_host_mac.mm src/core/plugin_window_mac.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+    target_sources(sr_core PRIVATE src/core/midi_input_coremidi.cpp src/core/plugin_host_mac.mm src/core/plugin_window_mac.mm
+                                   src/core/plugin_panel_mac.mm)
+    set_source_files_properties(src/core/plugin_host_mac.mm src/core/plugin_window_mac.mm src/core/plugin_panel_mac.mm
+                                PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
     target_link_libraries(sr_core PUBLIC "-framework CoreAudio" "-framework AudioToolbox" "-framework CoreFoundation"
                                          "-framework CoreMIDI" "-framework AppKit" "-framework CoreAudioKit"
                                          "-framework AVFoundation")

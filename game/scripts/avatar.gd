@@ -27,6 +27,8 @@ const HIP_OVER_SEAT := 0.05  # (seated, the hip joints over the seat)
 const STICK := 0.4  # a drumstick's length, metres
 
 var height := 1.75
+var _name_text := ""
+var _tag: Label3D  # its name, over its head
 var _parts := {}  # name → MeshInstance3D
 var _stretch := {}  # name → its scale, kept as it is placed
 var _phase := 0.0  # the walk's cycle (radians)
@@ -56,6 +58,16 @@ func build(tall: float, color: Color) -> void:
 		part.queue_free()
 	_parts.clear()
 	_stretch.clear()
+	_tag = Label3D.new()
+	_tag.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	_tag.pixel_size = 0.0016
+	_tag.font_size = 44
+	_tag.outline_size = 12
+	_tag.modulate = Color(0.95, 0.96, 1.0)
+	_tag.outline_modulate = Color(0.02, 0.03, 0.05, 0.8)
+	_tag.layers = 1 << (LAYER - 1)
+	add_child(_tag)
+	set_name_tag(_name_text)
 	var shirt := _material(color.darkened(0.15), 0.8)
 	var trousers := _material(Color(0.2, 0.22, 0.27), 0.85)
 	var skin := _material(Color(0.74, 0.72, 0.7), 0.6)  # (a mannequin's)
@@ -123,6 +135,14 @@ func build(tall: float, color: Color) -> void:
 	pose({}, 0.0)
 
 
+## Its name, shown over its head ("" for none).
+func set_name_tag(text: String) -> void:
+	_name_text = text
+	if _tag != null:
+		_tag.text = text
+		_tag.visible = text != ""
+
+
 ## Places it for this frame. `state`: "pitch" (where its head looks, up or down, radians), "move" (how fast it goes
 ## over the floor and which way, in its own frame, m/s), "seat_top" (seated, on a seat this high under its hips),
 ## "feet" and "hands" ([left, right], where they should be, in its own frame; otherwise as it stands or walks),
@@ -156,6 +176,7 @@ func pose(state: Dictionary, delta: float) -> void:
 	_place("neck", _between(shoulders, ears - spine * 0.02 * h))
 	var look := clampf(float(state.get("pitch", 0.0)), -1.1, 0.9)
 	_place("head", Transform3D(Basis(Vector3.RIGHT, look), ears + Vector3(0.0, 0.01 * h, 0.0)))
+	_tag.position = ears + Vector3(0.0, 0.14 * h, 0.0)
 	var feet: Array = state.get("feet", [])
 	var hands: Array = state.get("hands", [])
 	var sticks: Array = state.get("sticks", [])

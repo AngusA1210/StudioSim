@@ -6,9 +6,9 @@ Each instrument is a track, in the mix window and (in a Record room) the edit wi
   edit window; its name over it in the room changes too, and a plug-in instrument keeps a name given it rather than
   taking its plug-in's. **Colour** in the same menu offers a palette, as Pro Tools does: the track's name in the room,
   its light, its strip and its clips take it (the instrument's paint stays as it was made).
-- **Choosing tracks**: click a track's name in the edit window to choose it, Shift-click for every track from the
-  last one chosen to it, Cmd-click for one more or one fewer; in the mix window Shift-click and Cmd-click the names
-  (a plain click opens the instrument's window). Chosen tracks are lit.
+- **Choosing tracks**: click a track anywhere but on its controls to choose it (in the edit window its header, in the
+  mix window its strip, its name or between its buttons, faders and pots), Shift-click for every track from the last
+  one chosen to it, Cmd-click for one more or one fewer. Chosen tracks are lit.
 - **Routing folders**, as in Pro Tools: **⌘G** (or **New folder** in a track's menu) puts the chosen tracks in a new
   folder. Its tracks play into its bus (an aux input) rather than straight to the master, and from there through its
   inserts and its fader to the master, so one fader brings a whole drum kit up or down, and a compressor or EQ on it
@@ -63,8 +63,8 @@ the Room Reverb, the room's master and the mix's master. At the top of each stri
 under them its **sends**, A to E (see Aux tracks and sends). A fader whose track's automation is read moves with it, and
 in Touch, Latch or Write, holding one writes it.
 
-- **Names**: click a strip's name to open the instrument's own window (an amp's knobs and pedals, a pattern, a
-  Speaker's panel); the mix window comes back when it closes. Right-click the name to **duplicate** the instrument
+- **Names**: double-click a strip's name (or right-click it, **Open**) to open the instrument's own window (an amp's
+  knobs and pedals, a pattern, a Speaker's panel); the mix window comes back when it closes. Right-click the name to **duplicate** the instrument
   (as Pro Tools duplicates a track: the copy stands beside it, its strip comes next, and it has the same fader,
   pattern, volume, head, cabinet, knobs, pedals and inserts, plug-in settings included, and its clips and automation;
   its input starts off, and a

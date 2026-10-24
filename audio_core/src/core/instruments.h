@@ -184,10 +184,11 @@ struct EPianoVoice {
 }  // namespace voice
 
 // A drum machine. Every note plays one of its pieces, laid out like the General MIDI drum map and repeated in
-// every octave, so any key on a controller does something.
+// every octave, so any key on a controller does something. Its two toms are over the kick, Tom 1 (the higher) on the
+// left as the drummer sits, Tom 2 on the right; it has no hi-hat pedal (HatPedal, the acoustic kits' alone).
 class Drums : public Instrument {
 public:
-    enum Piece { Kick, Snare, HatClosed, HatOpen, TomLow, TomHigh, Clap, Crash, kPieces };
+    enum Piece { Kick, Snare, HatClosed, HatOpen, TomLow, TomHigh, Clap, Crash, HatPedal, kPieces };
     static Piece pieceFor(int note);
     static int noteFor(Piece piece);  // the note a piece is written as in a pattern
     static const char* pieceName(Piece piece);
@@ -242,21 +243,25 @@ constexpr int kKitParts = int(KitPart::kCount);
 
 // An acoustic drum kit. Each drum is its head's modes, settling in pitch after the hit, with the stick or beater on
 // top; the snare's wires buzz along with the kick and toms; the hats choke when closed; the crash's and ride's washes
-// build when hit again; harder hits are brighter, and no two hits are quite alike. The same eight pieces and keys as
-// the drum machine, except that the clap's key (D#, as General MIDI's ride at 51) plays a ride. Its parts (KitPart)
+// build when hit again; harder hits are louder (as General MIDI 2's velocity curve has it: 40 log10 of the velocity,
+// in dB, so half as hard is 12 dB down), brighter and, the head stretched further, sharper at first; and no two hits
+// are quite alike. The drum machine's keys, except that the clap's key (D#, as General MIDI's ride at 51) plays a
+// ride, its toms are a rack tom (Tom 1, A) and a floor tom (F), and G# (General MIDI's 44) is the hi-hat closed by
+// its pedal, the foot's chick with no stick. Its parts (KitPart)
 // are heard in the room each from its own place, as the kit itself is, untouched; its own sound (its track's) is the
 // kit as one, with its voicing's drive and room.
 class AcousticKit : public Instrument {
 public:
     using Piece = Drums::Piece;
     static constexpr Piece Ride = Drums::Clap;  // the ride stands where the drum machine has its clap
+    static Piece pieceFor(int note);
     static int noteFor(Piece piece);
     static const char* pieceName(Piece piece);
 
     AcousticKit(float sample_rate, const KitVoicing& voicing);
     void hit(Piece piece, float velocity, int delay);
-    void noteOn(int note, float velocity) override { hit(Drums::pieceFor(note), velocity, 0); }
-    void play(int note, float /*dur_sec*/, float velocity, int delay) override { hit(Drums::pieceFor(note), velocity, delay); }
+    void noteOn(int note, float velocity) override { hit(pieceFor(note), velocity, 0); }
+    void play(int note, float /*dur_sec*/, float velocity, int delay) override { hit(pieceFor(note), velocity, delay); }
     float velocityJitter() const override { return 0.06f; }
     void render(float* out, int n) override { renderParts(out, nullptr, n); }
     int parts() const override { return kKitParts; }

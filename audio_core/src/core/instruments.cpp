@@ -378,12 +378,12 @@ Drums::Piece Drums::pieceFor(int note) {
 }
 
 int Drums::noteFor(Piece piece) {
-    static const int kNote[kPieces] = {36, 38, 42, 46, 41, 45, 39, 49};
+    static const int kNote[kPieces] = {36, 38, 42, 46, 41, 45, 39, 49, 44};
     return kNote[piece];
 }
 
 const char* Drums::pieceName(Piece piece) {
-    static const char* const kName[kPieces] = {"Kick", "Snare", "Closed hat", "Open hat", "Low tom", "High tom", "Clap", "Crash"};
+    static const char* const kName[kPieces] = {"Kick", "Snare", "Closed hat", "Open hat", "Tom 2", "Tom 1", "Clap", "Crash", "Pedal hat"};
     return kName[piece];
 }
 
@@ -403,6 +403,7 @@ void Drums::hit(Piece piece, float v, int delay) {
             break;
         case HatClosed:
         case HatOpen:
+        case HatPedal:  // (it has none: closed, as G# plays here)
             noiseSlot().start(sr_, delay, Biquad::Highpass, 8000.0f, kLowpassQ, v * 0.34f, piece == HatOpen ? 0.3f : 0.07f);
             break;
         case TomLow:
@@ -469,9 +470,20 @@ StudioKit::StudioKit(float sample_rate) : AcousticKit(sample_rate, kStudio) {}
 AcousticKit::AcousticKit(float sample_rate, const KitVoicing& voicing)
     : Instrument(sample_rate), v_(voicing), scratch_(8192, 0.0f), echoes_(size_t(0.02f * sample_rate) + 1, 0.0f) {}
 
+Drums::Piece AcousticKit::pieceFor(int note) { return ((note % 12) + 12) % 12 == 8 ? Drums::HatPedal : Drums::pieceFor(note); }
+
 int AcousticKit::noteFor(Piece piece) { return piece == Ride ? 51 : Drums::noteFor(piece); }
 
-const char* AcousticKit::pieceName(Piece piece) { return piece == Ride ? "Ride" : Drums::pieceName(piece); }
+const char* AcousticKit::pieceName(Piece piece) {
+    switch (piece) {
+        case Ride:
+            return "Ride";
+        case Drums::TomLow:
+            return "Floor tom";
+        default:
+            return Drums::pieceName(piece);
+    }
+}
 
 // A voice at `hz` between a drum's two heads: as much the batter head's as the resonant head's in opposite polarity,
 // times `against`, the two together, heard from a distance, carrying the drum's sound as it was tuned (as loud, every
@@ -535,7 +547,8 @@ void AcousticKit::hit(Piece piece, float velocity, int delay) {
     const float v = std::clamp(velocity, 0.0f, 1.0f);
     const float bright = 0.55f + 0.45f * v;                    // harder hits are brighter...
     const float tune = 1.0f + k.tune_jitter * rng_.next();      // ...and no two land quite the same
-    const float l = v * (1.0f + k.level_jitter * rng_.next());
+    const float l = v * v * (1.0f + k.level_jitter * rng_.next());  // (General MIDI 2's curve: 40 log10 v dB)
+    const float stretch = 0.35f + 0.65f * v;  // how much further the head is stretched at first, the harder it is hit
     const auto buzz = [&](float decay) {  // the snare's wires, set going by whatever else is hit (heard from the snare)
         from(KitPart::SnareBottom, kWiresUnder, KitPart::SnareTop, kWiresOver);
         noise(delay, Biquad::Bandpass, 3800.0f, 0.6f, k.buzz * l, decay);
@@ -545,7 +558,7 @@ void AcousticKit::hit(Piece piece, float velocity, int delay) {
     switch (piece) {
         case Drums::Kick:
             drum(KitPart::KickBatter, KitPart::KickFront, kOtherHead, kKickDepth, true);  // the drum, from both heads
-            mode(delay, k.kick_hz * tune, k.kick_sharp, 0.012f, 0.95f * l, k.kick_decay);
+            mode(delay, k.kick_hz * tune, 1.0f + (k.kick_sharp - 1.0f) * stretch, 0.012f, 0.95f * l, k.kick_decay);
             noise(delay, Biquad::Lowpass, 900.0f, kLowpassQ, 0.28f * l, 0.05f);
             rim(true);
             mode(delay, k.kick_hz * 3.1f * tune, 1.05f, 0.02f, 0.10f * l, 0.16f);
@@ -558,12 +571,13 @@ void AcousticKit::hit(Piece piece, float velocity, int delay) {
             break;
         case Drums::Snare: {
             const float f = k.snare_hz * tune;
+            const float sharp = 1.0f + 0.06f * stretch;
             drum(KitPart::SnareTop, KitPart::SnareBottom, kOtherHead, kSnareDepth);
-            mode(delay, f, 1.04f, 0.03f, 0.42f * l, k.snare_decay);
+            mode(delay, f, sharp, 0.03f, 0.42f * l, k.snare_decay);
             rim(true);
-            mode(delay, f * 1.59f, 1.04f, 0.03f, 0.30f * l, k.snare_decay * 0.75f);
-            mode(delay, f * 2.14f, 1.03f, 0.03f, 0.20f * l, k.snare_decay * 0.6f);
-            mode(delay, f * 2.30f, 1.03f, 0.03f, 0.14f * l, k.snare_decay * 0.5f);
+            mode(delay, f * 1.59f, sharp, 0.03f, 0.30f * l, k.snare_decay * 0.75f);
+            mode(delay, f * 2.14f, 1.0f + 0.045f * stretch, 0.03f, 0.20f * l, k.snare_decay * 0.6f);
+            mode(delay, f * 2.30f, 1.0f + 0.045f * stretch, 0.03f, 0.14f * l, k.snare_decay * 0.5f);
             mode(delay, f * 2.72f, 1.0f, 0.01f, k.snare_ring * l, k.snare_ring_decay);  // the ring a head keeps
             mode(delay, 890.0f * tune, 1.0f, 0.01f, 0.07f * l, 0.06f);                 // the shell
             rim(false);
@@ -609,6 +623,15 @@ void AcousticKit::hit(Piece piece, float velocity, int delay) {
             noise(delay, Biquad::Bandpass, 3200.0f, 1.2f, 0.18f * l, 0.008f);  // the stick's tick
             break;
         }
+        case Drums::HatPedal:  // closed by the foot: the two cymbals meet, the chick of the air between them, no stick
+            from(KitPart::HiHat, 1.0f);
+            for (auto& m : metals_)
+                if (m.active && m.group == 1) m.choke(0.03f);
+            rim(true);
+            metal(delay, 412.0f * tune, k.hat_band, 5600.0f, 0.16f * l, 0.045f, k.hat_noise, 1);
+            noise(delay, Biquad::Bandpass, 1100.0f, 1.3f, 0.2f * l, 0.016f);
+            rim(false);
+            break;
         case Ride:  // a ping on top of a wash that builds and hangs
             from(KitPart::Ride, 1.0f);
             metal(delay, 523.0f * tune, 5200.0f, 3000.0f, 0.30f * l * bright, 0.4f, 0.15f, 0);  // (its ping and bell: its middle)

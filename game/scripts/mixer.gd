@@ -459,6 +459,7 @@ func _build_strip(inst) -> Dictionary:
 	box.add_child(plate)
 	var delay := _delay_row(box)
 	_strip_parent.add_child(strip)
+	strip.gui_input.connect(_on_strip_input.bind(inst, plate))
 	return {"inst": inst, "fader": pair.fader, "meter": pair.meter, "reduction": pair.reduction, "value": readouts.value, "peak": readouts.peak, "input": input,
 		"mute": mute, "solo": solo, "source": source, "output": output, "inserts": inserts, "sends": sends, "plate": plate,
 		"frame": strip.get_theme_stylebox("panel"), "panel": strip, "small": small_label, "pan": pan, "room": room, "delay": delay}
@@ -590,6 +591,7 @@ func _build_folder_strip(folder) -> Dictionary:
 	box.add_child(plate)
 	var delay := _delay_row(box)
 	_strip_parent.add_child(strip)
+	strip.gui_input.connect(_on_strip_input.bind(folder, plate))
 	return {"inst": folder, "fader": pair.fader, "meter": pair.meter, "reduction": pair.reduction, "value": readouts.value, "peak": readouts.peak, "input": null,
 		"mute": mute, "solo": solo, "source": count, "output": output, "inserts": inserts, "sends": sends, "plate": plate,
 		"frame": strip.get_theme_stylebox("panel"), "panel": strip, "pan": pan, "pans": pans, "room": {}, "delay": delay}
@@ -1031,8 +1033,8 @@ func _name_plate(text: String, color: Color, inst) -> Button:
 		Hints.give(plate, "Click to choose it (Shift or Cmd-click for more).  Right-click to rename it, colour it, its automation, or take it away")
 		plate.gui_input.connect(_on_name_input.bind(inst, plate))
 	else:
-		Hints.give(plate, "Click to open the %s, Shift or Cmd-click to choose it (%s: the chosen in a folder).  Right-click: rename, colour, folder, duplicate, remove" % [
-			_editor_name(inst), app.bindings.label("group")])
+		Hints.give(plate, "Click to choose it, Shift or Cmd-click for more (%s: the chosen in a folder); double-click to open the %s.  Right-click: rename, colour, folder, duplicate, remove" % [
+			app.bindings.label("group"), _editor_name(inst)])
 		plate.gui_input.connect(_on_name_input.bind(inst, plate))
 	return plate
 
@@ -1475,6 +1477,15 @@ func _on_plugin_menu_chosen(id: int) -> void:
 					app.show_instrument_editor(inst, true))
 
 
+## A click on a strip, not on anything in it to be worked (a button, a fader, a pan pot...): it chooses the track, as
+## its name does; a right-click, its menu.
+func _on_strip_input(event: InputEvent, inst, plate: Button) -> void:
+	if event is InputEventMouseButton and event.pressed and event.button_index in [MOUSE_BUTTON_LEFT, MOUSE_BUTTON_RIGHT]:
+		if event.button_index == MOUSE_BUTTON_LEFT and event.double_click:
+			return  # (a double-click on its name opens it; anywhere else it is one more click)
+		_on_name_input(event, inst, plate)
+
+
 func _on_name_input(event: InputEvent, inst, plate: Button) -> void:
 	if not (event is InputEventMouseButton) or not event.pressed:
 		return
@@ -1482,15 +1493,14 @@ func _on_name_input(event: InputEvent, inst, plate: Button) -> void:
 		plate.accept_event()
 		return
 	if event.button_index == MOUSE_BUTTON_LEFT:
-		if event.shift_pressed:  # choosing tracks, as Pro Tools does by their names
+		if event.double_click and not inst.is_folder:  # its own window
+			open_editor(inst)
+		elif event.shift_pressed:  # choosing tracks, as Pro Tools does
 			app.choose_track(inst, "range")
 		elif event.meta_pressed or event.ctrl_pressed:
 			app.choose_track(inst, "toggle")
-		elif inst.is_folder:
-			app.choose_track(inst)
 		else:
 			app.choose_track(inst)
-			open_editor(inst)
 	elif event.button_index == MOUSE_BUTTON_RIGHT:
 		_name_menu_for = inst
 		_name_menu.clear()

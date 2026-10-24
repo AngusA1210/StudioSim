@@ -2,8 +2,14 @@
 
 Every MIDI instrument in the room can be played by hand. Walk up to one and press E: the
 computer keyboard becomes a small piano for it, and any MIDI controller plays it too (see [Inputs](instruments.md#inputs)). The drums
-work like a drum machine: each key is a drum, laid out like a General MIDI kit
-(C kick, D snare, F# closed hat, A# open hat, F and A toms, D# clap, C# crash) and repeated in every octave.
+work like a drum machine: each key is a drum, laid out like a General MIDI kit and repeated in every octave, each
+key's drum named on it: C kick, D (and E) snare, the hi-hat closed by a stick on F#, by its pedal on G# (the acoustic
+kits'; the drum machine's G# closes it too) and open on A#, the toms on F and A (an acoustic kit's floor tom on F
+and its rack tom, Tom 1, on A; the drum machine's two toms over its kick, Tom 1 on the left as you sit and Tom 2),
+D# the ride (the drum machine's clap), C# crash. The toms are numbered from the left as you sit at the kit.
+How hard a key is played (a MIDI keyboard's velocity) sets how loud an acoustic kit's drum is, as General MIDI 2's
+curve has it (half as hard, 12 dB down), and how bright: the stick and the sizzle come forward and a drum's pitch
+bends further at first, its head stretched by a harder hit.
 
 Each instrument also has a pattern that the sequencer loops. The room starts with the default groove. Press P at an
 instrument to edit its pattern on a step grid, one bar at a time:
@@ -29,9 +35,9 @@ patterns go back to the defaults at each start until rooms can be saved.
   Live input always starts switched off, so an open microphone never meets a pair of speakers by surprise.
 - **MIDI**: every MIDI device the system sees, with a tick box each and a light that flashes when it sends notes.
 - **Settings**: binaural, distance falloff, the limiter's ceiling, delay compensation, text size, field of view, mouse sensitivity, room lighting, full screen (which
-  SoundRoom then opens in every time), whether the master meter and the audio readout are shown on screen, your
-  height and where the free camera hears from (see [Controls](controls.md#you-and-the-free-camera)), and auto-save
-  and backups for the room.
+  SoundRoom then opens in every time), whether the master meter and the audio readout are shown on screen, where the
+  free camera hears from (see [Controls](controls.md#you-and-the-free-camera)), and auto-save and backups for the
+  room. Your name and height are on the title screen's **You** page.
 
 Choices are saved (Godot's user data folder, `settings.cfg`) and restored at the next start. If a saved device
 isn't connected, the system default is used until it is.

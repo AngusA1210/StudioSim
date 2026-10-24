@@ -39,7 +39,8 @@ Facing an instrument, a card at the right of the screen lists what each key does
 
 ## You, and the free camera
 
-You have a body, as tall as **Your height** in the menu's settings says (140 to 210 cm). You hear the room from the
+You have a body, as tall as you set it on the title screen's **You** page (140 to 210 cm), with your name over it
+there too: both are set outside any room, as a player joining others would be. You hear the room from the
 middle of your head, between your ears, and see it from your eyes, 2.5 cm above and 8.5 cm in front of them, as on a
 real head: so the taller you are, the higher you hear and see from, and turning your head swings your eyes round
 your ears. Your own eyes don't see your body, but a microphone's view, the free camera and the title screen do: a
@@ -50,8 +51,8 @@ keys turn you; they don't walk.
 
 **The free camera** (F) starts at your eyes and flies the way it looks: W A S D (or the arrow keys), E up and Q down,
 Shift faster, the mouse to look. It goes through instruments and walls, but never out of the room, and your body
-stays where it stood. You go on hearing the room from your body, unless **Free camera hears from** in the menu's
-settings says the camera. A card at the right lists its keys, and the floor plan shows it as an outline beside you.
+stays where it stood. You hear the room from the camera as it goes, unless **Free camera hears from** (under Sound
+in the menu's settings) says from you, your body staying where it stood. A card at the right lists its keys, and the floor plan shows it as an outline beside you.
 F (or Esc) brings the view back to your eyes; Shift-F puts you where the camera is, facing its way. While you are at
 an instrument F is a note, as the other letter keys are; give the free camera another key on the Controls page to
 use it then.

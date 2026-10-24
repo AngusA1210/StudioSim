@@ -13,7 +13,6 @@ const MAX_GRID_CHANNELS := 16
 const FloorPlan := preload("res://scripts/floor_plan.gd")
 const Room := preload("res://scripts/room.gd")
 const Hints := preload("res://scripts/hints.gd")
-const Player := preload("res://scripts/player.gd")
 # The pages, in order.
 const METRONOME_TAB := 0
 const ROOM_TAB := 1
@@ -138,8 +137,6 @@ var _meter_toggle: CheckButton
 var _fullscreen_toggle: CheckButton
 var _light_slider: HSlider
 var _light_value: Label
-var _height_slider: HSlider
-var _height_value: Label
 var _hears_option: OptionButton
 
 
@@ -573,6 +570,12 @@ func _build_settings_page(page: VBoxContainer) -> void:
 	_compensation_toggle.toggled.connect(func(on: bool) -> void: app.set_delay_compensation(on))
 	_field(page, "Delay compensation").add_child(_compensation_toggle)
 	_note(page, "Plug-ins that look ahead make their tracks late. With it on, every track is held back to meet the latest at the mix's master, as a DAW does; the mix window shows each track's delay (dly) and how far it is held back (cmp). The room isn't held back: it is heard as it is played.")
+	_hears_option = OptionButton.new()
+	_hears_option.add_item("The camera")
+	_hears_option.add_item("You, where you stand")
+	_hears_option.item_selected.connect(func(index: int) -> void: app.set_free_camera_hears("you" if index == 1 else "camera"))
+	Hints.give(_hears_option, "While the free camera (%s) flies, where the room is heard from: the camera, as it goes, or your ears, your body staying where it stands" % app.bindings.label("free_camera"))
+	_field(page, "Free camera hears from").add_child(_hears_option)
 
 	page.add_child(HSeparator.new())
 	_heading(page, "Display and controls")
@@ -601,21 +604,6 @@ func _build_settings_page(page: VBoxContainer) -> void:
 	_stats_toggle.toggled.connect(_on_stats_toggled)
 	_field(page, "Audio readout on screen").add_child(_stats_toggle)
 
-	page.add_child(HSeparator.new())
-	_heading(page, "You")
-	_height_value = Label.new()
-	_height_slider = _slider(page, "Your height", Player.MIN_HEIGHT * 100.0, Player.MAX_HEIGHT * 100.0, 1.0, _height_value)
-	_height_value.custom_minimum_size.x = 150
-	_height_slider.value_changed.connect(func(cm: float) -> void:
-		app.set_height(cm / 100.0)
-		_height_value.text = height_text(cm / 100.0))
-	Hints.give(_height_slider, "How tall you are: you see from your eyes and hear from between your ears, as high as they are on you (and sitting at a kit, as a seated drummer's are), and your body is drawn that tall")
-	_hears_option = OptionButton.new()
-	_hears_option.add_item("You, where you stand")
-	_hears_option.add_item("The camera")
-	_hears_option.item_selected.connect(func(index: int) -> void: app.set_free_camera_hears("camera" if index == 1 else "you"))
-	Hints.give(_hears_option, "While the free camera (%s) flies, where the room is heard from: your ears, your body staying where it is, or the camera, as it goes" % app.bindings.label("free_camera"))
-	_field(page, "Free camera hears from").add_child(_hears_option)
 
 	page.add_child(HSeparator.new())
 	_heading(page, "Saving the room")
@@ -806,9 +794,7 @@ func _refresh_live() -> void:
 	_fov_value.text = "%d°" % roundi(settings.fov)
 	_mouse_slider.set_value_no_signal(settings.mouse_sensitivity)
 	_mouse_value.text = "%.2f ×" % settings.mouse_sensitivity
-	_height_slider.set_value_no_signal(roundf(settings.height * 100.0))
-	_height_value.text = height_text(settings.height)
-	_hears_option.select(1 if settings.free_camera_hears == "camera" else 0)
+	_hears_option.select(1 if settings.free_camera_hears == "you" else 0)
 	_stats_toggle.set_pressed_no_signal(settings.show_stats)
 	_stats_toggle.text = "On" if settings.show_stats else "Off"
 	_autosave_toggle.set_pressed_no_signal(settings.autosave)

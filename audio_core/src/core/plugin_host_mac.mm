@@ -3,6 +3,8 @@
 
 #include "plugin_formats.h"
 
+#import "plugin_panel_mac.h"
+
 #import <AVFoundation/AVFoundation.h>
 #import <AppKit/AppKit.h>
 #import <AudioToolbox/AUCocoaUIView.h>
@@ -16,26 +18,6 @@
 #include <cstdio>
 #include <cstring>
 #include <thread>
-
-// A plug-in's window that never takes the keyboard from the game, so that the computer keyboard keeps playing while a
-// knob in it is dragged, unless what is clicked in it is a box to type in. Many plug-ins try to take the keyboard when
-// clicked (they make themselves first responder and their window key); here they can't.
-@interface SRPluginPanel : NSPanel
-@property(nonatomic) BOOL typing;  // a text box in it was clicked last: it may have the keyboard, for that
-@end
-
-@implementation SRPluginPanel
-- (BOOL)canBecomeKeyWindow {
-    return self.typing;
-}
-- (void)sendEvent:(NSEvent*)event {
-    if (event.type == NSEventTypeLeftMouseDown || event.type == NSEventTypeRightMouseDown) {
-        NSView* hit = [self.contentView hitTest:[self.contentView.superview convertPoint:event.locationInWindow fromView:nil]];
-        self.typing = [hit isKindOfClass:[NSTextView class]] || [hit isKindOfClass:[NSTextField class]];
-    }
-    [super sendEvent:event];
-}
-@end
 
 namespace sr {
 namespace {
@@ -137,7 +119,6 @@ public:
     ~AudioUnitPlugin() override {
         if (window_) {
             if (resize_observer_) [[NSNotificationCenter defaultCenter] removeObserver:resize_observer_];
-            if (key_monitor_) [NSEvent removeMonitor:key_monitor_];
             [window_ orderOut:nil];
             window_.contentView = nil;
             window_ = nil;
@@ -340,20 +321,10 @@ public:
             NSView* view = makeView();
             if (!view) return false;
             const NSSize size = NSMakeSize(std::max(view.frame.size.width, 240.0), std::max(view.frame.size.height, 80.0));
-            // A panel that takes the keyboard only when something in it needs typing into (a text box), so that the
-            // game keeps the keys with the window open: notes still play, Tab still closes the mix window.
-            SRPluginPanel* panel = [[SRPluginPanel alloc] initWithContentRect:NSMakeRect(0, 0, size.width, size.height)
-                                                        styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable
-                                                          backing:NSBackingStoreBuffered
-                                                            defer:NO];
-            panel.becomesKeyOnlyIfNeeded = YES;
-            panel.hidesOnDeactivate = NO;
-            window_ = panel;
-            window_.releasedWhenClosed = NO;
+            // A panel that takes the keyboard only while something in it is typed into, so that the game keeps the keys
+            // with the window open: notes still play, Tab still closes the mix window.
+            window_ = [SRPluginPanel panelWithSize:size];
             window_.contentView = view;
-            // Above the game, full screen or not, and on whichever space the game is on.
-            window_.level = NSFloatingWindowLevel;
-            window_.collectionBehavior = NSWindowCollectionBehaviorFullScreenAuxiliary | NSWindowCollectionBehaviorMoveToActiveSpace;
             // A plug-in that resizes its own view (many have a size menu) takes the window with it.
             view.postsFrameChangedNotifications = YES;
             NSWindow* window = window_;
@@ -366,27 +337,6 @@ public:
                                                                                    [window setContentSize:changed.frame.size];
                                                                              }];
             [window_ center];
-            // Should one take the keyboard all the same (a text box clicked, or a plug-in that insists), it goes back to
-            // the game once the click is done, unless what was clicked is something to type in.
-            __weak NSPanel* watched = panel;
-            key_monitor_ = [NSEvent addLocalMonitorForEventsMatchingMask:(NSEventMaskLeftMouseUp | NSEventMaskRightMouseUp)
-                                                                 handler:^NSEvent*(NSEvent* event) {
-                                                                   if (event.window != watched) return event;
-                                                                   dispatch_async(dispatch_get_main_queue(), ^{
-                                                                     NSPanel* clicked = watched;
-                                                                     if (!clicked || !clicked.isKeyWindow) return;
-                                                                     const id responder = clicked.firstResponder;
-                                                                     if ([responder isKindOfClass:[NSTextView class]] ||
-                                                                         [responder isKindOfClass:[NSTextField class]])
-                                                                         return;  // being typed into
-                                                                     for (NSWindow* w in NSApp.orderedWindows)
-                                                                         if (![w isKindOfClass:[NSPanel class]] && w.isVisible && w.canBecomeKeyWindow) {
-                                                                             [w makeKeyWindow];
-                                                                             break;
-                                                                         }
-                                                                   });
-                                                                   return event;
-                                                                 }];
         }
         window_.title = [NSString stringWithUTF8String:title.c_str()] ?: @"Plug-in";
         [window_ orderFront:nil];  // in front, but leaving the keyboard with the game
@@ -625,7 +575,6 @@ private:
     NSWindow* window_ = nil;
     NSViewController* view_controller_ = nil;
     id resize_observer_ = nil;
-    id key_monitor_ = nil;
     void (^view_request_)(AUViewControllerBase*) = nil;
 };
 

@@ -17,8 +17,8 @@ const WHITE_KEYS := [[KEY_A, "A"], [KEY_S, "S"], [KEY_D, "D"], [KEY_F, "F"], [KE
 const BLACK_KEYS := [[KEY_W, "W", 0], [KEY_E, "E", 1], [KEY_T, "T", 3], [KEY_Y, "Y", 4], [KEY_U, "U", 5],
 	[KEY_O, "O", 7], [KEY_P, "P", 8]]
 # What each drum piece is called on a key: spelled out on the wide white keys, two letters on the black ones.
-const DRUM_LABELS := {"Kick": ["Kick", "BD"], "Snare": ["Snare", "SD"], "Closed hat": ["Hat", "CH"], "Open hat": ["Open", "OH"],
-	"Low tom": ["Lo tom", "LT"], "High tom": ["Hi tom", "HT"], "Clap": ["Clap", "CP"], "Ride": ["Ride", "RD"], "Crash": ["Crash", "CR"]}
+# A drum's name on a key, where it is too long for one line.
+const DRUM_LABELS := {"Floor tom": "Floor\ntom", "Closed hat": "Hat\nclosed", "Pedal hat": "Hat\npedal", "Open hat": "Hat\nopen"}
 
 var app
 var audio: SoundRoomAudio
@@ -432,17 +432,17 @@ func _build_piano(root: Control) -> void:
 	_piano_help.add_theme_font_size_override("font_size", 14)
 	box.add_child(_piano_help)
 	var keyboard := Control.new()
-	keyboard.custom_minimum_size = Vector2(438, 104)
+	keyboard.custom_minimum_size = Vector2(478, 104)
 	keyboard.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	box.add_child(keyboard)
 	var white_semitones := [0, 2, 4, 5, 7, 9, 11, 12, 14, 16]
 	var black_semitones := [1, 3, 6, 8, 10, 13, 15]
 	for i in WHITE_KEYS.size():
-		_piano_key(keyboard, WHITE_KEYS[i][0], WHITE_KEYS[i][1], Vector2(i * 44, 0), Vector2(42, 104),
+		_piano_key(keyboard, WHITE_KEYS[i][0], WHITE_KEYS[i][1], Vector2(i * 48, 0), Vector2(46, 104),
 			Color(0.91, 0.92, 0.96), Color(0.33, 0.35, 0.44), white_semitones[i], true)
 	for i in BLACK_KEYS.size():
 		var k: Array = BLACK_KEYS[i]
-		_piano_key(keyboard, k[0], k[1], Vector2((k[2] + 1) * 44 - 15, 0), Vector2(28, 64),
+		_piano_key(keyboard, k[0], k[1], Vector2((k[2] + 1) * 48 - 18, 0), Vector2(34, 64),
 			Color(0.09, 0.1, 0.15), DIM, black_semitones[i], false)
 	_piano.visible = false
 
@@ -468,14 +468,16 @@ func _piano_key(parent: Control, key: int, letter: String, pos: Vector2, size: V
 	label.add_theme_font_size_override("font_size", 12)
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	label.size = Vector2(size.x, 18)
-	label.position = Vector2(0, size.y - 22)
+	label.position = Vector2(0, size.y - 20)
 	rect.add_child(label)
-	var piece := Label.new()  # which drum this key hits, shown at the drums only
+	var piece := Label.new()  # which drum this key hits (on two lines, if it must), shown at the drums only
 	piece.add_theme_color_override("font_color", ink)
-	piece.add_theme_font_size_override("font_size", 11)
+	piece.add_theme_font_size_override("font_size", 10)
+	piece.add_theme_constant_override("line_spacing", -2)
 	piece.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	piece.size = Vector2(size.x, 16)
-	piece.position = Vector2(0, 65 if white else 6)  # on a white key, just below where the black keys end
+	piece.vertical_alignment = VERTICAL_ALIGNMENT_TOP
+	piece.size = Vector2(size.x, 26)
+	piece.position = Vector2(0, 63 if white else 5)  # on a white key, just below where the black keys end
 	piece.visible = false
 	rect.add_child(piece)
 	_piano_keys[key] = {"rect": rect, "idle": idle, "piece": piece, "semitone": semitone, "white": white, "label": label, "letter": letter}
@@ -492,8 +494,8 @@ func _label_piano(inst) -> void:
 		entry.label.text = "" if app.bindings.action_for(key) == "edit" else entry.letter  # (that key opens the panel instead)
 		entry.piece.visible = drums
 		if drums:
-			var names: Array = DRUM_LABELS.get(audio.get_drum_piece_name(60 + int(entry.semitone), inst.kind), ["", ""])
-			entry.piece.text = names[0] if entry.white else names[1]
+			var piece: String = audio.get_drum_piece_name(60 + int(entry.semitone), inst.kind)
+			entry.piece.text = DRUM_LABELS.get(piece, piece)
 
 
 ## A small label that lights up in its colour while what it names is on.

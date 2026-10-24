@@ -910,8 +910,8 @@ Array SoundRoomAudio::get_drum_pieces(const String& kind) const {
 }
 
 String SoundRoomAudio::get_drum_piece_name(int note, const String& kind) const {
-    const auto piece = sr::Drums::pieceFor(note);
     const bool acoustic = kind == "garage_drums" || kind == "studio_drums";
+    const auto piece = acoustic ? sr::AcousticKit::pieceFor(note) : sr::Drums::pieceFor(note);
     return String(acoustic ? sr::AcousticKit::pieceName(piece) : sr::Drums::pieceName(piece));
 }
 

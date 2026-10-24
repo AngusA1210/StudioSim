@@ -1,28 +1,11 @@
 // A plug-in's window on macOS: a floating panel over the game that never takes the keyboard from it unless something in
-// it is being typed into, as the Audio Units' windows are (plugin_host_mac.mm).
+// it is being typed into, as the Audio Units' windows are (plugin_panel_mac.h).
 
 #include "plugin_window.h"
 
-#import <AppKit/AppKit.h>
+#import "plugin_panel_mac.h"
 
 #include <algorithm>
-
-@interface SRPlugViewPanel : NSPanel
-@property(nonatomic) BOOL typing;  // a text box in it was clicked last: it may have the keyboard, for that
-@end
-
-@implementation SRPlugViewPanel
-- (BOOL)canBecomeKeyWindow {
-    return self.typing;
-}
-- (void)sendEvent:(NSEvent*)event {
-    if (event.type == NSEventTypeLeftMouseDown || event.type == NSEventTypeRightMouseDown) {
-        NSView* hit = [self.contentView hitTest:[self.contentView.superview convertPoint:event.locationInWindow fromView:nil]];
-        self.typing = [hit isKindOfClass:[NSTextView class]] || [hit isKindOfClass:[NSTextField class]];
-    }
-    [super sendEvent:event];
-}
-@end
 
 // A view the plug-in draws into that is flipped as VST3 views expect (their origin at the top left).
 @interface SRPlugViewHolder : NSView
@@ -41,15 +24,7 @@ class MacPluginWindow final : public PluginWindow {
 public:
     MacPluginWindow(int width, int height) {
         const NSRect frame = NSMakeRect(0, 0, std::max(width, 120), std::max(height, 60));
-        panel_ = [[SRPlugViewPanel alloc] initWithContentRect:frame
-                                                    styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable
-                                                      backing:NSBackingStoreBuffered
-                                                        defer:NO];
-        panel_.becomesKeyOnlyIfNeeded = YES;
-        panel_.hidesOnDeactivate = NO;
-        panel_.releasedWhenClosed = NO;
-        panel_.level = NSFloatingWindowLevel;  // above the game, full screen or not, on whichever space it is on
-        panel_.collectionBehavior = NSWindowCollectionBehaviorFullScreenAuxiliary | NSWindowCollectionBehaviorMoveToActiveSpace;
+        panel_ = [SRPluginPanel panelWithSize:frame.size];
         holder_ = [[SRPlugViewHolder alloc] initWithFrame:frame];
         panel_.contentView = holder_;
         [panel_ center];
@@ -101,7 +76,7 @@ public:
     }
 
 private:
-    SRPlugViewPanel* panel_ = nil;
+    SRPluginPanel* panel_ = nil;
     SRPlugViewHolder* holder_ = nil;
 };
 
