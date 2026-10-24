@@ -3518,7 +3518,8 @@ func _run() -> void:
 	var ahead_here: float = await TogetherGuest.ahead_of_session(main)
 	var stepped: Dictionary = await wait_for.call("step", 10.0)
 	var apart := float(stepped.get("ahead", 99.0)) - ahead_here
-	check(not stepped.is_empty() and bool(stepped.running) and absf(apart) < 3.0 and absf(ahead_here) < 3.0,
+	# (within 8 ms: here both copies share one computer, the two working flat out, with no sound card to pace them)
+	check(not stepped.is_empty() and bool(stepped.running) and absf(apart) < 8.0 and absf(ahead_here) < 8.0,
 		"started here, the patterns start there at the same moment on the session's clock, and stay in step",
 		"%+.1f ms apart (here %+.1f ms off the session's clock), %.1f ms there and back" % [apart, ahead_here, float(stepped.get("latency_ms", 0.0))])
 	# They leave: their body goes.

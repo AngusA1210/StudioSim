@@ -27,6 +27,7 @@ const PING_EVERY := 1.0
 const KEEP_IN_STEP_EVERY := 0.5
 const START_AHEAD := 0.35  # a start is set this far ahead, so that it reaches everyone first (seconds)
 const NUDGE_MOST := 0.004  # the most the patterns are moved at once to keep in step (seconds)
+const NUDGE_FAR := 0.010  # and while they are further out than that (just started, say)
 const STATE := 0  # channels: the room's changes, in order; where the players are (the latest only); notes
 const POSES := 1
 const NOTES := 2
@@ -400,26 +401,27 @@ func _heard_step() -> float:
 	return -1.0 if step < 0.0 else step - _output_latency() * app.tempo / 15.0
 
 
-## Every half second: the patterns nudged towards where the session says the music is (a few milliseconds at a time),
-## or started again in step if they are far off. The host's tempo changing moves where the music is reckoned from.
+## Every half second: the patterns nudged towards where the session says the music is (a few milliseconds at a time,
+## ten while they are further out than that), or started again in step if they are far off. The host's tempo changing moves where the music is reckoned from.
 func _keep_in_step() -> void:
 	if not bool(clock.running):
 		return
 	if role == "host" and not is_equal_approx(app.tempo, float(clock.bpm)):
 		clock = {"running": true, "anchor_us": session_us(), "anchor_step": expected_step(), "bpm": app.tempo}
 		_send("clock", clock)
-	if not is_equal_approx(app.tempo, float(clock.bpm)) or Time.get_ticks_usec() - _started_us < 1500000:
+	if not is_equal_approx(app.tempo, float(clock.bpm)) or Time.get_ticks_usec() - _started_us < 300000:
 		return  # (the tempo on its way here; or just started)
 	var expected := expected_step()
 	var heard := _heard_step()
-	if expected < 1.0:
+	if expected < 2.0:
 		return
 	var rate: float = float(clock.bpm) / 15.0
 	var off := (heard - expected) / rate  # seconds ahead
 	if heard < 0.0 or absf(off) > 0.25:
 		_start_in_step()
 	elif absf(off) > 0.001:
-		audio.nudge_sequencer(clampf(off, -NUDGE_MOST, NUDGE_MOST))
+		var most := NUDGE_FAR if absf(off) > NUDGE_FAR else NUDGE_MOST
+		audio.nudge_sequencer(clampf(off, -most, most))
 
 
 # ── Notes ────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -544,6 +546,12 @@ func carried_by_another(inst) -> String:
 
 func _process(delta: float) -> void:
 	if not is_playing_together():
+		return
+	if app.timeline.is_record():  # (made a Record room meanwhile: not together, for now)
+		leave()
+		status = "a Record room can't be played in together yet"
+		app.session.notice.emit("Playing together ended: %s" % status)
+		changed.emit()
 		return
 	sync.tick(delta)
 	for note in audio.take_played_notes():  # (a MIDI controller's, here)

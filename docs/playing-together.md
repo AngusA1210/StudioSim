@@ -55,7 +55,8 @@ The session's clock is the host's. Each player works out how far their computer'
 host the time, as NTP does: the reply that comes back soonest is the truest. When the patterns start, the start is
 set a third of a second ahead on that clock, so it reaches everyone first. Each player's patterns start then, less
 their own output's latency, so the first beat is heard at the same moment everywhere. Every half second, each player
-nudges their patterns, by a few milliseconds at most, to keep where the session's clock says the music is. That
+nudges their patterns, a few milliseconds at a time (up to ten while they're further out than that), to keep where
+the session's clock says the music is. That
 corrects for the sound cards' clocks running at slightly different speeds. A player joining while the patterns play
 comes in on the next step. In the checks, two copies of SoundRoom on one computer keep their patterns within a
 millisecond of each other.
