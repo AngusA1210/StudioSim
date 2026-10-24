@@ -8,6 +8,16 @@ extends SceneTree
 var main
 var view: SubViewport  # headless runs only get a 64-pixel window, so the game runs in a full-size off-screen one
 var failures := 0
+var on_mac := OS.get_name() == "macOS"
+var cmd := "⌘" if on_mac else "Ctrl+"  # how the screen names the Cmd shortcuts
+# The plug-ins the checks use: Apple's Audio Units on a Mac, which every Mac has; elsewhere the checks' own VST3s
+# (tests/vst3_test_plugin.cpp) stand in, the one instrument doing for both of Apple's.
+var delay_name := "AUDelay" if on_mac else "SR Test Echo"
+var reverb_name := "AUReverb2" if on_mac else "SR Test Gain"
+var synth_name := "DLSMusicDevice" if on_mac else "SR Test Tone"
+var sampler_name := "AUSampler" if on_mac else "SR Test Tone"
+var plugin_maker := "Apple" if on_mac else "SoundRoom checks"
+var preset_extension := ".aupreset" if on_mac else ".vstpreset"
 const TrackMenu := preload("res://scripts/track_menu.gd")
 const KitMics := preload("res://scripts/kit_mics.gd")
 const Avatar := preload("res://scripts/avatar.gd")
@@ -35,6 +45,21 @@ func check(ok: bool, what: String, detail := "") -> void:
 	print("  [%s] %s  (%s)" % ["pass" if ok else "FAIL", what, detail])
 	if not ok:
 		failures += 1
+
+
+## A check this machine can't make (the plug-ins it needs are a Mac's).
+func skip(what: String, why: String) -> void:
+	print("  [skip] %s  (%s)" % [what, why])
+
+
+## A plug-in's id, by its name: Apple's as they always are, the checks' own as this machine's scan found them.
+func plugin_id(plugin_name: String) -> String:
+	if on_mac:
+		return {"AUDelay": "AU:61756678:64656c79:6170706c", "AUReverb2": "AU:61756678:72766232:6170706c"}.get(plugin_name, "")
+	for p in main.available_plugins():
+		if p.name == plugin_name:
+			return str(p.id)
+	return ""
 
 
 func key(code: int, pressed := true) -> void:
@@ -348,7 +373,7 @@ func _run() -> void:
 	await frames(5)
 	check(player.target == drums and player.can_play_target(), "standing at the drums, they are what you're facing")
 	var card: Array = main.hud.hint_lines()
-	check(card == ["Drums", "E Play", "P Edit Pattern", "I Enable Input", "M Loop Off", "G Carry", "⌘L Lock in Place", "V Duplicate", "Backspace Remove (press twice)"],
+	check(card == ["Drums", "E Play", "P Edit Pattern", "I Enable Input", "M Loop Off", "G Carry", cmd + "L Lock in Place", "V Duplicate", "Backspace Remove (press twice)"],
 		"a card lists what each key does, one per line, with removing at the bottom", " / ".join(card))
 	var parts := 0
 	for node in drums._model.find_children("*", "MeshInstance3D", true, false):
@@ -835,24 +860,24 @@ func _run() -> void:
 	for heading in browser._tree.get_root().get_children():
 		headings.append(heading.get_text(0).get_slice("   ", 0))
 	check(amp.pedals.size() == 3 and panel._plugin_box.visible and browser.visible and browser.plugins.size() > 0 and headings.has("Delay") and
-		headings.has("Reverb") and headings.find("Amps & cabinets") <= 0, "a Plug-in pedal opens the plug-in browser, grouped by kind of effect",
+		headings.has("Reverb" if on_mac else "Dynamics") and headings.find("Amps & cabinets") <= 0, "a Plug-in pedal opens the plug-in browser, grouped by kind of effect",
 		"%d plug-ins: %s" % [browser.plugins.size(), ", ".join(headings)])
 	browser._by_maker.button_pressed = true
 	await frames(2)
 	var makers := []
 	for heading in browser._tree.get_root().get_children():
 		makers.append(heading.get_text(0).get_slice("   ", 0))
-	check(makers.has("Apple") and not makers.has("Delay"), "or by maker", ", ".join(makers))
-	browser._search.text = "audelay"
-	browser._search.text_changed.emit("audelay")
+	check(makers.has(plugin_maker) and not makers.has("Delay"), "or by maker", ", ".join(makers))
+	browser._search.text = delay_name.to_lower()
+	browser._search.text_changed.emit(delay_name.to_lower())
 	await frames(2)
 	var found: TreeItem = browser._tree.get_root().get_first_child()
 	check(browser._tree.get_root().get_child_count() == 1 and found.get_child_count() == 1 and not found.collapsed and
-		found.get_first_child().get_text(0) == "AUDelay", "searching narrows it to what matches")
-	browser._search.text_submitted.emit("audelay")
+		found.get_first_child().get_text(0) == delay_name, "searching narrows it to what matches")
+	browser._search.text_submitted.emit(delay_name.to_lower())
 	await frames(3)
-	check(not browser.visible and amp.pedals[2].plugin_name == "AUDelay" and panel._plugin_status.text.begins_with("AUDelay") and
-		panel._tiles[2].label.text == "AUDelay", "choosing it puts AUDelay on the board, before the amp", panel._plugin_status.text)
+	check(not browser.visible and amp.pedals[2].plugin_name == delay_name and panel._plugin_status.text.begins_with(delay_name) and
+		panel._tiles[2].label.text == delay_name, "choosing it puts AUDelay on the board, before the amp", panel._plugin_status.text)
 	browser._by_type.button_pressed = true
 	await click(panel._remove.get_global_rect().get_center())
 	check(amp.pedals.size() == 2 and panel.selected == 1, "a pedal can be taken off the board again")
@@ -864,7 +889,7 @@ func _run() -> void:
 	await tap(KEY_2)
 	await frames(2)
 	check(not amp.pedals[1].on and amp._pedal_leds[1].emission_energy_multiplier == 0.0, "2 switches the overdrive off from the room, and its light goes out")
-	main.set_insert(amp, 0, "AU:61756678:64656c79:6170706c")  # AUDelay
+	main.set_insert(amp, 0, plugin_id(delay_name))  # AUDelay
 	main.set_amp_control(amp, "treble", 7.5)
 	var amp_count: int = main.instruments.size()
 	await tap(KEY_V)
@@ -877,7 +902,7 @@ func _run() -> void:
 		same_pedals = same_pedals and amp_copy.pedals[i].kind == amp.pedals[i].kind and amp_copy.pedals[i].on == amp.pedals[i].on and \
 			amp_copy.pedals[i].controls == amp.pedals[i].controls
 	check(same_pedals and amp_copy.amp_head == amp.amp_head and amp_copy.amp_cabinet == amp.amp_cabinet and amp_copy.amp_controls == amp.amp_controls and
-		audio.get_inserts(amp_copy.source_id)[0].plugin_name == "AUDelay" and not amp_copy.input_on and amp_copy.input_channel == amp.input_channel,
+		audio.get_inserts(amp_copy.source_id)[0].plugin_name == delay_name and not amp_copy.input_on and amp_copy.input_channel == amp.input_channel,
 		"the copy has the same head, cabinet, knobs and pedals, the same plug-in on its insert, and its input off")
 	await tap(KEY_G)
 	main.remove_instrument(amp_copy)
@@ -891,7 +916,7 @@ func _run() -> void:
 	await frames(5)
 	var speaker_card: Array = main.hud.hint_lines()
 	check(player.target == speaker and speaker_card == ["Speaker", "I Enable Input", "P Volume and Input", "M Mute", "G Carry",
-		"⌘L Lock in Place", "V Duplicate", "Backspace Remove (press twice)"], "the Speaker's card offers input, its panel and mute, but not playing", " / ".join(speaker_card))
+		cmd + "L Lock in Place", "V Duplicate", "Backspace Remove (press twice)"], "the Speaker's card offers input, its panel and mute, but not playing", " / ".join(speaker_card))
 	await tap(KEY_M)
 	check(speaker.room_muted and not speaker.muted, "M mutes it in the room (you're standing in it; its track plays on in the mix)")
 	await tap(KEY_E)
@@ -952,12 +977,12 @@ func _run() -> void:
 	await click(drums_strip.inserts[0].button.get_global_rect().get_center())
 	var picker = main.plugin_browser
 	check(picker.visible and picker._title.text == "Insert A on the Drums", "clicking an empty insert opens the plug-in browser for it", picker._title.text)
-	picker._search.text = "audelay"
-	picker._search.text_changed.emit("audelay")
-	picker._search.text_submitted.emit("audelay")
+	picker._search.text = delay_name.to_lower()
+	picker._search.text_changed.emit(delay_name.to_lower())
+	picker._search.text_submitted.emit(delay_name.to_lower())
 	await frames(3)
-	check(not picker.visible and drums.inserts[0].plugin_name == "AUDelay" and drums_strip.inserts[0].button.text == "AUDelay" and
-		audio.get_inserts(drums.source_id)[0].plugin_name == "AUDelay", "choosing a plug-in puts it on the drums' first insert")
+	check(not picker.visible and drums.inserts[0].plugin_name == delay_name and drums_strip.inserts[0].button.text == delay_name and
+		audio.get_inserts(drums.source_id)[0].plugin_name == delay_name, "choosing a plug-in puts it on the drums' first insert")
 	mix._on_insert_clicked(drums, 0, true)  # with Cmd held
 	await frames(2)
 	check(not drums.inserts[0].on and drums_strip.inserts[0].style.bg_color.b > 0.6, "Cmd-click bypasses it, and it turns blue")
@@ -966,15 +991,15 @@ func _run() -> void:
 	check(held != null and mix._insert_can_drop(Vector2.ZERO, held, drums, 2) and not mix._insert_can_drop(Vector2.ZERO, held, drums, 0) and
 		mix._insert_drag(Vector2.ZERO, drums, 4) == null, "an insert can be picked up and dropped on another slot, but an empty one can't be picked up")
 	await mouse_drag(drums_strip.inserts[0].button.get_global_rect().get_center(), drums_strip.inserts[2].button.get_global_rect().get_center())
-	check(drums.inserts[0].plugin_name == "" and drums.inserts[2].plugin_name == "AUDelay" and not drums.inserts[2].editor_open and not picker.visible,
+	check(drums.inserts[0].plugin_name == "" and drums.inserts[2].plugin_name == delay_name and not drums.inserts[2].editor_open and not picker.visible,
 		"dragging it down the strip with the mouse moves it to that slot")
 	mix.drop_insert(mix._insert_drag(Vector2.ZERO, drums, 2), bass, 0, false)
 	await frames(2)
-	check(drums.inserts[2].plugin_name == "" and bass.inserts[0].plugin_name == "AUDelay" and mix._strip_for(bass).inserts[0].button.text == "AUDelay",
+	check(drums.inserts[2].plugin_name == "" and bass.inserts[0].plugin_name == delay_name and mix._strip_for(bass).inserts[0].button.text == delay_name,
 		"dragging it to another strip moves it to that instrument")
 	mix.drop_insert(mix._insert_drag(Vector2.ZERO, bass, 0), drums, 0, true)  # with Option held
 	await frames(2)
-	check(bass.inserts[0].plugin_name == "AUDelay" and drums.inserts[0].plugin_name == "AUDelay", "with Option held it is copied instead, as in Pro Tools")
+	check(bass.inserts[0].plugin_name == delay_name and drums.inserts[0].plugin_name == delay_name, "with Option held it is copied instead, as in Pro Tools")
 	main.clear_insert(bass, 0)
 	var right_click := InputEventMouseButton.new()
 	right_click.button_index = MOUSE_BUTTON_RIGHT
@@ -1162,20 +1187,20 @@ func _run() -> void:
 		"%s, %s" % [mix_chip, room_chip])
 	await click(mix._master.inserts[0].button.get_global_rect().get_center())
 	check(picker.visible and picker._title.text == "Insert A on the Mix Master", "the mix's master has inserts too", picker._title.text)
-	picker._search.text = "audelay"
-	picker._search.text_changed.emit("audelay")
-	picker._search.text_submitted.emit("audelay")
+	picker._search.text = delay_name.to_lower()
+	picker._search.text_changed.emit(delay_name.to_lower())
+	picker._search.text_submitted.emit(delay_name.to_lower())
 	await frames(3)
-	check(main.master_track.inserts[0].plugin_name == "AUDelay" and mix._master.inserts[0].button.text == "AUDelay" and
+	check(main.master_track.inserts[0].plugin_name == delay_name and mix._master.inserts[0].button.text == delay_name and
 		main.automation.plugin_params(main.master_track).size() == 1, "a plug-in on it plays on the whole mix, its controls automatable", mix._master.inserts[0].button.text)
 	main.clear_insert(main.master_track, 0)
 	# The room's master is a master as the mix's is: inserts, its own outputs, its own limiter; both crimson to begin with,
 	# and renamed and coloured as a track is.
 	await click(mix._room.inserts[0].button.get_global_rect().get_center())
 	var room_insert_title: String = picker._title.text
-	picker._search.text = "audelay"
-	picker._search.text_changed.emit("audelay")
-	picker._search.text_submitted.emit("audelay")
+	picker._search.text = delay_name.to_lower()
+	picker._search.text_changed.emit(delay_name.to_lower())
+	picker._search.text_submitted.emit(delay_name.to_lower())
 	await frames(3)
 	var room_insert: String = main.room_master_track.inserts[0].plugin_name
 	main.clear_insert(main.room_master_track, 0)
@@ -1185,7 +1210,7 @@ func _run() -> void:
 	await click(mix._room.limiter.get_global_rect().get_center())
 	var room_limit_off: bool = not main.settings.room_limiter and main.settings.limiter
 	await click(mix._room.limiter.get_global_rect().get_center())
-	check(room_insert_title == "Insert A on the Room Master" and room_insert == "AUDelay" and room_out == 2 and room_limit_off and main.settings.room_limiter,
+	check(room_insert_title == "Insert A on the Room Master" and room_insert == delay_name and room_out == 2 and room_limit_off and main.settings.room_limiter,
 		"the room's master has inserts, outputs of its own and a limiter of its own, as the mix's has", room_insert_title)
 	var crimson: Color = main.master_track.CRIMSON
 	var both_crimson: bool = main.master_track.color == crimson and main.room_master_track.color == crimson and mix._room.plate.get_meta("color") == crimson
@@ -1320,20 +1345,20 @@ func _run() -> void:
 	await frames(2)
 	main.menu._tabs.get_child(main.menu.CONTROLS_TAB).ensure_control_visible(main.menu._key_buttons.redo)
 	await frames(3)
-	check(main.menu._key_buttons.redo.text == "⌘X" and main.menu._key_buttons.undo.text == "⌘Z", "the Controls page lists the Cmd shortcuts too: redo is Cmd-X",
+	check(main.menu._key_buttons.redo.text == cmd + "X" and main.menu._key_buttons.undo.text == cmd + "Z", "the Controls page lists the Cmd shortcuts too: redo is Cmd-X",
 		main.menu._key_buttons.redo.text)
 	await click(main.menu._key_buttons.redo.get_global_rect().get_center())
 	key(KEY_META)  # Cmd on its way to the key is passed over
 	await frames(2)
 	await tap(KEY_Y)
 	key(KEY_META, false)
-	check(main.bindings.command_for(KEY_Y) == "redo" and main.bindings.label("redo") == "⌘Y" and main.bindings.command_for(KEY_X) == "" and
+	check(main.bindings.command_for(KEY_Y) == "redo" and main.bindings.label("redo") == cmd + "Y" and main.bindings.command_for(KEY_X) == "" and
 		main.bindings.key("redo") == KEY_Y, "and a shortcut takes its new key there (Cmd held or not)", main.menu._keys_note.text)
 	main.set_binding("undo", KEY_Y)
-	check(main.bindings.label("undo") == "⌘Y" and main.bindings.label("redo") == "⌘Z" and main.bindings.action_for(KEY_Y) != "undo",
+	check(main.bindings.label("undo") == cmd + "Y" and main.bindings.label("redo") == cmd + "Z" and main.bindings.action_for(KEY_Y) != "undo",
 		"two shortcuts swap keys as the plain keys do, apart from them")
 	main.reset_bindings()
-	check(main.bindings.label("redo") == "⌘X" and main.bindings.label("undo") == "⌘Z", "and they are put back with the rest")
+	check(main.bindings.label("redo") == cmd + "X" and main.bindings.label("undo") == cmd + "Z", "and they are put back with the rest")
 	await tap(KEY_ESCAPE)
 	await frames(2)
 
@@ -1508,8 +1533,8 @@ func _run() -> void:
 	print("Presets, copy and paste")
 	var library = main.library
 	var prompt = main.name_prompt
-	var reverb_id := "AU:61756678:72766232:6170706c"  # Apple's AUReverb2
-	var delay_id := "AU:61756678:64656c79:6170706c"  # and AUDelay
+	var reverb_id := plugin_id(reverb_name)  # Apple's AUReverb2 (or the checks' own SR Test Gain)
+	var delay_id := plugin_id(delay_name)  # and AUDelay (or SR Test Echo)
 	var bells = main.find_instrument("bells")
 	check(library.root.ends_with("automated-run-library") and not library.plugin_root.begins_with(OS.get_environment("HOME").path_join("Library/Audio")),
 		"automated runs keep templates and presets in a folder of their own", library.root)
@@ -1518,28 +1543,41 @@ func _run() -> void:
 	await frames(3)
 	await click(mix._strip_for(pad).inserts[0].button.get_global_rect().get_center(), MOUSE_BUTTON_RIGHT)
 	var presets = mix._insert_presets
-	check(mix._insert_menu.visible and mix._insert_menu.get_item_index(4) >= 0 and presets.get_item_index(presets.FACTORY + 12) >= 0 and
+	# (The checks' own plug-ins have no presets of their own: off a Mac, turning one of its controls stands in for
+	# choosing one.)
+	var turned: int = -1 if on_mac else int(audio.get_plugin_parameters(pad.source_id, "insert", 0)[0].id)
+	check(mix._insert_menu.visible and mix._insert_menu.get_item_index(4) >= 0 and (presets.get_item_index(presets.FACTORY + 12) >= 0 or not on_mac) and
 		presets.is_item_disabled(presets.get_item_index(presets.PASTE)), "an insert's right-click menu has Presets: AUReverb2's own, and nothing to paste yet",
 		"%d items" % presets.item_count)
 	mix._insert_menu.hide()
 	var as_loaded: PackedByteArray = audio.get_plugin_state(pad.source_id, "insert", 0)
-	presets.id_pressed.emit(presets.FACTORY + 12)
+	if on_mac:
+		presets.id_pressed.emit(presets.FACTORY + 12)
+	else:
+		audio.set_plugin_parameter(pad.source_id, "insert", 0, turned, 0.3)
 	await frames(2)
 	var hall: PackedByteArray = audio.get_plugin_state(pad.source_id, "insert", 0)
-	check(hall != as_loaded and mix._status.text == "Large Hall 2 loaded", "choosing one of its own presets loads it", mix._status.text)
+	if on_mac:
+		check(hall != as_loaded and mix._status.text == "Large Hall 2 loaded", "choosing one of its own presets loads it", mix._status.text)
+	else:
+		skip("choosing one of its own presets loads it", "the checks' own plug-ins have none")
+		check(hall != as_loaded, "turning one of its controls changes its settings")
 	presets.id_pressed.emit(presets.SAVE)
 	await frames(2)
-	check(prompt.is_open() and prompt._name.text == "AUReverb2", "Save preset asks for a name", prompt._title.text)
+	check(prompt.is_open() and prompt._name.text == reverb_name, "Save preset asks for a name", prompt._title.text)
 	await tap(KEY_TAB)
 	check(mix.is_open() and prompt.is_open(), "while it asks, the keys are for typing: Tab doesn't close the mix window")
 	prompt._name.text = "Big hall"
 	prompt.confirm()
 	await frames(2)
 	var saved: Array = library.plugin_presets(pad, "insert", 0)
-	check(not prompt.is_open() and saved.size() == 1 and saved[0].name == "Big hall" and saved[0].path == library.plugin_root.path_join("Apple/AUReverb2/Big hall.aupreset"),
-		"it is saved as an .aupreset in the plug-in's folder, where Audio Unit hosts keep them", saved[0].path if not saved.is_empty() else "nothing")
+	check(not prompt.is_open() and saved.size() == 1 and saved[0].name == "Big hall" and saved[0].path == library.plugin_root.path_join(plugin_maker).path_join(reverb_name).path_join("Big hall" + preset_extension),
+		"it is saved as a %s in the plug-in's folder, where other hosts keep them" % preset_extension, saved[0].path if not saved.is_empty() else "nothing")
 	presets.for_plugin(pad, "insert", 0)
-	presets.id_pressed.emit(presets.FACTORY)
+	if on_mac:
+		presets.id_pressed.emit(presets.FACTORY)
+	else:
+		audio.set_plugin_parameter(pad.source_id, "insert", 0, turned, 0.8)
 	await frames(2)
 	var small: PackedByteArray = audio.get_plugin_state(pad.source_id, "insert", 0)
 	presets.for_plugin(pad, "insert", 0)
@@ -1588,7 +1626,7 @@ func _run() -> void:
 	var kinds_on_board: Array = stack.pedals.map(func(p): return p.kind)
 	check(stack.amp_head == "high_gain" and stack.amp_cabinet == "4x12" and absf(stack.amp_controls.gain - 8.5) < 0.01 and
 		kinds_on_board == ["overdrive", "delay", "plugin"] and not stack.pedals[0].on and absf(stack.pedals[1].controls[0] - 3.0) < 0.01 and
-		stack.pedals[2].plugin_name == "AUReverb2" and audio.get_inserts(stack.source_id)[2].plugin_name == "AUDelay",
+		stack.pedals[2].plugin_name == reverb_name and audio.get_inserts(stack.source_id)[2].plugin_name == delay_name,
 		"loading it gives the stack the same head, cabinet, knobs, pedals and plug-ins", str(kinds_on_board))
 	names.for_instrument(speaker)
 	check(names.get_item_index(names.SAVED) < 0, "a Speaker isn't offered an amp's presets")
@@ -1601,7 +1639,7 @@ func _run() -> void:
 	names.for_instrument(speaker3)
 	names.id_pressed.emit(names.PASTE)
 	await frames(2)
-	check(not_onto_amp and absf(speaker3.volume_db - 6.0) < 0.01 and audio.get_inserts(speaker3.source_id)[0].plugin_name == "AUDelay",
+	check(not_onto_amp and absf(speaker3.volume_db - 6.0) < 0.01 and audio.get_inserts(speaker3.source_id)[0].plugin_name == delay_name,
 		"a Speaker's copied settings paste onto another Speaker (volume and plug-ins), not onto an amp")
 	main.set_speaker_volume(speaker, 0.0)
 	await tap(KEY_TAB)
@@ -1643,16 +1681,16 @@ func _run() -> void:
 	await frames(3)
 	await tap(KEY_T)
 	await click(im._card_for.plugin_synth.get_global_rect().get_center())
-	check(picker.visible and picker._title.text == "A plug-in instrument" and picker.plugins.any(func(p): return p.name == "DLSMusicDevice") and
-		not picker.plugins.any(func(p): return p.name == "AUDelay"), "Plug-in Instrument offers the instrument plug-ins, not the effects",
+	check(picker.visible and picker._title.text == "A plug-in instrument" and picker.plugins.any(func(p): return p.name == synth_name) and
+		not picker.plugins.any(func(p): return p.name == delay_name), "Plug-in Instrument offers the instrument plug-ins, not the effects",
 		"%d of them" % picker.plugins.size())
-	picker._search.text = "dlsmusic"
-	picker._search.text_changed.emit("dlsmusic")
-	picker._search.text_submitted.emit("dlsmusic")
+	picker._search.text = synth_name.to_lower()
+	picker._search.text_changed.emit(synth_name.to_lower())
+	picker._search.text_submitted.emit(synth_name.to_lower())
 	await frames(3)
 	var synth = player.carried
-	check(not im.is_open() and synth != null and synth.plays_plugin and synth.display_name == "DLSMusicDevice" and
-		synth.instrument_plugin.get("plugin_name", "") == "DLSMusicDevice", "choosing one brings a plug-in instrument into your hands, named after it",
+	check(not im.is_open() and synth != null and synth.plays_plugin and synth.display_name == synth_name and
+		synth.instrument_plugin.get("plugin_name", "") == synth_name, "choosing one brings a plug-in instrument into your hands, named after it",
 		synth.display_name if synth else "nothing")
 	await tap(KEY_G)
 	await frames(3)
@@ -1660,7 +1698,7 @@ func _run() -> void:
 	await frames(5)
 	check(main.hud.hint_lines().has("' Plug-in Window"), "its card offers its plug-in's window", " / ".join(main.hud.hint_lines()))
 	await tap(KEY_APOSTROPHE)
-	check(player.plugin_open == synth and main.hud._piano.visible and main.hud._piano_title.text.begins_with("Playing the DLSMusicDevice") and
+	check(player.plugin_open == synth and main.hud._piano.visible and main.hud._piano_title.text.begins_with("Playing the " + synth_name) and
 		main.hud.piano_top_fraction() > 0.1, "' opens its plug-in's window over the on-screen keyboard", main.hud._piano_title.text)
 	key(KEY_D)
 	var window_level: float = await average_level(synth.source_id, 0.3)
@@ -1704,23 +1742,23 @@ func _run() -> void:
 	var synth_strip: Dictionary = mix._strip_for(synth)
 	(mix._strip_row.get_parent() as ScrollContainer).ensure_control_visible(synth_strip.source)
 	await frames(3)
-	check(synth_strip.source is Button and synth_strip.source.text == "DLSMusicDevice" and synth_strip.plate.text == "DLSMusicDevice",
+	check(synth_strip.source is Button and synth_strip.source.text == synth_name and synth_strip.plate.text == synth_name,
 		"its strip shows its plug-in where others show their input")
 	await click(synth_strip.source.get_global_rect().get_center(), MOUSE_BUTTON_RIGHT)
 	check(mix._plugin_menu.visible and mix._plugin_menu.get_item_index(2) >= 0 and mix._plugin_presets.get_item_index(mix._plugin_presets.SAVE) >= 0,
 		"right-clicking it offers its window, another plug-in, and its presets")
 	mix._plugin_menu.hide()
 	mix._on_plugin_menu_chosen(1)
-	picker._search.text = "ausampler"
-	picker._search.text_changed.emit("ausampler")
-	picker._search.text_submitted.emit("ausampler")
+	picker._search.text = sampler_name.to_lower()
+	picker._search.text_changed.emit(sampler_name.to_lower())
+	picker._search.text_submitted.emit(sampler_name.to_lower())
 	await frames(3)
-	check(synth.display_name == "AUSampler" and mix._strip_for(synth).plate.text == "AUSampler" and mix._strip_for(synth).source.text == "AUSampler",
+	check(synth.display_name == sampler_name and mix._strip_for(synth).plate.text == sampler_name and mix._strip_for(synth).source.text == sampler_name,
 		"Replace with another plug-in, and it takes that one's name", synth.display_name)
 	mix.duplicate_instrument(synth)
 	await frames(3)
 	var synth_copy = main.instruments[main.instruments.find(synth) + 1]
-	check(synth_copy.plays_plugin and synth_copy.display_name == "AUSampler 2" and synth_copy.instrument_plugin.get("plugin_name", "") == "AUSampler",
+	check(synth_copy.plays_plugin and synth_copy.display_name == sampler_name + " 2" and synth_copy.instrument_plugin.get("plugin_name", "") == sampler_name,
 		"duplicated, it plays the same plug-in, with its settings", synth_copy.display_name)
 	main.remove_instrument(synth_copy)
 	await tap(KEY_TAB)
@@ -1817,7 +1855,7 @@ func _run() -> void:
 		audio.get_pattern(second_drums.source_id).is_empty() and audio.get_inserts(second_pad.source_id)[0].plugin_name == "" and
 		is_equal_approx(main.tempo, 123.0) and main.instruments.size() == on_disk.instruments.size(),
 		"Don't Save lets it go, and the new room is the template at the size asked for, without the patterns and plug-ins left unticked")
-	check(main.instruments.any(func(i): return i.plays_plugin and i.instrument_plugin.get("plugin_name", "") == "AUSampler"),
+	check(main.instruments.any(func(i): return i.plays_plugin and i.instrument_plugin.get("plugin_name", "") == sampler_name),
 		"though a plug-in instrument keeps its plug-in: it is the instrument")
 	check(is_equal_approx(float(library.read_room_file(room_file).tempo), 127.0), "the first room's file is as it was last saved")
 
@@ -1834,7 +1872,7 @@ func _run() -> void:
 	await seconds(1.0)
 	check(session.room_name == "Test room" and is_equal_approx(main.tempo, 127.0) and main.room.size.is_equal_approx(Vector3(18.0, 5.0, 12.0)) and
 		not session.has_unsaved_changes() and not title.is_open(), "opening one brings it back as it was saved, and goes in")
-	check(main.instruments.any(func(i): return i.plays_plugin and i.display_name == "AUSampler" and i.instrument_plugin.get("plugin_name", "") == "AUSampler") and
+	check(main.instruments.any(func(i): return i.plays_plugin and i.display_name == sampler_name and i.instrument_plugin.get("plugin_name", "") == sampler_name) and
 		main.instruments.any(func(i): return i.kind == "garage_drums"), "the garage kit and the plug-in instrument come back with it")
 	main.set_tempo(90.0)
 	session.request_quit()
@@ -2011,7 +2049,7 @@ func _run() -> void:
 		"the cursor shows what a press would do: the trim cursor at a clip's ends, a fade cursor (a ramp in a box) at its top corners")
 	check(view.hint_at(Vector2(view.x_of(take_steps.y) - 2.0, lane_y)).begins_with("Drag to trim the clip's end") and
 		view.zone_at(Vector2(view.x_of(take_steps.x) + 1.0, strip_y)).get("zone", "") == "fade_in" and
-		view.hint_at(Vector2(view.x_of((take_steps.x + take_steps.y) / 2.0), lane_y)).contains("⌘E splits"),
+		view.hint_at(Vector2(view.x_of((take_steps.x + take_steps.y) / 2.0), lane_y)).contains(cmd + "E splits"),
 		"a clip's ends trim it and its top corners fade it, as the hint line says with the mouse over them",
 		view.hint_at(Vector2(view.x_of(take_steps.y) - 2.0, lane_y)))
 	var end_x: float = view.x_of(take_steps.y - 4.0)
@@ -2569,7 +2607,7 @@ func _run() -> void:
 	await tap(KEY_G)
 	var moved_to: Vector3 = bells_moved.global_position
 	await command_tap(KEY_Z)
-	check(faced_bells and locked_card.has("⌘L Unlock") and not locked_card.has("G Carry") and lock_refused and bells_lifted and
+	check(faced_bells and locked_card.has(cmd + "L Unlock") and not locked_card.has("G Carry") and lock_refused and bells_lifted and
 		moved_to.distance_to(bells_spot) > 0.5 and bells_moved.global_position.is_equal_approx(bells_spot),
 		"facing it, Cmd-L locks it (its card offers to unlock it, not to carry it) and G won't pick it up; unlocked, carried off and put down, Cmd-Z puts it back",
 		"%s; refused %s, lifted %s, moved %.2f m, back %s" % [" / ".join(locked_card), lock_refused, bells_lifted, moved_to.distance_to(bells_spot),
@@ -2857,8 +2895,8 @@ func _run() -> void:
 		main.mixer._strips.all(func(strip: Dictionary) -> bool: return strip.get("reduction") is Control),
 		"every strip, the masters' too, has a gain reduction meter beside its meter")
 	main.set_pan(the_folder, 0.0)
-	var problem_on_bus: String = main.set_insert(the_folder, 0, "AU:61756678:64656c79:6170706c")
-	check(problem_on_bus == "" and str(the_folder.inserts[0].plugin_name) == "AUDelay", "a folder takes plug-ins on its inserts, as a track does", problem_on_bus)
+	var problem_on_bus: String = main.set_insert(the_folder, 0, plugin_id(delay_name))
+	check(problem_on_bus == "" and str(the_folder.inserts[0].plugin_name) == delay_name, "a folder takes plug-ins on its inserts, as a track does", problem_on_bus)
 	main.mixer._strip_for(folder_bass).output.item_selected.emit(0)
 	check(the_folder.members == [folder_drums] and main.folder_of(folder_bass) == null, "a track's output set to the master takes it out of the folder")
 	main.mixer.close()
@@ -3031,7 +3069,7 @@ func _run() -> void:
 	view.press(view._lane_buttons(amp_auto, view.lane_top(amp_row, 1), 1)[3].rect.get_center())  # × on the second
 	check(two_lanes == 2 and amp_auto.lanes.size() == 1 and is_equal_approx(view.height_of(amp_auto), view.ROW + view.LANE),
 		"+ adds another lane under the track, × takes one away")
-	var delay_problem: String = main.set_insert(keys_inst, 0, "AU:61756678:64656c79:6170706c")
+	var delay_problem: String = main.set_insert(keys_inst, 0, plugin_id(delay_name))
 	var keys_plugins: Array = auto.plugin_params(keys_inst)
 	var first_control: Dictionary = keys_plugins[0].params[0] if not keys_plugins.is_empty() and not keys_plugins[0].params.is_empty() else {}
 	var control_param: String = first_control.get("param", "")
@@ -3043,7 +3081,7 @@ func _run() -> void:
 	var control_info: Dictionary = auto.plugin_control(keys_inst, control_param)
 	var control_now: float = control_info.get("value", -1.0)
 	var control_wanted: float = lerpf(control_info.get("min", 0.0), control_info.get("max", 1.0), 0.25)
-	check(delay_problem == "" and keys_plugins[0].name.begins_with("AUDelay") and control_param.begins_with("insert:0:") and
+	check(delay_problem == "" and keys_plugins[0].name.begins_with(delay_name) and control_param.begins_with("insert:0:") and
 		absf(control_now - control_wanted) < 0.01 * maxf(1.0, absf(control_info.get("max", 1.0) - control_info.get("min", 0.0))),
 		"a plug-in's controls are offered in its own submenu, and one automated is set where its lane has it", "%s at %.2f" % [first_control.get("name", ""), control_now])
 	keys_inst.automation.erase(control_param)
@@ -3277,7 +3315,7 @@ func _run() -> void:
 	var reopened_band = main.folders.filter(func(f): return f.display_name == "Band").front() if main.folders.size() == 2 else null
 	check(reopened_keys.display_name == "Rhodes" and reopened_keys.named and reopened_keys.color == main.TRACK_COLORS[8][1] and reopened_folder != null and
 		reopened_folder.members.map(func(i): return i.kind) == ["drums", "bass"] and
-		str(reopened_folder.inserts[0].plugin_name) == "AUDelay", "and its tracks' names and colours, and its folder with its tracks and inserts")
+		str(reopened_folder.inserts[0].plugin_name) == delay_name, "and its tracks' names and colours, and its folder with its tracks and inserts")
 	var reopened_keys_volume: Array = main.automation.points(reopened_keys, "volume")
 	check(reopened_keys_volume.size() == 2 and main.automation.points(reopened_keys, "sustain").size() == 3, "its automation is kept with the room",
 		str(reopened_keys_volume))

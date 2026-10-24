@@ -9,6 +9,8 @@ game/bin/
 audio_core/thirdparty/steamaudio/
 audio_core/thirdparty/miniaudio/
 audio_core/thirdparty/vst3sdk/
+# Steinberg's ASIO SDK, downloaded by hand (see audio_core/CMakeLists.txt)
+audio_core/thirdparty/asiosdk/
 
 .DS_Store
 
