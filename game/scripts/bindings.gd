@@ -13,6 +13,7 @@ const ACTIONS := [
 	["left", "Step left", KEY_A],
 	["right", "Step right", KEY_D],
 	["run", "Run (hold)", KEY_SHIFT],
+	["free_camera", "Free camera: fly about the room, and back to you (with Shift, you go where it is)", KEY_F],
 	["play", "Play the instrument you face", KEY_E],
 	["keyboard", "Keyboard: play every instrument whose input is on", KEY_K],
 	["stop", "Get up from an instrument, close the keyboard", KEY_Q],

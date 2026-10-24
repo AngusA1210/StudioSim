@@ -2,7 +2,8 @@ extends Control
 ## The room seen from above: its outline, the walls in it, the instruments, and where you are standing.
 ## Drag on the floor to draw a wall; drag a wall to move it, or one of its ends to turn and stretch it. Drag one of the
 ## room's own walls to move it alone, in or out, the wall opposite staying put (never past a locked instrument).
-## North (the way you face when you first walk in) is up.
+## North (the way you face when you first walk in) is up. You are the white arrowhead; the free camera, while it flies, an
+## outline.
 
 signal selection_changed
 
@@ -108,6 +109,13 @@ func _draw() -> void:
 		var side := Vector2(-ahead.y, ahead.x)
 		draw_colored_polygon(PackedVector2Array([here + ahead * 10.0, here - ahead * 6.0 + side * 6.0, here - ahead * 6.0 - side * 6.0]),
 			Color(1, 1, 1, 0.95))
+		if player.flying:  # and the free camera, an outline, the way it looks
+			var at: Vector3 = player.fly_camera.global_position
+			var there := to_screen(Vector2(at.x, at.z))
+			var looks := Vector2(-sin(player.fly_yaw), -cos(player.fly_yaw))
+			var across := Vector2(-looks.y, looks.x)
+			draw_polyline(PackedVector2Array([there + looks * 10.0, there - looks * 6.0 + across * 6.0, there - looks * 6.0 - across * 6.0,
+				there + looks * 10.0]), ACCENT, 2.0)
 
 
 ## A wall's four corners on screen.

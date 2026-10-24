@@ -10,6 +10,7 @@ var view: SubViewport  # headless runs only get a 64-pixel window, so the game r
 var failures := 0
 const TrackMenu := preload("res://scripts/track_menu.gd")
 const KitMics := preload("res://scripts/kit_mics.gd")
+const Avatar := preload("res://scripts/avatar.gd")
 const Models := preload("res://scripts/instrument_models.gd")
 
 
@@ -362,6 +363,10 @@ func _run() -> void:
 	var quiet: float = audio.get_source_level(drums.source_id)
 	await tap(KEY_E)
 	check(player.playing == drums and main.hud._piano.visible, "E sits down at the drums and shows the keyboard", main.hud._piano_help.text)
+	var stool: Vector3 = drums.to_room(Vector3(0.0, 0.0, 0.66))
+	check(player.seated_at == drums and Vector2(player.global_position.x - stool.x, player.global_position.z - stool.z).length() < 0.01 and
+		absf(player.ear_position().y - Avatar.ears_at(player.height, 0.56).y) < 0.01 and absf(player.yaw - drums.global_rotation.y) < 0.01,
+		"on their stool, facing them: your ears where a seated drummer's are", "ears %.2f m up" % player.ear_position().y)
 	check(drums.input_on and drums._input_badge.visible and main.armed_instruments() == [drums],
 		"sitting down switches the drums' input on, and a green i shows under their name")
 	check(main.hud._piano_keys[KEY_A].piece.text == "Kick" and main.hud._piano_keys[KEY_T].piece.text == "CH" and main.hud._piano_keys[KEY_S].piece.text == "Snare",
@@ -448,8 +453,11 @@ func _run() -> void:
 	await tap(KEY_C)
 	check(not main.settings.click, "C switches the click off")
 	check(main.hud._beat.text.contains("120 BPM"), "the beat readout shows the tempo", main.hud._beat.text)
+	var sat_from: Dictionary = player.standing_spot()
 	await tap(KEY_Q)
 	check(player.playing == null and not drums.input_on and not drums._input_badge.visible, "Q stands up, and the drums' input goes off again")
+	check(player.seated_at == null and player.global_position.distance_to(sat_from.position) < 0.01 and absf(player.ear_position().y - 0.922 * player.height) < 0.01,
+		"back where you stood before you sat down")
 	await tap(KEY_I)
 	check(drums.input_on and drums._input_badge.visible and main.armed_instruments() == [drums], "I switches it on for good")
 	main._sit_at("keys")
@@ -2267,6 +2275,102 @@ func _run() -> void:
 	main.settings.loop_record = false
 	timeline.set_loop(true, loop_before.x, loop_before.y)
 	check(main.speaker.clips.size() == 1 and keys_inst.clips.size() == 2, "(the loop recording undone)")
+
+	print("You in the room")
+	main._sit_at("drums")
+	await frames(5)
+	var facing := Vector3(-sin(player.yaw), 0.0, -cos(player.yaw))
+	var eyes_over_ears: Vector3 = player.camera.global_position - player.ear_position()
+	var body_layer := 1 << (Avatar.LAYER - 1)
+	var body_parts: Array = player.avatar.find_children("*", "MeshInstance3D", true, false)
+	check(body_parts.size() > 20 and body_parts.all(func(m): return m.layers == body_layer) and player.camera.cull_mask & body_layer == 0 and
+		main.mic_panel._eye.cull_mask & body_layer != 0 and player.fly_camera.cull_mask & body_layer != 0,
+		"you have a body, on a layer of its own: a microphone's view and the free camera see it, your own eyes don't", "%d parts" % body_parts.size())
+	check(absf(player.ear_position().y - 0.922 * 1.75) < 0.005 and absf(eyes_over_ears.dot(facing) - 0.049 * 1.75) < 0.005 and
+		absf(eyes_over_ears.y - 0.0145 * 1.75) < 0.005 and player.listener_transform().origin.is_equal_approx(player.ear_position()),
+		"1.75 m tall, you hear from the middle of your head, 1.61 m up, and see from 2.5 cm above and 8.5 cm in front of it",
+		"ears %.3f m up; eyes %.3f m ahead, %.3f m above" % [player.ear_position().y, eyes_over_ears.dot(facing), eyes_over_ears.y])
+	main.menu.open()
+	await frames(2)
+	main.menu._height_slider.value = 160.0
+	await frames(2)
+	var height_said: String = main.menu._height_value.text
+	main.menu.close()
+	var head_mesh: MeshInstance3D = player.avatar.find_child("head", true, false)
+	check(is_equal_approx(player.height, 1.6) and is_equal_approx(main.settings.height, 1.6) and absf(player.ear_position().y - 0.922 * 1.6) < 0.005 and
+		is_equal_approx((player._shape.shape as CapsuleShape3D).height, 1.6) and head_mesh != null and absf(head_mesh.position.y - 0.932 * 1.6) < 0.02 and
+		height_said == "160 cm  ·  5′ 3″", "Your height, in the menu: your eyes, ears and body go with it",
+		"%s; ears %.3f m up, its head %.3f, %.2f m tall" % [height_said, player.ear_position().y, head_mesh.position.y if head_mesh else -1.0, player.height])
+	main.set_height(1.75)
+	# The free camera: off from your eyes, flying the way it looks, through anything, your body staying put.
+	var stood_at: Vector3 = player.global_position
+	await tap(KEY_F)
+	check(player.flying and player.fly_camera.current and player.fly_camera.global_position.distance_to(player.camera.global_position) < 0.01 and
+		main.hud.hint_lines()[0].begins_with("Free Camera"), "F lets the free camera go, from your eyes; a card says its keys", " / ".join(main.hud.hint_lines()))
+	var hold := func(code: int, held_for: float) -> void:
+		var e := InputEventKey.new()  # (movement reads the keyboard's state)
+		e.physical_keycode = code
+		e.pressed = true
+		Input.parse_input_event(e)
+		await seconds(held_for)
+		e = e.duplicate()
+		e.pressed = false
+		Input.parse_input_event(e)
+		await frames(2)
+	var flew_from: Vector3 = player.fly_camera.global_position
+	await hold.call(KEY_W, 0.5)
+	await hold.call(KEY_E, 0.4)
+	var flown: Vector3 = player.fly_camera.global_position - flew_from
+	check(flown.dot(facing) > 0.8 and flown.y > 0.6 and player.global_position.distance_to(stood_at) < 0.01 and player.target == null and
+		player.listener_transform().origin.is_equal_approx(player.ear_position()) and player.seated_at == null and not player.playing,
+		"it flies the way it looks (W) and up (E), your body standing where it was, the room still heard from your ears",
+		"%.2f m ahead, %.2f m up" % [flown.dot(facing), flown.y])
+	main.set_free_camera_hears("camera")
+	check(player.listener_transform().origin.is_equal_approx(player.fly_camera.global_position), "set to, the room is heard from the camera instead")
+	main.set_free_camera_hears("you")
+	await hold.call(KEY_W, 4.0)  # (into the drums, and on to the wall behind them)
+	var half_room: Vector3 = main.room.size / 2.0
+	var cam_at: Vector3 = player.fly_camera.global_position
+	check(absf(cam_at.z) <= half_room.z - 0.099 and absf(cam_at.x) <= half_room.x - 0.099, "it goes through anything, but never out of the room",
+		"%.2f m from the wall it flew at" % (half_room.z - absf(cam_at.z)))
+	await tap(KEY_F)
+	check(not player.flying and player.camera.current and player.global_position.distance_to(stood_at) < 0.01, "F again: back to your eyes, where you stood")
+	await tap(KEY_F)
+	await hold.call(KEY_A, 0.4)
+	var put_at: Vector3 = player.fly_camera.global_position
+	var shift_f := InputEventKey.new()
+	shift_f.physical_keycode = KEY_F
+	shift_f.keycode = KEY_F
+	shift_f.shift_pressed = true
+	shift_f.pressed = true
+	self.view.push_input(shift_f)
+	await frames(2)
+	shift_f = shift_f.duplicate()
+	shift_f.pressed = false
+	self.view.push_input(shift_f)
+	await frames(2)
+	check(not player.flying and Vector2(player.global_position.x - put_at.x, player.global_position.z - put_at.z).length() < 0.05 and
+		player.camera.current, "Shift-F puts you where the camera is, facing its way")
+	# Walking, your body's feet step.
+	main._sit_at("drums")
+	await frames(3)
+	var foot_l: MeshInstance3D = player.avatar.find_child("foot_l", true, false)
+	var foot_r: MeshInstance3D = player.avatar.find_child("foot_r", true, false)
+	var still_apart: float = absf(foot_l.position.z - foot_r.position.z)
+	var w_key := InputEventKey.new()
+	w_key.physical_keycode = KEY_S
+	w_key.pressed = true
+	Input.parse_input_event(w_key)
+	var widest := 0.0
+	var walked_until := Time.get_ticks_msec() + 700
+	while Time.get_ticks_msec() < walked_until:
+		await process_frame
+		widest = maxf(widest, absf(foot_l.position.z - foot_r.position.z))
+	w_key = w_key.duplicate()
+	w_key.pressed = false
+	Input.parse_input_event(w_key)
+	await frames(2)
+	check(still_apart < 0.02 and widest > 0.3, "standing, your feet are together; walking, they step", "%.2f m apart at most" % widest)
 
 	print("Microphones")
 	var drums_heard = main.find_instrument("drums")

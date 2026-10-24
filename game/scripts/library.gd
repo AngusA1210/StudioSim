@@ -384,7 +384,8 @@ func room_data() -> Dictionary:
 	for wall in app.room.walls:
 		walls.append([wall.a.x, wall.a.y, wall.b.x, wall.b.y, wall.height, wall.get("material", app.room.DEFAULT_WALL_MATERIAL)])
 	var size: Vector3 = app.room.size
-	var stood: Vector3 = app.player.global_position
+	var spot: Dictionary = app.player.standing_spot()  # (at a kit, where you stood before you sat down)
+	var stood: Vector3 = spot.position
 	var folders := []
 	for folder in app.folders:  # (its tracks: an instrument's by its place in the list, a folder's or an aux's as {"folder"} or {"aux"})
 		folders.append({"name": folder.display_name, "color": _color_data(folder.color), "level_db": folder.level_db, "muted": folder.muted,
@@ -405,7 +406,7 @@ func room_data() -> Dictionary:
 	return {"soundroom": "room", "version": VERSION, "mode": app.timeline.mode, "timeline": app.timeline.to_data(),
 		"tempo": app.tempo, "swing": app.swing, "master_db": app.master_volume_db, "room_master_db": app.room_volume_db, "reverb_db": app.reverb_db,
 		"room": {"size": [size.x, size.y, size.z], "walls": walls, "surfaces": app.room.surfaces.duplicate()},
-		"player": {"position": [stood.x, stood.z], "yaw": app.player.yaw}, "instruments": instruments, "folders": folders, "auxes": auxes,
+		"player": {"position": [stood.x, stood.z], "yaw": spot.yaw}, "instruments": instruments, "folders": folders, "auxes": auxes,
 		"masters": masters}
 
 

@@ -257,7 +257,7 @@ func enter() -> void:
 func _cut_to_room() -> void:
 	_ui.visible = false
 	_open = false  # from here the player listens, moves and looks
-	app.player.camera.make_current()
+	app.player.look_through()
 	for inst in app.instruments:
 		inst.set_label_visible(true)
 	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED

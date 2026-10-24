@@ -29,8 +29,9 @@ patterns go back to the defaults at each start until rooms can be saved.
   Live input always starts switched off, so an open microphone never meets a pair of speakers by surprise.
 - **MIDI**: every MIDI device the system sees, with a tick box each and a light that flashes when it sends notes.
 - **Settings**: binaural, distance falloff, the limiter's ceiling, delay compensation, text size, field of view, mouse sensitivity, room lighting, full screen (which
-  SoundRoom then opens in every time), whether the master meter and the audio readout are shown on screen, and
-  auto-save and backups for the room.
+  SoundRoom then opens in every time), whether the master meter and the audio readout are shown on screen, your
+  height and where the free camera hears from (see [Controls](controls.md#you-and-the-free-camera)), and auto-save
+  and backups for the room.
 
 Choices are saved (Godot's user data folder, `settings.cfg`) and restored at the next start. If a saved device
 isn't connected, the system default is used until it is.

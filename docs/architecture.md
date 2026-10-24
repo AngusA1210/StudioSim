@@ -5,6 +5,9 @@ game/                      Godot project: the room, player, instruments, HUD, me
   scripts/catalog.gd       every kind of instrument (and the microphone) and the groups the instrument menu shows them in
   scripts/room.gd          the room's floor, ceiling and walls, built to whatever size and layout is set
   scripts/instrument_models.gd   what each instrument looks like, built from simple shapes
+  scripts/player.gd        you: walking, looking, carrying, playing (on a kit's stool), the free camera, and where the
+                           room is heard from
+  scripts/avatar.gd        a body as tall as it is set, in proportion, posed each frame (two-bone IK for its limbs)
   scripts/mixer.gd         the mix window: channel strips, faders (fader.gd), pan pots (pan_control.gd), levels in the
                            room (mini_fader.gd) and meters (level_meter.gd)
   scripts/amp_panel.gd     an amp's knobs (knob.gd) and its pedalboard

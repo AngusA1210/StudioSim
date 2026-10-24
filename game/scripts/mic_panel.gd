@@ -117,7 +117,7 @@ func close() -> void:
 	_aiming = false
 	if inst != null and is_instance_valid(inst):
 		inst.set_hidden_layer(0)
-	app.player.camera.make_current()
+	app.player.look_through()
 	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 	if _back_to_mixer:
 		_back_to_mixer = false

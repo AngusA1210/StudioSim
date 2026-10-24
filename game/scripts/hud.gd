@@ -8,6 +8,7 @@ const LevelMeter := preload("res://scripts/level_meter.gd")
 const PANEL_BG := Color(0.05, 0.06, 0.09, 0.82)
 const DIM := Color(0.62, 0.65, 0.74)
 const WARN := Color(1.0, 0.61, 0.48)
+const FLYING := Color(0.49, 0.89, 0.82)
 const BINAURAL_BLUE := Color(0.55, 0.78, 1.0)
 const MONITOR_GREEN := Color(0.45, 0.9, 0.62)
 const FOLLOW_AMBER := Color(0.98, 0.76, 0.36)
@@ -303,7 +304,14 @@ func _show_hint(vp: Vector2) -> void:
 	var tint := Color.WHITE
 	var rows := []  # [key, action]; an empty key draws a line, for the removal at the bottom
 	var keys = app.bindings
-	if player.remove_pending != null:
+	if player.flying:  # the free camera: its keys, and where the room is heard from
+		title = "Free Camera  ·  heard from %s" % ("it" if app.settings.free_camera_hears == "camera" else "you")
+		tint = FLYING
+		rows = [["%s %s %s %s" % [keys.name_of(keys.key("forward")), keys.name_of(keys.key("left")), keys.name_of(keys.key("back")),
+			keys.name_of(keys.key("right"))], "Fly Where You Look"], ["%s  %s" % [keys.name_of(player.RISE), keys.name_of(player.SINK)], "Up / Down"],
+			[keys.label("run"), "Faster (hold)"], ["", ""], ["%s or Esc" % keys.label("free_camera"), "Back to You"],
+			["Shift %s" % keys.label("free_camera"), "Put You Here"]]
+	elif player.remove_pending != null:
 		title = "Remove %s?" % player.remove_pending.display_name
 		tint = WARN
 		rows = [[keys.label("remove"), "Yes, Remove It"], ["look away", "Keep It"]]
@@ -497,11 +505,12 @@ static func loop_text(start: float, end: float) -> String:
 
 
 ## The line of keys at the foot of the screen in the room: the menu, the mix window (and in a Record room the edit
-## window), the instrument menu and the keyboard.
+## window), the instrument menu, the keyboard and the free camera.
 func keys_prompt() -> String:
 	var keys = app.bindings
-	return "Esc  menu  ·  %s  mix window%s  ·  %s  add an instrument  ·  %s  keyboard" % [keys.label("mixer"),
-		"  ·  %s  edit window" % keys.label("edit_window") if app.timeline.is_record() else "", keys.label("add"), keys.label("keyboard")]
+	return "Esc  menu  ·  %s  mix window%s  ·  %s  add an instrument  ·  %s  keyboard  ·  %s  free camera" % [keys.label("mixer"),
+		"  ·  %s  edit window" % keys.label("edit_window") if app.timeline.is_record() else "", keys.label("add"), keys.label("keyboard"),
+		keys.label("free_camera")]
 
 
 func _chip(parent: Control) -> Label:

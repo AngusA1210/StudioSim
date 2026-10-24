@@ -1,10 +1,22 @@
 extends CharacterBody3D
 ## First-person player: walks the room, aims at instruments, carries them, and sits down at one to play it.
 ## Sitting at an instrument switches its input on (until you get up), so the MIDI keyboard plays it; the computer
-## keyboard plays it too. Both also play every other instrument whose input you have switched on yourself.
-## The camera is also the listener, so the audio core hears the room from here.
+## keyboard plays it too. Both also play every other instrument whose input you have switched on yourself. At a kit
+## you sit on its stool.
+## You have a body (avatar.gd) as tall as the menu says: the audio core hears the room from the middle of its head,
+## between its ears, and you see from its eyes, a little above and in front of them. The free camera (F) leaves it
+## where it is and flies about the room, through anything; you hear from your body still, or from the camera.
 
-const EYE_HEIGHT := 1.65
+const Avatar := preload("res://scripts/avatar.gd")
+const COLOR := Color(0.4, 0.62, 0.9)  # your shirt and headphones
+const MIN_HEIGHT := 1.4
+const MAX_HEIGHT := 2.1
+const STOOL := Vector3(0.0, 0.56, 0.66)  # the top of a kit's stool, on its model (instrument_models.gd)
+const AT_A_KIT := -0.42  # sitting down at a kit, you look down at it
+const FLY_SPEED := 2.5
+const FLY_FAST := 7.0
+const RISE := KEY_E  # the free camera, up and down (as in an editor's fly mode)
+const SINK := KEY_Q
 const WALK_SPEED := 2.8
 const RUN_SPEED := 5.5
 const TURN_SPEED := 1.9  # arrow keys, radians per second
@@ -21,9 +33,17 @@ const KEYMAP := Bindings.NOTES
 var app  # main.gd: settings and the audio core
 var audio: SoundRoomAudio
 var instruments: Array = []
-var camera: Camera3D
+var camera: Camera3D  # your eyes
+var head: Node3D  # the middle of your head, between your ears, turned as you look: where you hear from
+var avatar  # your body
+var height := 1.75
 var yaw := 0.0
 var pitch := 0.0
+var seated_at = null  # the kit whose stool you sit on
+var flying := false  # the free camera
+var fly_camera: Camera3D
+var fly_yaw := 0.0
+var fly_pitch := 0.0
 var target = null   # instrument you're aiming at
 var carried = null  # instrument you're carrying
 var playing = null  # instrument you're playing
@@ -42,7 +62,9 @@ var clear_pending = null   # the amp whose loop J was pressed for once; a second
 var _clear_deadline := 0
 
 var _remove_deadline := 0
-
+var _shape: CollisionShape3D
+var _stood := {}  # where you stood before you sat down: {position, yaw, pitch}
+var _last_position := Vector3.ZERO  # (how fast your body goes, for its stride)
 
 
 func setup(the_app, room_instruments: Array) -> void:
@@ -50,32 +72,123 @@ func setup(the_app, room_instruments: Array) -> void:
 	audio = app.audio
 	instruments = room_instruments
 
-	var shape := CollisionShape3D.new()
+	_shape = CollisionShape3D.new()
 	var capsule := CapsuleShape3D.new()
 	capsule.radius = 0.3
-	capsule.height = 1.8
-	shape.shape = capsule
-	shape.position.y = 0.9
-	add_child(shape)
+	_shape.shape = capsule
+	add_child(_shape)
 
+	head = Node3D.new()
+	add_child(head)
 	camera = Camera3D.new()
-	camera.position.y = EYE_HEIGHT
 	camera.fov = app.settings.fov
 	camera.near = 0.05
-	add_child(camera)
+	camera.cull_mask = 0xFFFFF & ~(1 << (Avatar.LAYER - 1))  # (your own body isn't in your way)
+	head.add_child(camera)
 	camera.make_current()
+	avatar = Avatar.new()
+	add_child(avatar)
+	fly_camera = Camera3D.new()
+	fly_camera.top_level = true  # (it goes where it flies, whatever your body does)
+	fly_camera.near = 0.05
+	add_child(fly_camera)
+	set_height(app.settings.height)
 	place(Vector3(0.0, 0.0, 3.6), 0.0)
 
 
 func place(at: Vector3, facing_yaw: float) -> void:
+	if flying:
+		stop_flying()
+	if seated_at != null:  # (up, and where you are put)
+		seated_at = null
+		_shape.disabled = false
+		_place_head()
 	position = at
+	_last_position = at
 	yaw = facing_yaw
 	pitch = 0.0
 	_apply_look()
 
 
+## How tall you are (metres): your eyes and ears, and your body, go with it.
+func set_height(tall: float) -> void:
+	height = clampf(tall, MIN_HEIGHT, MAX_HEIGHT)
+	(_shape.shape as CapsuleShape3D).height = height
+	_shape.position.y = height / 2.0
+	avatar.build(height, COLOR)
+	_place_head()
+
+
+func _place_head() -> void:
+	head.position = Avatar.ears_at(height, STOOL.y if seated_at != null else -1.0)
+	camera.position = Avatar.eyes_from_ears(height)
+
+
+## Where you hear from: the middle of your head.
 func ear_position() -> Vector3:
-	return camera.global_position
+	return head.global_position
+
+
+## Where the room is heard from, and which way: your head, or the free camera if it is flying and set to be heard from.
+func listener_transform() -> Transform3D:
+	if flying and app.settings.free_camera_hears == "camera":
+		return fly_camera.global_transform
+	return head.global_transform
+
+
+## The view you look through: your eyes, or the free camera.
+func view_camera() -> Camera3D:
+	return fly_camera if flying else camera
+
+
+func look_through() -> void:
+	view_camera().make_current()
+
+
+## Where you stand (before you sat down, if you are at a kit), and which way you face.
+func standing_spot() -> Dictionary:
+	if seated_at != null and not _stood.is_empty():
+		return {"position": _stood.position, "yaw": _stood.yaw}
+	return {"position": global_position, "yaw": yaw}
+
+
+## Everything in the room moved by `shift` (one of its walls moved): you too, and where you stood before you sat down.
+func shift(by: Vector3) -> void:
+	global_position += by
+	_last_position += by
+	if not _stood.is_empty():
+		_stood.position += by
+
+
+## The free camera: it starts at your eyes and flies about the room, through anything; your body stays where it is.
+func start_flying() -> void:
+	if flying:
+		return
+	put_down()
+	if target != null:
+		target.set_highlighted(false)
+		target = null
+	flying = true
+	fly_yaw = yaw
+	fly_pitch = pitch
+	fly_camera.fov = camera.fov
+	fly_camera.global_transform = Transform3D(Basis.from_euler(Vector3(fly_pitch, fly_yaw, 0.0)), camera.global_position)
+	fly_camera.make_current()
+
+
+## Back to your eyes; or, `put_here`, with you standing where the camera is, facing its way.
+func stop_flying(put_here := false) -> void:
+	if not flying:
+		return
+	flying = false
+	if put_here:
+		if playing != null:
+			stop_playing()
+		var under := Vector3(fly_camera.global_position.x, 0.0, fly_camera.global_position.z)
+		place(app.room.settle(under, 0.3, 0.3, under), fly_yaw)
+		pitch = clampf(fly_pitch, -1.45, 1.45)
+		_apply_look()
+	camera.make_current()
 
 
 func can_play_target() -> bool:
@@ -95,6 +208,8 @@ func start_playing(inst) -> void:
 	if not was_on:
 		app.set_input(inst, true)  # (this tells notice_input, which would mark the input as your own choice)
 	_sat_input = not was_on
+	if inst.drum_kit:
+		_sit(inst)
 
 
 func stop_playing() -> void:
@@ -104,6 +219,36 @@ func stop_playing() -> void:
 	if was != null and _sat_input and was.input_on:
 		app.set_input(was, false)
 	_sat_input = false
+	_stand_up()
+
+
+## On a kit's stool, facing it, looking down at it: your eyes and ears where a seated drummer's are.
+func _sit(kit) -> void:
+	_stood = {"position": global_position, "yaw": yaw, "pitch": pitch}
+	seated_at = kit
+	_shape.disabled = true  # (the kit's own box would push you off its stool)
+	velocity = Vector3.ZERO
+	global_position = kit.to_room(Vector3(STOOL.x, 0.0, STOOL.z))
+	_last_position = global_position
+	yaw = kit.global_rotation.y
+	pitch = AT_A_KIT
+	_place_head()
+	_apply_look()
+
+
+## Up from the stool, back where you stood before.
+func _stand_up() -> void:
+	if seated_at == null:
+		return
+	seated_at = null
+	_shape.disabled = false
+	global_position = app.room.settle(_stood.position, 0.3, 0.3, _stood.position)
+	_last_position = global_position
+	yaw = _stood.yaw
+	pitch = _stood.pitch
+	_stood = {}
+	_place_head()
+	_apply_look()
 
 
 ## An instrument's input was switched on or off. If it is the one you are sitting at, the choice is now yours:
@@ -201,8 +346,12 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
 		var sensitivity: float = MOUSE_SENSITIVITY * app.settings.mouse_sensitivity
-		yaw -= event.relative.x * sensitivity
-		pitch = clampf(pitch - event.relative.y * sensitivity, -1.45, 1.45)
+		if flying:
+			fly_yaw -= event.relative.x * sensitivity
+			fly_pitch = clampf(fly_pitch - event.relative.y * sensitivity, -1.5, 1.5)
+		else:
+			yaw -= event.relative.x * sensitivity
+			pitch = clampf(pitch - event.relative.y * sensitivity, -1.45, 1.45)
 		_apply_look()
 	elif event is InputEventMouseButton and event.pressed and plugin_open != null:  # a click outside its window
 		close_plugin_window()
@@ -223,9 +372,12 @@ func _handle_key(event: InputEventKey) -> void:
 				audio.note_off(id, held[key][0])
 			held.erase(key)
 		return
-	if key == KEY_ESCAPE:  # always backs out: a plug-in's window put away, up from an instrument, the keyboard closed, or the menu
+	if key == KEY_ESCAPE:  # always backs out: a plug-in's window put away, the free camera back to you, up from an
+		# instrument, the keyboard closed, or the menu
 		if plugin_open != null:
 			close_plugin_window()
+		elif flying:
+			stop_flying()
 		elif playing != null:
 			stop_playing()
 		elif typing:
@@ -237,12 +389,19 @@ func _handle_key(event: InputEventKey) -> void:
 	if notes and Bindings.NOTES.has(key) and app.bindings.action_for(key) != "edit":  # (the panel's key opens it, seated too)
 		_note_on(key)
 		return
+	if flying and (key == RISE or key == SINK):  # (held, up and down: see _fly)
+		return
 	# The instrument these keys act on: the one you are playing, or else the one you are facing.
 	var at = playing if playing != null else target
 	var keys = app.bindings
 	match keys.action_for(key):
 		"mixer":
 			app.mixer.open()
+		"free_camera":  # with Shift, you are put where it is
+			if flying:
+				stop_flying(event.shift_pressed)
+			else:
+				start_flying()
 		"edit":
 			if at != null and at.playable and (playing != null or can_play_target()):
 				app.sequencer.open(at)
@@ -393,9 +552,18 @@ func _physics_process(delta: float) -> void:
 		strafe += _held("right") - _held("left")
 		forward += float(Input.is_physical_key_pressed(KEY_UP)) - float(Input.is_physical_key_pressed(KEY_DOWN))
 		turn += float(Input.is_physical_key_pressed(KEY_LEFT)) - float(Input.is_physical_key_pressed(KEY_RIGHT))
+	if flying:
+		_fly(delta, forward, strafe, turn)
+		_pose_avatar(delta)
+		return
 	if turn != 0.0:
 		yaw += turn * TURN_SPEED * delta
 		_apply_look()
+	if seated_at != null:  # on its stool, wherever the kit is put
+		if instruments.has(seated_at):
+			global_position = seated_at.to_room(Vector3(STOOL.x, 0.0, STOOL.z))
+		_pose_avatar(delta)
+		return
 
 	var basis_flat := Basis(Vector3.UP, yaw)
 	var wish := basis_flat * Vector3(strafe, 0.0, -forward)
@@ -413,11 +581,51 @@ func _physics_process(delta: float) -> void:
 	if playing != null and _distance_to(playing) > PLAY_REACH + 0.6:
 		stop_playing()
 	_update_carry()
+	_pose_avatar(delta)
+
+
+## The free camera, flying the way it looks (and up or down), never out of the room.
+func _fly(delta: float, forward: float, strafe: float, turn: float) -> void:
+	fly_yaw += turn * TURN_SPEED * delta
+	var rise := 0.0
+	if _can_move() and not Input.is_key_pressed(KEY_META) and not Input.is_key_pressed(KEY_CTRL):
+		var notes := playing != null or typing or plugin_open != null
+		rise = float(Input.is_physical_key_pressed(RISE) and not (notes and Bindings.NOTES.has(RISE))) - float(Input.is_physical_key_pressed(SINK))
+	var look := Basis.from_euler(Vector3(fly_pitch, fly_yaw, 0.0))
+	var wish := look * Vector3(strafe, 0.0, -forward) + Vector3(0.0, rise, 0.0)
+	if wish.length() > 1.0:
+		wish = wish.normalized()
+	var at := fly_camera.global_position + wish * (FLY_FAST if app.bindings.is_down("run") else FLY_SPEED) * delta
+	var half: Vector3 = app.room.size / 2.0
+	at = Vector3(clampf(at.x, -half.x + 0.1, half.x - 0.1), clampf(at.y, 0.1, app.room.size.y - 0.1), clampf(at.z, -half.z + 0.1, half.z - 0.1))
+	fly_camera.global_transform = Transform3D(look, at)
+
+
+## Your body, as you are: walking, carrying, playing, or on a kit's stool with your feet on its pedals and your sticks
+## over its hi-hat and snare.
+func _pose_avatar(delta: float) -> void:
+	var moved := (global_position - _last_position) / maxf(delta, 0.0001)
+	_last_position = global_position
+	var going := global_transform.basis.inverse() * Vector3(moved.x, 0.0, moved.z)
+	var state := {"pitch": pitch, "move": going.limit_length(RUN_SPEED)}
+	var k := height / 1.75
+	if seated_at != null and instruments.has(seated_at):
+		var mine := global_transform.affine_inverse()
+		var kit = seated_at
+		state.seat_top = STOOL.y
+		state.feet = [mine * kit.to_room(Vector3(-0.56, 0.09, 0.42)), mine * kit.to_room(Vector3(0.04, 0.09, 0.36))]
+		state.hands = [mine * kit.to_room(Vector3(-0.15, 0.85, 0.5)), mine * kit.to_room(Vector3(-0.22, 1.0, 0.38))]
+		state.sticks = [mine * kit.to_room(Vector3(-0.28, 0.69, 0.23)), mine * kit.to_room(Vector3(-0.47, 0.94, 0.15))]
+	elif carried != null:
+		state.hands = [Vector3(-0.17, 1.12, -0.42) * k, Vector3(0.17, 1.12, -0.42) * k]
+	elif playing != null or plugin_open != null:
+		state.hands = [Vector3(-0.15, 0.98, -0.38) * k, Vector3(0.15, 0.98, -0.38) * k]
+	avatar.pose(state, delta)
 
 
 func _process(_delta: float) -> void:
 	if app.title == null or not app.title.is_open():  # on the title screen its own camera does the listening
-		audio.set_listener(camera.global_transform)
+		audio.set_listener(listener_transform())
 	if plugin_open != null and _plugin_shown and not plugin_open.instrument_plugin.get("editor_open", true):
 		close_plugin_window()  # closed with its own button, or put away by the mix window
 	if remove_pending != null and (Time.get_ticks_msec() >= _remove_deadline
@@ -425,7 +633,7 @@ func _process(_delta: float) -> void:
 		remove_pending = null  # too slow, or looking at something else now
 	if clear_pending != null and (Time.get_ticks_msec() >= _clear_deadline or clear_pending != target):
 		clear_pending = null
-	var aimed = null if carried != null else _pick_target()
+	var aimed = null if carried != null or flying else _pick_target()
 	if aimed != target:
 		if target != null:
 			target.set_highlighted(false)
@@ -465,8 +673,10 @@ func release_keys() -> void:
 
 func _apply_look() -> void:
 	rotation = Vector3(0.0, yaw, 0.0)
-	if camera:
-		camera.rotation = Vector3(pitch, 0.0, 0.0)
+	if head:
+		head.rotation = Vector3(pitch, 0.0, 0.0)
+	if flying:
+		fly_camera.global_transform = Transform3D(Basis.from_euler(Vector3(fly_pitch, fly_yaw, 0.0)), fly_camera.global_position)
 
 
 ## The instrument you're facing, judged by heading so a low instrument is selectable without looking down at it.

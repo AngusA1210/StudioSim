@@ -518,7 +518,7 @@ func move_room_wall(side: String, by: float) -> float:
 	for inst in instruments:
 		inst.global_position += shift
 	if player != null:
-		player.global_position += shift
+		player.shift(shift)
 	var flat := Vector2(shift.x, shift.z)
 	for i in room.walls.size():
 		room.walls[i].a += flat
@@ -1411,9 +1411,22 @@ func set_click_volume_db(db: float) -> void:
 
 # ── The title screen ────────────────────────────────────────────────────────────────────────────────────────
 
-## Where the room is being heard from: the player's ears, or the title screen's camera.
+## Where the room is being heard from: the player's ears (or the free camera), or the title screen's camera.
 func listener_position() -> Vector3:
-	return title.camera.global_position if title != null and title.is_open() else player.ear_position()
+	return title.camera.global_position if title != null and title.is_open() else player.listener_transform().origin
+
+
+## How tall you are (metres): your eyes and ears, and your body, go with it.
+func set_height(metres: float) -> void:
+	player.set_height(metres)
+	settings.height = player.height
+	settings.save_to_disk()
+
+
+## While the free camera flies, the room is heard from "you" (your ears, where your body stands) or the "camera".
+func set_free_camera_hears(which: String) -> void:
+	settings.free_camera_hears = "camera" if which == "camera" else "you"
+	settings.save_to_disk()
 
 
 ## Back to the title screen. The room carries on as it is.
@@ -2102,6 +2115,7 @@ func _apply_display() -> void:
 	get_window().content_scale_factor = settings.text_scale
 	if player:
 		player.camera.fov = settings.fov
+		player.fly_camera.fov = settings.fov
 	if not options.has("silent"):  # automated runs keep their window as it is
 		var mode := Window.MODE_FULLSCREEN if settings.fullscreen else Window.MODE_WINDOWED
 		if get_window().mode != mode and not (mode == Window.MODE_WINDOWED and get_window().mode == Window.MODE_MAXIMIZED):

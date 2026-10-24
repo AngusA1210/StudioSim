@@ -4,12 +4,13 @@
 | --- | --- |
 | W A S D, mouse | move, look (click to capture the mouse); the arrow keys walk and turn too |
 | Shift | run |
+| F | the free camera: it leaves your body where it stands and flies about the room (see below); F or Esc brings the view back to you, Shift-F puts you where the camera is |
 | G or click | pick up the instrument you're facing, put it down (it turns to face you) |
 | ⌘L | lock the instrument you're facing (or carrying, or the microphone whose panel is open) in place, or unlock it: a yellow padlock floats over its name, and it can't be picked up, nor a microphone moved or aimed |
 | T | the instrument menu: add an instrument to the room |
 | V | duplicate the instrument you're facing or carrying, with its settings, pedals and plug-ins: the copy is in your hands to put down |
 | Backspace, twice | remove the instrument you're facing or carrying |
-| E | play the instrument you're next to; Q stops |
+| E | play the instrument you're next to (at a kit, you sit on its stool); Q stops |
 | A S D F G H J K L ; | white keys while playing (W E T Y U O are the black keys, Z/X change octave; P opens the panel, seated too) |
 | K | the keyboard: the letter keys play every instrument whose input is on, from wherever you stand. The arrow keys walk and turn meanwhile; Q or Esc closes it |
 | I | that instrument's input on/off (see below) |
@@ -35,6 +36,25 @@
 | B | binaural on/off (compare with plain stereo) |
 
 Facing an instrument, a card at the right of the screen lists what each key does to it.
+
+## You, and the free camera
+
+You have a body, as tall as **Your height** in the menu's settings says (140 to 210 cm). You hear the room from the
+middle of your head, between your ears, and see it from your eyes, 2.5 cm above and 8.5 cm in front of them, as on a
+real head: so the taller you are, the higher you hear and see from, and turning your head swings your eyes round
+your ears. Your own eyes don't see your body, but a microphone's view, the free camera and the title screen do: a
+figure in headphones (where its ears are), its head turned the way you look, stepping as you walk and holding out
+what you carry. At a kit you sit on its stool, facing it, your feet on its pedals and your sticks over its hi-hat and
+snare, and you hear it from where a seated drummer does; getting up puts you back where you stood. Seated, the arrow
+keys turn you; they don't walk.
+
+**The free camera** (F) starts at your eyes and flies the way it looks: W A S D (or the arrow keys), E up and Q down,
+Shift faster, the mouse to look. It goes through instruments and walls, but never out of the room, and your body
+stays where it stood. You go on hearing the room from your body, unless **Free camera hears from** in the menu's
+settings says the camera. A card at the right lists its keys, and the floor plan shows it as an outline beside you.
+F (or Esc) brings the view back to your eyes; Shift-F puts you where the camera is, facing its way. While you are at
+an instrument F is a note, as the other letter keys are; give the free camera another key on the Controls page to
+use it then.
 
 Every key here can be changed on the **Controls** page of the menu: click an action's key, then press the new one
 (an action that had it takes the old key). The ⌘ shortcuts (save, record, undo, redo, split, duplicate a clip, and the

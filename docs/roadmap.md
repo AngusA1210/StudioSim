@@ -18,16 +18,16 @@ effect, responses and noise, and stereo pairs on stereo tracks, mid-side among t
 each with its master (the mix's with inserts), either one on the main outputs; and drums miked as in a studio (an
 acoustic kit heard drum by drum, each head and cymbal from its own place, with the heads' polarity, near field and
 bleed, where across a head or cymbal a mic is placed, the kick's port and a mic inside it, a mic's polarity, the
-mic panel's distances drum by drum, and a kit miked up in one go).
+mic panel's distances drum by drum, and a kit miked up in one go); and you in the room: a body as tall as you set,
+hearing from between its ears and seeing from its eyes, seated on a kit's stool to play it, and a free camera that
+flies about the room, heard from you or from it.
 
 To do, roughly in this order:
 
-1. **You in the room**: an avatar whose height you can set (the ears and eyes go with it; the view is a little tall
-   for some now), which multiplayer will show to the others; and a free camera, detached from the avatar, that flies
-   about the room with nothing in its way.
-2. **Windows, played**: built and checked on every change; next, played and listened to on a Windows machine, and
+1. **Windows, played**: built and checked on every change; next, played and listened to on a Windows machine, and
    ASIO for interfaces whose Windows drivers want it.
-3. **Multiplayer**, the final goal: a session server, a networked clock, note events and low-latency audio streams.
+2. **Multiplayer**, the final goal: a session server, a networked clock, note events and low-latency audio streams;
+   each player's body shown to the others (avatar.gd is built to be driven by another player's state).
 
 Also wanted along the way: MIDI on Linux, and VR through OpenXR. Perhaps later a free version with Jam rooms
 only, Record rooms coming with the full one.
