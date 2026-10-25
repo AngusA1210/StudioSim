@@ -764,6 +764,32 @@ double SoundRoomAudio::get_sequencer_step_now() const { return engine_ ? engine_
 void SoundRoomAudio::set_sustain(int id, bool down) { if (engine_) engine_->setSustain(id, down); }
 void SoundRoomAudio::share_played_notes(bool on) { if (engine_) engine_->sharePlayedNotes(on); }
 
+String SoundRoomAudio::start_net_audio(bool host, const String& address, int port, int me) {
+    if (!engine_) return "the audio isn't running";
+    std::string error;
+    return engine_->startNetAudio(host, address.utf8().get_data(), port, me, &error) ? String() : String(error.c_str());
+}
+void SoundRoomAudio::stop_net_audio() { if (engine_) engine_->stopNetAudio(); }
+void SoundRoomAudio::set_net_players(const PackedInt32Array& ids) {
+    if (!engine_) return;
+    std::vector<int> players;
+    for (int i = 0; i < ids.size(); ++i) players.push_back(ids[i]);
+    engine_->setNetPlayers(players);
+}
+bool SoundRoomAudio::send_source_to_net(int id, int number) { return engine_ && engine_->sendSourceToNet(id, number); }
+bool SoundRoomAudio::feed_source_from_net(int id, int player, int number) { return engine_ && engine_->feedSourceFromNet(id, player, number); }
+Dictionary SoundRoomAudio::get_net_stats(int id) const {
+    Dictionary d;
+    if (!engine_) return d;
+    const sr::NetAudio::Stats st = engine_->netStats(id);
+    d["frames"] = int64_t(st.frames);
+    d["lost"] = int64_t(st.lost);
+    d["late"] = int64_t(st.late);
+    d["held_ms"] = st.held_ms;
+    d["hold_ms"] = st.hold_ms;
+    return d;
+}
+
 Array SoundRoomAudio::take_played_notes() {
     Array out;
     if (!engine_) return out;
@@ -1102,6 +1128,12 @@ void SoundRoomAudio::_bind_methods() {
     ClassDB::bind_method(D_METHOD("set_sustain", "id", "down"), &SoundRoomAudio::set_sustain);
     ClassDB::bind_method(D_METHOD("share_played_notes", "on"), &SoundRoomAudio::share_played_notes);
     ClassDB::bind_method(D_METHOD("take_played_notes"), &SoundRoomAudio::take_played_notes);
+    ClassDB::bind_method(D_METHOD("start_net_audio", "host", "address", "port", "me"), &SoundRoomAudio::start_net_audio);
+    ClassDB::bind_method(D_METHOD("stop_net_audio"), &SoundRoomAudio::stop_net_audio);
+    ClassDB::bind_method(D_METHOD("set_net_players", "ids"), &SoundRoomAudio::set_net_players);
+    ClassDB::bind_method(D_METHOD("send_source_to_net", "id", "number"), &SoundRoomAudio::send_source_to_net);
+    ClassDB::bind_method(D_METHOD("feed_source_from_net", "id", "player", "number"), &SoundRoomAudio::feed_source_from_net);
+    ClassDB::bind_method(D_METHOD("get_net_stats", "id"), &SoundRoomAudio::get_net_stats);
     ClassDB::bind_method(D_METHOD("play_from", "step"), &SoundRoomAudio::play_from);
     ClassDB::bind_method(D_METHOD("set_loop_range", "on", "start_step", "end_step"), &SoundRoomAudio::set_loop_range);
     ClassDB::bind_method(D_METHOD("get_timeline_position"), &SoundRoomAudio::get_timeline_position);

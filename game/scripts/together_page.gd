@@ -19,6 +19,7 @@ var _join_button: Button
 var _status: Label
 var _players: VBoxContainer
 var _leave_button: Button
+var _voice: OptionButton
 var _hint: Label
 var _was := ""  # what playing together was, when last shown
 
@@ -88,6 +89,7 @@ func join(address := "") -> String:
 
 func _refresh() -> void:
 	var net = app.net
+	_fill_voice()
 	if net.role == "guest" and _was == "joining" and is_open():  # (in: into the room)
 		close()
 		app.title.enter()
@@ -196,6 +198,13 @@ func _build() -> void:
 	Hints.give(_join_button, "Your room becomes a copy of theirs (yours as it was is left as it was saved)")
 	join_row.add_child(_join_button)
 
+	_label(box, "Your voice")
+	_voice = OptionButton.new()
+	_voice.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	_voice.item_selected.connect(func(index: int) -> void: app.net.set_voice_input(index - 1))
+	Hints.give(_voice, func() -> String:
+		return "Which of your interface's inputs your voice comes in on: playing together, hold %s to talk, and the others hear you from where you stand (your own voice isn't sent back to you)" % app.bindings.label("talk"))
+	box.add_child(_voice)
 	_status = Label.new()
 	_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	box.add_child(_status)
@@ -207,6 +216,19 @@ func _build() -> void:
 	box.add_child(_leave_button)
 	_hint = Hints.line()
 	box.add_child(_hint)
+
+
+## Your voice's choices: none, or each input of the input device (as many as it says it has, eight if it isn't known).
+func _fill_voice() -> void:
+	var inputs := 8
+	for device in app.audio.get_input_devices():
+		if str(device.get("name", "")) == app.settings.input_device or (app.settings.input_device == "" and bool(device.get("is_default", false))):
+			inputs = maxi(int(device.get("channels", 8)), 1)
+	_voice.clear()
+	_voice.add_item("None")
+	for i in inputs:
+		_voice.add_item("Input %d" % (i + 1))
+	_voice.select(clampi(app.settings.voice_input + 1, 0, inputs))
 
 
 func _label(parent: Control, text: String) -> void:

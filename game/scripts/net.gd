@@ -13,6 +13,12 @@ extends Node
 ## first beat is heard at the same moment everywhere, and every half second each nudges theirs (a few milliseconds
 ## at a time) to keep to where the session says the music is. Live notes are heard as soon as they arrive, as late as the
 ## network makes them (as a player standing further off would be).
+##
+## A live input (a Speaker, a guitar into an amp) is played through by the player who switches its input on, and by
+## nobody else meanwhile: its sound, as it leaves it (after its pedals, amp and inserts), goes to the others over a
+## port of its own beside the session's (net_audio.h), and their copies of it play that in place of their own input.
+## And each player's voice, from the input they choose for it, while they hold the talk key: heard by the others from
+## their body's head, in the room like any sound (so the microphones hear it too), and not by themselves.
 
 signal changed  # a player came or went; hosting, joining or leaving
 signal reported(from: int, data: Dictionary)  # (the automated checks: what the other copy of the game found)
@@ -28,6 +34,7 @@ const KEEP_IN_STEP_EVERY := 0.5
 const START_AHEAD := 0.35  # a start is set this far ahead, so that it reaches everyone first (seconds)
 const NUDGE_MOST := 0.004  # the most the patterns are moved at once to keep in step (seconds)
 const NUDGE_FAR := 0.010  # and while they are further out than that (just started, say)
+const VOICE := 255  # (each player's voice is their sound numbered 255)
 const STATE := 0  # channels: the room's changes, in order; where the players are (the latest only); notes
 const POSES := 1
 const NOTES := 2
@@ -54,6 +61,12 @@ var _since_ping := 0.0
 var _since_pose := 0.0
 var _since_step := 0.0
 var _started_us := 0  # when the patterns were last started here (on this computer's clock)
+var _where := ""  # (a joining player) the host's address, and the session's port there
+var _port := PORT
+var _streams := 0  # this player's sounds, numbered so far
+var _voice_out := -1  # this player's voice: a source no one hears here, whose sound goes to the others
+var _voices := {}  # another player's id → the source their voice comes from here
+var talking := false
 
 
 func setup(the_app) -> void:
@@ -100,6 +113,11 @@ func host(port := PORT, bind := "*") -> String:
 	clock = {"running": app.sequence_running, "anchor_us": session_us(), "anchor_step": maxf(_heard_step(), 0.0), "bpm": app.tempo}
 	audio.share_played_notes(true)
 	status = "Hosting on port %d" % port
+	var trouble: String = audio.start_net_audio(true, bind, port + 1, 1)
+	if trouble != "":
+		status += " (no sound between players: %s)" % trouble
+	_tell_engine_who()
+	follow_voices()
 	changed.emit()
 	return ""
 
@@ -114,6 +132,8 @@ func join(address: String) -> String:
 		where = where.get_slice(":", 0)
 	if where == "":
 		return "the host's address is wanted"
+	_where = where
+	_port = port
 	var peer := ENetMultiplayerPeer.new()
 	var problem := peer.create_client(where, port)
 	if problem != OK:
@@ -144,6 +164,14 @@ func _end(why: String) -> void:
 	for id in _bodies.keys():
 		_forget(id)
 	audio.share_played_notes(false)
+	_silence_voices()
+	audio.stop_net_audio()
+	for inst in app.instruments:  # (nobody's input plays through anything any more but this player's own)
+		for key in ["fed_by", "stream", "feeding", "sending"]:
+			inst.remove_meta(key)
+		if inst.played_by != "":
+			inst.played_by = ""
+			inst._refresh_label()
 	if was == "guest":
 		app.session.end_copy()
 	status = why
@@ -214,6 +242,12 @@ func _on_peer_disconnected(id: int) -> void:
 	players.erase(id)
 	_let_go(id)
 	_forget(id)
+	_tell_engine_who()
+	for inst in app.instruments:  # (what they played through is free again)
+		if int(inst.get_meta("fed_by", 0)) == id:
+			inst.set_meta("fed_by", 0)
+			inst.set_meta("stream", 0)
+			follow_feed(inst)
 	_send("players", players)
 	_send("gone", {"id": id})
 	app.session.notice.emit("%s has left" % gone)
@@ -238,6 +272,7 @@ func _on_packet(id: int, bytes: PackedByteArray) -> void:
 			for each in _bodies.keys():
 				if not players.has(each):
 					_forget(each)
+			follow_voices()
 			changed.emit()
 		"me":  # (a player's name or height, changed)
 			if role == "host" and players.has(id):
@@ -288,7 +323,9 @@ func _on_hello(id: int, data: Dictionary) -> void:
 		return
 	players[id] = {"name": str(data.get("name", "Player")), "height": float(data.get("height", 1.75)),
 		"color": _color_data(COLORS[players.size() % COLORS.size()])}
+	_tell_engine_who()
 	_send("welcome", {"you": id, "host": host_name, "room_name": app.session.room_name, "room": app.library.room_data(), "ids": sync.ids(),
+		"feeds": app.instruments.map(func(i): return [int(i.get_meta("fed_by", 0)), int(i.get_meta("stream", 0))]),
 		"players": players, "clock": clock}, id)
 	_send("players", players, -id)
 	app.session.notice.emit("%s has joined" % players[id].name)
@@ -305,8 +342,18 @@ func _on_welcome(data: Dictionary) -> void:
 	app.player.put_down()
 	sync.applying = true
 	var problem: String = app.library.apply_room_data(data.room)
+	var feeds: Array = data.get("feeds", [])
+	for i in mini(feeds.size(), app.instruments.size()):  # (whose input plays through what)
+		app.instruments[i].set_meta("fed_by", int(feeds[i][0]))
+		app.instruments[i].set_meta("stream", int(feeds[i][1]))
 	sync.adopt(data.ids)
 	sync.applying = false
+	var trouble: String = audio.start_net_audio(false, _where, _port + 1, me)
+	if trouble != "":
+		app.session.notice.emit("No sound between players: %s" % trouble)
+	for inst in app.instruments:
+		follow_feed(inst)
+	follow_voices()
 	app.session.begin_copy("%s (%s's)" % [str(data.room_name), host_name])
 	_stand_beside_host()
 	audio.share_played_notes(true)
@@ -422,6 +469,145 @@ func _keep_in_step() -> void:
 	elif absf(off) > 0.001:
 		var most := NUDGE_FAR if absf(off) > NUDGE_FAR else NUDGE_MOST
 		audio.nudge_sequencer(clampf(off, -most, most))
+
+
+# ── Inputs ───────────────────────────────────────────────────────────────────────────────────────────────────
+
+func _tell_engine_who() -> void:
+	if role == "host":
+		audio.set_net_players(PackedInt32Array(players.keys().filter(func(id): return int(id) != 1)))
+	follow_voices()
+
+
+# ── Voices ───────────────────────────────────────────────────────────────────────────────────────────────────
+
+## Whether this player's voice wants the audio input open (playing together, an input chosen for it).
+func wants_voice() -> bool:
+	return is_playing_together() and app.settings.voice_input >= 0
+
+
+## The voices as the session has them: this player's own (from its input, to the others, heard by nobody here), and
+## each other player's, from where their head is.
+func follow_voices() -> void:
+	if not is_playing_together():
+		return
+	if wants_voice() and _voice_out < 0:
+		_voice_out = audio.add_source("live", app.player.ear_position(), 1.0, 0.0)
+		if _voice_out >= 0:
+			audio.set_source_input_channel(_voice_out, app.settings.voice_input)
+			audio.set_source_room_muted(_voice_out, true)  # (your own voice isn't sent back to you)
+			audio.set_source_muted(_voice_out, true)
+			audio.send_source_to_net(_voice_out, VOICE)
+	elif not wants_voice() and _voice_out >= 0:
+		audio.remove_source(_voice_out)
+		_voice_out = -1
+		talking = false
+	if _voice_out >= 0:
+		audio.set_source_input_channel(_voice_out, app.settings.voice_input)
+	app.follow_live_inputs()
+	for id in players:
+		if int(id) != me and not _voices.has(int(id)):
+			var source: int = audio.add_source("live", Vector3.ZERO, 1.0, 0.35)
+			if source >= 0:
+				audio.feed_source_from_net(source, int(id), VOICE)
+				_voices[int(id)] = source
+	for id in _voices.keys():
+		if not players.has(id):
+			audio.remove_source(_voices[id])
+			_voices.erase(id)
+
+
+func _silence_voices() -> void:
+	for id in _voices:
+		audio.remove_source(_voices[id])
+	_voices.clear()
+	if _voice_out >= 0:
+		audio.remove_source(_voice_out)
+		_voice_out = -1
+	talking = false
+	app.follow_live_inputs.call_deferred()
+
+
+## Your voice's input chosen (-1: none), from the page.
+func set_voice_input(channel: int) -> void:
+	app.settings.voice_input = channel
+	app.settings.save_to_disk()
+	follow_voices()
+
+
+## Each frame: your voice on while the talk key is held (unless something is being typed into), and each other
+## player's coming from their head, their name saying when they talk.
+func _voices_each_frame() -> void:
+	var wanted: bool = _voice_out >= 0 and app.bindings.is_down("talk") and not (app.get_viewport().gui_get_focus_owner() is LineEdit)
+	if wanted != talking:
+		talking = wanted
+		audio.set_source_input(_voice_out, talking)
+	for id in _voices:
+		var source: int = _voices[id]
+		var info: Dictionary = players.get(id, {})
+		var body: Dictionary = _bodies.get(id, {})
+		if body.is_empty():
+			continue
+		var node: Node3D = body.node
+		var mouth: Vector3 = node.global_transform * (Avatar.ears_at(float(info.get("height", 1.75))) + Vector3(0.0, -0.03, -0.09))
+		audio.set_source_position(source, mouth)
+		var heard: bool = audio.get_source_level(source) > 0.002
+		var tag := "%s  (talking)" % str(info.get("name", "Player")) if heard else str(info.get("name", "Player"))
+		if body.get("tag", "") != tag:
+			body.tag = tag
+			body.body.set_name_tag(tag)
+
+
+func name_of(id: int) -> String:
+	return str(players.get(id, {}).get("name", "Someone"))
+
+
+## A live input's input switched on or off here (main.set_input): whether it may be. Switched on, this player plays
+## through it (unless another already does), its sound going to the others; switched off, it is free again.
+func input_switched(inst, on: bool) -> bool:
+	if not is_playing_together():
+		return true
+	var by := int(inst.get_meta("fed_by", 0))
+	if on:
+		if by != 0 and by != me:
+			app.session.notice.emit("%s is playing through %s" % [name_of(by), inst.display_name])
+			return false
+		if by != me:
+			_streams = _streams % 255 + 1
+			inst.set_meta("fed_by", me)
+			inst.set_meta("stream", _streams)
+			inst.set_meta("sending", _streams)
+			audio.send_source_to_net(inst.source_id, _streams)
+	elif by == me:
+		inst.set_meta("fed_by", 0)
+		inst.set_meta("stream", 0)
+		inst.set_meta("sending", 0)
+		audio.send_source_to_net(inst.source_id, 0)
+	return true
+
+
+## A live input as the session has it: played by another player's sound (their input's, as it left theirs), or by
+## this player's own input, or by nobody.
+func follow_feed(inst) -> void:
+	if not inst.is_live():
+		return
+	var by := int(inst.get_meta("fed_by", 0))
+	var stream := int(inst.get_meta("stream", 0))
+	var someone_else := by != 0 and by != me
+	var wanted := [by, stream] if someone_else else [0, 0]
+	if wanted != inst.get_meta("feeding", [0, 0]):
+		audio.feed_source_from_net(inst.source_id, wanted[0], wanted[1])
+		inst.set_meta("feeding", wanted)
+	if someone_else and int(inst.get_meta("sending", 0)) != 0:  # (both switched it on at once: the host's order said theirs)
+		inst.set_meta("sending", 0)
+		audio.send_source_to_net(inst.source_id, 0)
+	if someone_else and inst.input_on:
+		inst.set_input(false)
+		app.follow_live_inputs()
+	var shown := name_of(by) if someone_else else ""
+	if inst.played_by != shown:
+		inst.played_by = shown
+		inst._refresh_label()
 
 
 # ── Notes ────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -572,3 +758,4 @@ func _process(delta: float) -> void:
 		_since_step = 0.0
 		_keep_in_step()
 	_move_bodies(delta)
+	_voices_each_frame()

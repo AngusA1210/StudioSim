@@ -619,6 +619,8 @@ func set_live_input(on: bool) -> void:
 ## Switches an instrument's input on or off, as a track's input in a DAW. With it on, a MIDI instrument plays what
 ## the MIDI keyboard sends, and a Speaker plays its hardware input (the audio input opens when the first one does).
 func set_input(inst, on: bool) -> void:
+	if inst.is_live() and not net.input_switched(inst, on):  # (playing together: someone else's input is playing through it)
+		return
 	inst.set_input(on)
 	if player != null:
 		player.notice_input(inst)
@@ -633,7 +635,7 @@ func armed_instruments() -> Array:
 
 ## Opens the audio input while any Speaker or amp wants it (its input on, or armed to record), and closes it when none does.
 func follow_live_inputs() -> void:
-	var wanted := instruments.any(func(inst): return inst.is_live() and (inst.input_on or inst.armed))
+	var wanted: bool = instruments.any(func(inst): return inst.is_live() and (inst.input_on or inst.armed)) or net.wants_voice()
 	if wanted == live_input:
 		return
 	live_input = wanted

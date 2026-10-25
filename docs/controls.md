@@ -4,6 +4,7 @@
 | --- | --- |
 | W A S D, mouse | move, look (click to capture the mouse); the arrow keys walk and turn too |
 | Shift | run |
+| \` (hold) | playing together: talk to the others, with an input chosen for your voice (see [Playing together](playing-together.md)) |
 | F | the free camera: it leaves your body where it stands and flies about the room (see below); F or Esc brings the view back to you, Shift-F puts you where the camera is |
 | G or click | pick up the instrument you're facing, put it down (it turns to face you) |
 | ⌘L | lock the instrument you're facing (or carrying, or the microphone whose panel is open) in place, or unlock it: a yellow padlock floats over its name, and it can't be picked up, nor a microphone moved or aimed |

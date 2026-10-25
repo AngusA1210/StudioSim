@@ -14,6 +14,7 @@ const ACTIONS := [
 	["right", "Step right", KEY_D],
 	["run", "Run (hold)", KEY_SHIFT],
 	["free_camera", "Free camera: fly about the room, and back to you (with Shift, you go where it is)", KEY_F],
+	["talk", "Talk to the others, playing together (hold)", KEY_QUOTELEFT],
 	["play", "Play the instrument you face", KEY_E],
 	["keyboard", "Keyboard: play every instrument whose input is on", KEY_K],
 	["stop", "Get up from an instrument, close the keyboard", KEY_Q],
@@ -133,6 +134,8 @@ static func name_of(keycode: int) -> String:
 			return "Backspace"
 		KEY_EQUAL:
 			return "="
+		KEY_QUOTELEFT:
+			return "`"
 	return OS.get_keycode_string(keycode)
 
 

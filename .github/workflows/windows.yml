@@ -31,6 +31,7 @@ jobs:
             audio_core/thirdparty/steamaudio
             audio_core/thirdparty/miniaudio
             audio_core/thirdparty/vst3sdk
+            audio_core/thirdparty/opus
           key: deps-${{ hashFiles('tools/fetch_deps.sh') }}
 
       - name: Fetch what isn't kept in git

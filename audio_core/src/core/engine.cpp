@@ -196,6 +196,10 @@ struct AudioEngine::Source {
     float mute_target = 1.0f, mute_gain = 1.0f;
     int input_channel = LiveInput::kAllInputs;
     bool input_on = false;  // see setSourceInput; kept by both threads (the game's copy survives a reconfigure)
+    // Playing together: its sound sent to the other players (NetAudio's slot), or what it plays received from one,
+    // in place of its own; the audio thread's, and the game thread's copies.
+    int net_send = -1, net_feed = -1;
+    int net_send_slot = -1, net_feed_slot = -1;
     // Amps: the knobs (the game thread's copy, put back if the amp is rebuilt).
     std::array<float, kAmpControls> amp_controls{5, 5, 5, 5, 5, 5};
     AmpHead amp_head = AmpHead::Crunch;
@@ -2648,6 +2652,43 @@ double AudioEngine::sequencerStepNow() const {
     const double since = double(steadyMicros() - rendered_at_us_.load(std::memory_order_relaxed)) / 1e6;
     return position_.load(std::memory_order_relaxed) + since * steps_per_second_.load(std::memory_order_relaxed);
 }
+bool AudioEngine::startNetAudio(bool host, const std::string& address, int port, int me, std::string* error) {
+    return net_audio_->start(host, address, port, uint16_t(me), error);
+}
+void AudioEngine::stopNetAudio() {
+    for (auto& s : owned_) {
+        if (!s) continue;
+        if (s->net_send_slot >= 0) sendSourceToNet(s->id, 0);
+        if (s->net_feed_slot >= 0) feedSourceFromNet(s->id, 0, 0);
+    }
+    net_audio_->stop();
+}
+void AudioEngine::setNetPlayers(const std::vector<int>& ids) {
+    std::vector<uint16_t> players;
+    for (int id : ids) players.push_back(uint16_t(id));
+    net_audio_->setPlayers(players);
+}
+bool AudioEngine::sendSourceToNet(int id, int number) {
+    Source* s = owned(id);
+    if (!s) return false;
+    if (s->net_send_slot >= 0) net_audio_->closeSend(s->net_send_slot);
+    s->net_send_slot = number > 0 ? net_audio_->openSend(uint8_t(number), sr_) : -1;
+    Command c; c.type = Command::NetSend; c.id = id; c.v[0] = float(s->net_send_slot); push(c);
+    return number <= 0 || s->net_send_slot >= 0;
+}
+bool AudioEngine::feedSourceFromNet(int id, int player, int number) {
+    Source* s = owned(id);
+    if (!s) return false;
+    if (s->net_feed_slot >= 0) net_audio_->closeReceive(s->net_feed_slot);
+    s->net_feed_slot = player > 0 ? net_audio_->openReceive(uint16_t(player), uint8_t(number), sr_) : -1;
+    Command c; c.type = Command::NetFeed; c.id = id; c.v[0] = float(s->net_feed_slot); push(c);
+    return player <= 0 || s->net_feed_slot >= 0;
+}
+NetAudio::Stats AudioEngine::netStats(int id) const {
+    const Source* s = owned(id);
+    if (!s) return {};
+    return s->net_feed_slot >= 0 ? net_audio_->receiveStats(s->net_feed_slot) : net_audio_->sendStats(s->net_send_slot);
+}
 void AudioEngine::takePlayedNotes(std::vector<PlayedNote>& out) {
     PlayedNote note;
     while (played_.pop(note)) out.push_back(note);
@@ -3141,6 +3182,12 @@ void AudioEngine::drainCommands() {
                 break;
             case Command::Sustain:
                 if (s) s->instrument->sustain(c.v[0] > 0.5f);
+                break;
+            case Command::NetSend:
+                if (s) s->net_send = int(c.v[0]);
+                break;
+            case Command::NetFeed:
+                if (s) s->net_feed = int(c.v[0]);
                 break;
             case Command::Tempo:
                 sequencer_.setTempo(c.v[0]);
@@ -4114,7 +4161,10 @@ void AudioEngine::playSource(size_t index, float binaural_from, float glide, flo
     Source* s = sources_[index];
     const bool mic = isMic(s->kind);  // (a microphone's mono holds what it plays: what it hears, or its clips)
     float* mono = s->mono.data();
-    if (!mic) {
+    const bool fed = !mic && s->net_feed >= 0;  // (what another player plays into it, as it left theirs)
+    if (fed) {
+        net_audio_->playout(s->net_feed, mono, block_);
+    } else if (!mic) {
         std::fill(s->mono.begin(), s->mono.end(), 0.0f);
         if (s->kind == InstrumentKind::PluginSynth)  // the room's tempo, for plug-ins that keep time
             static_cast<PluginSynth*>(s->instrument.get())->setBeatSamples(double(bar_timing_[1]) / 4.0);
@@ -4127,10 +4177,11 @@ void AudioEngine::playSource(size_t index, float binaural_from, float glide, flo
     }
     // Its inserts, before its fader (and, an instrument's, before the room too: but not an instrument with parts, which
     // the room hears as it is, as a real kit would be heard, its inserts in its track alone).
-    if (s->insert_board.count > 0) {
+    if (s->insert_board.count > 0 && !fed) {
         const PedalTiming timing{double(bar_timing_[1]) / 4.0, bar_timing_[0], bar_timing_[1]};
         for (int p = 0; p < s->insert_board.count; ++p) s->insert_board.pedals[size_t(p)]->process(mono, block_, timing);
     }
+    if (s->net_send >= 0) net_audio_->capture(s->net_send, mono, block_);  // (for the other players, as it leaves it)
 
     double energy = 0.0, pre_energy = 0.0, room_energy = 0.0;
     float peak = 0.0f, pre_peak = 0.0f, room_peak = 0.0f;

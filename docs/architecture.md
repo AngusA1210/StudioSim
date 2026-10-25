@@ -35,6 +35,8 @@ audio_core/
     engine.*               device, command queue, the room and the mix, the shared clock; microphones hearing the room
     radiation.*            how a cabinet's cones radiate (beaming, the near field, open and closed backs), and a kit's heads and cymbals
     plugin_host*           plug-ins: which format a plug-in is in, Audio Units (macOS), VST3 (everywhere)
+    net_audio.*            playing together: live inputs' sound and voices between players (Opus over UDP, through
+                           the host), held back just enough to ride out the network
     plugin_window_*        a plug-in's own window, on each platform
     plugin_panel_mac       on a Mac, the floating panel every plug-in's window is: the keyboard left with the room,
                            unless something in it is typed into

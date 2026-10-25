@@ -3522,6 +3522,38 @@ func _run() -> void:
 	check(not stepped.is_empty() and bool(stepped.running) and absf(apart) < 8.0 and absf(ahead_here) < 8.0,
 		"started here, the patterns start there at the same moment on the session's clock, and stay in step",
 		"%+.1f ms apart (here %+.1f ms off the session's clock), %.1f ms there and back" % [apart, ahead_here, float(stepped.get("latency_ms", 0.0))])
+	# A live input they switch on plays through the Speaker here: its sound (as it leaves their copy of it, after its
+	# pedals, amp and inserts) comes over the network (silence, in these runs, with no sound card), and nobody else can
+	# play through it meanwhile; switched off, it is free again.
+	var speaker_shared = main.speaker
+	main.net.report({"ask": "input", "id": sync.id_of(speaker_shared), "on": true})
+	var switched: Dictionary = await wait_for.call("input", 10.0)
+	await seconds(1.2)
+	var flowing: Dictionary = audio.get_net_stats(speaker_shared.source_id)
+	main.set_input(speaker_shared, true)  # (refused: theirs)
+	check(bool(switched.get("on", false)) and int(speaker_shared.get_meta("fed_by", 0)) == guest_id and speaker_shared.played_by == "Guest" and
+		int(flowing.get("frames", 0)) > 100 and int(flowing.get("lost", 1)) == 0 and not speaker_shared.input_on,
+		"a live input they switch on plays through the Speaker here, its sound coming over the network, and nobody else can play through it meanwhile",
+		"%d frames came, %d lost, %.1f ms held back" % [int(flowing.get("frames", 0)), int(flowing.get("lost", 0)), float(flowing.get("hold_ms", 0.0))])
+	main.net.report({"ask": "input", "id": sync.id_of(speaker_shared), "on": false})
+	await wait_for.call("input", 10.0)
+	await seconds(0.8)
+	main.set_input(speaker_shared, true)
+	var mine_now: bool = speaker_shared.input_on and int(speaker_shared.get_meta("fed_by", 0)) == 1
+	main.set_input(speaker_shared, false)
+	check(speaker_shared.played_by == "" and mine_now and int(speaker_shared.get_meta("fed_by", 0)) == 0,
+		"switched off there, it is free again: switched on here, its sound goes to them")
+	# Their voice, from the input they choose for it, while they hold the talk key: heard here from their head.
+	main.net.report({"ask": "talk"})
+	var talked: Dictionary = await wait_for.call("talk", 10.0)
+	await seconds(0.8)
+	var their_voice: int = main.net._voices.get(guest_id, -1)
+	var voice_came: Dictionary = audio.get_net_stats(their_voice) if their_voice >= 0 else {}
+	var their_head: Vector3 = main.net.body_of(guest_id).global_position if main.net.body_of(guest_id) != null else Vector3.INF
+	check(bool(talked.get("talking", false)) and bool(talked.get("live_input", false)) and their_voice >= 0 and int(voice_came.get("frames", 0)) > 50 and
+		main.net._voice_out < 0 and not main.live_input,
+		"their voice, while they hold the talk key, comes here from their body (this player has none chosen, so sends none)",
+		"%d frames of their voice came" % int(voice_came.get("frames", 0)))
 	# They leave: their body goes.
 	main.net.report({"ask": "leave"})
 	var left_until := Time.get_ticks_msec() + 8000

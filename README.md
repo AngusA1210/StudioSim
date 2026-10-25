@@ -18,7 +18,7 @@ It is also a workstation: rooms can be recorded, edited and mixed the way a DAW 
   mix as separate masters.
 - **Plug-ins**: VST3 on macOS and Windows, Audio Units on macOS.
 - **Playing together**: one player hosts their room and others join it over the network, each hearing it from where
-  they stand, with the patterns in step on a shared clock. Audio between players is next.
+  they stand, with the patterns in step on a shared clock, live inputs streamed between players, and voices.
 
 ## Build and run
 
@@ -40,8 +40,8 @@ recording, mixing, room acoustics, and how the code is put together.
 
 ## Roadmap
 
-1. Multiplayer: begun (hosting and joining a room, the room shared, a shared clock); next, low-latency audio between
-   players, Record rooms together, and a session server.
+1. Multiplayer: begun (hosting and joining, the room shared, a shared clock, live inputs and voices streamed); next,
+   Record rooms together, and a session server.
 
 The full list is in [docs/roadmap.md](docs/roadmap.md).
 
@@ -51,3 +51,4 @@ The full list is in [docs/roadmap.md](docs/roadmap.md).
 - [Steam Audio](https://github.com/ValveSoftware/steam-audio) (Apache 2.0)
 - [miniaudio](https://github.com/mackron/miniaudio) (public domain / MIT-0)
 - [VST 3 SDK](https://github.com/steinbergmedia/vst3sdk) (MIT; VST is a registered trademark of Steinberg Media Technologies GmbH)
+- [Opus](https://opus-codec.org) (BSD 3-clause), for the sound between players

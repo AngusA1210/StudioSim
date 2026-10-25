@@ -90,5 +90,24 @@ func _on_asked(_from: int, ask: Dictionary) -> void:
 			main.net.report({"step": "played"})
 		"step":  # how far ahead of the session's clock the patterns are heard here (ms), read over half a second
 			main.net.report({"step": "step", "ahead": await ahead_of_session(main), "running": main.sequence_running, "latency_ms": main.net.latency_ms})
+		"input":  # a live input's input switched on or off, by this player
+			var inst = sync.find(str(ask.id))
+			main.set_input(inst, bool(ask.on))
+			for i in 5:
+				await process_frame
+			main.net.report({"step": "input", "on": inst.input_on, "fed_by": int(inst.get_meta("fed_by", 0))})
+		"talk":  # this player's voice on its first input, and the talk key held (the null device's silence, in these runs)
+			main.net.set_voice_input(0)
+			var hold := InputEventKey.new()
+			hold.physical_keycode = main.bindings.key("talk")
+			hold.pressed = true
+			Input.parse_input_event(hold)
+			for i in 10:
+				await process_frame
+			main.net.report({"step": "talk", "talking": main.net.talking, "live_input": main.live_input})
+			await main.get_tree().create_timer(1.0).timeout
+			hold = hold.duplicate()
+			hold.pressed = false
+			Input.parse_input_event(hold)
 		"leave":
 			main.net.leave()

@@ -224,7 +224,8 @@ func _process(_delta: float) -> void:
 	_together_chip.visible = net.is_playing_together()
 	if _together_chip.visible:
 		var others: int = net.players.size() - 1
-		_light_chip(_together_chip, ("TOGETHER · %d" % (others + 1)) + ("  ·  %.0f MS" % net.latency_ms if net.role == "guest" else ""), true, TOGETHER_TEAL)
+		_light_chip(_together_chip, ("TOGETHER · %d" % (others + 1)) + ("  ·  %.0f MS" % net.latency_ms if net.role == "guest" else "") +
+			("  ·  TALKING" if net.talking else ""), true, TOGETHER_TEAL)
 	_modes_panel.reset_size()
 	_modes_panel.position = Vector2(_beat_panel.position.x - _modes_panel.size.x - 8, 14)
 

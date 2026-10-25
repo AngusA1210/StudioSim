@@ -265,6 +265,16 @@ public:
     void set_sustain(int id, bool down);
     void share_played_notes(bool on);
     Array take_played_notes();
+    // The sound between players: begun ("" if it was, else why not) as the host on `port` (every network, "*", or
+    // `address`'s alone), or as player `me` sending to the host at `address`:`port`; the session's players (the
+    // host's); a source's sound sent as this player's sound `number` (0: no longer); a source fed by another player's
+    // sound (player 0: no longer); how it is going ({frames, lost, late, held_ms, hold_ms}).
+    String start_net_audio(bool host, const String& address, int port, int me);
+    void stop_net_audio();
+    void set_net_players(const PackedInt32Array& ids);
+    bool send_source_to_net(int id, int number);
+    bool feed_source_from_net(int id, int player, int number);
+    Dictionary get_net_stats(int id) const;
     // The timeline (a Record room): playing from a step (sixteenths from the start of bar 1), loop playback over a
     // range of steps, and where it is (in steps, as last rendered).
     void play_from(double step);

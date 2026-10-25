@@ -8,6 +8,7 @@ TP="$ROOT/audio_core/thirdparty"
 MINIAUDIO_VERSION="0.11.25"
 STEAMAUDIO_VERSION="4.8.1"
 VST3SDK_TAG="v3.8.1_build_84"  # Steinberg's VST 3 SDK, MIT-licensed since 3.8
+OPUS_TAG="v1.5.2"  # Xiph's Opus codec (BSD), for audio between players
 
 mkdir -p "$TP"
 
@@ -40,6 +41,12 @@ if [ ! -f "$TP/vst3sdk/pluginterfaces/base/funknown.h" ]; then
   rm -rf "$TP/vst3sdk"
   git clone -q --depth 1 --branch "$VST3SDK_TAG" https://github.com/steinbergmedia/vst3sdk.git "$TP/vst3sdk"
   git -C "$TP/vst3sdk" submodule update -q --init --depth 1 pluginterfaces public.sdk
+fi
+
+if [ ! -f "$TP/opus/include/opus.h" ]; then
+  echo "Fetching Opus $OPUS_TAG"
+  rm -rf "$TP/opus"
+  git clone -q --depth 1 --branch "$OPUS_TAG" https://github.com/xiph/opus.git "$TP/opus"
 fi
 
 echo "Dependencies ready in $TP"

@@ -60,6 +60,7 @@ var is_amp := false    # a guitar or bass amp, with knobs and a loop pedal
 var drum_kit := false  # each key plays a drum (the drums, the garage kit)
 var plays_plugin := false  # a plug-in instrument: it plays one of the instrument plug-ins on the computer
 var is_mic := false    # a microphone: it hears the room from where it stands, and its track records that
+var played_by := ""  # playing together: the other player whose input plays through it (a Speaker's, an amp's)
 var mic_tilt := 0.0    # a microphone: how far it points down (degrees; the way it faces is its aim round)
 var mic_gain_db := 0.0 # a microphone's gain, before it is recorded, as a preamp's
 var mic_inverted := false  # and its polarity there (Ø)
@@ -678,6 +679,8 @@ func set_highlighted(value: bool) -> void:
 
 func _refresh_label() -> void:
 	var notes := []
+	if played_by != "":  # (playing together: another player's input, playing through it)
+		notes.append(played_by)
 	if room_muted or (is_mic and muted):  # (an instrument: muted in the room; a microphone: its track)
 		notes.append("muted")
 	if playable and not loop_on:

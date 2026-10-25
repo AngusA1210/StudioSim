@@ -16,7 +16,7 @@ tools/build.sh
 
 then open `game/project.godot` in Godot (or run it with `godot --path game`).
 
-`tools/build.sh` fetches the libraries that aren't kept in git (Steam Audio, miniaudio, the VST 3 SDK), builds the
+`tools/build.sh` fetches the libraries that aren't kept in git (Steam Audio, miniaudio, the VST 3 SDK, Opus), builds the
 audio core and the Godot extension, runs the offline audio checks, registers the extension with the Godot project,
 and then runs the game silently with pretend key presses and clicks to check the controls and menus
 (`game/tests/ui_check.gd`). Open `game/project.godot` in the Godot editor to work on the scene and scripts. Every

@@ -22,6 +22,7 @@
 #include "looper.h"
 #include "microphones.h"
 #include "midi_input.h"
+#include "net_audio.h"
 #include "mix.h"
 #include "pedals.h"
 #include "plugin_host.h"
@@ -500,6 +501,17 @@ public:
     };
     void sharePlayedNotes(bool on) { share_played_.store(on, std::memory_order_relaxed); }
     void takePlayedNotes(std::vector<PlayedNote>& out);
+    // The sound between players (net_audio.h): begun as the host, on `port` (every network, or `address`'s alone), or
+    // as another player, `me`, sending to the host at `address`:`port`; the players in the session (the host's); a
+    // source's sound, as it leaves it (after its pedals, amp and inserts), sent as this player's sound `number` (1 to
+    // 255; 0: no longer); a source fed by another player's sound in place of its own (player 0: no longer); and how
+    // either is going. False where it couldn't be.
+    bool startNetAudio(bool host, const std::string& address, int port, int me, std::string* error);
+    void stopNetAudio();
+    void setNetPlayers(const std::vector<int>& ids);
+    bool sendSourceToNet(int id, int number);
+    bool feedSourceFromNet(int id, int player, int number);
+    NetAudio::Stats netStats(int id) const;
 
     // ── The timeline (a Record room) ─────────────────────────────────────────────────────────────────────
     // Playing from a step (sixteenths from the start of bar 1: the patterns follow, each from its own start every time
@@ -633,7 +645,7 @@ private:
             MasterAutomation, MasterRead, SourceSoloMuted, MicPath, MicCone, SourceFacing, MicModelSet, MicAim, SourcePan, MicMidSide,
             SourceRoomGain, SourceRoomMuted, RoomVolume, MonitorSet, MasterInserts, AmpLoopMix, LimiterCeiling, BusMono,
             Compensation, CompensationTotal, AmpLoopDelay, Echo, ScatterWall, PartPath, MicShell, BusPans,
-            SequencerStartIn, SequencerNudge, Sustain,
+            SequencerStartIn, SequencerNudge, Sustain, NetSend, NetFeed,
         } type = AddSource;
         int id = 0;
         float v[9] = {};
@@ -756,6 +768,7 @@ private:
     uint32_t record_epoch_ = 0;
     SpscQueue<Command> commands_{8192};
     SpscQueue<PlayedNote> played_{2048};  // audio thread → game thread: what the controllers played, for the network
+    std::unique_ptr<NetAudio> net_audio_ = std::make_unique<NetAudio>();  // (made once: the audio thread holds on to it)
     std::atomic<bool> share_played_{false};
     std::atomic<int64_t> rendered_at_us_{0};  // when the last block was rendered (steady clock), and the patterns' pace then
     std::atomic<double> steps_per_second_{0.0};

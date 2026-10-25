@@ -1,9 +1,8 @@
 # Playing together
 
 Several players can be in one room at once, each on their own computer. One player **hosts** the room they have
-open; the others **join** it. This is the first stage of multiplayer: everything that happens in the room is shared,
-but no audio goes over the network yet, so live inputs and microphones are still heard only on the computer they're
-plugged into (see [What comes next](#what-comes-next)).
+open; the others **join** it. Everything that happens in the room is shared, the live inputs' sound goes to everyone,
+and the players can talk to each other.
 
 ## Hosting and joining
 
@@ -11,7 +10,8 @@ plugged into (see [What comes next](#what-comes-next)).
 
 - **Host**: open a Jam room, then press Host. The page shows the address others join at, which is this computer's on
   the local network (192.168…), with the port (47130 unless you change it). To play over the internet, forward that
-  port (UDP) to this computer in your router, and give the others your public address.
+  port and the next one (47131: the sound between players), both UDP, to this computer in your router, and give the
+  others your public address.
 - **Join**: type the host's address (add `:port` if it isn't 47130) and press Join. Your room becomes a copy of
   theirs, and you go into it beside where the host stands. The room you had open is left as it was last saved. The
   copy has no file of its own; **Save As** keeps one.
@@ -31,6 +31,9 @@ the room when they leave. To make or open another room, a player who joined leav
 - **The patterns' clock**: Space starts or stops the patterns for everyone at once (see below).
 - **Notes**: what each player plays, by the computer keyboard or a MIDI controller (with velocity and the sustain
   pedal), is heard by everyone from the instrument it is played on.
+- **Live inputs**: a player who switches on a Speaker's or an amp's input plays through it, and nobody else can
+  meanwhile (its label shows their name). Its sound goes to everyone (see below).
+- **Voices**: each player can talk to the others (see below).
 - **Each player**: their body, at their height and in their colour, with their name over it (from the title screen's
   **You** page), where they stand, the way they look, sitting at a kit or carrying an instrument. An instrument
   someone else is carrying can't be picked up.
@@ -39,7 +42,8 @@ Each player keeps their own:
 
 - **The mix window**: faders, mute and solo, pans, folders, aux tracks, sends and the masters. A player who joins
   starts with the host's mix and goes on from there.
-- **Inputs**: which instruments' inputs are on (every one starts off), and which hardware inputs the Speakers play.
+- **Inputs**: which instruments' inputs are on (every one starts off), and which hardware inputs the Speakers play
+  and the voice comes in on.
 - **What they hear**: the room from where they stand, or their mix (H); binaural or not; the free camera.
 
 When two players change the same thing at the same moment, the host's order decides, and every copy ends up the
@@ -65,9 +69,28 @@ A note played live is heard by the others as soon as it arrives, so as late as t
 milliseconds on a local network and tens over the internet, much as a player standing further away would be heard
 later.
 
+## Sound between players
+
+A live input's sound is taken as it leaves the instrument, after its pedals, amp and inserts, on the computer of the
+player playing through it. It goes to the others, whose copies of the instrument play it in place of their own input.
+So each player hears it placed in the room from where they stand, as they hear everything else, and the microphones
+in the room hear it too. Its plug-ins only need to be on that player's computer.
+
+It is sent as Opus, the codec made for this: 48 kHz, in frames of 5 ms, at 128 kb/s each, which is plain to the ear on
+a guitar or a voice. It goes on a port of its own beside the session's, through the host, which passes each player's
+sound on to the others. Each computer holds what it receives back just long enough to ride out the network's
+unevenness, and no longer. That's 5 to 15 ms on a local network, more over the internet, and it adjusts to how uneven
+the network has lately been. The sound is played back a touch faster or slower (0.2 % at most) to keep that much in
+hand, since no two sound cards' clocks quite agree. A frame that never comes is made up by Opus from the ones before
+it. A sound played into one computer reaches another about 10 to 25 ms later on a local network, plus the network's
+own delay over the internet.
+
+**Voices**: on the Play together page, choose the input your voice comes in on (**Your voice**), then hold
+**\`** to talk. The others hear you from your body's head, in the room like any sound, so a microphone near you hears
+you too. Your own voice isn't sent back to you. While someone talks, their name says so. Choosing an input for your
+voice opens the audio input for the whole session, so that holding the key never has to wait for it.
+
 ## What comes next
 
-- **Audio between players**: a live input (a guitar into an amp, a Speaker) or a microphone on one computer, heard
-  by everyone, streamed with low latency; and a voice channel.
 - **Record rooms** together: the timeline, and recordings, which would have to be sent to everyone.
 - Joining without forwarding a port: a session server that players meet through.

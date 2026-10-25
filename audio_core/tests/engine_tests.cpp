@@ -1033,6 +1033,7 @@ int main(int argc, char** argv) {
         // now, between steps.
         Room together;
         together.soloOnly(together.drums);
+        together.engine.setBinaural(false);  // (plain stereo: the beats' onsets as they are, whatever the HRTF)
         together.engine.setReverb(false);
         together.engine.setSwing(0.0);
         together.engine.setTempo(120.0);
@@ -4287,6 +4288,55 @@ int main(int argc, char** argv) {
         check(sustained.rms_l > 3.0 * let_go.rms_l + 1e-5 && stopped_after.rms_l < 0.3 * sustained.rms_l,
               "the sustain pedal automated holds a note on, and stopping lets it up",
               fmt("%.0f dBFS held, ", db(sustained.rms_l)) + fmt("%.0f dBFS let go", db(let_go.rms_l)));
+
+        // The sound between players: a Speaker's sound on one player's computer (here, a second engine) sent over the
+        // network (this computer's own) to another's, which plays it from its own copy of the Speaker, placed in the
+        // room as it hears it: as loud, a little later (the network, a frame, and what is held back to ride out its
+        // unevenness), nothing lost. Both run in real time, ten milliseconds at a time.
+        {
+            Room first, second;
+            std::string net_error;
+            const bool joined = first.engine.startNetAudio(true, "127.0.0.1", 48990, 1, &net_error) &&
+                                second.engine.startNetAudio(false, "127.0.0.1", 48990, 2, &net_error);
+            first.engine.setNetPlayers({2});
+            first.soloOnly(first.speaker);
+            second.soloOnly(second.speaker);
+            first.engine.setSourceInput(first.speaker, true);
+            const bool sending = first.engine.sendSourceToNet(first.speaker, 1);
+            const bool feeding = second.engine.feedSourceFromNet(second.speaker, 1, 1);
+            int64_t played = 0;
+            const auto tone = [&](int64_t) {  // (silent for a third of a second, then 440 Hz)
+                const int64_t at = played++;
+                return at < 16000 ? 0.0f : 0.3f * float(std::sin(2.0 * kPi * 440.0 * double(at) / 48000.0));
+            };
+            std::vector<float> heard_first, heard_second;
+            for (int k = 0; k < 150; ++k) {
+                const auto due = std::chrono::steady_clock::now() + std::chrono::milliseconds(10);
+                const Render a = renderSeconds(first.engine, 0.01, tone), b = renderSeconds(second.engine, 0.01);
+                heard_first.insert(heard_first.end(), a.l.begin(), a.l.end());
+                heard_second.insert(heard_second.end(), b.l.begin(), b.l.end());
+                std::this_thread::sleep_until(due);
+            }
+            const NetAudio::Stats got = second.engine.netStats(second.speaker), sent = first.engine.netStats(first.speaker);
+            first.engine.stopNetAudio();
+            second.engine.stopNetAudio();
+            const auto onset = [](const std::vector<float>& x) {
+                for (size_t i = 0; i < x.size(); ++i)
+                    if (std::fabs(x[i]) > 0.002f) return int(i);
+                return -1;
+            };
+            const auto level = [](const std::vector<float>& x) {
+                double e = 0.0;
+                for (size_t i = x.size() - 24000; i < x.size(); ++i) e += double(x[i]) * x[i];
+                return std::sqrt(e / 24000.0);
+            };
+            const double later_ms = (onset(heard_second) - onset(heard_first)) / 48.0;
+            const double louder = db(level(heard_second) / level(heard_first));
+            check(joined && sending && feeding && got.frames > 150 && got.lost == 0 && std::fabs(louder) < 0.5 && later_ms > 4.0 && later_ms < 40.0,
+                  "a Speaker's sound, sent from one player's computer, is heard from the other's copy of it: as loud, a little later",
+                  net_error + fmt("%.0f frames sent, ", double(sent.frames)) + fmt("%.0f came, ", double(got.frames)) + fmt("%.0f lost; ", double(got.lost)) +
+                      fmt("%+.2f dB, ", louder) + fmt("%.1f ms later, ", later_ms) + fmt("%.1f ms held back", got.hold_ms));
+        }
 
         // What a controller plays here is kept for the other players (while asked to), and their sustain pedal is put
         // down on an instrument as theirs was.

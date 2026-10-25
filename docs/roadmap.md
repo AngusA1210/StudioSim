@@ -27,9 +27,9 @@ To do, roughly in this order:
 
 1. **Multiplayer**, the final goal (begun: a player hosts their room and others join it by address, the room and
    everything in it kept the same for everyone, each player's body seen by the others, notes played heard by all,
-   and the patterns in step on the session's clock; see [Playing together](playing-together.md)). Next: low-latency
-   audio between players (live inputs, microphones, voices), Record rooms together, and a session server to meet
-   through without forwarding a port.
+   the patterns in step on the session's clock, live inputs' sound streamed between players with Opus, and voices
+   from the players' bodies; see [Playing together](playing-together.md)). Next: Record rooms together, and a session
+   server to meet through without forwarding a port.
 
 Also wanted along the way: MIDI on Linux, and VR through OpenXR. Perhaps later a free version with Jam rooms
 only, Record rooms coming with the full one.

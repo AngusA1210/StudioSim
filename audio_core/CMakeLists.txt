@@ -71,6 +71,17 @@ else()
     target_link_libraries(vst3_hosting PUBLIC dl)
 endif()
 
+# ── Opus (BSD), for the sound between players ───────────────────────────────────────────────────────────────
+set(OPUS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/opus")
+if(NOT EXISTS "${OPUS_DIR}/include/opus.h")
+    message(FATAL_ERROR "Opus is missing. Run tools/fetch_deps.sh first.")
+endif()
+set(OPUS_BUILD_TESTING OFF CACHE BOOL "" FORCE)
+set(OPUS_BUILD_PROGRAMS OFF CACHE BOOL "" FORCE)
+set(OPUS_INSTALL_PKG_CONFIG_MODULE OFF CACHE BOOL "" FORCE)
+set(OPUS_INSTALL_CMAKE_CONFIG_MODULE OFF CACHE BOOL "" FORCE)
+add_subdirectory("${OPUS_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/opus" EXCLUDE_FROM_ALL)
+
 # ── The engine-agnostic audio core ──────────────────────────────────────────────────────────────────────────
 add_library(sr_core STATIC
     src/core/engine.cpp
@@ -88,6 +99,7 @@ add_library(sr_core STATIC
     src/core/microphones.cpp
     src/core/radiation.cpp
     src/core/interpolation.cpp
+    src/core/net_audio.cpp
     src/core/plugin_category.cpp
     src/core/plugin_host.cpp
     src/core/plugin_host_vst3.cpp
@@ -96,7 +108,7 @@ add_library(sr_core STATIC
     src/core/miniaudio_impl.c
 )
 target_include_directories(sr_core PUBLIC src/core thirdparty/miniaudio)
-target_link_libraries(sr_core PUBLIC phonon vst3_hosting)
+target_link_libraries(sr_core PUBLIC phonon vst3_hosting opus)
 if(APPLE)
     target_sources(sr_core PRIVATE src/core/midi_input_coremidi.cpp src/core/plugin_host_mac.mm src/core/plugin_window_mac.mm
                                    src/core/plugin_panel_mac.mm)
@@ -107,7 +119,7 @@ if(APPLE)
                                          "-framework AVFoundation")
 elseif(WIN32)
     target_sources(sr_core PRIVATE src/core/midi_input_win.cpp src/core/plugin_window_win.cpp)
-    target_link_libraries(sr_core PUBLIC winmm user32 gdi32)
+    target_link_libraries(sr_core PUBLIC winmm user32 gdi32 ws2_32)
 else()
     target_sources(sr_core PRIVATE src/core/midi_input_stub.cpp src/core/plugin_window_stub.cpp)
 endif()

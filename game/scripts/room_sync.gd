@@ -104,6 +104,9 @@ func state_of(inst) -> Dictionary:
 		out.loop_on = inst.loop_on
 		out.steps = app.audio.get_pattern_steps(inst.source_id)
 		out.pattern = app.audio.get_pattern(inst.source_id)
+	if inst.is_live():  # (whose input plays through it, and as which of their sounds)
+		out.fed_by = int(inst.get_meta("fed_by", 0))
+		out.stream = int(inst.get_meta("stream", 0))
 	return out
 
 
@@ -296,6 +299,10 @@ func _apply_state(inst, state: Dictionary) -> void:
 		if bool(state.get("loop_on", true)) != inst.loop_on:
 			inst.set_loop(bool(state.get("loop_on", true)))
 	_apply_settings(inst, state.get("settings", {}))
+	if inst.is_live():
+		inst.set_meta("fed_by", int(state.get("fed_by", 0)))
+		inst.set_meta("stream", int(state.get("stream", 0)))
+		net.follow_feed(inst)
 
 
 ## An instrument's settings changed elsewhere, made here: only what differs, so that nothing (a plug-in above all) is
