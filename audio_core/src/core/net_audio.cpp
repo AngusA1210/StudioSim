@@ -17,6 +17,7 @@
 #endif
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <timeapi.h>
 using socklen_t = int;
 #else
 #include <arpa/inet.h>
@@ -168,6 +169,9 @@ bool NetAudio::start(bool host, const std::string& address, int port, uint16_t m
     socket_ = s;
     addresses_.clear();
     last_hello_ms_ = 0;
+#ifdef _WIN32
+    timeBeginPeriod(1);  // (Windows' timer ticks every 15.6 ms unless asked: the frames would go out in bursts)
+#endif
     running_.store(true, std::memory_order_release);
     thread_ = std::thread([this] { run(); });
     return true;
@@ -178,6 +182,9 @@ void NetAudio::stop() {
     if (thread_.joinable()) thread_.join();
     closeSocket(socket_);
     socket_ = -1;
+#ifdef _WIN32
+    timeEndPeriod(1);
+#endif
     const int64_t now = nowMs();
     for (auto& s : sends_)
         if (s.active.exchange(false)) s.closed_ms.store(now);
