@@ -550,7 +550,9 @@ func _voices_each_frame() -> void:
 			continue
 		var node: Node3D = body.node
 		var mouth: Vector3 = node.global_transform * (Avatar.ears_at(float(info.get("height", 1.75))) + Vector3(0.0, -0.03, -0.09))
-		audio.set_source_position(source, mouth)
+		if mouth.distance_to(body.get("mouth", Vector3.INF)) > 0.01:  # (moved: where the room, and its microphones, hear it from)
+			body.mouth = mouth
+			audio.set_source_position(source, mouth)
 		var heard: bool = audio.get_source_level(source) > 0.002
 		var tag := "%s  (talking)" % str(info.get("name", "Player")) if heard else str(info.get("name", "Player"))
 		if body.get("tag", "") != tag:
