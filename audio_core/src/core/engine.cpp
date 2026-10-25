@@ -942,9 +942,10 @@ void AudioEngine::reapPedals() {
 }
 
 // ── The timeline and recording (game thread) ───────────────────────────────────────────────────────────────
-void AudioEngine::playFrom(double step) {
+void AudioEngine::playFrom(double step, double in_seconds) {
     const uint32_t cue = streamer_.prepare(std::max(step, 0.0) * 15.0 / transport_.bpm);  // (the first moments read in before it starts)
-    Command c; c.type = Command::TimelinePlay; c.v[0] = float(std::max(step, 0.0)); c.epoch = cue; push(c);
+    Command c; c.type = Command::TimelinePlay; c.v[0] = float(std::max(step, 0.0)); c.v[1] = float(in_seconds); c.epoch = cue;
+    c.count = steadyMicros(); push(c);
     transport_.running = true;
 }
 
@@ -1069,7 +1070,7 @@ void AudioEngine::setRecordArm(int id, bool armed) {
 }
 
 bool AudioEngine::startRecording(const std::vector<std::pair<int, std::string>>& files, double from_step, std::string* error,
-                                 double count_in_steps, bool loop, double preroll_steps, double punch_out_step) {
+                                 double count_in_steps, bool loop, double preroll_steps, double punch_out_step, double in_seconds) {
     if (recording_wanted_ || recorder_) {
         if (error) *error = "it is recording already";
         return false;
@@ -1086,6 +1087,8 @@ bool AudioEngine::startRecording(const std::vector<std::pair<int, std::string>>&
     c.v[2] = loop ? 1.0f : 0.0f;
     c.v[3] = float(std::max(preroll_steps, 0.0));
     c.v[4] = float(punch_out_step);
+    c.v[5] = float(in_seconds);
+    c.count = steadyMicros();
     if (!commands_.push(c)) {
         if (error) *error = "the audio engine is busy: try again";
         return false;
@@ -2639,9 +2642,9 @@ void AudioEngine::setSequencerRunning(bool on) {
     transport_.running = on;
     Command c; c.type = Command::SequencerRunning; c.v[0] = on ? 1.0f : 0.0f; push(c);
 }
-void AudioEngine::startSequencerIn(double seconds, int64_t from_step) {
+void AudioEngine::startSequencerIn(double seconds, double from_step) {
     transport_.running = true;
-    Command c; c.type = Command::SequencerStartIn; c.v[0] = float(seconds); c.v[1] = float(std::max<int64_t>(from_step, 0));
+    Command c; c.type = Command::SequencerStartIn; c.v[0] = float(seconds); c.v[1] = float(std::max(from_step, 0.0));
     c.count = steadyMicros(); push(c);
 }
 void AudioEngine::nudgeSequencer(double seconds) {
@@ -2982,7 +2985,10 @@ void AudioEngine::drainCommands() {
             case Command::TimelinePlay:
                 for (Source* each : sources_)
                     if (each) each->instrument->stopSequenced();
-                sequencer_.start(clock_, double(c.v[0]));
+                if (c.v[1] >= 0.0f)  // (at a set moment: less what it took to get here)
+                    sequencer_.startAt(double(clock_) + std::max(0.0, double(c.v[1]) - double(steadyMicros() - c.count) / 1e6) * sr_, double(c.v[0]));
+                else
+                    sequencer_.start(clock_, double(c.v[0]));
                 chaseSustain(double(c.v[0]));
                 streamer_.reached(c.epoch);
                 break;
@@ -3048,7 +3054,12 @@ void AudioEngine::drainCommands() {
                     // The music from the pre-roll's start (after the count-in, if there is one); the recording from the step
                     // asked for, and to the punch out.
                     const double play_from = std::max(punch_in - double(c.v[3]), 0.0);
-                    sequencer_.start(clock_ + int64_t(std::llround(beats * beat_samples)), play_from);
+                    if (c.v[5] >= 0.0f) {  // (at a set moment, as when playing together: less what it took to get here)
+                        const double late = double(steadyMicros() - c.count) / 1e6;
+                        sequencer_.startAt(double(clock_) + std::max(0.0, double(c.v[5]) - late) * sr_ + beats * beat_samples, play_from);
+                    } else {
+                        sequencer_.start(clock_ + int64_t(std::llround(beats * beat_samples)), play_from);
+                    }
                     chaseSustain(play_from);
                     if (beats > 0) {
                         count_in_end_ = int64_t(std::llround(sequencer_.timeOfStep(play_from)));
@@ -3173,7 +3184,7 @@ void AudioEngine::drainCommands() {
                     }
                     if (c.type == Command::SequencerStartIn) {
                         const double late = double(steadyMicros() - c.count) / 1e6;  // (on its way here)
-                        sequencer_.startAt(double(clock_) + std::max(0.0, double(c.v[0]) - late) * sr_, int64_t(c.v[1]));
+                        sequencer_.startAt(double(clock_) + std::max(0.0, double(c.v[0]) - late) * sr_, double(c.v[1]));
                     }
                 }
                 break;

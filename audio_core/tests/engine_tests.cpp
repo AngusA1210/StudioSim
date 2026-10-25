@@ -1052,6 +1052,26 @@ int main(int argc, char** argv) {
               "playing together, the patterns start from the top when told, move later when nudged, and say where they are",
               due.empty() || nudged.empty() ? "" : fmt("first beat at %.0f samples, ", double(due[0])) +
                   fmt("nudged 10 ms: %.0f; ", double(nudged[0])) + fmt("at step %.2f", step_now));
+        // And a Record room's timeline, played from a step (the third beat) a set time from now, and recorded from one
+        // (the second), as when the transport starts for everyone at once.
+        together.engine.setSequencerRunning(false);
+        renderSeconds(together.engine, 0.6);
+        together.engine.playFrom(8.0, 0.5);
+        const auto from_beat = onsets(renderSeconds(together.engine, 0.9), 4000);
+        together.engine.setSequencerRunning(false);
+        renderSeconds(together.engine, 0.6);
+        std::string record_error;
+        const bool recording_set = together.engine.startRecording({}, 4.0, &record_error, 0.0, false, 0.0, -1.0, 0.5);
+        const auto recorded_from = onsets(renderSeconds(together.engine, 0.9), 4000);
+        together.engine.stopRecording();
+        renderSeconds(together.engine, 0.1);
+        RecordingResult nothing;
+        together.engine.takeRecording(&nothing);
+        check(!from_beat.empty() && from_beat[0] >= 24000 && from_beat[0] - 24000 <= 96 && recording_set && !recorded_from.empty() &&
+                  recorded_from[0] >= 24000 && recorded_from[0] - 24000 <= 96,
+              "and a timeline played, or recorded, from a step starts it when told",
+              (from_beat.empty() ? std::string("no beat") : fmt("played: its beat at %.0f samples, ", double(from_beat[0]))) +
+                  (recorded_from.empty() ? record_error : fmt("recorded: at %.0f", double(recorded_from[0]))));
 
         // The Keys follow a pattern too, holding each note for its length.
         Room keys;

@@ -35,9 +35,13 @@ const START_AHEAD := 0.35  # a start is set this far ahead, so that it reaches e
 const NUDGE_MOST := 0.004  # the most the patterns are moved at once to keep in step (seconds)
 const NUDGE_FAR := 0.010  # and while they are further out than that (just started, say)
 const VOICE := 255  # (each player's voice is their sound numbered 255)
-const STATE := 0  # channels: the room's changes, in order; where the players are (the latest only); notes
+const STATE := 0  # channels: the room's changes, in order; where the players are (the latest only); notes; files
 const POSES := 1
 const NOTES := 2
+const FILES := 3
+const CHANNELS := 4  # (as many as there are of those, declared on both sides)
+const CHUNK := 32768  # a recording's file goes in pieces this big (bytes),
+const CHUNKS_A_FRAME := 4  # this many each frame (about 8 MB a second at 60 frames a second)
 # Each player's colour, by when they came.
 const COLORS := [Color(0.4, 0.62, 0.9), Color(0.92, 0.55, 0.3), Color(0.5, 0.82, 0.45), Color(0.85, 0.42, 0.7), Color(0.95, 0.82, 0.35),
 	Color(0.45, 0.85, 0.85), Color(0.75, 0.55, 0.95), Color(0.9, 0.4, 0.4)]
@@ -61,9 +65,14 @@ var _since_ping := 0.0
 var _since_pose := 0.0
 var _since_step := 0.0
 var _started_us := 0  # when the patterns were last started here (on this computer's clock)
+var _waiting_clock := {}  # (a joining player) the music as the session has it, waiting for the session's time to be known
 var _where := ""  # (a joining player) the host's address, and the session's port there
 var _port := PORT
 var _streams := 0  # this player's sounds, numbered so far
+var _outgoing := []  # recordings' files going: [{name, to, at, size, file}]
+var _incoming := {}  # name → {size, got}: coming
+var _asked := {}  # names asked for (of the host), and not come yet
+var _wanted_by := {}  # (the host's) name → the players waiting for it, until it has come here
 var _voice_out := -1  # this player's voice: a source no one hears here, whose sound goes to the others
 var _voices := {}  # another player's id → the source their voice comes from here
 var talking := false
@@ -95,11 +104,9 @@ func session_us() -> int:
 ## "127.0.0.1" for this computer alone, as the checks do). Returns what went wrong, or "".
 func host(port := PORT, bind := "*") -> String:
 	leave()
-	if app.timeline.is_record():
-		return "playing together is for Jam rooms, for now"
 	var peer := ENetMultiplayerPeer.new()
 	peer.set_bind_ip(bind)
-	var problem := peer.create_server(port, MAX_GUESTS)
+	var problem := peer.create_server(port, MAX_GUESTS, CHANNELS)
 	if problem != OK:
 		return "port %d couldn't be opened (%s)" % [port, error_string(problem)]
 	peer.host.compress(ENetConnection.COMPRESS_ZSTD)
@@ -135,7 +142,7 @@ func join(address: String) -> String:
 	_where = where
 	_port = port
 	var peer := ENetMultiplayerPeer.new()
-	var problem := peer.create_client(where, port)
+	var problem := peer.create_client(where, port, CHANNELS)
 	if problem != OK:
 		return "%s couldn't be reached (%s)" % [address, error_string(problem)]
 	peer.host.compress(ENetConnection.COMPRESS_ZSTD)
@@ -166,8 +173,17 @@ func _end(why: String) -> void:
 	audio.share_played_notes(false)
 	_silence_voices()
 	audio.stop_net_audio()
+	for each in _outgoing:
+		if each.get("file") != null:
+			each.file.close()
+	_outgoing.clear()
+	_incoming.clear()
+	_waiting_clock = {}
+	_pings.clear()
+	_asked.clear()
+	_wanted_by.clear()
 	for inst in app.instruments:  # (nobody's input plays through anything any more but this player's own)
-		for key in ["fed_by", "stream", "feeding", "sending"]:
+		for key in ["fed_by", "stream", "feeding", "sending", "armed_by"]:
 			inst.remove_meta(key)
 		if inst.played_by != "":
 			inst.played_by = ""
@@ -182,6 +198,11 @@ func _end(why: String) -> void:
 
 func _me(id: int) -> Dictionary:
 	return {"name": _my_name(), "height": app.settings.height, "color": _color_data(COLORS[(id - 1) % COLORS.size()])}
+
+
+## This player's name, as the others see it.
+func my_name() -> String:
+	return _my_name()
 
 
 func _my_name() -> String:
@@ -243,11 +264,16 @@ func _on_peer_disconnected(id: int) -> void:
 	_let_go(id)
 	_forget(id)
 	_tell_engine_who()
-	for inst in app.instruments:  # (what they played through is free again)
+	for inst in app.instruments:  # (what they played through, and had armed, is free again)
 		if int(inst.get_meta("fed_by", 0)) == id:
 			inst.set_meta("fed_by", 0)
 			inst.set_meta("stream", 0)
 			follow_feed(inst)
+		if int(inst.get_meta("armed_by", 0)) == id:
+			inst.set_meta("armed_by", 0)
+	_outgoing = _outgoing.filter(func(each): return int(each.to) != id)
+	for name in _wanted_by:
+		_wanted_by[name].erase(id)
 	_send("players", players)
 	_send("gone", {"id": id})
 	app.session.notice.emit("%s has left" % gone)
@@ -302,6 +328,14 @@ func _on_packet(id: int, bytes: PackedByteArray) -> void:
 		"run":  # (a player's Space: the host sets the moment for everyone)
 			if role == "host":
 				set_running(bool(data.on))
+		"transport":
+			if role == "host":
+				set_transport(data)
+		"want":  # (a recording's file someone hasn't got)
+			if role == "host":
+				_serve(str(data.name), id)
+		"file":
+			_on_file(data)
 		"clock":
 			_follow(data)
 		"report":
@@ -353,6 +387,7 @@ func _on_welcome(data: Dictionary) -> void:
 		app.session.notice.emit("No sound between players: %s" % trouble)
 	for inst in app.instruments:
 		follow_feed(inst)
+		need_files(inst.clips)
 	follow_voices()
 	app.session.begin_copy("%s (%s's)" % [str(data.room_name), host_name])
 	_stand_beside_host()
@@ -388,6 +423,10 @@ func _on_pong(data: Dictionary) -> void:
 			best = p
 	_offset_us = best[1]
 	latency_ms = float(best[0]) / 1000.0
+	if not _waiting_clock.is_empty():  # (the session's time known: the music as it has it)
+		var waiting := _waiting_clock
+		_waiting_clock = {}
+		_follow(waiting)
 
 
 ## Space, while playing together: the patterns started or stopped for everyone at once.
@@ -406,17 +445,42 @@ func set_running(on: bool) -> void:
 	_follow(wanted)
 
 
-## Where the music should be on the session's clock just now, in steps.
+## Where the music should be on the session's clock just now, in steps: going on from where it started, at the tempo,
+## and in a Record room round its loop as the timeline goes (but not while recording, unless loop recording).
 func expected_step() -> float:
-	return float(clock.anchor_step) + float(session_us() - int(clock.anchor_us)) / 1e6 * float(clock.bpm) / 15.0
+	var step := float(clock.anchor_step) + float(session_us() - int(clock.anchor_us)) / 1e6 * float(clock.bpm) / 15.0
+	var length := _loop_length()
+	if length > 0.0 and step >= app.timeline.loop_end:
+		step = app.timeline.loop_start + fmod(step - app.timeline.loop_start, length)
+	return step
+
+
+## How long the loop the music goes round is, in steps (0: it doesn't go round one).
+func _loop_length() -> float:
+	var timeline = app.timeline
+	var round: bool = timeline.is_record() and timeline.loop_on and (not bool(clock.get("record", false)) or bool(clock.get("loop_record", false)))
+	var length: float = timeline.loop_end - timeline.loop_start
+	return length if round and length >= 0.25 and float(clock.anchor_step) < timeline.loop_end else 0.0
 
 
 ## The patterns as the session's clock has them: started then (from where the music is, for a player coming in while
 ## they play), or stopped.
 func _follow(data: Dictionary) -> void:
+	if role == "guest" and _pings.is_empty():  # (the session's time not known here yet: once it is)
+		_waiting_clock = data
+		return
 	var was: bool = clock.running
 	var anchor_moved: bool = int(data.anchor_us) != int(clock.anchor_us)
+	var was_recording: bool = bool(clock.get("record", false))
 	clock = data
+	if app.timeline.is_record():  # (a Record room: its timeline)
+		if not bool(clock.running):
+			app.timeline.stop_together(float(clock.get("playhead", app.timeline.playhead)))
+		elif was and not anchor_moved and bool(clock.get("record", false)) and not was_recording:  # (recording from where it plays)
+			app.timeline.play_together(0.0, 0.0, 0.0, true, false)
+		elif not was or anchor_moved:
+			_play_in_step()
+		return
 	if not bool(clock.running):
 		app.sequence_running = false
 		audio.set_sequencer_running(false)
@@ -438,6 +502,85 @@ func _start_in_step() -> void:
 	_started_us = Time.get_ticks_usec()
 
 
+## How far ahead of where the session's clock says the music is it is heard here (seconds; round a loop, the nearer
+## way round).
+func ahead_of_session() -> float:
+	var apart := _heard_step() - expected_step()
+	var length := _loop_length()
+	if length > 0.0:
+		apart = fposmod(apart + length / 2.0, length) - length / 2.0
+	return apart / (float(clock.bpm) / 15.0)
+
+
+## A Record room's timeline from where the session says (a moment ahead; or, coming in while it plays, from a little
+## way on, without recording).
+func _play_in_step() -> void:
+	var timeline = app.timeline
+	var rate: float = float(clock.bpm) / 15.0
+	var now := session_us()
+	var at := int(clock.anchor_us)
+	var from := float(clock.anchor_step)
+	var late := now > at - 50000
+	if late:
+		from = expected_step() + 0.15 * rate
+		at = now + 150000
+	if timeline.playing and not timeline.recording:  # (from somewhere else)
+		audio.set_sequencer_running(false)
+		timeline.playing = false
+	timeline.play_together(from, float(clock.get("punch_in", from)), maxf(float(at - now) / 1e6 - _output_latency(), 0.0),
+		bool(clock.get("record", false)) and not late, bool(clock.get("loop_record", false)))
+	_started_us = Time.get_ticks_usec()
+
+
+## Whether the session is recording (in a Record room): some player, or none, recording what they have armed.
+func is_recording() -> bool:
+	return bool(clock.running) and bool(clock.get("record", false))
+
+
+## Space, Cmd-Space, or the playhead moved while playing, in a Record room: the timeline started (recording too, with
+## `record`; from `from`, or the playhead), or stopped, for everyone at once. (A Jam room's: its patterns.)
+func request_transport(on: bool, record := false, from := -1.0) -> void:
+	var timeline = app.timeline
+	var ask := {"on": on, "record": record, "from": timeline.playhead if from < 0.0 else from,
+		"preroll": float(app.settings.preroll_bars * timeline.STEPS_PER_BAR), "loop_record": record and app.settings.loop_record,
+		"follow": app.settings.insertion_follows}
+	if role == "host":
+		set_transport(ask)
+	else:
+		_send("transport", ask, 1)
+
+
+## (The host) the transport as asked, set for everyone: started a moment ahead (from the pre-roll's start), recording
+## from where it plays, or stopped (the playhead back where playing began, or, as the one who stopped it has it, where
+## the music stopped).
+func set_transport(ask: Dictionary) -> void:
+	if not app.timeline.is_record():
+		set_running(bool(ask.on))
+		return
+	var now := session_us()
+	var wanted: Dictionary
+	if not bool(ask.on):
+		var at: float = expected_step() if bool(ask.get("follow", false)) and bool(clock.running) else float(clock.get("punch_in", app.timeline.playhead))
+		wanted = {"running": false, "anchor_us": now, "anchor_step": 0.0, "bpm": app.tempo, "playhead": maxf(at, 0.0)}
+	elif bool(clock.running) and bool(ask.record):
+		wanted = clock.duplicate()
+		wanted.record = true
+	else:
+		var from: float = app.timeline.loop_start if bool(ask.get("loop_record", false)) else float(ask.from)
+		var preroll := float(ask.get("preroll", 0.0)) if not bool(clock.running) else 0.0
+		wanted = {"running": true, "anchor_us": now + int(START_AHEAD * 1e6), "anchor_step": maxf(from - preroll, 0.0), "bpm": app.tempo,
+			"record": bool(ask.record), "loop_record": bool(ask.get("loop_record", false)), "punch_in": from}
+	_send("clock", wanted)
+	_follow(wanted)
+
+
+## The room made a Jam room or a Record room (the host's): stopped, for everyone.
+func mode_changed() -> void:
+	if role == "host":
+		clock = {"running": false, "anchor_us": session_us(), "anchor_step": 0.0, "bpm": app.tempo}
+		_send("clock", clock)
+
+
 func _output_latency() -> float:
 	return float(audio.get_stats().get("output_latency_ms", 0.0)) / 1000.0
 
@@ -451,21 +594,26 @@ func _heard_step() -> float:
 ## Every half second: the patterns nudged towards where the session says the music is (a few milliseconds at a time,
 ## ten while they are further out than that), or started again in step if they are far off. The host's tempo changing moves where the music is reckoned from.
 func _keep_in_step() -> void:
-	if not bool(clock.running):
+	if not bool(clock.running) or (role == "guest" and _pings.is_empty()):
 		return
 	if role == "host" and not is_equal_approx(app.tempo, float(clock.bpm)):
-		clock = {"running": true, "anchor_us": session_us(), "anchor_step": expected_step(), "bpm": app.tempo}
+		var moved: Dictionary = clock.duplicate()
+		moved.anchor_us = session_us()
+		moved.anchor_step = expected_step()
+		moved.bpm = app.tempo
+		clock = moved
 		_send("clock", clock)
-	if not is_equal_approx(app.tempo, float(clock.bpm)) or Time.get_ticks_usec() - _started_us < 300000:
-		return  # (the tempo on its way here; or just started)
-	var expected := expected_step()
+	if not is_equal_approx(app.tempo, float(clock.bpm)) or Time.get_ticks_usec() - _started_us < 300000 or bool(clock.get("record", false)):
+		return  # (the tempo on its way here; or just started; or recording, when the take is to stay as it is played)
 	var heard := _heard_step()
-	if expected < 2.0:
+	if expected_step() < 2.0 and not app.timeline.is_record():
 		return
-	var rate: float = float(clock.bpm) / 15.0
-	var off := (heard - expected) / rate  # seconds ahead
+	var off := ahead_of_session()
 	if heard < 0.0 or absf(off) > 0.25:
-		_start_in_step()
+		if app.timeline.is_record():
+			_play_in_step()
+		else:
+			_start_in_step()
 	elif absf(off) > 0.001:
 		var most := NUDGE_FAR if absf(off) > NUDGE_FAR else NUDGE_MOST
 		audio.nudge_sequencer(clampf(off, -most, most))
@@ -477,6 +625,165 @@ func _tell_engine_who() -> void:
 	if role == "host":
 		audio.set_net_players(PackedInt32Array(players.keys().filter(func(id): return int(id) != 1)))
 	follow_voices()
+
+
+# ── Arming ───────────────────────────────────────────────────────────────────────────────────────────────────
+
+## A track armed or disarmed here (timeline.set_armed): whether it may be. Armed, it is this player's to record (and a
+## Speaker's or an amp's input this player's to play through, which it must be to record it); nobody else's meanwhile.
+func arm_switched(inst, on: bool) -> bool:
+	if not is_playing_together():
+		return true
+	var by := int(inst.get_meta("armed_by", 0))
+	if on:
+		if by != 0 and by != me:
+			app.session.notice.emit("%s has %s armed" % [name_of(by), inst.display_name])
+			return false
+		if inst.is_live() and not input_switched(inst, true):
+			return false
+		inst.set_meta("armed_by", me)
+	else:
+		if by == me:
+			inst.set_meta("armed_by", 0)
+		if inst.is_live() and not inst.input_on:
+			input_switched(inst, false)
+	return true
+
+
+## A track as the session has it: armed here only if it is this player's to record.
+func follow_arm(inst) -> void:
+	var by := int(inst.get_meta("armed_by", 0))
+	if by != 0 and by != me and inst.armed:
+		inst.armed = false
+		audio.set_record_arm(inst.source_id, false)
+		app.follow_live_inputs()
+		app.timeline.changed.emit()
+
+
+## Who has a track armed, other than this player ("" if nobody, or this player).
+func armed_by_another(inst) -> String:
+	var by := int(inst.get_meta("armed_by", 0))
+	return name_of(by) if by != 0 and by != me else ""
+
+
+# ── Recordings' files ───────────────────────────────────────────────────────────────────────────────────────
+
+func _path_of(name: String) -> String:
+	return app.session.room_folder().path_join(name)
+
+
+## Whether a recording's file is here (in the room's folder).
+func has_file(name: String) -> bool:
+	return FileAccess.file_exists(_path_of(name))
+
+
+## A track's clips, come from another player: any of their files that isn't here asked for, of the host (which has
+## every one, or is getting it).
+func need_files(clips: Array) -> void:
+	if role != "guest":
+		return
+	var names := {}
+	for clip in clips:
+		if str(clip.get("kind", "")) == "audio":
+			names[str(clip.get("file", ""))] = true
+		for take in clip.get("takes", []):
+			if str(take.get("kind", "")) == "audio":
+				names[str(take.get("file", ""))] = true
+	for name in names:
+		if name != "" and not has_file(name) and not _asked.has(name) and not _incoming.has(name):
+			_asked[name] = true
+			_send("want", {"name": name}, 1)
+
+
+## What this player has just recorded (its files' names): to the host, which passes them on to whoever wants them; or,
+## the host's, to whoever has asked already.
+func recorded(names: Array) -> void:
+	for name in names:
+		if role == "guest":
+			_queue(str(name), 1)
+		elif role == "host":
+			for id in _wanted_by.get(str(name), []):
+				_queue(str(name), int(id))
+			_wanted_by.erase(str(name))
+
+
+## (The host) a file asked for by a player: sent, if it is here; or once it has come.
+func _serve(name: String, to: int) -> void:
+	if has_file(name):
+		_queue(name, to)
+	else:
+		if not _wanted_by.has(name):
+			_wanted_by[name] = []
+		if not _wanted_by[name].has(to):
+			_wanted_by[name].append(to)
+
+
+func _queue(name: String, to: int) -> void:
+	var file := FileAccess.open(_path_of(name), FileAccess.READ)
+	if file == null:
+		return
+	_outgoing.append({"name": name, "to": to, "at": 0, "size": file.get_length(), "file": file})
+
+
+## Each frame: a few pieces of the files going (to one player, then the next).
+func _send_files() -> void:
+	var budget := CHUNKS_A_FRAME
+	while budget > 0 and not _outgoing.is_empty():
+		var each: Dictionary = _outgoing[0]
+		var file: FileAccess = each.file
+		file.seek(int(each.at))
+		var data := file.get_buffer(CHUNK)
+		_send("file", {"name": each.name, "size": int(each.size), "at": int(each.at), "data": data}, int(each.to), FILES)
+		each.at = int(each.at) + data.size()
+		budget -= 1
+		if data.is_empty() or int(each.at) >= int(each.size):
+			file.close()
+			_outgoing.pop_front()
+
+
+## A piece of a file come: written in its place (as name.part until it is whole, then named), and once whole, the
+## tracks that play it told; the host passes it on to those waiting for it.
+func _on_file(data: Dictionary) -> void:
+	var name := str(data.name)
+	if name.contains("..") or name.is_absolute_path():  # (only into the room's own folder)
+		return
+	var path := _path_of(name)
+	DirAccess.make_dir_recursive_absolute(path.get_base_dir())
+	var partial := path + ".part"
+	var at := int(data.at)
+	var file := FileAccess.open(partial, FileAccess.WRITE if at == 0 else FileAccess.READ_WRITE)
+	if file == null:
+		return
+	file.seek(at)
+	var bytes: PackedByteArray = data.data
+	file.store_buffer(bytes)
+	file.close()
+	if not _incoming.has(name):
+		_incoming[name] = {"size": int(data.size), "got": 0}
+	_incoming[name].got = at + bytes.size()
+	if at + bytes.size() < int(data.size):
+		return
+	_incoming.erase(name)
+	_asked.erase(name)
+	if FileAccess.file_exists(path):
+		DirAccess.remove_absolute(path)
+	DirAccess.rename_absolute(partial, path)
+	app.timeline.file_arrived(name)
+	if role == "host":
+		for id in _wanted_by.get(name, []):
+			_queue(name, int(id))
+		_wanted_by.erase(name)
+
+
+## How much of the recordings' files is still to come here, and to go from here (bytes), for the page.
+func files_pending() -> Vector2i:
+	var coming := 0
+	for name in _incoming:
+		coming += int(_incoming[name].size) - int(_incoming[name].got)
+	var going := 0
+	for each in _outgoing:
+		going += int(each.size) - int(each.at)
+	return Vector2i(coming, going)
 
 
 # ── Voices ───────────────────────────────────────────────────────────────────────────────────────────────────
@@ -735,13 +1042,8 @@ func carried_by_another(inst) -> String:
 func _process(delta: float) -> void:
 	if not is_playing_together():
 		return
-	if app.timeline.is_record():  # (made a Record room meanwhile: not together, for now)
-		leave()
-		status = "a Record room can't be played in together yet"
-		app.session.notice.emit("Playing together ended: %s" % status)
-		changed.emit()
-		return
 	sync.tick(delta)
+	_send_files()
 	for note in audio.take_played_notes():  # (a MIDI controller's, here)
 		played(int(note[0]), str(note[1]), int(note[2]), float(note[3]))
 	_since_pose += delta

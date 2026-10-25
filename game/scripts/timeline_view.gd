@@ -678,12 +678,14 @@ func _draw_header(inst, top: float, font: Font) -> void:
 	draw_string(font, Vector2(name_x, top + 40), what, HORIZONTAL_ALIGNMENT_LEFT, 60, 11, DIM)
 	for b in _buttons(inst, top):
 		var lit: bool = b.on
-		draw_rect(b.rect, b.color if lit else Color(0.3, 0.31, 0.34))
+		var theirs: bool = b.get("theirs", false)  # (playing together: another player's, armed or played through)
+		draw_rect(b.rect, b.color if lit else (b.color.darkened(0.55) if theirs else Color(0.3, 0.31, 0.34)))
 		draw_string(font, b.rect.position + Vector2(5, 14), b.text, HORIZONTAL_ALIGNMENT_LEFT, -1, 12,
 			Color(0.08, 0.08, 0.09) if lit else Color(0.85, 0.86, 0.9))
 
 
-## A track's header buttons: R (armed), I (input), M (muted), S (soloed).
+## A track's header buttons: R (armed), I (input), M (muted), S (soloed). Playing together, an R or an I that is another
+## player's (a track they have armed, an input of theirs playing through it) is shown dim in its colour.
 ## Whether a row folds its tracks away (a folder's does; an aux's and the master's don't).
 static func _folds(track) -> bool:
 	return track.is_folder and not track.is_aux and not track.get("is_master")
@@ -699,8 +701,9 @@ func _buttons(inst, top: float) -> Array:
 			{"what": "solo", "text": "S", "on": inst.soloed, "color": SOLO_YELLOW, "rect": Rect2(150, y, 20, 19)},
 		]
 	return [
-		{"what": "arm", "text": "R", "on": inst.armed, "color": RECORD_RED, "rect": Rect2(78, y, 20, 19)},
-		{"what": "input", "text": "I", "on": inst.input_on, "color": INPUT_GREEN, "rect": Rect2(102, y, 20, 19)},
+		{"what": "arm", "text": "R", "on": inst.armed, "color": RECORD_RED, "rect": Rect2(78, y, 20, 19),
+			"theirs": app.net.armed_by_another(inst) != ""},
+		{"what": "input", "text": "I", "on": inst.input_on, "color": INPUT_GREEN, "rect": Rect2(102, y, 20, 19), "theirs": inst.played_by != ""},
 		{"what": "mute", "text": "M", "on": inst.muted, "color": MUTE_ORANGE, "rect": Rect2(126, y, 20, 19)},
 		{"what": "solo", "text": "S", "on": inst.soloed, "color": SOLO_YELLOW, "rect": Rect2(150, y, 20, 19)},
 	]

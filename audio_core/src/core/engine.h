@@ -485,7 +485,7 @@ public:
     // joins while they play), as everyone's are to start at once on the session's clock (the time a command takes to
     // reach the audio thread taken off; the output's latency is the caller's to take off, so that the step is heard
     // then); and moved later (or earlier, negative) by `seconds`, to keep in step.
-    void startSequencerIn(double seconds, int64_t from_step = 0);
+    void startSequencerIn(double seconds, double from_step = 0.0);
     void nudgeSequencer(double seconds);
     // Where the patterns are at this moment, in steps since they started (between steps too), as rendered: the last
     // block's place, carried on at the tempo; -1 while they are stopped.
@@ -515,8 +515,9 @@ public:
 
     // ── The timeline (a Record room) ─────────────────────────────────────────────────────────────────────
     // Playing from a step (sixteenths from the start of bar 1: the patterns follow, each from its own start every time
-    // round), stopping (setSequencerRunning(false)), and loop playback over a range of steps.
-    void playFrom(double step);
+    // round), stopping (setSequencerRunning(false)), and loop playback over a range of steps. With `in_seconds` (0 or
+    // more), the step is reached that long from now, as when playing together (see startSequencerIn).
+    void playFrom(double step, double in_seconds = -1.0);
     void setLoopRange(bool on, double start_step, double end_step);  // anywhere, not only on steps
     double timelinePosition() const { return position_.load(std::memory_order_relaxed); }  // in steps, as last rendered
     // A track's clips: notes to play (an instrument) and audio to play into it (a Speaker or an amp, through its pedals,
@@ -580,8 +581,10 @@ public:
     // while it records (Auto Input). With `loop`, loop playback goes on round while it records (Pro Tools' Loop
     // Record): the takes follow one another in the files, for the game to cut into a take for each pass. Already
     // playing, it records from where the music is, straight away.
+    // (`in_seconds`, 0 or more: from the timeline stopped, the music starts that long from now, as playFrom's.)
     bool startRecording(const std::vector<std::pair<int, std::string>>& files, double from_step, std::string* error,
-                        double count_in_steps = 0.0, bool loop = false, double preroll_steps = 0.0, double punch_out_step = -1.0);
+                        double count_in_steps = 0.0, bool loop = false, double preroll_steps = 0.0, double punch_out_step = -1.0,
+                        double in_seconds = -1.0);
     // How many beats of a count-in are still to come (0: none, or it has ended).
     int countInLeft() const { return count_in_left_.load(std::memory_order_relaxed); }
     void stopRecording();  // from the next block; takeRecording then has it

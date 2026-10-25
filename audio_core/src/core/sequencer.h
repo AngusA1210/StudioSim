@@ -48,9 +48,9 @@ public:
     void setSwing(double swing);
     void start(int64_t now, double from_step = 0.0);  // from here (in sixteenths from the start of bar 1; between steps too)
     void stop(int64_t now);  // where the music had got to is kept, for position()
-    // Its step `from_step` (the top, 0, to begin with) due at sample `at`, as the session's clock has it when playing
-    // together; and moved later (or earlier, negative) by `samples`, to keep in step with another player's.
-    void startAt(double at, int64_t from_step = 0);
+    // From `from_step` (the top, 0, to begin with; between steps too), it falling at sample `at`, as the session's clock
+    // has it when playing together; and moved later (or earlier, negative) by `samples`, to keep in step with another's.
+    void startAt(double at, double from_step = 0.0);
     void nudge(double samples);
     bool running() const { return running_; }
     // Loop playback: on reaching step `end`, the music goes back to `start`. Suspended (while recording), it runs on.

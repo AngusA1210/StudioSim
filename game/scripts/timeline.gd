@@ -20,6 +20,11 @@ extends Node
 ## loop recording (Loop Record, Option-L) makes a take of each pass: the last one shown, every one kept in full in the
 ## clip's `takes` ({take: its number, group: the recording's, and the rest of a clip}). Comping puts a part of any take
 ## in the track in place of what is there (see comp): each part keeps the takes, to comp from again.
+##
+## Playing together (net.gd), the transport is everyone's: play, stop, record and locate go to the host, which sets
+## the moment on the session's clock, and each player's timeline starts then (play_together), recording the tracks
+## that player has armed; the clips are shared (room_sync.gd), and a recording's files go to everyone (a clip whose
+## file hasn't come yet is silent until it does).
 
 signal changed  # the clips or the transport changed: whatever draws them draws again
 
@@ -98,8 +103,11 @@ func load_from(data: Dictionary, new_mode := "") -> void:
 	restart(bool(t.get("playing", true)))
 
 
-## The music going again as the mode has it.
+## The music going again as the mode has it (playing together, stopped: the session starts it for everyone).
 func restart(play := true) -> void:
+	var together: bool = app.net.is_playing_together()
+	if together:
+		play = false
 	for inst in app.instruments:
 		inst.armed = false
 		audio.set_record_arm(inst.source_id, false)
@@ -117,9 +125,11 @@ func restart(play := true) -> void:
 	else:
 		audio.set_loop_range(false, 0, 0)
 		playing = false
-		app.sequence_running = true
+		app.sequence_running = not together
 		audio.set_sequencer_running(false)
-		audio.set_sequencer_running(true)
+		audio.set_sequencer_running(not together)
+	if together:
+		app.net.mode_changed()
 	changed.emit()
 
 
@@ -137,6 +147,9 @@ func to_data() -> Dictionary:
 
 ## Space: play from the playhead, or stop (and go back to where playing began).
 func toggle_play() -> void:
+	if app.net.is_playing_together():
+		app.net.request_transport(not playing)
+		return
 	if playing:
 		stop()
 	else:
@@ -167,6 +180,10 @@ func stop() -> void:
 
 ## Puts the playhead at a step (playing on from there, if it is playing).
 func locate(step: float) -> void:
+	if app.net.is_playing_together() and playing and not recording:  # (everyone's, from there)
+		playhead = maxf(step, 0.0)
+		app.net.request_transport(true, false, playhead)
+		return
 	playhead = maxf(step, 0.0)
 	if playing and not recording:
 		_started_at = playhead
@@ -195,7 +212,7 @@ func snap(step: float, to := -1) -> float:
 ## heard through its input while stopped or recording and plays back what it recorded while playing (Auto Input); with
 ## its input monitored (I), always its input. An armed instrument takes the notes played, as with its input on.
 func set_armed(inst, on: bool) -> void:
-	if inst.armed == on:
+	if inst.armed == on or not app.net.arm_switched(inst, on):  # (playing together: not a track another player has armed)
 		return
 	inst.armed = on
 	audio.set_record_arm(inst.source_id, on)
@@ -207,6 +224,12 @@ func set_armed(inst, on: bool) -> void:
 ## Cmd-Space: recording from the playhead (or from where it is playing), or, while recording, stopping. Returns why it
 ## couldn't start, or "".
 func toggle_record() -> String:
+	if app.net.is_playing_together():  # (everyone's transport: each player records the tracks they have armed)
+		if not is_record():
+			return "recording is for Record rooms (the Room button in the menu can switch this room over)"
+		var session_records: bool = app.net.is_recording()  # (whether or not this player has anything armed)
+		app.net.request_transport(not session_records, not session_records)
+		return ""
 	if recording:
 		stop()
 		return ""
@@ -263,9 +286,77 @@ func _stop_recording() -> void:
 	_taking = true
 
 
+# ── Playing together ─────────────────────────────────────────────────────────────────────────────────────────
+
+## The session's transport, started: the music from `from` (a pre-roll's start, or where it is, for a player coming in
+## while it plays) `in_seconds` from now; recording from `punch_in_step` the tracks this player has armed, if it records
+## (round the loop, a take a pass, with `loop_record`). Already playing, recording starts where the music is.
+func play_together(from: float, punch_in_step: float, in_seconds: float, record: bool, loop_record: bool) -> void:
+	var armed: Array = app.instruments.filter(func(inst): return inst.armed)
+	if playing:
+		if record and not recording and not armed.is_empty():
+			_record_armed(armed, -1.0, 0.0, false, -1.0)
+		return
+	_started_at = punch_in_step
+	if record and not armed.is_empty() and app.session.has_room():
+		if loop_record and not loop_on:
+			set_loop(true)
+		_looping = loop_record
+		if _record_armed(armed, punch_in_step, punch_in_step - from, loop_record, in_seconds):
+			return
+	audio.play_from(from, in_seconds)
+	playing = true
+	app.sequence_running = true
+	changed.emit()
+
+
+## (Recording the tracks armed here, as start_recording does, from a stop at a set moment or straight away.)
+func _record_armed(armed: Array, from: float, preroll: float, loop_record: bool, in_seconds: float) -> bool:
+	var folder: String = app.session.room_folder().path_join(AUDIO_FOLDER)
+	DirAccess.make_dir_recursive_absolute(folder)
+	var files := []
+	for inst in armed:
+		if not inst.playable:
+			files.append([inst.source_id, folder.path_join(_take_name(folder, inst.display_name))])
+	var at: float = from if from >= 0.0 else audio.get_timeline_position()
+	if not audio.start_recording(files, at, 0.0, loop_record, maxf(preroll, 0.0), -1.0, in_seconds):
+		app.session.notice.emit("It couldn't record here: %s" % audio.get_error())
+		return false
+	punch_in = at
+	punch_out = -1.0
+	_stop_at = -1.0
+	playing = true
+	recording = true
+	app.sequence_running = true
+	changed.emit()
+	return true
+
+
+## The session's transport, stopped: the playhead where the session says (where playing began, or where it stopped).
+func stop_together(at: float) -> void:
+	if recording:
+		_stop_recording()
+	audio.set_sequencer_running(false)
+	playing = false
+	app.sequence_running = false
+	playhead = maxf(at, 0.0)
+	changed.emit()
+
+
+## A recording's file has come (from another player): the tracks that play it, told.
+func file_arrived(name: String) -> void:
+	_peaks.erase(app.session.room_folder().path_join(name))
+	for inst in app.instruments:
+		if inst.clips.any(func(clip): return str(clip.get("file", "")) == name):
+			sync(inst)
+	changed.emit()
+
+
 ## "Speaker_01.wav", "Speaker_02.wav"...: the first not in the folder yet.
 func _take_name(folder: String, track: String) -> String:
 	var base: String = app.library._safe(track).replace(" ", "_")
+	if app.net.is_playing_together():  # (named for the player too: two players' takes never share a name)
+		base += "_" + app.library._safe(app.net.my_name()).replace(" ", "_")
 	var number := 1
 	while FileAccess.file_exists(folder.path_join("%s_%02d.wav" % [base, number])):
 		number += 1
@@ -396,6 +487,7 @@ func _add_takes(took: Dictionary) -> void:
 		_take_pedal(inst, events, loop_start if looped else maxf(start_step, 0.0), loop_end if looped else end_step)
 	for inst in app.instruments:
 		sync(inst)
+	app.net.recorded(took.audio.filter(func(take): return float(take.seconds) > 0.0).map(func(take): return AUDIO_FOLDER.path_join(str(take.path).get_file())))
 	app.session.notice.emit("Recorded %d takes" % passes.size() if looped and passes.size() > 1 else "Recorded")
 	changed.emit()
 
@@ -646,7 +738,7 @@ func engine_clips(inst) -> Array:
 			reach.get_or_add(_meets(inst, c), [0.0, 0.0])[0] = span.x
 	for c in inst.clips.size():
 		var clip: Dictionary = inst.clips[c]
-		if clip.kind != "audio":
+		if clip.kind != "audio" or not FileAccess.file_exists(file_path(clip)):  # (playing together, its file still coming: silent)
 			continue
 		var extra: Array = reach.get(c, [0.0, 0.0])
 		var into: float = crossfade_span(inst, c).x + crossfade_span(inst, c).y  # its crossfade out

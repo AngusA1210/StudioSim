@@ -49,13 +49,12 @@ func _run() -> void:
 	quit(0)
 
 
-## How far ahead of where the session's clock says the music is the patterns are heard (ms): the middle of a dozen
-## readings over half a second (each may be a block out).
+## How far ahead of where the session's clock says the music is the patterns are heard (ms): the middle of thirty
+## readings over a second and a bit (each may be a block out, or more, the two copies sharing one computer).
 static func ahead_of_session(game) -> float:
 	var readings := []
-	for i in 12:
-		var rate: float = game.tempo / 15.0
-		readings.append((game.net._heard_step() - game.net.expected_step()) / rate * 1000.0)
+	for i in 30:
+		readings.append(game.net.ahead_of_session() * 1000.0)
 		await game.get_tree().create_timer(0.04).timeout
 	readings.sort()
 	return readings[readings.size() / 2]
@@ -109,5 +108,16 @@ func _on_asked(_from: int, ask: Dictionary) -> void:
 			hold = hold.duplicate()
 			hold.pressed = false
 			Input.parse_input_event(hold)
+		"arm":  # a track armed (or disarmed) by this player, to record
+			var inst = sync.find(str(ask.id))
+			main.timeline.set_armed(inst, bool(ask.on))
+			for i in 5:
+				await process_frame
+			main.net.report({"step": "arm", "armed": inst.armed})
+		"transport":  # what the timeline is doing here
+			var speaker_clips: Array = main.speaker.clips.map(func(c): return str(c.get("file", ""))) if main.speaker != null else []
+			main.net.report({"step": "transport", "mode": main.timeline.mode, "playing": main.timeline.playing, "recording": main.timeline.recording,
+				"at": main.timeline.position(), "folder": main.session.room_folder(), "speaker_clips": speaker_clips, "armed": main.instruments.filter(
+				func(i): return i.armed).map(func(i): return i.display_name)})
 		"leave":
 			main.net.leave()

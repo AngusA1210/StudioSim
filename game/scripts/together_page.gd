@@ -58,8 +58,13 @@ func _input(event: InputEvent) -> void:
 func _process(_delta: float) -> void:
 	if is_open():
 		_hint.text = Hints.under_mouse(_panel)
+		var pending: Vector2i = app.net.files_pending()
+		var files := ("  ·  recordings: %.1f MB to come" % (pending.x / 1048576.0) if pending.x > 0 else "") + (
+			"  ·  %.1f MB to send" % (pending.y / 1048576.0) if pending.y > 0 else "")
 		if app.net.role == "guest":
-			_status.text = "In %s's room  ·  %.0f ms to the host and back" % [app.net.host_name, app.net.latency_ms]
+			_status.text = "In %s's room  ·  %.0f ms to the host and back%s" % [app.net.host_name, app.net.latency_ms, files]
+		elif app.net.role == "host" and files != "":
+			_status.text = app.net.status + files
 
 
 ## Something to say on the page, in place of how it is going.

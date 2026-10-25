@@ -3554,6 +3554,71 @@ func _run() -> void:
 		main.net._voice_out < 0 and not main.live_input,
 		"their voice, while they hold the talk key, comes here from their body (this player has none chosen, so sends none)",
 		"%d frames of their voice came" % int(voice_came.get("frames", 0)))
+	# A Record room together: the transport everyone's, each player recording the tracks they have armed, and what they
+	# record coming here, the audio's file and all.
+	check(main.session.has_room(), "(the room hosted has a folder, for recordings to come to)")
+	timeline.set_mode("record")
+	await seconds(1.0)
+	main.net.report({"ask": "transport"})
+	var record_there: Dictionary = await wait_for.call("transport", 10.0)
+	main.net.report({"ask": "arm", "id": sync.id_of(keys_shared), "on": true})
+	var armed_there: Dictionary = await wait_for.call("arm", 10.0)
+	main.net.report({"ask": "arm", "id": sync.id_of(speaker_shared), "on": true})
+	await wait_for.call("arm", 10.0)
+	await seconds(0.6)
+	timeline.set_armed(keys_shared, true)  # (refused: theirs)
+	check(str(record_there.get("mode", "")) == "record" and bool(armed_there.get("armed", false)) and int(keys_shared.get_meta("armed_by", 0)) == guest_id and
+		not keys_shared.armed and int(speaker_shared.get_meta("fed_by", 0)) == guest_id and str(record_there.get("folder", "")).contains("Together"),
+		"made a Record room here, it is one there too (in a folder of its own); a track they arm is theirs to record, not to be armed here",
+		str(record_there.get("folder", "")))
+	timeline.locate(16.0)
+	await seconds(0.5)
+	var keys_clips_before: int = keys_shared.clips.size()
+	var keys_takes_before: Array = keys_shared.clips.map(func(c): return hash(c))
+	timeline.toggle_record()
+	await seconds(0.7)
+	main.net.report({"ask": "transport"})
+	var recording_there: Dictionary = await wait_for.call("transport", 10.0)
+	main.net.report({"ask": "play", "id": sync.id_of(keys_shared), "note": 64})
+	await wait_for.call("played", 10.0)
+	await seconds(0.8)
+	var playing_here: bool = timeline.playing and not timeline.recording
+	timeline.toggle_record()  # (stopped, for everyone)
+	var take_until := Time.get_ticks_msec() + 15000
+	var audio_take := {}
+	while Time.get_ticks_msec() < take_until:
+		await process_frame
+		var takes: Array = speaker_shared.clips.filter(func(c): return str(c.get("kind", "")) == "audio" and str(c.get("file", "")).contains("Guest"))
+		if not takes.is_empty() and FileAccess.file_exists(timeline.file_path(takes.back())) and keys_shared.clips.any(func(c): return not keys_takes_before.has(hash(c))):
+			audio_take = takes.back()
+			break
+	var is_new_take := func(c) -> bool:
+		return not keys_takes_before.has(hash(c)) and str(c.get("kind", "")) == "midi" and c.notes.any(func(n): return int(n.note) == 64)
+	var midi_take: Array = keys_shared.clips.filter(is_new_take)
+	check(bool(recording_there.get("recording", false)) and playing_here and not midi_take.is_empty() and not audio_take.is_empty() and
+		float(midi_take[0].start) >= 15.0 and not timeline.playing,
+		"recording, started here, records their armed tracks there (this player's plays on): their notes, and their audio, its file sent here",
+		"%s, %s" % [str(audio_take.get("file", "no audio take")), "a MIDI take from step %.1f" % float(midi_take[0].start) if not midi_take.is_empty() else "no MIDI take"])
+	main.net.report({"ask": "arm", "id": sync.id_of(keys_shared), "on": false})
+	await wait_for.call("arm", 10.0)
+	main.net.report({"ask": "arm", "id": sync.id_of(speaker_shared), "on": false})
+	await wait_for.call("arm", 10.0)
+	# The timeline played from the playhead, in step there, round the loop.
+	timeline.set_loop(true, 0.0, 32.0)
+	timeline.locate(4.0)
+	await seconds(0.4)
+	timeline.toggle_play()
+	await seconds(4.0)
+	main.net.report({"ask": "step"})
+	var timeline_here: float = await TogetherGuest.ahead_of_session(main)
+	var timeline_there: Dictionary = await wait_for.call("step", 10.0)
+	timeline.toggle_play()
+	check(absf(float(timeline_there.get("ahead", 99.0)) - timeline_here) < 8.0 and absf(timeline_here) < 8.0,
+		"played from the playhead here, the timeline plays there at the same moment, and in step round the loop",
+		"%+.1f ms apart (here %+.1f ms off the session's clock)" % [float(timeline_there.get("ahead", 99.0)) - timeline_here, timeline_here])
+	await seconds(0.5)
+	timeline.set_mode("jam")
+	await seconds(0.6)
 	# They leave: their body goes.
 	main.net.report({"ask": "leave"})
 	var left_until := Time.get_ticks_msec() + 8000

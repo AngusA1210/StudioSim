@@ -204,12 +204,15 @@ func _process(_delta: float) -> void:
 		var counting: int = timeline.counting_in()
 		var state: String = {"count-in": "●  COUNT-IN %d" % counting, "pre-roll": "●  PRE-ROLL", "post-roll": "●  POST-ROLL",
 			"recording": "●  LOOP REC" if timeline._looping else "●  REC"}.get(timeline.phase(), "▶" if timeline.playing else "■")
+		var session_records: bool = not timeline.recording and timeline.playing and app.net.is_recording()
+		if session_records:  # (playing together: another player recording what they have armed)
+			state = "●  REC (OTHERS)"
 		var seconds: float = maxf(at, 0.0) * timeline.step_seconds()
 		_beat.text = "%s   %d | %d   %d:%04.1f   ·   %s%d BPM%s" % [state, int(at / 16.0) + 1, int(fmod(at, 16.0) / 4.0) + 1,
 			int(seconds / 60.0), fmod(seconds, 60.0),
 			"⟳ %s   ·   " % loop_text(timeline.loop_start, timeline.loop_end) if timeline.loop_on else "",
 			roundi(app.tempo), "  ·  click" if app.settings.click else ""]
-		_beat.add_theme_color_override("font_color", Color(1.0, 0.4, 0.38) if timeline.recording else DIM)
+		_beat.add_theme_color_override("font_color", Color(1.0, 0.4, 0.38) if timeline.recording or session_records else DIM)
 	else:
 		_beat.add_theme_color_override("font_color", DIM)
 	_beat_panel.reset_size()
@@ -224,8 +227,10 @@ func _process(_delta: float) -> void:
 	_together_chip.visible = net.is_playing_together()
 	if _together_chip.visible:
 		var others: int = net.players.size() - 1
+		var pending: Vector2i = net.files_pending()  # (recordings still coming, and going)
 		_light_chip(_together_chip, ("TOGETHER · %d" % (others + 1)) + ("  ·  %.0f MS" % net.latency_ms if net.role == "guest" else "") +
-			("  ·  TALKING" if net.talking else ""), true, TOGETHER_TEAL)
+			("  ·  TALKING" if net.talking else "") + ("  ·  ↓ %.1f MB" % (pending.x / 1048576.0) if pending.x > 0 else "") +
+			("  ·  ↑ %.1f MB" % (pending.y / 1048576.0) if pending.y > 0 else ""), true, TOGETHER_TEAL)
 	_modes_panel.reset_size()
 	_modes_panel.position = Vector2(_beat_panel.position.x - _modes_panel.size.x - 8, 14)
 

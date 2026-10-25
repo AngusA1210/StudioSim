@@ -11,13 +11,14 @@ extends Node
 signal changed  # a room was made, opened or saved: whatever shows its name shows it again
 signal notice(text: String)  # something done along the way (saved, backed up), for the screen to mention
 
+const TOGETHER := "Together"  # (where copies of other players' rooms go, in the rooms folder)
 const BACKUP_DIR := "Room Backups"
 const MAX_RECENT := 10
 
 var app
 var path := ""       # the room's file; "" while none is open
 var room_name := ""
-var copy := false    # a copy of another player's room (joined, or left): no file of its own until saved as one
+var copy := false    # a copy of another player's room (joined, or left), kept in Together in the rooms folder
 var saved_at := 0    # when it was last saved (Unix time), 0 if never
 var _saved := ""     # the room as it was when last saved or opened, to tell whether it has changed since
 var _backed_up := ""  # likewise for the last backup
@@ -51,11 +52,18 @@ func has_room() -> bool:
 	return path != "" or copy
 
 
-## Joined another player's room: its copy here, named for it, with no file (Save As keeps one).
+## Joined another player's room: its copy here, named for it, in a folder of its own in Together, in the rooms folder,
+## where its recordings go, and the others' come (it is saved there only when saved).
 func begin_copy(the_name: String) -> void:
-	path = ""
+	var folder := location().path_join(TOGETHER)
+	var unique := the_name
+	var number := 2
+	while exists(folder, unique):
+		unique = "%s %d" % [the_name, number]
+		number += 1
+	path = file_for(folder, unique)
 	copy = true
-	room_name = the_name
+	room_name = unique
 	_mark_saved()
 	changed.emit()
 

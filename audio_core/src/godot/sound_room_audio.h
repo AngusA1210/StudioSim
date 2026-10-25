@@ -277,7 +277,7 @@ public:
     Dictionary get_net_stats(int id) const;
     // The timeline (a Record room): playing from a step (sixteenths from the start of bar 1), loop playback over a
     // range of steps, and where it is (in steps, as last rendered).
-    void play_from(double step);
+    void play_from(double step, double in_seconds = -1.0);  // (in_seconds, 0 or more: reaching it that long from now)
     void set_loop_range(bool on, double start_step, double end_step);
     double get_timeline_position() const;
     // A track's clips: notes [{step, length (steps), note, velocity}] and audio [{path, start, offset, length} (seconds)].
@@ -293,7 +293,8 @@ public:
     void set_record_arm(int id, bool armed);
     // (a count-in first, the timeline stopped; with `loop`, round the loop, a take a pass)
     bool start_recording(const Array& files, double from_step, double count_in_steps = 0.0, bool loop = false, double preroll_steps = 0.0,
-                         double punch_out_step = -1.0);  // (and a pre-roll first; with `punch_out_step`, stopping recording there)
+                         double punch_out_step = -1.0, double in_seconds = -1.0);  // (and a pre-roll first; with `punch_out_step`, stopping
+                                                                                    // recording there; `in_seconds`, as play_from's)
     int get_count_in() const;  // beats of a count-in still to come
     void stop_recording();
     bool is_recording() const;

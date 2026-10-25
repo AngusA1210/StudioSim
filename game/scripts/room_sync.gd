@@ -8,8 +8,9 @@ extends RefCounted
 ## changes to the same thing at once end the same way everywhere (each player's own change, coming back, is let be
 ## unless someone else's came in between).
 ##
-## Shared: the room, and each instrument's place, name, colour, lock, settings (an amp's, its pedals', a microphone's,
-## its inserts, a plug-in instrument's plug-in), pattern and level in the room. Each player's own: the mix window (the
+## Shared: the room (and a Record room's mode, loop and playhead), and each instrument's place, name, colour, lock,
+## settings (an amp's, its pedals', a microphone's, its inserts, a plug-in instrument's plug-in), pattern, level in
+## the room, clips (a Record room's track: a recording's file comes after, net.gd), and who has it armed. Each player's own: the mix window (the
 ## faders, mute and solo, pans, folders, aux tracks, sends and masters), which inputs are on, and what they hear.
 
 const Library := preload("res://scripts/library.gd")
@@ -107,6 +108,8 @@ func state_of(inst) -> Dictionary:
 	if inst.is_live():  # (whose input plays through it, and as which of their sounds)
 		out.fed_by = int(inst.get_meta("fed_by", 0))
 		out.stream = int(inst.get_meta("stream", 0))
+	out.armed_by = int(inst.get_meta("armed_by", 0))
+	out.clips = inst.clips
 	return out
 
 
@@ -135,9 +138,12 @@ func room_entry() -> Dictionary:
 	for wall in room.walls:
 		walls.append([snappedf(wall.a.x, 0.001), snappedf(wall.a.y, 0.001), snappedf(wall.b.x, 0.001), snappedf(wall.b.y, 0.001),
 			snappedf(wall.height, 0.001), wall.get("material", room.DEFAULT_WALL_MATERIAL)])
+	var timeline = app.timeline
 	return {"size": [snappedf(room.size.x, 0.001), snappedf(room.size.y, 0.001), snappedf(room.size.z, 0.001)], "walls": walls,
 		"surfaces": room.surfaces.duplicate(), "tempo": snappedf(app.tempo, 0.01), "swing": snappedf(app.swing, 0.001),
-		"reverb_db": snappedf(app.reverb_db, 0.01)}
+		"reverb_db": snappedf(app.reverb_db, 0.01), "mode": timeline.mode,
+		"loop": [timeline.loop_on, snappedf(timeline.loop_start, 0.001), snappedf(timeline.loop_end, 0.001)],
+		"playhead": snappedf(timeline.playhead, 0.001)}
 
 
 # ── Sending what changed here ────────────────────────────────────────────────────────────────────────────────
@@ -303,6 +309,13 @@ func _apply_state(inst, state: Dictionary) -> void:
 		inst.set_meta("fed_by", int(state.get("fed_by", 0)))
 		inst.set_meta("stream", int(state.get("stream", 0)))
 		net.follow_feed(inst)
+	inst.set_meta("armed_by", int(state.get("armed_by", 0)))
+	net.follow_arm(inst)
+	if state.has("clips") and hash(state.clips) != hash(inst.clips):
+		inst.clips = state.clips.duplicate(true)
+		app.timeline.sync(inst)
+		app.timeline.changed.emit()
+		net.need_files(inst.clips)
 
 
 ## An instrument's settings changed elsewhere, made here: only what differs, so that nothing (a plug-in above all) is
@@ -431,3 +444,14 @@ func _apply_room(room_part: Dictionary) -> void:
 		app.set_swing(float(room_part.swing))
 	if not is_equal_approx(float(room_part.get("reverb_db", app.reverb_db)), app.reverb_db):
 		app.set_reverb_db(float(room_part.reverb_db))
+	var timeline = app.timeline
+	if str(room_part.get("mode", timeline.mode)) != timeline.mode:  # (a Jam room or a Record room, as the host's is)
+		timeline.mode = str(room_part.mode)
+		timeline.restart(false)
+	var loop: Array = room_part.get("loop", [])
+	if loop.size() == 3 and (bool(loop[0]) != timeline.loop_on or not is_equal_approx(float(loop[1]), timeline.loop_start) or
+			not is_equal_approx(float(loop[2]), timeline.loop_end)):
+		timeline.set_loop(bool(loop[0]), float(loop[1]), float(loop[2]))
+	if room_part.has("playhead") and not is_equal_approx(float(room_part.playhead), timeline.playhead) and not timeline.playing:
+		timeline.playhead = float(room_part.playhead)
+		timeline.changed.emit()
