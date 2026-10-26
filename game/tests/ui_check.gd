@@ -3483,7 +3483,10 @@ func _run() -> void:
 		"another player joins: their room a copy of this one, every instrument where it stands, the room as it is",
 		"%d instruments there, %d here" % [joined.get("ids", []).size(), main.instruments.size()])
 	var guest_id := int(joined.get("me", 0))
-	await seconds(0.6)
+	var body_until := Time.get_ticks_msec() + 3000  # (made when their first pose comes: the other copy may be slow just after starting)
+	while main.net.body_of(guest_id) == null and Time.get_ticks_msec() < body_until:
+		await process_frame
+	await seconds(0.3)
 	var guest_body = main.net.body_of(guest_id)
 	check(guest_body != null and Vector2(guest_body.global_position.x, guest_body.global_position.z).distance_to(
 		Vector2(float(joined.at[0]), float(joined.at[1]))) < 0.1 and guest_body.get_child(0).height > 1.6 and guest_body.get_child(0).height < 1.64,
