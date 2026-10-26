@@ -2671,6 +2671,9 @@ void AudioEngine::setNetPlayers(const std::vector<int>& ids) {
     for (int id : ids) players.push_back(uint16_t(id));
     net_audio_->setPlayers(players);
 }
+bool AudioEngine::sendNetDatagram(const std::string& address, int port, const std::vector<uint8_t>& data) {
+    return net_audio_->sendDatagram(address, port, data.data(), data.size());
+}
 bool AudioEngine::sendSourceToNet(int id, int number) {
     Source* s = owned(id);
     if (!s) return false;

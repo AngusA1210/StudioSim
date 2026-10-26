@@ -178,6 +178,23 @@ elseif(WIN32)  # (Windows finds a DLL beside the program)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different "${PHONON_LIBRARY}" "$<TARGET_FILE_DIR:engine_tests>/")
 endif()
 
+# ── The session server (src/server: players meet through it, on a machine the internet can reach) ──────────────
+find_package(Threads REQUIRED)
+add_library(sr_session_server STATIC src/server/session_server.cpp)
+target_include_directories(sr_session_server PUBLIC src/server)
+target_link_libraries(sr_session_server PUBLIC Threads::Threads)
+if(WIN32)
+    target_link_libraries(sr_session_server PUBLIC ws2_32)
+endif()
+add_executable(soundroom_session_server src/server/main.cpp)
+target_link_libraries(soundroom_session_server PRIVATE sr_session_server)
+set_target_properties(soundroom_session_server PROPERTIES OUTPUT_NAME "soundroom-session-server" RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+foreach(cfg DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)  # (in the build folder itself, where the game's checks look for it)
+    set_target_properties(soundroom_session_server PROPERTIES RUNTIME_OUTPUT_DIRECTORY_${cfg} "${CMAKE_BINARY_DIR}")
+endforeach()
+add_executable(session_server_tests tests/session_server_tests.cpp)
+target_link_libraries(session_server_tests PRIVATE sr_session_server)
+
 # ── Godot extension ─────────────────────────────────────────────────────────────────────────────────────────
 add_subdirectory(thirdparty/godot-cpp EXCLUDE_FROM_ALL)
 add_library(soundroom_audio SHARED

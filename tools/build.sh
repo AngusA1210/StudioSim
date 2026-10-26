@@ -9,10 +9,15 @@ CONFIG="${1:-Release}"
 git -C "$ROOT" submodule update --init --recursive
 "$ROOT/tools/fetch_deps.sh"
 cmake -S "$ROOT/audio_core" -B "$ROOT/audio_core/build" -DCMAKE_BUILD_TYPE="$CONFIG"
-cmake --build "$ROOT/audio_core/build" --config "$CONFIG" --target engine_tests soundroom_audio -j "$(sysctl -n hw.ncpu 2>/dev/null || nproc)"
+cmake --build "$ROOT/audio_core/build" --config "$CONFIG" --target engine_tests session_server_tests soundroom_session_server soundroom_audio \
+  -j "$(sysctl -n hw.ncpu 2>/dev/null || nproc)"
 case "$(uname -s)" in
-  MINGW*|MSYS*|CYGWIN*) "$ROOT/audio_core/build/$CONFIG/engine_tests.exe" ;;  # (Visual Studio builds each kind in a folder of its own)
-  *) "$ROOT/audio_core/build/engine_tests" ;;
+  MINGW*|MSYS*|CYGWIN*)  # (Visual Studio builds each kind in a folder of its own)
+    "$ROOT/audio_core/build/$CONFIG/engine_tests.exe"
+    "$ROOT/audio_core/build/$CONFIG/session_server_tests.exe" ;;
+  *)
+    "$ROOT/audio_core/build/engine_tests"
+    "$ROOT/audio_core/build/session_server_tests" ;;
 esac
 
 if command -v godot >/dev/null; then

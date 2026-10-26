@@ -10,24 +10,33 @@ and the players can talk to each other.
 
 - **Host**: open a room (a Jam room or a Record room), then press Host. The page shows the address others join at, which is this computer's on
   the local network (192.168…), with the port (47130 unless you change it).
-- **Join**: type the host's address (add `:port` if it isn't 47130), and its password if it has one, and press Join. Your room becomes a copy of
-  theirs, and you go into it beside where the host stands. The room you had open is left as it was last saved. The
-  copy goes in a folder of its own in **Together**, in your rooms folder: what you record goes there, and what the
-  others record comes there. It is saved there when you save it, and it stays yours after you leave.
+- **Join**: type the host's address (add `:port` if it isn't 47130), or the session's code, and its password if it has
+  one, and press Join. Your room becomes a copy of theirs, and you go into it beside where the host stands. The room
+  you had open is left as it was last saved. The copy goes in a folder of its own in **Together**, in your rooms
+  folder: what you record goes there, and what the others record comes there. It is saved there when you save it,
+  and it stays yours after you leave.
 
 **Over the internet**: tick it before hosting, and SoundRoom asks your router, by UPnP, to open the session's port
 and the next one (47131: the sound between players) to this computer while you host. Most home routers allow it.
 The page then shows your public address, for the others to join at from anywhere, and the ports are closed again
 when the session ends. If the router won't (UPnP switched off, or a network that is itself behind another, as on
-some mobile and student connections), the page says why: forward both ports (UDP) to this computer in the router by
-hand, or play on one network.
+some mobile and student connections), the page says why. Then forward both ports (UDP) to this computer in the
+router by hand, or meet through a session server.
+
+**Session server**: a program on a machine the internet can reach, which players meet through (see
+[Running a session server](session-server.md)). Put its address on the Play together page (and `:port` if it
+isn't 47100). Everyone uses the same one. Hosting over the internet with one given, the page shows a code
+("K7Q-M2D") as well as the address, and the others can join with that from anywhere, whatever their routers do.
+The two computers are introduced, and talk directly where their routers allow it (most do). Where they don't, the
+server passes everything between them itself, a little later than directly, and the page says so.
 
 **Password**: set before hosting, only those who give it can join. It keeps out anyone who comes across an open
 port; it isn't encryption.
 
-**Losing the connection**: a player whose connection to the host drops tries to get back in by themselves, every few
-seconds for half a minute, and their copy of the room is brought up to date again when they do. Their inputs and
-armed tracks are let go meanwhile, so they switch those on again. When the host ends the session, nobody tries.
+**Losing the connection**: a player whose connection to the host drops tries to get back in by themselves (by the
+address or code they joined with), every few seconds for half a minute, and their copy of the room is brought up to
+date again when they do. Their inputs and armed tracks are let go meanwhile, so they switch those on again. When the
+host ends the session, nobody tries.
 
 While you're together, a **TOGETHER** chip on screen shows how many are in the room and, for a player who joined,
 the time a message takes to reach the host and back. The floor plan shows each other player as an arrowhead in their
@@ -135,4 +144,4 @@ voice opens the audio input for the whole session, so that holding the key never
 
 ## What comes next
 
-- Joining where the router can't open a port: a session server that players meet through.
+- A session server run for everyone, so that nobody has to run their own.

@@ -509,6 +509,7 @@ public:
     bool startNetAudio(bool host, const std::string& address, int port, int me, std::string* error);
     void stopNetAudio();
     void setNetPlayers(const std::vector<int>& ids);
+    bool sendNetDatagram(const std::string& address, int port, const std::vector<uint8_t>& data);  // (NetAudio::sendDatagram)
     bool sendSourceToNet(int id, int number);
     bool feedSourceFromNet(int id, int player, int number);
     NetAudio::Stats netStats(int id) const;

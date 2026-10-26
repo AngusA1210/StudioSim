@@ -39,7 +39,8 @@ namespace sr {
 
 namespace {
 
-// A packet: "SR", what it is (1 a frame of sound, 2 a hello: where a player sends from, for the host), who sent it,
+// A packet: "SR", what it is (1 a frame of sound, 2 a hello: where a player sends from, for the host; from the host,
+// keeping the way open, as routers close a way nothing has gone out on lately), who sent it,
 // which of their sounds, its place in that sound's order, then (a frame) what Opus made of it.
 constexpr uint8_t kMagic0 = 'S', kMagic1 = 'R', kSound = 1, kHello = 2;
 constexpr int kHeader = 8;
@@ -197,6 +198,16 @@ void NetAudio::setPlayers(const std::vector<uint16_t>& ids) {
     players_ = ids;
 }
 
+bool NetAudio::sendDatagram(const std::string& address, int port, const uint8_t* data, size_t size) {
+    if (!running()) return false;
+    sockaddr_in to{};
+    to.sin_family = AF_INET;
+    to.sin_port = htons(uint16_t(port));
+    if (inet_pton(AF_INET, address.c_str(), &to.sin_addr) != 1) return false;
+    sendTo(&to, data, int(size));  // (the network thread may be sending too: each sendto is whole)
+    return true;
+}
+
 // A slot is used again only once it has been closed a second: the audio thread may still have been in it.
 int NetAudio::openSend(uint8_t number, double engine_rate) {
     const int64_t now = nowMs();
@@ -325,11 +336,16 @@ void NetAudio::run() {
         receivePackets();
         sendFrames();
         const int64_t now = nowMs();
-        if (!host_ && now - last_hello_ms_ >= 500) {  // (another player: where they send from, for the host)
+        if (now - last_hello_ms_ >= (host_ ? 1000 : 500)) {  // (another player: where they send from, for the host)
             last_hello_ms_ = now;
             uint8_t hello[kHeader] = {kMagic0, kMagic1, kHello, 0, 0, 0, 0, 0};
             putU16(hello + 3, me_);
-            sendTo(host_address_.data(), hello, kHeader);
+            if (host_) {
+                std::lock_guard<std::mutex> lock(players_mutex_);
+                for (const auto& a : addresses_) sendTo(a.second.data(), hello, kHeader);
+            } else {
+                sendTo(host_address_.data(), hello, kHeader);
+            }
         }
     }
 }

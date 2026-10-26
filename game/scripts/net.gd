@@ -1,6 +1,7 @@
 extends Node
-## Playing together. One player hosts the room they have open (a Jam room); the others join it by the host's address,
-## over the local network or the internet (with the host's port forwarded to their computer). On joining, a player's
+## Playing together. One player hosts the room they have open; the others join it by the host's address, over the
+## local network or the internet (the host's router asked to open its ports, or them forwarded by hand), or by the
+## session's code, meeting through a session server (meeting.gd), where neither can be. On joining, a player's
 ## room becomes a copy of the host's, and from then on it is kept the same (room_sync.gd). Each player's computer makes
 ## the room's sound itself, heard from where that player stands: what goes over the network is what happens in the
 ## room, not its sound. That is the room and everything in it, where each player is (their body, seen by the others),
@@ -24,6 +25,7 @@ signal changed  # a player came or went; hosting, joining or leaving
 signal reported(from: int, data: Dictionary)  # (the automated checks: what the other copy of the game found)
 
 const Avatar := preload("res://scripts/avatar.gd")
+const Meeting := preload("res://scripts/meeting.gd")
 const RoomSync := preload("res://scripts/room_sync.gd")
 const PORT := 47130
 const PROTOCOL := 1
@@ -72,9 +74,11 @@ var _upnp = null  # (the host's) the router that opened the ports, to close them
 var _router_thread: Thread
 var _password := ""  # (the host's) what a joining player must give, if anything
 var _host_ended := false  # (a joining player) the host ended the session, rather than the connection being lost
-var _rejoin := {}  # (a joining player whose connection was lost) {where, port, password, tries, next}: trying to get back in
-var _where := ""  # (a joining player) the host's address, and the session's port there
-var _port := PORT
+var _rejoin := {}  # (a joining player whose connection was lost) {given, password, tries, next}: trying to get back in
+var meeting = null  # meeting.gd: (the host's) its code, from the session server; (joining by a code) finding it
+var _given := ""  # (a joining player) the host's address, or the session's code, as given
+var _sound_where := ""  # (a joining player) where the sound between players goes: the host's, or the server's relay
+var _sound_port := 0
 var _streams := 0  # this player's sounds, numbered so far
 var _outgoing := []  # recordings' files going: [{name, to, at, size, file}]
 var _incoming := {}  # name → {size, got}: coming
@@ -93,7 +97,7 @@ func setup(the_app) -> void:
 	multiplayer.peer_connected.connect(_on_peer_connected)
 	multiplayer.peer_disconnected.connect(_on_peer_disconnected)
 	multiplayer.connected_to_server.connect(_on_connected)
-	multiplayer.connection_failed.connect(func() -> void: _end("the host couldn't be reached"))
+	multiplayer.connection_failed.connect(_failed)
 	multiplayer.server_disconnected.connect(_lost)
 	multiplayer.peer_packet.connect(_on_packet)
 
@@ -138,9 +142,24 @@ func host(port := PORT, bind := "*", open_router := false, password := "") -> St
 	follow_voices()
 	if open_router and not app.options.has("silent"):  # (never in the automated runs: nobody's router is theirs to open)
 		_ask_router(port)
+	if open_router and app.settings.session_server.strip_edges() != "":  # (a code, for others to join with from anywhere)
+		meeting = Meeting.new(self)
+		meeting.host(app.settings.session_server, port, port + 1, _local_address(bind))
 	changed.emit()
 	return ""
 
+
+## This computer's address on its own network (for a player joining a session hosted here from the same network,
+## by its code): the one bound to, or the likeliest of its own.
+static func _local_address(bind: String) -> String:
+	if bind != "*":
+		return bind
+	var addresses := Array(IP.get_local_addresses()).filter(func(a): return a.count(".") == 3 and not a.begins_with("127.") and not a.begins_with("169.254."))
+	for prefix in ["192.168.", "10.", "172."]:
+		for a in addresses:
+			if a.begins_with(prefix):
+				return a
+	return addresses[0] if not addresses.is_empty() else ""
 
 ## The router asked to open the session's ports (UDP: the session's, and the next for the sound between players), in a
 ## thread of its own, as finding it takes a moment.
@@ -190,33 +209,87 @@ func _notification(what: int) -> void:
 			_upnp = null
 
 
-## Joins the room hosted at `address` ("host" or "host:port"), with its `password` if it has one. How it goes is told
-## by `changed` and `status`.
+## Joins the room hosted at `address` ("host" or "host:port"), or with the session's code ("K7Q-M2D"), found through
+## the session server; with its `password` if it has one. How it goes is told by `changed` and `status`.
 func join(address: String, password := "") -> String:
 	var rejoining := _rejoin.duplicate()
 	leave()
 	_rejoin = rejoining
 	_password = password
 	_host_ended = false
-	var where := address.strip_edges()
+	_given = address.strip_edges()
+	if Meeting.is_code(_given):
+		if app.settings.session_server.strip_edges() == "":
+			return "a code is joined through a session server: its address is wanted"
+		meeting = Meeting.new(self)
+		meeting.relay_only = app.options.has("relay")
+		meeting.find(app.settings.session_server, _given)
+		role = "joining"
+		status = "Finding the session %s…" % _given.to_upper()
+		changed.emit()
+		return ""
+	var where := _given
 	var port := PORT
 	if where.count(":") == 1:
 		port = int(where.get_slice(":", 1))
 		where = where.get_slice(":", 0)
 	if where == "":
 		return "the host's address is wanted"
-	_where = where
-	_port = port
-	var peer := ENetMultiplayerPeer.new()
-	var problem := peer.create_client(where, port, CHANNELS)
-	if problem != OK:
-		return "%s couldn't be reached (%s)" % [address, error_string(problem)]
-	peer.host.compress(ENetConnection.COMPRESS_ZSTD)
-	multiplayer.multiplayer_peer = peer
-	role = "joining"
+	_sound_where = where
+	_sound_port = port + 1
+	var problem := _connect(where, port)
+	if problem != "":
+		return "%s couldn't be reached (%s)" % [address, problem]
 	status = "Joining %s…" % address
 	changed.emit()
 	return ""
+
+
+## (Joining by a code) where the session server says to join: the host's computer, or the server's relay to it.
+func meet(game_address: String, game_port: int, sound_address: String, sound_port: int) -> void:
+	_sound_where = sound_address
+	_sound_port = sound_port
+	var problem := _connect(game_address, game_port)
+	if problem != "":
+		_end("the host couldn't be reached (%s)" % problem)
+		return
+	status = "Joining %s%s…" % [_given.to_upper(), " by way of the session server" if meeting.by_relay else ""]
+	changed.emit()
+
+
+## (Joining) the session's connection begun, to `where`:`port` (in place of one tried before).
+func _connect(where: String, port: int) -> String:
+	if multiplayer.multiplayer_peer != null:
+		multiplayer.multiplayer_peer.close()
+	var peer := ENetMultiplayerPeer.new()
+	var problem := peer.create_client(where, port, CHANNELS)
+	if problem != OK:
+		multiplayer.multiplayer_peer = null
+		return error_string(problem)
+	peer.host.compress(ENetConnection.COMPRESS_ZSTD)
+	multiplayer.multiplayer_peer = peer
+	role = "joining"
+	return ""
+
+
+## The host not reached: by way of the session server instead, if joining by a code; or that's that.
+func _failed() -> void:
+	if meeting != null and meeting.go_by_relay():
+		return
+	_end("the host couldn't be reached")
+
+
+## Meeting through the session server didn't work (meeting.problem says why).
+func meeting_failed(why: String) -> void:
+	if role == "joining":
+		_end(why)
+	else:
+		changed.emit()  # (the host: no code, but hosting as before)
+
+
+## (Joining by a code) in by way of the session server's relay, rather than directly.
+func by_relay() -> bool:
+	return meeting != null and meeting.by_relay
 
 
 ## Leaves the session (as the host, ends it). A player who joined keeps a copy of the room, as it was.
@@ -254,6 +327,9 @@ func _end(why: String) -> void:
 	_outgoing.clear()
 	_incoming.clear()
 	_waiting_clock = {}
+	if meeting != null:
+		meeting.end()
+		meeting = null
 	_pings.clear()
 	_asked.clear()
 	_wanted_by.clear()
@@ -323,6 +399,8 @@ func report(data: Dictionary) -> void:
 
 
 func _on_connected() -> void:
+	if meeting != null:
+		meeting.connected()
 	me = multiplayer.get_unique_id()
 	_send("hello", {"protocol": PROTOCOL, "name": _my_name(), "height": app.settings.height, "password": _password}, 1)
 
@@ -333,7 +411,7 @@ func _lost() -> void:
 	if role != "guest" or _host_ended:
 		_end("the host has ended the session" if _host_ended else "the host has left")
 		return
-	var again := {"where": _where, "port": _port, "password": _password, "tries": 0, "next": 1.0}
+	var again := {"given": _given, "password": _password, "tries": 0, "next": 1.0}
 	_end("")
 	_rejoin = again
 	status = "The connection to the host was lost: trying to get back in…"
@@ -343,7 +421,7 @@ func _lost() -> void:
 
 func _try_rejoining(delta: float) -> void:
 	_rejoin.next = float(_rejoin.next) - delta
-	if float(_rejoin.next) > 0.0 or role == "guest":
+	if float(_rejoin.next) > 0.0 or role == "guest" or meeting != null:  # (a code being found meanwhile: let be)
 		return
 	_rejoin.tries = int(_rejoin.tries) + 1
 	if int(_rejoin.tries) > 10:
@@ -353,7 +431,7 @@ func _try_rejoining(delta: float) -> void:
 		changed.emit()
 		return
 	_rejoin.next = 3.0
-	join("%s:%d" % [_rejoin.where, int(_rejoin.port)], str(_rejoin.password))
+	join(str(_rejoin.given), str(_rejoin.password))
 	status = "The connection to the host was lost: trying to get back in (%d)…" % int(_rejoin.tries)
 
 
@@ -494,9 +572,11 @@ func _on_welcome(data: Dictionary) -> void:
 		app.instruments[i].set_meta("stream", int(feeds[i][1]))
 	sync.adopt(data.ids)
 	sync.applying = false
-	var trouble: String = audio.start_net_audio(false, _where, _port + 1, me)
+	var trouble: String = audio.start_net_audio(false, _sound_where, _sound_port, me)
 	if trouble != "":
 		app.session.notice.emit("No sound between players: %s" % trouble)
+	elif meeting != null:
+		meeting.in_session()
 	for inst in app.instruments:
 		follow_feed(inst)
 		need_files(inst.clips)
@@ -1164,6 +1244,8 @@ func carried_by_another(inst) -> String:
 # ── Each frame ──────────────────────────────────────────────────────────────────────────────────────────────
 
 func _process(delta: float) -> void:
+	if meeting != null:
+		meeting.tick(delta)
 	if not _rejoin.is_empty():
 		_try_rejoining(delta)
 	if not is_playing_together():

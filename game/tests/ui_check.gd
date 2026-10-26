@@ -3683,6 +3683,67 @@ func _run() -> void:
 	if OS.is_process_running(guest_run):
 		OS.kill(guest_run)
 	check(main.net.role == "" and not main.net.is_playing_together(), "and the session ends")
+	# Meeting through a session server (one started here, on this computer alone, as someone would run one on a machine
+	# the internet reaches): hosted over the internet, the room is given a code; a player joins with it, the two
+	# computers talking directly, and another by way of the server's relay, as where they can't, the sound too.
+	var server_program := ProjectSettings.globalize_path("res://").path_join("../audio_core/build/soundroom-session-server" +
+		(".exe" if OS.get_name() == "Windows" else "")).simplify_path()
+	var server_port := port + 10
+	var server_run := OS.create_process(server_program, ["--port", str(server_port), "--bind", "127.0.0.1", "--quiet"]) if \
+		FileAccess.file_exists(server_program) else -1
+	await seconds(0.3)
+	main.settings.session_server = "127.0.0.1:%d" % server_port
+	main.together_page._internet.button_pressed = true
+	hosted = main.together_page.host(port, "127.0.0.1")
+	main.together_page._internet.button_pressed = false
+	var code_until := Time.get_ticks_msec() + 10000
+	while main.net.meeting != null and main.net.meeting.state not in ["hosted", ""] and Time.get_ticks_msec() < code_until:
+		await process_frame
+	var code: String = main.net.meeting.code if main.net.meeting != null else ""
+	main.together_page._refresh()
+	check(server_run > 0 and hosted == "" and preload("res://scripts/meeting.gd").is_code(code) and main.together_page._where.text.contains(code) and
+		main.net.router == "", "hosted over the internet with a session server, the room is given a code to join with (no router asked, in these runs)",
+		code if code != "" else (main.net.meeting.problem if main.net.meeting != null else server_program))
+	var meet_args := ["--headless", "--path", ProjectSettings.globalize_path("res://"), "--script", "res://tests/together_guest.gd", "--", "--silent",
+		"--join=" + code.to_lower(), "--server=127.0.0.1:%d" % server_port]
+	guest_run = OS.create_process(OS.get_executable_path(), meet_args)
+	joined = await wait_for.call("joined", 45.0)
+	check(not joined.is_empty() and not bool(joined.get("by_relay", true)) and main.net.players.size() == 2,
+		"another player joins with the code (typed in small letters), the two computers talking directly", str(joined.get("status", "")))
+	main.net.report({"ask": "leave"})
+	left_until = Time.get_ticks_msec() + 8000
+	while main.net.players.size() > 1 and Time.get_ticks_msec() < left_until:
+		await process_frame
+	await seconds(0.5)
+	if OS.is_process_running(guest_run):
+		OS.kill(guest_run)
+	guest_run = OS.create_process(OS.get_executable_path(), meet_args + ["--relay"])
+	joined = await wait_for.call("joined", 45.0)
+	guest_id = int(joined.get("me", 0))
+	var relay_seen := -1
+	if main.net.players.has(guest_id):
+		relay_seen = (main.net.multiplayer.multiplayer_peer as ENetMultiplayerPeer).get_peer(guest_id).get_remote_port()
+	var relays: Array = main.net.meeting._relays if main.net.meeting != null else []
+	main.net.report({"ask": "input", "id": sync.id_of(main.speaker), "on": true})
+	await wait_for.call("input", 10.0)
+	await seconds(1.2)
+	flowing = audio.get_net_stats(main.speaker.source_id)
+	check(not joined.is_empty() and bool(joined.get("by_relay", false)) and relays.size() == 1 and relay_seen == int(relays[0][0]) and
+		int(flowing.get("frames", 0)) > 100,
+		"and another by way of the session server's relay, as where the two can't reach each other: the session, and its sound",
+		"from the relay's port %d; %d frames came, %d lost" % [relay_seen, int(flowing.get("frames", 0)), int(flowing.get("lost", 0))])
+	main.net.report({"ask": "input", "id": sync.id_of(main.speaker), "on": false})
+	await wait_for.call("input", 10.0)
+	main.net.report({"ask": "leave"})
+	left_until = Time.get_ticks_msec() + 8000
+	while main.net.players.size() > 1 and Time.get_ticks_msec() < left_until:
+		await process_frame
+	main.net.leave()
+	main.settings.session_server = ""
+	await seconds(0.5)
+	for each in [guest_run, server_run]:
+		if each > 0 and OS.is_process_running(each):
+			OS.kill(each)
 	timeline.set_mode("record")
 	main.show_title()
 	await frames(3)

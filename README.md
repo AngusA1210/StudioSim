@@ -41,8 +41,9 @@ recording, mixing, room acoustics, and how the code is put together.
 
 ## Roadmap
 
-1. Multiplayer: begun (hosting and joining, over the internet too, the room shared, a shared clock, live inputs and
-   voices streamed, Record rooms together); next, a session server.
+1. Multiplayer: begun (hosting and joining, over the internet too, through a session server where routers won't
+   open ports, the room shared, a shared clock, live inputs and voices streamed, Record rooms together); next, a
+   session server run for everyone.
 
 The full list is in [docs/roadmap.md](docs/roadmap.md).
 

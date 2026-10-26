@@ -770,6 +770,10 @@ String SoundRoomAudio::start_net_audio(bool host, const String& address, int por
     return engine_->startNetAudio(host, address.utf8().get_data(), port, me, &error) ? String() : String(error.c_str());
 }
 void SoundRoomAudio::stop_net_audio() { if (engine_) engine_->stopNetAudio(); }
+bool SoundRoomAudio::send_net_datagram(const String& address, int port, const PackedByteArray& data) {
+    if (!engine_) return false;
+    return engine_->sendNetDatagram(address.utf8().get_data(), port, std::vector<uint8_t>(data.ptr(), data.ptr() + data.size()));
+}
 void SoundRoomAudio::set_net_players(const PackedInt32Array& ids) {
     if (!engine_) return;
     std::vector<int> players;
@@ -1130,6 +1134,7 @@ void SoundRoomAudio::_bind_methods() {
     ClassDB::bind_method(D_METHOD("take_played_notes"), &SoundRoomAudio::take_played_notes);
     ClassDB::bind_method(D_METHOD("start_net_audio", "host", "address", "port", "me"), &SoundRoomAudio::start_net_audio);
     ClassDB::bind_method(D_METHOD("stop_net_audio"), &SoundRoomAudio::stop_net_audio);
+    ClassDB::bind_method(D_METHOD("send_net_datagram", "address", "port", "data"), &SoundRoomAudio::send_net_datagram);
     ClassDB::bind_method(D_METHOD("set_net_players", "ids"), &SoundRoomAudio::set_net_players);
     ClassDB::bind_method(D_METHOD("send_source_to_net", "id", "number"), &SoundRoomAudio::send_source_to_net);
     ClassDB::bind_method(D_METHOD("feed_source_from_net", "id", "player", "number"), &SoundRoomAudio::feed_source_from_net);

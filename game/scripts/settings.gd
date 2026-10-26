@@ -42,6 +42,7 @@ var player_name := ""  # shown over your body
 var height := 1.75  # how tall you are, metres: your eyes and ears, and your body
 var free_camera_hears := "camera"  # while the free camera flies, the room is heard from the "camera" or "you" (your ears)
 var voice_input := -1  # playing together: which hardware input is your voice (0-based), held key to talk; -1, none
+var session_server := ""  # playing together: the session server players meet through (its address, and :port if not 47100)
 
 # Rooms
 var rooms_location := ""   # the folder new rooms go in; "" for SoundRoom/Rooms (see library.gd's home())
@@ -100,6 +101,7 @@ func load_from_disk() -> void:
 	room_brightness = clampf(file.get_value("display", "room_brightness", room_brightness), 0.5, 3.0)
 	player_name = str(file.get_value("you", "name", player_name)).left(24)
 	voice_input = int(file.get_value("io", "voice_input", voice_input))
+	session_server = str(file.get_value("together", "session_server", session_server))
 	height = clampf(float(file.get_value("you", "height", height)), 1.4, 2.1)
 	# (a key of its own: the one it had when it was heard from you to begin with is left behind)
 	free_camera_hears = "you" if file.get_value("sound", "free_camera_heard_from", free_camera_hears) == "you" else "camera"
@@ -153,6 +155,7 @@ func save_to_disk() -> void:
 	file.set_value("display", "room_brightness", room_brightness)
 	file.set_value("you", "name", player_name)
 	file.set_value("io", "voice_input", voice_input)
+	file.set_value("together", "session_server", session_server)
 	file.set_value("you", "height", height)
 	file.set_value("sound", "free_camera_heard_from", free_camera_hears)
 	file.set_value("controls", "keys", bindings)

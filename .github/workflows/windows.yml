@@ -50,6 +50,13 @@ jobs:
         shell: bash
         run: audio_core/build/Release/engine_tests.exe
 
+      - name: The session server, and its checks
+        if: ${{ !cancelled() && steps.configure.outcome == 'success' }}
+        shell: bash
+        run: |
+          cmake --build audio_core/build --config Release --parallel --target session_server_tests soundroom_session_server
+          audio_core/build/Release/session_server_tests.exe
+
       - name: Build the Godot extension
         if: ${{ !cancelled() && steps.configure.outcome == 'success' }}
         run: cmake --build audio_core/build --config Release --parallel --target soundroom_audio

@@ -271,6 +271,7 @@ public:
     // sound (player 0: no longer); how it is going ({frames, lost, late, held_ms, hold_ms}).
     String start_net_audio(bool host, const String& address, int port, int me);
     void stop_net_audio();
+    bool send_net_datagram(const String& address, int port, const PackedByteArray& data);
     void set_net_players(const PackedInt32Array& ids);
     bool send_source_to_net(int id, int number);
     bool feed_source_from_net(int id, int player, int number);

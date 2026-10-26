@@ -20,6 +20,7 @@ extends Node3D
 ##   --text-scale=F           override the text size
 ##   --screenshot=path.png    save a screenshot after --frames frames (default 90), print stats, and quit
 ##   --quit-after=seconds     print stats and quit after this long
+##   --relay                  joining by a code, by way of the session server's relay from the first (for the checks)
 
 const Instrument := preload("res://scripts/instrument.gd")
 const Folder := preload("res://scripts/folder.gd")

@@ -66,6 +66,10 @@ public:
     bool running() const { return running_.load(std::memory_order_acquire); }
     // (The host) the players in the session, by id: only theirs are taken in, and passed on.
     void setPlayers(const std::vector<uint16_t>& ids);
+    // A packet of anyone's from this socket, to `address` (as numbers) and `port`: meeting through a session server
+    // (session_server.h), which must see where it comes from, and the host's sending to a player joining, so that its
+    // router lets theirs in. False if it isn't running, or the address isn't one.
+    bool sendDatagram(const std::string& address, int port, const uint8_t* data, size_t size);
 
     // What goes where (the game thread). A sound sent is numbered (1 to 255) by the player sending it; a sound
     // received is known by its sender and number. Each gives a slot (or -1, all in use), for the audio thread.
@@ -140,7 +144,7 @@ private:
     std::mutex players_mutex_;
     std::vector<uint16_t> players_;      // (the host's) who is in the session
     std::vector<std::pair<uint16_t, std::vector<uint8_t>>> addresses_;  // (the host's) where each player sends from
-    int64_t last_hello_ms_ = 0;
+    int64_t last_hello_ms_ = 0;  // (another player's: to the host every half second; the host's, to each player every second)
 };
 
 }  // namespace sr

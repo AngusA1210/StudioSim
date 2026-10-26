@@ -16,6 +16,7 @@ var _host_button: Button
 var _where: Label  # where the others join this computer
 var _internet: CheckBox  # (hosting) the router asked to open the ports
 var _password: LineEdit
+var _server: LineEdit  # the session server players meet through
 var _address: LineEdit
 var _join_button: Button
 var _status: Label
@@ -64,7 +65,8 @@ func _process(_delta: float) -> void:
 		var files := ("  ·  recordings: %.1f MB to come" % (pending.x / 1048576.0) if pending.x > 0 else "") + (
 			"  ·  %.1f MB to send" % (pending.y / 1048576.0) if pending.y > 0 else "")
 		if app.net.role == "guest":
-			_status.text = "In %s's room  ·  %.0f ms to the host and back%s" % [app.net.host_name, app.net.latency_ms, files]
+			_status.text = "In %s's room  ·  %.0f ms to the host and back%s%s" % [app.net.host_name, app.net.latency_ms,
+				"  ·  by way of the session server" if app.net.by_relay() else "", files]
 		elif app.net.role == "host" and files != "":
 			_status.text = app.net.status + files
 
@@ -105,6 +107,7 @@ func _refresh() -> void:
 	_host_button.disabled = together or not app.session.has_room()
 	_internet.disabled = together
 	_password.editable = not together
+	_server.editable = not together
 	_join_button.disabled = together
 	_leave_button.visible = together
 	_leave_button.text = "End the session" if net.role == "host" else "Leave"
@@ -120,8 +123,16 @@ func _refresh() -> void:
 			"":
 				pass
 			_:
-				_where.text += "\nNot over the internet: %s. Forward ports %d and %d (UDP) to this computer in your router." % [net.router,
-					int(_port.value), int(_port.value) + 1]
+				_where.text += "\nThe router didn't open them: %s. Forward ports %d and %d (UDP) to this computer in your router%s." % [
+					net.router, int(_port.value), int(_port.value) + 1, ", or join with the code" if net.meeting != null else ""]
+		if net.meeting != null:  # (a session server: a code)
+			match net.meeting.state:
+				"hosted":
+					_where.text += "\nOr from anywhere, with the code %s" % net.meeting.code
+				"":
+					_where.text += "\nNo code: %s" % net.meeting.problem
+				_:
+					_where.text += "\nAsking the session server for a code…"
 	if net.status != "" or not together:
 		_status.text = net.status if net.status != "" else ("Host the room that is open, or join another player's." if app.session.has_room() else
 			"Open a room to host it, or join another player's.")
@@ -194,7 +205,7 @@ func _build() -> void:
 	host_row.add_child(_port)
 	_internet = CheckBox.new()
 	_internet.text = "Over the internet"
-	Hints.give(_internet, "Asks your router (by UPnP, which most home routers allow) to open the session's two ports to this computer while you host, and shows the address others join at from anywhere. Closed again when the session ends")
+	Hints.give(_internet, "Asks your router (by UPnP, which most home routers allow) to open the session's two ports to this computer while you host, and shows the address others join at from anywhere (closed again when the session ends). With a session server, the room also gets a code that others join with, which works where the router won't open them")
 	host_row.add_child(_internet)
 	_host_button = Button.new()
 	_host_button.text = "Host"
@@ -218,16 +229,29 @@ func _build() -> void:
 	_password.custom_minimum_size.x = 220
 	Hints.give(_password, "Hosting: only those who give it can join (it keeps out anyone who comes across your open port; it isn't encryption). Joining: the host's, if they set one")
 	password_row.add_child(_password)
+	var server_label := Label.new()
+	server_label.text = "Session server"
+	server_label.add_theme_color_override("font_color", DIM)
+	password_row.add_child(server_label)
+	_server = LineEdit.new()
+	_server.placeholder_text = "None"
+	_server.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_server.text = app.settings.session_server
+	_server.text_changed.connect(func(text: String) -> void:
+		app.settings.session_server = text.strip_edges()
+		app.settings.save_to_disk())
+	Hints.give(_server, "A machine on the internet that players meet through (its address, and :port if not 47100), for when a router won't open its ports. Hosting over the internet, the room gets a code that others join with, from anywhere. Everyone uses the same one. Running one: docs/session-server.md")
+	password_row.add_child(_server)
 
 	_label(box, "Join a room")
 	var join_row := HBoxContainer.new()
 	join_row.add_theme_constant_override("separation", 10)
 	box.add_child(join_row)
 	_address = LineEdit.new()
-	_address.placeholder_text = "The host's address (and :port, if not %d)" % Net.PORT
+	_address.placeholder_text = "The host's address (and :port, if not %d), or the session's code" % Net.PORT
 	_address.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_address.text_submitted.connect(func(_text: String) -> void: join())
-	Hints.give(_address, "The address the host's page shows: on the same network, theirs there (192.168…); over the internet, their public one")
+	Hints.give(_address, "What the host's page shows: on the same network, their address there (192.168…); over the internet, their public one, or the session's code (K7Q-M2D), found through the session server")
 	join_row.add_child(_address)
 	_join_button = Button.new()
 	_join_button.text = "Join"

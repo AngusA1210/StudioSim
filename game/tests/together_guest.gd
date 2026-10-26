@@ -2,7 +2,7 @@ extends SceneTree
 ## The other player, for the automated checks: ui_check.gd hosts a room and starts this, a second copy of the game,
 ## which joins it and then does what the checks ask, saying what it found (over the session itself).
 ## Run by ui_check.gd: godot --headless --path game --script tests/together_guest.gd -- --silent --join=127.0.0.1:<port>
-## [--password=<the host's>] (turned away, it quits with 2)
+## [--password=<the host's>] (turned away, it quits with 2); or --join=<code> --server=<the session server> [--relay]
 
 const RoomSync := preload("res://scripts/room_sync.gd")
 
@@ -10,6 +10,7 @@ var main
 var view: SubViewport
 var address := ""
 var password := ""
+var server := ""
 
 
 func _initialize() -> void:
@@ -18,6 +19,8 @@ func _initialize() -> void:
 			address = arg.trim_prefix("--join=")
 		if arg.begins_with("--password="):
 			password = arg.trim_prefix("--password=")
+		if arg.begins_with("--server="):
+			server = arg.trim_prefix("--server=")
 	view = SubViewport.new()
 	view.size = Vector2i(1280, 760)
 	root.add_child(view)
@@ -33,6 +36,7 @@ func _run() -> void:
 	main.settings.height = 1.62
 	main.player.set_height(1.62)
 	main.net.reported.connect(_on_asked)
+	main.settings.session_server = server
 	main.net.join(address, password)
 	var until := Time.get_ticks_msec() + 20000
 	while main.net.role != "guest" and Time.get_ticks_msec() < until:
@@ -46,7 +50,8 @@ func _run() -> void:
 		await process_frame
 	main.net.report({"step": "joined", "ids": main.net.sync.ids(), "kinds": main.instruments.map(func(i): return i.kind),
 		"places": main.instruments.map(func(i): return main.net.sync.place_of(i)), "players": main.net.players.size(), "me": main.net.me,
-		"room": main.net.sync.room_entry(), "at": [main.player.global_position.x, main.player.global_position.z]})
+		"room": main.net.sync.room_entry(), "at": [main.player.global_position.x, main.player.global_position.z], "by_relay": main.net.by_relay(),
+		"status": main.net.status})
 	until = Time.get_ticks_msec() + 180000  # (the checks go on for at most three minutes)
 	while (main.net.role == "guest" or not main.net._rejoin.is_empty()) and Time.get_ticks_msec() < until:
 		await process_frame
