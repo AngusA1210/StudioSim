@@ -290,8 +290,11 @@ func _stop_recording() -> void:
 
 ## The session's transport, started: the music from `from` (a pre-roll's start, or where it is, for a player coming in
 ## while it plays) `in_seconds` from now; recording from `punch_in_step` the tracks this player has armed, if it records
-## (round the loop, a take a pass, with `loop_record`). Already playing, recording starts where the music is.
-func play_together(from: float, punch_in_step: float, in_seconds: float, record: bool, loop_record: bool) -> void:
+## (round the loop, a take a pass, with `loop_record`; a count-in of `count_in` steps first, `counted` seconds long,
+## which only those recording hear; and to `punch_out_step`, if it is 0 or more). Already playing, recording starts where
+## the music is.
+func play_together(from: float, punch_in_step: float, in_seconds: float, record: bool, loop_record: bool, count_in := 0.0,
+		counted := 0.0, punch_out_step := -1.0) -> void:
 	var armed: Array = app.instruments.filter(func(inst): return inst.armed)
 	if playing:
 		if record and not recording and not armed.is_empty():
@@ -302,7 +305,7 @@ func play_together(from: float, punch_in_step: float, in_seconds: float, record:
 		if loop_record and not loop_on:
 			set_loop(true)
 		_looping = loop_record
-		if _record_armed(armed, punch_in_step, punch_in_step - from, loop_record, in_seconds):
+		if _record_armed(armed, punch_in_step, punch_in_step - from, loop_record, maxf(in_seconds - counted, 0.0), count_in, punch_out_step):
 			return
 	audio.play_from(from, in_seconds)
 	playing = true
@@ -311,7 +314,7 @@ func play_together(from: float, punch_in_step: float, in_seconds: float, record:
 
 
 ## (Recording the tracks armed here, as start_recording does, from a stop at a set moment or straight away.)
-func _record_armed(armed: Array, from: float, preroll: float, loop_record: bool, in_seconds: float) -> bool:
+func _record_armed(armed: Array, from: float, preroll: float, loop_record: bool, in_seconds: float, count_in := 0.0, punch_out_step := -1.0) -> bool:
 	var folder: String = app.session.room_folder().path_join(AUDIO_FOLDER)
 	DirAccess.make_dir_recursive_absolute(folder)
 	var files := []
@@ -319,11 +322,11 @@ func _record_armed(armed: Array, from: float, preroll: float, loop_record: bool,
 		if not inst.playable:
 			files.append([inst.source_id, folder.path_join(_take_name(folder, inst.display_name))])
 	var at: float = from if from >= 0.0 else audio.get_timeline_position()
-	if not audio.start_recording(files, at, 0.0, loop_record, maxf(preroll, 0.0), -1.0, in_seconds):
+	if not audio.start_recording(files, at, count_in, loop_record, maxf(preroll, 0.0), punch_out_step, in_seconds):
 		app.session.notice.emit("It couldn't record here: %s" % audio.get_error())
 		return false
 	punch_in = at
-	punch_out = -1.0
+	punch_out = punch_out_step
 	_stop_at = -1.0
 	playing = true
 	recording = true

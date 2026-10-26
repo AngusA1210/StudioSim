@@ -9,13 +9,25 @@ and the players can talk to each other.
 **Play together…** on the title screen opens the page for it.
 
 - **Host**: open a room (a Jam room or a Record room), then press Host. The page shows the address others join at, which is this computer's on
-  the local network (192.168…), with the port (47130 unless you change it). To play over the internet, forward that
-  port and the next one (47131: the sound between players), both UDP, to this computer in your router, and give the
-  others your public address.
-- **Join**: type the host's address (add `:port` if it isn't 47130) and press Join. Your room becomes a copy of
+  the local network (192.168…), with the port (47130 unless you change it).
+- **Join**: type the host's address (add `:port` if it isn't 47130), and its password if it has one, and press Join. Your room becomes a copy of
   theirs, and you go into it beside where the host stands. The room you had open is left as it was last saved. The
   copy goes in a folder of its own in **Together**, in your rooms folder: what you record goes there, and what the
   others record comes there. It is saved there when you save it, and it stays yours after you leave.
+
+**Over the internet**: tick it before hosting, and SoundRoom asks your router, by UPnP, to open the session's port
+and the next one (47131: the sound between players) to this computer while you host. Most home routers allow it.
+The page then shows your public address, for the others to join at from anywhere, and the ports are closed again
+when the session ends. If the router won't (UPnP switched off, or a network that is itself behind another, as on
+some mobile and student connections), the page says why: forward both ports (UDP) to this computer in the router by
+hand, or play on one network.
+
+**Password**: set before hosting, only those who give it can join. It keeps out anyone who comes across an open
+port; it isn't encryption.
+
+**Losing the connection**: a player whose connection to the host drops tries to get back in by themselves, every few
+seconds for half a minute, and their copy of the room is brought up to date again when they do. Their inputs and
+armed tracks are let go meanwhile, so they switch those on again. When the host ends the session, nobody tries.
 
 While you're together, a **TOGETHER** chip on screen shows how many are in the room and, for a player who joined,
 the time a message takes to reach the host and back. The floor plan shows each other player as an arrowhead in their
@@ -86,8 +98,12 @@ dim in the edit window). Arming a Speaker or an amp makes you the one playing th
 input. When the session records, everyone's armed tracks record at once, each on its own player's computer: the
 notes they play, and the audio of their inputs, before the pedals, amp and inserts. Anyone can start the recording,
 whether or not they have anything armed; while someone else records, the transport says REC (OTHERS). Loop Record
-works together: the takes of each pass are kept, as alone. A count-in and punching in and out don't work together
-yet; a pre-roll does.
+works together: the takes of each pass are kept, as alone.
+
+The settings of whoever starts the recording are the session's: a pre-roll, a count-in, and punching in and out.
+A count-in is the same length for everyone, but only those recording hear its click. Punching records over the
+loop range only; the session stops by itself at the punch-out (after the post-roll, if there is one), and the
+playhead goes back to the punch-in.
 
 A recording's clips reach everyone once it stops. Its audio file goes to the host, which sends it to each player
 whose copy of the room refers to a file it hasn't got, a player joining later too. The clip is silent until its file
@@ -119,5 +135,4 @@ voice opens the audio input for the whole session, so that holding the key never
 
 ## What comes next
 
-- Joining without forwarding a port: a session server that players meet through.
-- A count-in and punching in and out, together.
+- Joining where the router can't open a port: a session server that players meet through.

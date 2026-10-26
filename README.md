@@ -17,9 +17,9 @@ It is also a workstation: rooms can be recorded, edited and mixed the way a DAW 
 - **A mix window** laid out like a DAW's: inserts, sends, folders, aux tracks, delay compensation, and the room and the
   mix as separate masters.
 - **Plug-ins**: VST3 on macOS and Windows, Audio Units on macOS.
-- **Playing together**: one player hosts their room and others join it over the network, each hearing it from where
-  they stand, with the patterns in step on a shared clock, live inputs streamed between players, voices, and Record
-  rooms recorded together.
+- **Playing together**: one player hosts their room and others join it, on one network or over the internet, each
+  hearing it from where they stand, with the patterns in step on a shared clock, live inputs streamed between
+  players, voices, and Record rooms recorded together.
 
 ## Build and run
 
@@ -41,8 +41,8 @@ recording, mixing, room acoustics, and how the code is put together.
 
 ## Roadmap
 
-1. Multiplayer: begun (hosting and joining, the room shared, a shared clock, live inputs and voices streamed, Record
-   rooms together); next, a session server.
+1. Multiplayer: begun (hosting and joining, over the internet too, the room shared, a shared clock, live inputs and
+   voices streamed, Record rooms together); next, a session server.
 
 The full list is in [docs/roadmap.md](docs/roadmap.md).
 

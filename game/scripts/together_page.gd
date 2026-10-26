@@ -14,6 +14,8 @@ var _panel: PanelContainer
 var _port: SpinBox
 var _host_button: Button
 var _where: Label  # where the others join this computer
+var _internet: CheckBox  # (hosting) the router asked to open the ports
+var _password: LineEdit
 var _address: LineEdit
 var _join_button: Button
 var _status: Label
@@ -77,7 +79,7 @@ func tell(text: String) -> void:
 func host(port := -1, bind := "*") -> String:
 	if port >= 0:
 		_port.set_value_no_signal(port)
-	var problem: String = app.net.host(int(_port.value), bind)
+	var problem: String = app.net.host(int(_port.value), bind, _internet.button_pressed, _password.text.strip_edges())
 	if problem != "":
 		_status.text = "It couldn't be hosted: %s." % problem
 		_status.add_theme_color_override("font_color", WARN)
@@ -85,7 +87,7 @@ func host(port := -1, bind := "*") -> String:
 
 
 func join(address := "") -> String:
-	var problem: String = app.net.join(_address.text if address == "" else address)
+	var problem: String = app.net.join(_address.text if address == "" else address, _password.text.strip_edges())
 	if problem != "":
 		_status.text = "It couldn't be joined: %s." % problem
 		_status.add_theme_color_override("font_color", WARN)
@@ -100,7 +102,9 @@ func _refresh() -> void:
 		app.title.enter()
 	_was = net.role
 	var together: bool = net.is_playing_together() or net.role == "joining"
-	_host_button.disabled = together or not app.session.has_room() or app.timeline.is_record()
+	_host_button.disabled = together or not app.session.has_room()
+	_internet.disabled = together
+	_password.editable = not together
 	_join_button.disabled = together
 	_leave_button.visible = together
 	_leave_button.text = "End the session" if net.role == "host" else "Leave"
@@ -108,6 +112,16 @@ func _refresh() -> void:
 	if net.role == "host":
 		var addresses := Array(IP.get_local_addresses()).filter(func(a): return a.count(".") == 3 and not a.begins_with("127.") and not a.begins_with("169.254."))
 		_where.text = "Others join at %s  (port %d)" % [", ".join(addresses) if not addresses.is_empty() else "this computer's address", int(_port.value)]
+		match net.router:  # (over the internet)
+			"asking":
+				_where.text += "\nAsking your router to open the ports…"
+			"open":
+				_where.text += "\nOver the internet: %s  (the router has opened ports %d and %d)" % [net.public_address, int(_port.value), int(_port.value) + 1]
+			"":
+				pass
+			_:
+				_where.text += "\nNot over the internet: %s. Forward ports %d and %d (UDP) to this computer in your router." % [net.router,
+					int(_port.value), int(_port.value) + 1]
 	if net.status != "" or not together:
 		_status.text = net.status if net.status != "" else ("Host the room that is open, or join another player's." if app.session.has_room() else
 			"Open a room to host it, or join another player's.")
@@ -178,14 +192,32 @@ func _build() -> void:
 	_port.select_all_on_focus = true
 	Hints.give(_port, "The port the others join on. Over the internet, forward it (UDP) to this computer in your router")
 	host_row.add_child(_port)
+	_internet = CheckBox.new()
+	_internet.text = "Over the internet"
+	Hints.give(_internet, "Asks your router (by UPnP, which most home routers allow) to open the session's two ports to this computer while you host, and shows the address others join at from anywhere. Closed again when the session ends")
+	host_row.add_child(_internet)
 	_host_button = Button.new()
 	_host_button.text = "Host"
 	_host_button.pressed.connect(func() -> void: host())
-	Hints.give(_host_button, "Others can then join the room you have open (a Jam room): their copies kept the same as yours, each hearing it from where they stand")
+	Hints.give(_host_button, "Others can then join the room you have open: their copies kept the same as yours, each hearing it from where they stand")
 	host_row.add_child(_host_button)
 	_where = Label.new()
 	_where.add_theme_color_override("font_color", ACCENT)
 	box.add_child(_where)
+
+	var password_row := HBoxContainer.new()
+	password_row.add_theme_constant_override("separation", 10)
+	box.add_child(password_row)
+	var password_label := Label.new()
+	password_label.text = "Password"
+	password_label.add_theme_color_override("font_color", DIM)
+	password_row.add_child(password_label)
+	_password = LineEdit.new()
+	_password.secret = true
+	_password.placeholder_text = "None"
+	_password.custom_minimum_size.x = 220
+	Hints.give(_password, "Hosting: only those who give it can join (it keeps out anyone who comes across your open port; it isn't encryption). Joining: the host's, if they set one")
+	password_row.add_child(_password)
 
 	_label(box, "Join a room")
 	var join_row := HBoxContainer.new()

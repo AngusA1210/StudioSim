@@ -66,6 +66,13 @@ var _since_pose := 0.0
 var _since_step := 0.0
 var _started_us := 0  # when the patterns were last started here (on this computer's clock)
 var _waiting_clock := {}  # (a joining player) the music as the session has it, waiting for the session's time to be known
+var public_address := ""  # (the host's) where others join from the internet, the router having opened the ports
+var router := ""  # (the host's) how asking the router went: "", "asking", "open", or what went wrong
+var _upnp = null  # (the host's) the router that opened the ports, to close them again
+var _router_thread: Thread
+var _password := ""  # (the host's) what a joining player must give, if anything
+var _host_ended := false  # (a joining player) the host ended the session, rather than the connection being lost
+var _rejoin := {}  # (a joining player whose connection was lost) {where, port, password, tries, next}: trying to get back in
 var _where := ""  # (a joining player) the host's address, and the session's port there
 var _port := PORT
 var _streams := 0  # this player's sounds, numbered so far
@@ -87,7 +94,7 @@ func setup(the_app) -> void:
 	multiplayer.peer_disconnected.connect(_on_peer_disconnected)
 	multiplayer.connected_to_server.connect(_on_connected)
 	multiplayer.connection_failed.connect(func() -> void: _end("the host couldn't be reached"))
-	multiplayer.server_disconnected.connect(func() -> void: _end("the host has left"))
+	multiplayer.server_disconnected.connect(_lost)
 	multiplayer.peer_packet.connect(_on_packet)
 
 
@@ -102,8 +109,12 @@ func session_us() -> int:
 
 ## Hosts the room that is open, for others to join on `port` (on every network this computer is on, or only `bind`'s:
 ## "127.0.0.1" for this computer alone, as the checks do). Returns what went wrong, or "".
-func host(port := PORT, bind := "*") -> String:
+## With `open_router`, the router is asked (UPnP) to open the session's two ports to this computer, so that others can
+## join over the internet at the address it gives (public_address) without anyone forwarding them by hand. With a
+## `password`, only those who give it can join.
+func host(port := PORT, bind := "*", open_router := false, password := "") -> String:
 	leave()
+	_password = password
 	var peer := ENetMultiplayerPeer.new()
 	peer.set_bind_ip(bind)
 	var problem := peer.create_server(port, MAX_GUESTS, CHANNELS)
@@ -125,13 +136,68 @@ func host(port := PORT, bind := "*") -> String:
 		status += " (no sound between players: %s)" % trouble
 	_tell_engine_who()
 	follow_voices()
+	if open_router and not app.options.has("silent"):  # (never in the automated runs: nobody's router is theirs to open)
+		_ask_router(port)
 	changed.emit()
 	return ""
 
 
-## Joins the room hosted at `address` ("host" or "host:port"). How it goes is told by `changed` and `status`.
-func join(address: String) -> String:
+## The router asked to open the session's ports (UDP: the session's, and the next for the sound between players), in a
+## thread of its own, as finding it takes a moment.
+func _ask_router(port: int) -> void:
+	router = "asking"
+	_router_thread = Thread.new()
+	_router_thread.start(func() -> void:
+		var upnp := UPNP.new()
+		var answer := {"ok": false, "why": "no router answered (UPnP may be off in it)"}
+		if upnp.discover(2000, 2, "InternetGatewayDevice") == UPNP.UPNP_RESULT_SUCCESS and upnp.get_gateway() != null and \
+				upnp.get_gateway().is_valid_gateway():
+			var first := upnp.add_port_mapping(port, port, "SoundRoom", "UDP", 0)
+			var second := upnp.add_port_mapping(port + 1, port + 1, "SoundRoom (sound)", "UDP", 0)
+			if first == UPNP.UPNP_RESULT_SUCCESS and second == UPNP.UPNP_RESULT_SUCCESS:
+				answer = {"ok": true, "address": upnp.query_external_address(), "upnp": upnp, "port": port}
+			else:
+				answer.why = "the router wouldn't open them (UPnP answered %d)" % (first if first != UPNP.UPNP_RESULT_SUCCESS else second)
+		_router_answered.call_deferred(answer))
+
+
+func _router_answered(answer: Dictionary) -> void:
+	if _router_thread != null:
+		_router_thread.wait_to_finish()
+		_router_thread = null
+	if role != "host":  # (ended meanwhile: closed again)
+		if bool(answer.ok):
+			_close_router(answer.upnp, int(answer.port))
+		return
+	if bool(answer.ok):
+		router = "open"
+		_upnp = {"upnp": answer.upnp, "port": int(answer.port)}
+		public_address = str(answer.address)
+	else:
+		router = str(answer.why)
+	changed.emit()
+
+
+func _close_router(upnp, port: int) -> void:
+	upnp.delete_port_mapping(port, "UDP")
+	upnp.delete_port_mapping(port + 1, "UDP")
+
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_WM_CLOSE_REQUEST or what == NOTIFICATION_PREDELETE:  # (quitting: the router's ports closed)
+		if _upnp != null:
+			_close_router(_upnp.upnp, int(_upnp.port))
+			_upnp = null
+
+
+## Joins the room hosted at `address` ("host" or "host:port"), with its `password` if it has one. How it goes is told
+## by `changed` and `status`.
+func join(address: String, password := "") -> String:
+	var rejoining := _rejoin.duplicate()
 	leave()
+	_rejoin = rejoining
+	_password = password
+	_host_ended = false
 	var where := address.strip_edges()
 	var port := PORT
 	if where.count(":") == 1:
@@ -155,8 +221,17 @@ func join(address: String) -> String:
 
 ## Leaves the session (as the host, ends it). A player who joined keeps a copy of the room, as it was.
 func leave() -> void:
+	_rejoin = {}
 	if role == "":
 		return
+	if role == "host" and multiplayer.multiplayer_peer != null:  # (the others told it is over, not lost)
+		_send("ending", {})
+		(multiplayer.multiplayer_peer as ENetMultiplayerPeer).host.flush()
+	if _upnp != null:
+		_close_router(_upnp.upnp, int(_upnp.port))
+		_upnp = null
+	public_address = ""
+	router = ""
 	if multiplayer.multiplayer_peer != null:
 		multiplayer.multiplayer_peer.close()
 	multiplayer.multiplayer_peer = null
@@ -191,7 +266,7 @@ func _end(why: String) -> void:
 	if was == "guest":
 		app.session.end_copy()
 	status = why
-	if why != "" and was != "":
+	if why != "" and was != "" and _rejoin.is_empty():
 		app.session.notice.emit("Playing together ended: %s" % why)
 	changed.emit()
 
@@ -249,7 +324,37 @@ func report(data: Dictionary) -> void:
 
 func _on_connected() -> void:
 	me = multiplayer.get_unique_id()
-	_send("hello", {"protocol": PROTOCOL, "name": _my_name(), "height": app.settings.height}, 1)
+	_send("hello", {"protocol": PROTOCOL, "name": _my_name(), "height": app.settings.height, "password": _password}, 1)
+
+
+## The host gone without saying so (the connection lost, as a network can drop out): tried again every few seconds for
+## half a minute, the copy of the room kept as it is meanwhile. Ended by the host, or left: over.
+func _lost() -> void:
+	if role != "guest" or _host_ended:
+		_end("the host has ended the session" if _host_ended else "the host has left")
+		return
+	var again := {"where": _where, "port": _port, "password": _password, "tries": 0, "next": 1.0}
+	_end("")
+	_rejoin = again
+	status = "The connection to the host was lost: trying to get back in…"
+	app.session.notice.emit(status)
+	changed.emit()
+
+
+func _try_rejoining(delta: float) -> void:
+	_rejoin.next = float(_rejoin.next) - delta
+	if float(_rejoin.next) > 0.0 or role == "guest":
+		return
+	_rejoin.tries = int(_rejoin.tries) + 1
+	if int(_rejoin.tries) > 10:
+		_rejoin = {}
+		status = "the connection to the host was lost"
+		app.session.notice.emit("Playing together ended: %s" % status)
+		changed.emit()
+		return
+	_rejoin.next = 3.0
+	join("%s:%d" % [_rejoin.where, int(_rejoin.port)], str(_rejoin.password))
+	status = "The connection to the host was lost: trying to get back in (%d)…" % int(_rejoin.tries)
 
 
 func _on_peer_connected(_id: int) -> void:
@@ -292,7 +397,10 @@ func _on_packet(id: int, bytes: PackedByteArray) -> void:
 		"welcome":
 			_on_welcome(data)
 		"refused":
+			_rejoin = {}
 			_end(str(data.get("why", "the host said no")))
+		"ending":  # (the host is ending the session: not a connection lost)
+			_host_ended = true
 		"players":
 			players = data
 			for each in _bodies.keys():
@@ -355,6 +463,9 @@ func _on_hello(id: int, data: Dictionary) -> void:
 	if int(data.get("protocol", 0)) != PROTOCOL:
 		_send("refused", {"why": "it is another version of SoundRoom"}, id)
 		return
+	if _password != "" and str(data.get("password", "")) != _password:
+		_send("refused", {"why": "the password isn't right"}, id)
+		return
 	players[id] = {"name": str(data.get("name", "Player")), "height": float(data.get("height", 1.75)),
 		"color": _color_data(COLORS[players.size() % COLORS.size()])}
 	_tell_engine_who()
@@ -368,6 +479,7 @@ func _on_hello(id: int, data: Dictionary) -> void:
 
 ## In: the room as the host has it, made here.
 func _on_welcome(data: Dictionary) -> void:
+	_rejoin = {}
 	role = "guest"
 	me = int(data.you)
 	host_name = str(data.host)
@@ -527,8 +639,10 @@ func _play_in_step() -> void:
 	if timeline.playing and not timeline.recording:  # (from somewhere else)
 		audio.set_sequencer_running(false)
 		timeline.playing = false
-	timeline.play_together(from, float(clock.get("punch_in", from)), maxf(float(at - now) / 1e6 - _output_latency(), 0.0),
-		bool(clock.get("record", false)) and not late, bool(clock.get("loop_record", false)))
+	var recording := bool(clock.get("record", false)) and not late
+	timeline.play_together(from, float(clock.get("punch_in", from)), maxf(float(at - now) / 1e6 - _output_latency(), 0.0), recording,
+		bool(clock.get("loop_record", false)), float(clock.get("count_in", 0.0)) if recording else 0.0, float(clock.get("counted_us", 0)) / 1e6,
+		float(clock.get("punch_out", -1.0)))
 	_started_us = Time.get_ticks_usec()
 
 
@@ -543,7 +657,8 @@ func request_transport(on: bool, record := false, from := -1.0) -> void:
 	var timeline = app.timeline
 	var ask := {"on": on, "record": record, "from": timeline.playhead if from < 0.0 else from,
 		"preroll": float(app.settings.preroll_bars * timeline.STEPS_PER_BAR), "loop_record": record and app.settings.loop_record,
-		"follow": app.settings.insertion_follows}
+		"follow": app.settings.insertion_follows, "count_in": float(app.settings.count_in_bars * timeline.STEPS_PER_BAR) if record else 0.0,
+		"punch": record and app.settings.punch, "postroll": float(app.settings.postroll_bars * timeline.STEPS_PER_BAR)}
 	if role == "host":
 		set_transport(ask)
 	else:
@@ -566,10 +681,19 @@ func set_transport(ask: Dictionary) -> void:
 		wanted = clock.duplicate()
 		wanted.record = true
 	else:
-		var from: float = app.timeline.loop_start if bool(ask.get("loop_record", false)) else float(ask.from)
+		# (punching in and out over the range on the ruler, or round it, a take a pass: from its start)
+		var timeline = app.timeline
+		var looped: bool = bool(ask.get("loop_record", false))
+		var punched: bool = bool(ask.get("punch", false)) and not looped and timeline.loop_end > timeline.loop_start
+		var from: float = timeline.loop_start if looped or punched else float(ask.from)
 		var preroll := float(ask.get("preroll", 0.0)) if not bool(clock.running) else 0.0
-		wanted = {"running": true, "anchor_us": now + int(START_AHEAD * 1e6), "anchor_step": maxf(from - preroll, 0.0), "bpm": app.tempo,
-			"record": bool(ask.record), "loop_record": bool(ask.get("loop_record", false)), "punch_in": from}
+		# A count-in: the click counts whole beats (at least one) before the music, which starts once it has.
+		var count_in := float(ask.get("count_in", 0.0)) if bool(ask.record) else 0.0
+		var beats := maxi(1, roundi(count_in / 4.0)) if count_in > 0.0 else 0
+		var counted := int(beats * 4 * 15.0 / app.tempo * 1e6)
+		wanted = {"running": true, "anchor_us": now + int(START_AHEAD * 1e6) + counted, "anchor_step": maxf(from - preroll, 0.0), "bpm": app.tempo,
+			"record": bool(ask.record), "loop_record": looped, "punch_in": from, "count_in": count_in, "counted_us": counted,
+			"punch_out": timeline.loop_end if punched else -1.0, "postroll": float(ask.get("postroll", 0.0)) if punched else 0.0}
 	_send("clock", wanted)
 	_follow(wanted)
 
@@ -1040,8 +1164,13 @@ func carried_by_another(inst) -> String:
 # ── Each frame ──────────────────────────────────────────────────────────────────────────────────────────────
 
 func _process(delta: float) -> void:
+	if not _rejoin.is_empty():
+		_try_rejoining(delta)
 	if not is_playing_together():
 		return
+	if role == "host" and is_recording() and float(clock.get("punch_out", -1.0)) >= 0.0 and \
+			expected_step() >= float(clock.punch_out) + float(clock.get("postroll", 0.0)):  # (punched out, and the post-roll played)
+		set_transport({"on": false, "follow": false})
 	sync.tick(delta)
 	_send_files()
 	for note in audio.take_played_notes():  # (a MIDI controller's, here)

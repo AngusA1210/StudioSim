@@ -3462,11 +3462,20 @@ func _run() -> void:
 		return true
 	var sync = main.net.sync
 	var port := 48000 + randi() % 2000
+	main.together_page._password.text = "jam"
 	var hosted: String = main.together_page.host(port, "127.0.0.1")  # (this computer alone: no firewall to ask)
-	check(hosted == "" and main.net.role == "host" and main.net.players.size() == 1 and main.instruments.all(func(i): return sync.id_of(i) != ""),
-		"the room is hosted, for others to join, each instrument named for the network", hosted)
-	var guest_run := OS.create_process(OS.get_executable_path(), ["--headless", "--path", ProjectSettings.globalize_path("res://"), "--script",
-		"res://tests/together_guest.gd", "--", "--silent", "--join=127.0.0.1:%d" % port])
+	main.together_page._password.text = ""
+	check(hosted == "" and main.net.role == "host" and main.net.players.size() == 1 and main.instruments.all(func(i): return sync.id_of(i) != "") and
+		main.net.router == "", "the room is hosted, for others to join (with a password), each instrument named for the network (no router asked)", hosted)
+	var guest_args := ["--headless", "--path", ProjectSettings.globalize_path("res://"), "--script", "res://tests/together_guest.gd", "--", "--silent",
+		"--join=127.0.0.1:%d" % port]
+	var stranger := OS.create_process(OS.get_executable_path(), guest_args + ["--password=nope"])
+	var stranger_until := Time.get_ticks_msec() + 45000
+	while OS.is_process_running(stranger) and Time.get_ticks_msec() < stranger_until:
+		await process_frame
+	check(not OS.is_process_running(stranger) and OS.get_process_exit_code(stranger) == 2 and main.net.players.size() == 1,
+		"a player giving the wrong password is turned away", "it ended with %d" % OS.get_process_exit_code(stranger))
+	var guest_run := OS.create_process(OS.get_executable_path(), guest_args + ["--password=jam"])
 	var joined: Dictionary = await wait_for.call("joined", 45.0)
 	check(not joined.is_empty() and joined.ids == sync.ids() and joined.kinds == main.instruments.map(func(i): return i.kind) and
 		close_to.call(joined.places, main.instruments.map(func(i): return sync.place_of(i))) and hash(joined.room) == hash(sync.room_entry()) and
@@ -3599,6 +3608,34 @@ func _run() -> void:
 		float(midi_take[0].start) >= 15.0 and not timeline.playing,
 		"recording, started here, records their armed tracks there (this player's plays on): their notes, and their audio, its file sent here",
 		"%s, %s" % [str(audio_take.get("file", "no audio take")), "a MIDI take from step %.1f" % float(midi_take[0].start) if not midi_take.is_empty() else "no MIDI take"])
+	# Punching in and out over bar 2, after a bar's count-in (theirs to hear, recording): the session stops by itself once
+	# punched out, back where it started; what they recorded is that bar's.
+	main.settings.punch = true
+	main.settings.count_in_bars = 1
+	timeline.set_loop(true, 16.0, 32.0)
+	await seconds(0.6)
+	var punch_before: Array = keys_shared.clips.map(func(c): return hash(c))
+	timeline.toggle_record()
+	await seconds(3.2)
+	main.net.report({"ask": "play", "id": sync.id_of(keys_shared), "note": 67})
+	await wait_for.call("played", 10.0)
+	var stop_until := Time.get_ticks_msec() + 10000
+	while timeline.playing and Time.get_ticks_msec() < stop_until:
+		await process_frame
+	var stopped_itself: bool = not timeline.playing
+	var punched := {}
+	var punched_until := Time.get_ticks_msec() + 10000
+	while punched.is_empty() and Time.get_ticks_msec() < punched_until:
+		await process_frame
+		for c in keys_shared.clips:
+			if not punch_before.has(hash(c)) and str(c.get("kind", "")) == "midi" and c.notes.any(func(n): return int(n.note) == 67):
+				punched = c
+	main.settings.punch = false
+	main.settings.count_in_bars = 0
+	check(stopped_itself and not punched.is_empty() and float(punched.start) >= 15.9 and float(punched.start) + float(punched.length) <= 32.5 and
+		is_equal_approx(timeline.playhead, 16.0),
+		"punched in over bar 2 after a count-in, they record that bar alone, and the session stops by itself once punched out",
+		"steps %.1f to %.1f" % [float(punched.get("start", -1.0)), float(punched.get("start", -1.0)) + float(punched.get("length", 0.0))])
 	main.net.report({"ask": "arm", "id": sync.id_of(keys_shared), "on": false})
 	await wait_for.call("arm", 10.0)
 	main.net.report({"ask": "arm", "id": sync.id_of(speaker_shared), "on": false})
@@ -3619,6 +3656,22 @@ func _run() -> void:
 	await seconds(0.5)
 	timeline.set_mode("jam")
 	await seconds(0.6)
+	# Their connection lost (the host drops it, as a network can): they come back in by themselves.
+	(main.net.multiplayer.multiplayer_peer as ENetMultiplayerPeer).disconnect_peer(guest_id)
+	var back_until := Time.get_ticks_msec() + 30000
+	var back_as := 0
+	while Time.get_ticks_msec() < back_until and back_as == 0:
+		await process_frame
+		for player_id in main.net.players:
+			if int(player_id) != 1 and int(player_id) != guest_id and str(main.net.players[player_id].name) == "Guest":
+				back_as = int(player_id)
+	await seconds(1.5)
+	main.net.report({"ask": "transport"})
+	var back_there: Dictionary = await wait_for.call("transport", 10.0)
+	check(back_as != 0 and main.net.players.size() == 2 and not back_there.is_empty() and main.net.body_of(back_as) != null,
+		"their connection lost, they come back in by themselves", "back as player %d" % back_as)
+	if back_as != 0:
+		guest_id = back_as
 	# They leave: their body goes.
 	main.net.report({"ask": "leave"})
 	var left_until := Time.get_ticks_msec() + 8000

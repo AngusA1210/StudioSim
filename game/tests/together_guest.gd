@@ -2,18 +2,22 @@ extends SceneTree
 ## The other player, for the automated checks: ui_check.gd hosts a room and starts this, a second copy of the game,
 ## which joins it and then does what the checks ask, saying what it found (over the session itself).
 ## Run by ui_check.gd: godot --headless --path game --script tests/together_guest.gd -- --silent --join=127.0.0.1:<port>
+## [--password=<the host's>] (turned away, it quits with 2)
 
 const RoomSync := preload("res://scripts/room_sync.gd")
 
 var main
 var view: SubViewport
 var address := ""
+var password := ""
 
 
 func _initialize() -> void:
 	for arg in OS.get_cmdline_user_args():
 		if arg.begins_with("--join="):
 			address = arg.trim_prefix("--join=")
+		if arg.begins_with("--password="):
+			password = arg.trim_prefix("--password=")
 	view = SubViewport.new()
 	view.size = Vector2i(1280, 760)
 	root.add_child(view)
@@ -29,13 +33,13 @@ func _run() -> void:
 	main.settings.height = 1.62
 	main.player.set_height(1.62)
 	main.net.reported.connect(_on_asked)
-	main.net.join(address)
+	main.net.join(address, password)
 	var until := Time.get_ticks_msec() + 20000
 	while main.net.role != "guest" and Time.get_ticks_msec() < until:
 		await process_frame
 	if main.net.role != "guest":
 		print("GUEST: couldn't join %s (%s)" % [address, main.net.status])
-		quit(1)
+		quit(2 if main.net.status.contains("password") else 1)
 		return
 	main.title.enter()
 	for i in 20:
@@ -43,8 +47,8 @@ func _run() -> void:
 	main.net.report({"step": "joined", "ids": main.net.sync.ids(), "kinds": main.instruments.map(func(i): return i.kind),
 		"places": main.instruments.map(func(i): return main.net.sync.place_of(i)), "players": main.net.players.size(), "me": main.net.me,
 		"room": main.net.sync.room_entry(), "at": [main.player.global_position.x, main.player.global_position.z]})
-	until = Time.get_ticks_msec() + 120000  # (the checks go on for at most two minutes)
-	while main.net.role == "guest" and Time.get_ticks_msec() < until:
+	until = Time.get_ticks_msec() + 180000  # (the checks go on for at most three minutes)
+	while (main.net.role == "guest" or not main.net._rejoin.is_empty()) and Time.get_ticks_msec() < until:
 		await process_frame
 	quit(0)
 

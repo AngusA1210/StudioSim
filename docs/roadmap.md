@@ -29,8 +29,10 @@ To do, roughly in this order:
    everything in it kept the same for everyone, each player's body seen by the others, notes played heard by all,
    the patterns in step on the session's clock, live inputs' sound streamed between players with Opus, voices from
    the players' bodies, and Record rooms together: one transport, each player recording what they arm, recordings'
-   files sent to everyone; see [Playing together](playing-together.md)). Next: a session server to meet through
-   without forwarding a port.
+   files sent to everyone, with a count-in and punching together; hosting over the internet, the router asked to
+   open the ports by UPnP; a password; getting back in after a lost connection; see
+   [Playing together](playing-together.md)). Next: a session server to meet through where the router can't open a
+   port.
 
 Also wanted along the way: MIDI on Linux, and VR through OpenXR. Perhaps later a free version with Jam rooms
 only, Record rooms coming with the full one.
