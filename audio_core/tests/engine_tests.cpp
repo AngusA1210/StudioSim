@@ -291,7 +291,7 @@ struct VirtualKeyboard {
     MIDIClientRef client = 0;
     MIDIEndpointRef source = 0;
     bool open(CFStringRef name) {
-        return MIDIClientCreate(CFSTR("Studiolator Tests"), nullptr, nullptr, &client) == noErr &&
+        return MIDIClientCreate(CFSTR("StudioSim Tests"), nullptr, nullptr, &client) == noErr &&
                MIDISourceCreateWithProtocol(client, name, kMIDIProtocol_1_0, &source) == noErr;
     }
     void send(uint8_t status, uint8_t d1, uint8_t d2) const {
@@ -449,7 +449,7 @@ int main(int argc, char** argv) {
             std::printf("%-26s %-34s %s\n", p.category.c_str(), p.name.c_str(), p.maker.c_str());
         return 0;
     }
-    std::printf("Studiolator audio core: offline checks\n");
+    std::printf("StudioSim audio core: offline checks\n");
     setVst3SearchPaths({SR_TEST_VST3_DIR});  // (the checks' own VST3 plug-in, never anyone's own)
 
     {
@@ -600,7 +600,7 @@ int main(int argc, char** argv) {
     {
         std::printf("\nMIDI controller (a virtual keyboard)\n");
         VirtualKeyboard keyboard;
-        if (!keyboard.open(CFSTR("Studiolator Test Keyboard"))) {
+        if (!keyboard.open(CFSTR("StudioSim Test Keyboard"))) {
             std::printf("  [skip] the system MIDI service is not available here\n");
         } else {
             Room room;
@@ -611,7 +611,7 @@ int main(int argc, char** argv) {
             auto names = room.engine.midiDevices();
             std::string keyboard_name;
             for (const auto& d : names)
-                if (d.name.find("Studiolator Test Keyboard") != std::string::npos) keyboard_name = d.name;
+                if (d.name.find("StudioSim Test Keyboard") != std::string::npos) keyboard_name = d.name;
             check(started && !keyboard_name.empty(), "the engine finds the keyboard", fmt("%.0f MIDI source(s) listed", double(names.size())));
 
             renderSeconds(room.engine, 0.3);
@@ -683,7 +683,7 @@ int main(int argc, char** argv) {
                   fmt("keys %.0f dBFS, bass %.0f dBFS", db(layered_keys), db(layered_bass)));
 
             VirtualKeyboard second;  // plugged in while running
-            second.open(CFSTR("Studiolator Second Keyboard"));
+            second.open(CFSTR("StudioSim Second Keyboard"));
             CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.2, false);
             room.engine.pollMidi();
             check(room.engine.midiDevices().size() == names.size() + 1, "a controller plugged in later is picked up",
@@ -2452,7 +2452,7 @@ int main(int argc, char** argv) {
         check(switched && !hall.empty() && hall != as_loaded && mix.engine.factoryPresets(mix.drums, PluginPlace::Insert, 4).empty(),
               "a plug-in's own presets are listed, and choosing one changes its settings",
               factory.empty() ? "none" : fmt("%.0f presets, the last ", double(factory.size())) + factory.back());
-        const std::string preset_path = (std::filesystem::temp_directory_path() / "studiolator-engine-tests" / "Apple" / "AUReverb2" / "Big.aupreset").string();
+        const std::string preset_path = (std::filesystem::temp_directory_path() / "studiosim-engine-tests" / "Apple" / "AUReverb2" / "Big.aupreset").string();
         std::string preset_error;
         const bool written = writePluginPreset(preset_path, "Big", hall, &preset_error);
         PluginPresetFile read_back;
@@ -2464,7 +2464,7 @@ int main(int argc, char** argv) {
         const bool rejected = !readPluginPreset(preset_path + ".missing", &not_a_preset, &preset_error);
         check(read && read_back.plugin_id == au_reverb && read_back.name == "Big" && put_back && again.size() >= hall.size() - 16 && again != as_loaded && rejected,
               "a plug-in's settings saved as an .aupreset file name the plug-in and the preset, and load back", preset_error);
-        std::filesystem::remove_all(std::filesystem::temp_directory_path() / "studiolator-engine-tests");
+        std::filesystem::remove_all(std::filesystem::temp_directory_path() / "studiosim-engine-tests");
         mix.engine.clearInsert(mix.pad, 0);
 #else
         // Off a Mac, VST3s alone; an Audio Unit (from a session made on a Mac) is turned away, saying why.
@@ -2632,13 +2632,13 @@ int main(int argc, char** argv) {
         // What each module holds is kept between sessions, so a module is looked into once, not every session (some,
         // loaded to be asked, put up windows of their own: licensed plug-ins' notices).
         {
-            const auto record = std::filesystem::temp_directory_path() / "studiolator-vst3-scan.txt";
+            const auto record = std::filesystem::temp_directory_path() / "studiosim-vst3-scan.txt";
             std::filesystem::remove(record);
             setVst3ScanRecord(record.string());
             setVst3SearchPaths({SR_TEST_VST3_DIR});  // (a fresh start: nothing known)
             PluginInstance::available();
             const int first = vst3ModulesScanned();
-            setVst3SearchPaths({SR_TEST_VST3_DIR});  // (as if Studiolator were started again: only the record known)
+            setVst3SearchPaths({SR_TEST_VST3_DIR});  // (as if StudioSim were started again: only the record known)
             setVst3ScanRecord(record.string());
             const std::vector<PluginDescription> again = PluginInstance::available();
             const bool kept = std::any_of(again.begin(), again.end(), [](const PluginDescription& p) { return p.name == "SR Test Gain"; });
@@ -2653,7 +2653,7 @@ int main(int argc, char** argv) {
         const auto gain_it = std::find_if(effects.begin(), effects.end(), [](const PluginDescription& p) { return p.name == "SR Test Gain"; });
         const auto tone_it = std::find_if(instruments.begin(), instruments.end(), [](const PluginDescription& p) { return p.name == "SR Test Tone"; });
         check(gain_it != effects.end() && gain_it->format == "VST3" && gain_it->id.rfind("VST3:", 0) == 0 && gain_it->id.size() == 37 &&
-                  gain_it->maker == "Studiolator checks" && gain_it->category == "Dynamics" && tone_it != instruments.end() && tone_it->instrument,
+                  gain_it->maker == "StudioSim checks" && gain_it->category == "Dynamics" && tone_it != instruments.end() && tone_it->instrument,
               "a VST3's effects and instruments are found in its bundle, each by its class id, as the same on every platform",
               gain_it != effects.end() ? gain_it->id + ", " + gain_it->category : notFound());
         const std::string gain_id = gain_it != effects.end() ? gain_it->id : "", tone_id = tone_it != instruments.end() ? tone_it->id : "";
@@ -2677,7 +2677,7 @@ int main(int argc, char** argv) {
         const bool second_ready = second && second->prepare(48000.0, 512, &why, true) && second->loadState(saved);
         std::vector<float> left(256, 0.5f), right(256, 0.25f);
         if (second_ready) second->processStereo(left.data(), right.data(), 256);
-        const std::string preset_path = (std::filesystem::temp_directory_path() / "studiolator_check.vstpreset").string();
+        const std::string preset_path = (std::filesystem::temp_directory_path() / "studiosim_check.vstpreset").string();
         PluginPresetFile preset;
         const bool preset_ok = writePluginPreset(preset_path, "Twice as loud", saved, &why) && readPluginPreset(preset_path, &preset, &why) &&
                                preset.plugin_id == gain_id && preset.name == "Twice as loud" && preset.state == saved;
@@ -2952,7 +2952,7 @@ int main(int argc, char** argv) {
 
     {
         std::printf("\nThe timeline and recording\n");
-        const auto folder = std::filesystem::temp_directory_path() / "studiolator-recording-tests";
+        const auto folder = std::filesystem::temp_directory_path() / "studiosim-recording-tests";
         std::filesystem::remove_all(folder);
         std::filesystem::create_directories(folder);
 
@@ -3190,7 +3190,7 @@ int main(int argc, char** argv) {
 
     {
         std::printf("\nReading recorded audio from disk as it plays\n");
-        const auto folder = std::filesystem::temp_directory_path() / "studiolator-streaming-tests";
+        const auto folder = std::filesystem::temp_directory_path() / "studiosim-streaming-tests";
         std::filesystem::remove_all(folder);
         std::filesystem::create_directories(folder);
         // A minute of a tone growing louder as it goes, so its level says where in it the music is (16-bit and two
@@ -3997,7 +3997,7 @@ int main(int argc, char** argv) {
         }
 
         // Armed and recording, it records what it hears, as an amp records its input.
-        const auto folder = std::filesystem::temp_directory_path() / "studiolator-mic-tests";
+        const auto folder = std::filesystem::temp_directory_path() / "studiosim-mic-tests";
         std::filesystem::remove_all(folder);
         std::filesystem::create_directories(folder);
         room.engine.setSourceInput(mic, false);
@@ -4213,7 +4213,7 @@ int main(int argc, char** argv) {
         room.engine.setMicMidSide(pair, false);
 
         // Armed, it records one stereo file; played back, its clip is in two channels again.
-        const auto folder = std::filesystem::temp_directory_path() / "studiolator-stereo-mic-tests";
+        const auto folder = std::filesystem::temp_directory_path() / "studiosim-stereo-mic-tests";
         std::filesystem::remove_all(folder);
         std::filesystem::create_directories(folder);
         room.engine.setMicModel(pair, "pencil", MicPattern::Cardioid);

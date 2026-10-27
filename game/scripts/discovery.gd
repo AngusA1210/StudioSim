@@ -2,7 +2,7 @@ extends RefCounted
 ## Finding rooms on this network, for the room browser, with no server: a player looking asks every computer on the
 ## network every couple of seconds (a UDP broadcast), and each one hosting a listed room answers with what it is (its
 ## name, its host, Jam or Record, how many are in it, whether it has a password). The host answers on a port of its
-## own (47129, or one of the next three if another copy of Studiolator on that computer has it), from the same program
+## own (47129, or one of the next three if another copy of StudioSim on that computer has it), from the same program
 ## its session's port belongs to, so a firewall that lets the one in lets the other.
 ##
 ## The automated runs ask this computer alone (127.0.0.1), never the network.
@@ -101,7 +101,7 @@ func tick(delta: float) -> void:
 		return
 	_since = 0.0
 	var ask := (ASK + " " + str(net.PROTOCOL)).to_utf8_buffer()
-	var where := ["127.0.0.1"]  # (a room hosted on this computer, by another copy of Studiolator)
+	var where := ["127.0.0.1"]  # (a room hosted on this computer, by another copy of StudioSim)
 	if not net.app.options.has("silent"):
 		where.append("255.255.255.255")
 		for address in IP.get_local_addresses():  # (and each network's own broadcast address, as a /24 has it)
@@ -115,6 +115,6 @@ func tick(delta: float) -> void:
 				failed = true
 	problem = ""
 	if failed:
-		problem = ("this Mac isn't letting Studiolator reach the local network: allow it in System Settings > Privacy & Security > Local Network " +
+		problem = ("this Mac isn't letting StudioSim reach the local network: allow it in System Settings > Privacy & Security > Local Network " +
 			"(for Godot, or for the app it was started from, such as Terminal)") if OS.get_name() == "macOS" else \
 			"this computer couldn't ask the local network (is it connected to one?)"

@@ -1,4 +1,4 @@
-// Studiolator's room list: the rooms hosted over the internet, for every player's room browser. A Cloudflare Worker
+// StudioSim's room list: the rooms hosted over the internet, for every player's room browser. A Cloudflare Worker
 // with a D1 database (both free), set up as docs/room-list.md says. It only lists rooms: players connect to each other
 // directly, to the address the host's computer has on the internet.
 //
@@ -33,7 +33,7 @@ async function handle(request, store, now) {
   const path = url.pathname.replace(/\/+$/, "");
   const since = now - FRESH_MS;
   if (request.method === "GET" && path === "") {
-    return reply({ service: "Studiolator room list", rooms: (await store.list(since, MOST_LISTED)).length });
+    return reply({ service: "StudioSim room list", rooms: (await store.list(since, MOST_LISTED)).length });
   }
   if (request.method === "GET" && path === "/rooms") {
     return reply({ rooms: await store.list(since, MOST_LISTED) });

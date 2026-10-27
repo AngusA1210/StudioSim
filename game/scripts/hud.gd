@@ -22,7 +22,7 @@ const BLACK_KEYS := [[KEY_W, "W", 0], [KEY_E, "E", 1], [KEY_T, "T", 3], [KEY_Y, 
 const DRUM_LABELS := {"Floor tom": "Floor\ntom", "Closed hat": "Hat\nclosed", "Pedal hat": "Hat\npedal", "Open hat": "Hat\nopen"}
 
 var app
-var audio: StudiolatorAudio
+var audio: StudioSimAudio
 var player
 
 var _root: Control

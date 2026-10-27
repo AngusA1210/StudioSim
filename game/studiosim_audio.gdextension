@@ -1,18 +1,18 @@
 [configuration]
 
-entry_symbol = "studiolator_audio_init"
+entry_symbol = "studiosim_audio_init"
 compatibility_minimum = "4.5"
 ; The extension owns a real-time audio thread, so it is not safe to hot-reload.
 reloadable = false
 
 [libraries]
 
-macos.debug = "res://bin/libstudiolator_audio.dylib"
-macos.release = "res://bin/libstudiolator_audio.dylib"
-windows.debug.x86_64 = "res://bin/studiolator_audio.dll"
-windows.release.x86_64 = "res://bin/studiolator_audio.dll"
-linux.debug.x86_64 = "res://bin/libstudiolator_audio.so"
-linux.release.x86_64 = "res://bin/libstudiolator_audio.so"
+macos.debug = "res://bin/libstudiosim_audio.dylib"
+macos.release = "res://bin/libstudiosim_audio.dylib"
+windows.debug.x86_64 = "res://bin/studiosim_audio.dll"
+windows.release.x86_64 = "res://bin/studiosim_audio.dll"
+linux.debug.x86_64 = "res://bin/libstudiosim_audio.so"
+linux.release.x86_64 = "res://bin/libstudiosim_audio.so"
 
 [dependencies]
 

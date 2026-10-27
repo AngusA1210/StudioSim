@@ -64,7 +64,7 @@ audio_core/
     mix.*                  room reverb (feedback delay network, sized to the room) and output limiter
                            (the output meter and the distance law live in engine.* and spatializer.*)
     compensation.h         the delay lines delay compensation is made of
-  src/godot/               the Godot extension wrapping the engine (StudiolatorAudio node)
+  src/godot/               the Godot extension wrapping the engine (StudioSimAudio node)
   src/server/              the session server, a program of its own that players meet through (session-server.md)
   tests/engine_tests.cpp   offline checks: levels, binaural direction, walls, latency, MIDI, live input, sequencer, amps, pedals, plug-ins, loop pedal
   tests/session_server_tests.cpp  the session server's checks: codes, finding a session, a relay
@@ -72,7 +72,7 @@ game/tests/ui_check.gd     the game driven by pretend keys and clicks: title, pl
                            presets, and rooms (making, saving, backups, opening), and playing together
 game/tests/together_guest.gd  a second copy of the game that joins the room ui_check.gd hosts, and does what it asks
 services/room-list/        the room list: a Cloudflare Worker (worker.js) and its D1 table, its checks, and a stand-in
-prototypes/studiolator/    the original browser prototype, for reference
+prototypes/studiosim/    the original browser prototype, for reference
 tools/                     build and dependency scripts
 ```
 

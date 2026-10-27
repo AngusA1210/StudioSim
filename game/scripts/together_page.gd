@@ -211,7 +211,7 @@ func _join_listed() -> void:
 	if room.is_empty():
 		return
 	if int(room.get("protocol", 0)) != Net.PROTOCOL:
-		tell("%s is hosted by another version of Studiolator." % str(room.name))
+		tell("%s is hosted by another version of StudioSim." % str(room.name))
 		return
 	if bool(room.get("locked", false)) and _list_password.text.strip_edges() == "":
 		tell("%s has a password: type it beside Join." % str(room.name))

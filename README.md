@@ -1,4 +1,4 @@
-# Studiolator
+# StudioSim
 
 A shared 3D space for playing music together. Instruments stand in a room, you walk around it in first person, and
 everything you hear is rendered binaurally from where you stand and which way you face.

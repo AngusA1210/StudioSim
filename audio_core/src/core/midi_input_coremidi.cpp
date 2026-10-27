@@ -112,14 +112,14 @@ bool MidiInput::start(Sink sink, std::string* error) {
     if (impl_->client) return true;
     impl_->sink = std::move(sink);
     Impl* impl = impl_.get();
-    if (MIDIClientCreateWithBlock(CFSTR("Studiolator"), &impl->client, ^(const MIDINotification* message) {
+    if (MIDIClientCreateWithBlock(CFSTR("StudioSim"), &impl->client, ^(const MIDINotification* message) {
             if (message->messageID == kMIDIMsgSetupChanged) impl->rescan();
         }) != noErr) {
         if (error) *error = "could not start MIDI";
         impl->client = 0;
         return false;
     }
-    if (MIDIInputPortCreateWithProtocol(impl->client, CFSTR("Studiolator In"), kMIDIProtocol_1_0, &impl->port,
+    if (MIDIInputPortCreateWithProtocol(impl->client, CFSTR("StudioSim In"), kMIDIProtocol_1_0, &impl->port,
                                         ^(const MIDIEventList* list, void* source) {
                                             impl->handle(list, static_cast<Impl::Entry*>(source));
                                         }) != noErr) {

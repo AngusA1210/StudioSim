@@ -25,7 +25,7 @@ is left as it was last saved. The copy goes in a folder of its own in **Together
 record goes there, and what the others record comes there. It is saved there when you save it, and it stays yours
 after you leave.
 
-**Over the internet**: tick it before hosting, and Studiolator asks your router, by UPnP, to open the session's port
+**Over the internet**: tick it before hosting, and StudioSim asks your router, by UPnP, to open the session's port
 and the next one (47131: the sound between players) to this computer while you host. Most home routers allow it.
 The page then shows your public address, for the others to join at from anywhere under Direct connect, and a
 listed room is put on the [room list](room-list.md), for everyone's Rooms tab. The ports are closed again, and the
@@ -49,7 +49,7 @@ once, allow Godot in Windows Security > Firewall & network protection > Allow an
 its firewall on asks too. A Mac may also ask whether Godot (or the app it was started from, such as Terminal) can
 find devices on the local network; it must be let (System Settings > Privacy & Security > Local Network): the Rooms
 tab says when it can't ask the network. Both computers must be on the same network, and not a guest Wi-Fi, which
-often keeps its computers apart. Both must run the same version of Studiolator: a room hosted by another shows so
+often keeps its computers apart. Both must run the same version of StudioSim: a room hosted by another shows so
 under Rooms.
 
 **Losing the connection**: a player whose connection to the host drops tries to get back in by themselves (by the
@@ -124,7 +124,7 @@ their own output's latency, so the first beat is heard at the same moment everyw
 nudges their patterns, a few milliseconds at a time (up to ten while they're further out than that), to keep where
 the session's clock says the music is. That
 corrects for the sound cards' clocks running at slightly different speeds. A player joining while the patterns play
-comes in on the next step. In the checks, two copies of Studiolator on one computer keep their patterns within a
+comes in on the next step. In the checks, two copies of StudioSim on one computer keep their patterns within a
 millisecond of each other.
 
 A note played live is heard by the others as soon as it arrives, so as late as the network makes it. That's a few

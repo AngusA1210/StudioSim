@@ -14,7 +14,7 @@ const TITLE_GAIN := 0.6      # the music plays a little quieter behind the title
 const TAGLINE := "A room of instruments, heard from where you stand."
 
 var app
-var audio: StudiolatorAudio
+var audio: StudioSimAudio
 var camera: Camera3D
 var buttons := {}  # "back" (into the open room), "new", "open", "together", "you", "audio", "settings", "controls", "quit" → Button
 
@@ -152,7 +152,7 @@ func _build() -> void:
 	heavy.variation_embolden = 0.7
 	heavy.spacing_glyph = 1
 	_title = Label.new()
-	_title.text = "Studiolator"
+	_title.text = "StudioSim"
 	_title.add_theme_font_override("font", heavy)
 	column.add_child(_title)
 	_tagline = Label.new()

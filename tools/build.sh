@@ -33,7 +33,7 @@ trap 'rmdir "$LOCK" 2>/dev/null || true' EXIT
 git -C "$ROOT" submodule update --init --recursive
 "$ROOT/tools/fetch_deps.sh"
 cmake -S "$ROOT/audio_core" -B "$ROOT/audio_core/build" -DCMAKE_BUILD_TYPE="$CONFIG"
-cmake --build "$ROOT/audio_core/build" --config "$CONFIG" --target engine_tests session_server_tests studiolator_session_server studiolator_audio \
+cmake --build "$ROOT/audio_core/build" --config "$CONFIG" --target engine_tests session_server_tests studiosim_session_server studiosim_audio \
   -j "$(sysctl -n hw.ncpu 2>/dev/null || nproc)"
 case "$(uname -s)" in
   MINGW*|MSYS*|CYGWIN*)  # (Visual Studio builds each kind in a folder of its own)

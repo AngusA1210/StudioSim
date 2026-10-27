@@ -21,12 +21,12 @@
 
 namespace godot {
 
-class StudiolatorAudio : public Node {
-    GDCLASS(StudiolatorAudio, Node)
+class StudioSimAudio : public Node {
+    GDCLASS(StudioSimAudio, Node)
 
 public:
-    StudiolatorAudio();
-    ~StudiolatorAudio() override;
+    StudioSimAudio();
+    ~StudioSimAudio() override;
 
     // ── Playback engine and I/O ──────────────────────────────────────────────────────────────────────────
     // Opens the default output. silent = run the audio clock without a sound card (automated runs).

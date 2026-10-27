@@ -62,7 +62,7 @@ const send = async (method, path, body, from) => {
 const room = (extra = {}) => ({ id: "a1b2c3d4e5f6", token: "tokentokentoken123", name: "Friday jam", host: "Andrew", mode: "jam", players: 1,
   most: 8, locked: false, port: 47130, protocol: 1, open: true, ...extra });
 
-say("Studiolator's room list: checks\n");
+say("StudioSim's room list: checks\n");
 
 let r = await send("POST", "/rooms", room());
 let listed = await send("GET", "/rooms");
@@ -102,7 +102,7 @@ check(stays && gone, "taken off the list by its host, and only by its host", `${
 for (const each of kept.values()) each.updated -= 80000;
 listed = await send("GET", "/rooms");
 const front = await send("GET", "/");
-check(listed.data.rooms.length === 0 && front.data.service === "Studiolator room list", "a room not heard from for 75 seconds isn't listed",
+check(listed.data.rooms.length === 0 && front.data.service === "StudioSim room list", "a room not heard from for 75 seconds isn't listed",
   `${listed.data.rooms.length} listed`);
 
 check((await send("GET", "/nothing")).status === 404, "anything else isn't there", "404");

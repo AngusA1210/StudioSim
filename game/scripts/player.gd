@@ -31,7 +31,7 @@ const Bindings := preload("res://scripts/bindings.gd")  # the keys, and the comp
 const KEYMAP := Bindings.NOTES
 
 var app  # main.gd: settings and the audio core
-var audio: StudiolatorAudio
+var audio: StudioSimAudio
 var instruments: Array = []
 var camera: Camera3D  # your eyes
 var head: Node3D  # the middle of your head, between your ears, turned as you look: where you hear from

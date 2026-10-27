@@ -51,7 +51,7 @@ const FOOT_HEIGHT := 40.0  # a strip's foot: an instrument's level in the room, 
 const PAN_HEIGHT := 40.0
 
 var app
-var audio: StudiolatorAudio
+var audio: StudioSimAudio
 
 var _root: Control
 var _panel: PanelContainer

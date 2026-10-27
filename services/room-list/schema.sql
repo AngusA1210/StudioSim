@@ -1,4 +1,4 @@
--- Studiolator's room list (worker.js): one row for each room hosted over the internet.
+-- StudioSim's room list (worker.js): one row for each room hosted over the internet.
 CREATE TABLE IF NOT EXISTS rooms (
   id TEXT PRIMARY KEY,
   token TEXT NOT NULL,

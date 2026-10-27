@@ -27,7 +27,7 @@ const HELP := "Click a square to add a note, click a note to remove it. Right-cl
 
 var app
 var _close_button: Button  # its label says which key closes it too
-var audio: StudiolatorAudio
+var audio: StudioSimAudio
 var inst = null  # the instrument whose pattern is open
 var bar := 0
 

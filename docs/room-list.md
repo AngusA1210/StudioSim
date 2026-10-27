@@ -3,7 +3,7 @@
 The room list puts rooms hosted over the internet into every player's room browser (the Rooms tab of Play
 together), as rooms on one network appear there by themselves. It is a small program on Cloudflare (a Worker, with a
 D1 database to keep the rooms in), both on Cloudflare's free plan, with nothing to look after once it is set up.
-Everyone uses the same one: it is set up once, and its address goes into Studiolator.
+Everyone uses the same one: it is set up once, and its address goes into StudioSim.
 
 It only lists rooms. A player joining connects straight to the host's computer, at the address the list saw the host
 come from, so the host's router must have its ports open: **Over the internet** asks it to (UPnP), and the Rooms tab
@@ -18,24 +18,24 @@ Nothing needs installing for this.
 
 1. Sign up for a free account at [dash.cloudflare.com](https://dash.cloudflare.com/sign-up).
 2. **The database.** In the dashboard, open **Storage & Databases › D1 SQL Database** and create a database named
-   `studiolator-rooms`. Open it, go to its **Console**, paste in everything in `services/room-list/schema.sql`, and
+   `studiosim-rooms`. Open it, go to its **Console**, paste in everything in `services/room-list/schema.sql`, and
    run it. The console then shows a `rooms` table.
 3. **The Worker.** Open **Compute (Workers) › Workers & Pages**, choose **Create**, start from the "Hello World"
-   Worker, name it `studiolator-rooms`, and deploy it. Then choose **Edit code**, replace everything in it with
+   Worker, name it `studiosim-rooms`, and deploy it. Then choose **Edit code**, replace everything in it with
    `services/room-list/worker.js`, and deploy again.
 4. **Connect the two.** In the Worker's **Settings › Bindings**, add a binding: a **D1 database**, with the variable
-   name `DB` (exactly that), and the `studiolator-rooms` database. Save it, which deploys the Worker again.
-5. **Try it.** The Worker's page shows its address, something like `https://studiolator-rooms.<yours>.workers.dev`.
-   Open that address in a browser: it should say `{"service":"Studiolator room list","rooms":0}`. Adding `/rooms` to
+   name `DB` (exactly that), and the `studiosim-rooms` database. Save it, which deploys the Worker again.
+5. **Try it.** The Worker's page shows its address, something like `https://studiosim-rooms.<yours>.workers.dev`.
+   Open that address in a browser: it should say `{"service":"StudioSim room list","rooms":0}`. Adding `/rooms` to
    the address shows the list itself: `{"rooms":[]}`.
-6. **Tell Studiolator.** Put the address into `game/scripts/room_list.gd`, as `ADDRESS` near its top, without a
+6. **Tell StudioSim.** Put the address into `game/scripts/room_list.gd`, as `ADDRESS` near its top, without a
    slash at the end:
 
    ```gdscript
-   const ADDRESS := "https://studiolator-rooms.<yours>.workers.dev"
+   const ADDRESS := "https://studiosim-rooms.<yours>.workers.dev"
    ```
 
-   Commit it, and every copy of Studiolator made from the project from then on uses the list. (The automated checks
+   Commit it, and every copy of StudioSim made from the project from then on uses the list. (The automated checks
    never use it: they use a stand-in on the same computer.)
 
 ## Setting it up from a terminal instead
@@ -47,13 +47,13 @@ npx wrangler login
 ```
 
 ```bash
-npx wrangler d1 create studiolator-rooms
+npx wrangler d1 create studiosim-rooms
 ```
 
 Put the `database_id` that prints into `wrangler.toml`, then:
 
 ```bash
-npx wrangler d1 execute studiolator-rooms --remote --file=schema.sql
+npx wrangler d1 execute studiosim-rooms --remote --file=schema.sql
 ```
 
 ```bash

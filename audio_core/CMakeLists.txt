@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(studiolator_audio LANGUAGES C CXX)
+project(studiosim_audio LANGUAGES C CXX)
 if(APPLE)
     enable_language(OBJCXX)  # hosting Audio Units and showing their windows
 endif()
@@ -186,35 +186,35 @@ target_link_libraries(sr_session_server PUBLIC Threads::Threads)
 if(WIN32)
     target_link_libraries(sr_session_server PUBLIC ws2_32)
 endif()
-add_executable(studiolator_session_server src/server/main.cpp)
-target_link_libraries(studiolator_session_server PRIVATE sr_session_server)
-set_target_properties(studiolator_session_server PROPERTIES OUTPUT_NAME "studiolator-session-server" RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+add_executable(studiosim_session_server src/server/main.cpp)
+target_link_libraries(studiosim_session_server PRIVATE sr_session_server)
+set_target_properties(studiosim_session_server PROPERTIES OUTPUT_NAME "studiosim-session-server" RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
 foreach(cfg DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)  # (in the build folder itself, where the game's checks look for it)
-    set_target_properties(studiolator_session_server PROPERTIES RUNTIME_OUTPUT_DIRECTORY_${cfg} "${CMAKE_BINARY_DIR}")
+    set_target_properties(studiosim_session_server PROPERTIES RUNTIME_OUTPUT_DIRECTORY_${cfg} "${CMAKE_BINARY_DIR}")
 endforeach()
 add_executable(session_server_tests tests/session_server_tests.cpp)
 target_link_libraries(session_server_tests PRIVATE sr_session_server)
 
 # ── Godot extension ─────────────────────────────────────────────────────────────────────────────────────────
 add_subdirectory(thirdparty/godot-cpp EXCLUDE_FROM_ALL)
-add_library(studiolator_audio SHARED
+add_library(studiosim_audio SHARED
     src/godot/register_types.cpp
-    src/godot/studiolator_audio.cpp
+    src/godot/studiosim_audio.cpp
 )
-target_link_libraries(studiolator_audio PRIVATE sr_core godot::cpp)
-set_target_properties(studiolator_audio PROPERTIES
-    OUTPUT_NAME "studiolator_audio"
+target_link_libraries(studiosim_audio PRIVATE sr_core godot::cpp)
+set_target_properties(studiosim_audio PROPERTIES
+    OUTPUT_NAME "studiosim_audio"
     LIBRARY_OUTPUT_DIRECTORY "${GAME_BIN_DIR}"
     RUNTIME_OUTPUT_DIRECTORY "${GAME_BIN_DIR}"
 )
 foreach(cfg DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)
-    set_target_properties(studiolator_audio PROPERTIES
+    set_target_properties(studiosim_audio PROPERTIES
         LIBRARY_OUTPUT_DIRECTORY_${cfg} "${GAME_BIN_DIR}" RUNTIME_OUTPUT_DIRECTORY_${cfg} "${GAME_BIN_DIR}")
 endforeach()
 if(APPLE)
     # Find libphonon.dylib next to the extension at runtime.
-    set_target_properties(studiolator_audio PROPERTIES BUILD_RPATH "@loader_path" INSTALL_RPATH "@loader_path")
+    set_target_properties(studiosim_audio PROPERTIES BUILD_RPATH "@loader_path" INSTALL_RPATH "@loader_path")
 endif()
-add_custom_command(TARGET studiolator_audio POST_BUILD
+add_custom_command(TARGET studiosim_audio POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${PHONON_LIBRARY}" "${GAME_BIN_DIR}/"
     COMMENT "Copying Steam Audio next to the extension")

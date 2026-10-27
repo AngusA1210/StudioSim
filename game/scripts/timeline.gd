@@ -1,7 +1,7 @@
 extends Node
 ## A room's mode, and a Record room's timeline, as a DAW has one.
 ##
-## A Jam room is what Studiolator always was: every instrument's pattern looping round, the music starting from the top
+## A Jam room is what StudioSim always was: every instrument's pattern looping round, the music starting from the top
 ## with Space. A Record room has a timeline: its transport plays from the playhead (and stopping goes back there, as
 ## Pro Tools does, or with insertion following playback stays where the music stopped), loop playback goes round a range of bars (the first four, to begin with), and its tracks can be
 ## armed and recorded (Cmd-Space starts recording from the playhead, Cmd-Space or Space stops it). An armed Speaker or
@@ -38,7 +38,7 @@ const MAX_CLIP_GAIN_DB := 24.0
 const COMP_XFADE := 0.01  # seconds: where two comped parts of a recording meet
 
 var app
-var audio: StudiolatorAudio
+var audio: StudioSimAudio
 var mode := "jam"         # "jam" or "record"
 var playhead := 0.0       # steps: where playing and recording start from
 var loop_on := true

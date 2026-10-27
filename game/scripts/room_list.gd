@@ -7,7 +7,7 @@ extends Node
 ##
 ## The automated runs use a list of their own, on this computer (--room-list=http://127.0.0.1:<port>), never this one.
 
-## The room list's address, once it is running: "https://studiolator-rooms.<your subdomain>.workers.dev".
+## The room list's address, once it is running: "https://studiosim-rooms.<your subdomain>.workers.dev".
 const ADDRESS := ""
 const ANNOUNCE_EVERY := 30.0
 const FETCH_EVERY := 5.0

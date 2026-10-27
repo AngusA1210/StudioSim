@@ -42,7 +42,7 @@ const NUMBER_KEYS := [KEY_1, KEY_2, KEY_3, KEY_4, KEY_5, KEY_6, KEY_7, KEY_8]
 
 var app
 var _close_button: Button  # its label says which key closes it too
-var audio: StudiolatorAudio
+var audio: StudioSimAudio
 var inst = null
 var selected := -1  # the pedal being set up under the board; -1 for none
 var _back_to_mixer := false  # opened from the mix window, which comes back when this closes

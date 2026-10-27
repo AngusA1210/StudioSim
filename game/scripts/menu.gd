@@ -32,7 +32,7 @@ Notes                   A S D F G H J K L ;  white keys,  W E T Y U O P  black k
                         (but for the panel's key, which opens it then too)."""
 
 var app
-var audio: StudiolatorAudio
+var audio: StudioSimAudio
 # The room that is open
 var _room_title: Label
 var _room_status: Label
@@ -387,7 +387,7 @@ func _build_metronome_page(page: VBoxContainer) -> void:
 	_click_slider = _slider(page, "Click volume", -24.0, 6.0, 0.5, _click_value)
 	_click_slider.value_changed.connect(_on_click_volume_changed)
 	_note(page, "The click is on every beat, higher on the first beat of the bar. It plays straight into your ears rather than from somewhere in the room.")
-	_note(page, "Space starts and stops the patterns and C switches the click, without opening this menu. To change what an instrument plays, walk up to it and press Tab. The tempo and the patterns go back to the defaults each time Studiolator starts, until rooms can be saved.")
+	_note(page, "Space starts and stops the patterns and C switches the click, without opening this menu. To change what an instrument plays, walk up to it and press Tab. The tempo and the patterns go back to the defaults each time StudioSim starts, until rooms can be saved.")
 
 
 func _build_room_page(page: VBoxContainer) -> void:
@@ -812,7 +812,7 @@ func _refresh_live() -> void:
 	_kept_value.text = "the last %d" % settings.backups_kept
 	_refresh_room()
 	_fullscreen_toggle.set_pressed_no_signal(settings.fullscreen)
-	_fullscreen_toggle.text = "On: Studiolator opens full screen" if settings.fullscreen else "Off"
+	_fullscreen_toggle.text = "On: StudioSim opens full screen" if settings.fullscreen else "Off"
 	_meter_toggle.set_pressed_no_signal(settings.show_meter)
 	_meter_toggle.text = "On" if settings.show_meter else "Off"
 	_light_slider.set_value_no_signal(settings.room_brightness * 100.0)
@@ -824,7 +824,7 @@ func _refresh_live() -> void:
 ## The header: the room's name, and when it was saved, or something just done.
 func _refresh_room() -> void:
 	var session = app.session
-	_room_title.text = (session.room_name if session.room_name.length() <= 28 else session.room_name.left(27) + "…") if session.has_room() else "Studiolator"
+	_room_title.text = (session.room_name if session.room_name.length() <= 28 else session.room_name.left(27) + "…") if session.has_room() else "StudioSim"
 	_save.visible = session.has_room() or (app.title == null or not app.title.is_open())
 	_room_menu.visible = _save.visible
 	_room_menu.get_popup().set_item_disabled(_room_menu.get_popup().get_item_index(2), not session.has_room())

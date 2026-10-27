@@ -46,7 +46,7 @@ var session_server := ""  # playing together: the session server players meet th
 var session_rules := {}  # playing together: the rules a room is last hosted with (listed, most, may: net.gd's RULES)
 
 # Rooms
-var rooms_location := ""   # the folder new rooms go in; "" for Studiolator/Rooms (see library.gd's home())
+var rooms_location := ""   # the folder new rooms go in; "" for StudioSim/Rooms (see library.gd's home())
 var recent_rooms: Array = []  # the rooms opened or saved lately, the latest first (their files)
 var room_mode := "jam"     # what a new room is made as, to begin with: "jam" or "record" (the last chosen)
 var autosave := false      # save the open room every so often, while it has changes

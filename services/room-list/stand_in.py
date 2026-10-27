@@ -101,7 +101,7 @@ def serve(port):
             if self.path.rstrip("/") == "/rooms":
                 self._reply({"rooms": rooms.list(since)})
             else:
-                self._reply({"service": "Studiolator room list", "rooms": len(rooms.list(since))})
+                self._reply({"service": "StudioSim room list", "rooms": len(rooms.list(since))})
 
         def do_POST(self):
             body = self._body()
