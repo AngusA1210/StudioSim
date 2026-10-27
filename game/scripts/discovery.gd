@@ -21,7 +21,7 @@ var looking := false
 var _answering: PacketPeerUDP = null  # (hosting) the port asked on
 var _asking: PacketPeerUDP = null
 var _since := ASK_EVERY
-var _id := ""  # (hosting) this session's, so that a room heard at two of its computer's addresses is one room
+var id := ""  # (hosting) this session's, so that a room heard at two of its computer's addresses (or on the room list too) is one room
 
 
 func _init(the_net) -> void:
@@ -31,7 +31,7 @@ func _init(the_net) -> void:
 ## (Hosting) answering those who ask, on `bind`'s address ("*": every network; "127.0.0.1": this computer alone).
 func answer(bind: String) -> void:
 	stop_answering()
-	_id = "%x%x" % [randi(), Time.get_ticks_usec()]
+	id = "%x%x" % [randi(), Time.get_ticks_usec()]
 	for k in PORTS:
 		var socket := PacketPeerUDP.new()
 		if socket.bind(PORT + k, bind) == OK:
@@ -81,7 +81,7 @@ func tick(delta: float) -> void:
 			var asked := _answering.get_packet().get_string_from_utf8()
 			if asked.begins_with(ASK) and net.role == "host" and bool(net.rules.get("listed", true)):
 				_answering.set_dest_address(_answering.get_packet_ip(), _answering.get_packet_port())
-				_answering.put_packet((ANSWER + " " + JSON.stringify(net.listing(_id))).to_utf8_buffer())
+				_answering.put_packet((ANSWER + " " + JSON.stringify(net.listing(id))).to_utf8_buffer())
 	if _asking == null:
 		return
 	while _asking.get_available_packet_count() > 0:
@@ -94,6 +94,7 @@ func tick(delta: float) -> void:
 				var was: Dictionary = rooms.get(id, {})
 				room.address = address if was.is_empty() or str(was.address).begins_with("127.") else str(was.address)  # (this network's, rather than this computer's)
 				room.seen = Time.get_ticks_msec()
+				room.where = "network"
 				rooms[id] = room
 	_since += delta
 	if _since < ASK_EVERY:

@@ -24,6 +24,7 @@ game/                      Godot project: the room, player, instruments, HUD, me
   scripts/room_sync.gd     the room kept the same for everyone: what changed sent, what came applied, in the host's order
   scripts/meeting.gd       meeting through a session server: the host's code, finding a session by it, a relay
   scripts/discovery.gd     the room browser: the rooms hosted on this network, found by a broadcast, and the host's answers
+  scripts/room_list.gd     the rooms hosted over the internet: a hosted room put on the room list, the list fetched
   scripts/together_page.gd hosting or joining, from the title screen
   scripts/library.gd       what a room holds, templates, instrument and plug-in presets, and copied settings
   scripts/timeline.gd      a room's mode; a Record room's transport, recording and clips
@@ -70,7 +71,8 @@ audio_core/
 game/tests/ui_check.gd     the game driven by pretend keys and clicks: title, playing, patterns, instruments, amps, room, menus,
                            presets, and rooms (making, saving, backups, opening), and playing together
 game/tests/together_guest.gd  a second copy of the game that joins the room ui_check.gd hosts, and does what it asks
-prototypes/studiolator/     the original browser prototype, for reference
+services/room-list/        the room list: a Cloudflare Worker (worker.js) and its D1 table, its checks, and a stand-in
+prototypes/studiolator/    the original browser prototype, for reference
 tools/                     build and dependency scripts
 ```
 

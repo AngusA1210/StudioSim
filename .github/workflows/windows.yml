@@ -12,6 +12,7 @@ on:
       - "audio_core/tests/**"
       - "audio_core/CMakeLists.txt"
       - "tools/fetch_deps.sh"
+      - "services/**"
       - ".github/workflows/windows.yml"
   workflow_dispatch:
 
@@ -56,6 +57,13 @@ jobs:
         run: |
           cmake --build audio_core/build --config Release --parallel --target session_server_tests studiolator_session_server
           audio_core/build/Release/session_server_tests.exe
+
+      - name: The room list's checks
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          python -I services/room-list/stand_in.py --check
+          node services/room-list/tests.mjs
 
       - name: Build the Godot extension
         if: ${{ !cancelled() && steps.configure.outcome == 'success' }}

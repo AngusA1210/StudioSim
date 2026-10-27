@@ -33,7 +33,8 @@ To do, roughly in this order:
    open the ports by UPnP, or meeting through a session server by a code, directly or by way of its relay; a room
    browser for the rooms on one network; the host's rules (a name, a password, listed or not, the most players,
    what joining players may do, asking a player to leave); getting back in after a lost connection; see
-   [Playing together](playing-together.md)). Next: rooms listed across the internet.
+   [Playing together](playing-together.md)); rooms listed across the internet, on a free Cloudflare Worker. Next: the
+   room list set up and its address put in ([Setting up the room list](room-list.md)).
 
 Also wanted along the way: MIDI on Linux, and VR through OpenXR. Perhaps later a free version with Jam rooms
 only, Record rooms coming with the full one.

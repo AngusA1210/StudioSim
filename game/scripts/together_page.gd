@@ -1,6 +1,7 @@
 extends CanvasLayer
 ## Playing together, from the title screen, in three tabs. Rooms: the rooms hosted on this network, found by
-## themselves (discovery.gd), joined with a double-click (and the password, if one has it). Host: the room to host
+## themselves (discovery.gd), and those listed across the internet (room_list.gd), joined with a double-click (and the
+## password, if one has it). Host: the room to host
 ## (the one open, a new one or a saved one), its name, password, whether it is listed, how many may be in it and what
 ## joining players may do. Direct connect: a room joined by its host's address (or its code, through a session server).
 ## While together, the page shows the session in their place: who is in it, where others join (the host's), its rules
@@ -92,6 +93,7 @@ func close() -> void:
 		field.release_focus()
 	_root.visible = false
 	app.net.discovery.look(false)
+	app.net.room_list.look(false)
 
 
 ## One of the tabs: "rooms", "host" or "direct".
@@ -242,6 +244,7 @@ func _refresh() -> void:
 		_tabs[key].set_pressed_no_signal(key == _tab)
 	_session.visible = together
 	net.discovery.look(is_open() and not together and _tab == "rooms")
+	net.room_list.look(is_open() and not together and _tab == "rooms")
 	if _pages.rooms.visible:
 		_fill_list()
 
@@ -311,6 +314,9 @@ func _where_others_join() -> String:
 				text += "\nNo code: %s" % net.meeting.problem
 			_:
 				text += "\nAsking the session server for a code…"
+	if net.over_internet and bool(net.rules.listed) and net.room_list.address != "":
+		text += "\nListed on the internet too" if net.room_list.listed else (
+			"\nNot on the internet's room list: %s" % net.room_list.listed_problem if net.room_list.listed_problem != "" else "\nPutting it on the internet's room list…")
 	if OS.get_name() == "Windows":
 		text += "\nIf nobody can join: Windows Defender Firewall must let Godot in, for this network (set the network to Private)."
 	return text
@@ -348,12 +354,18 @@ func _fill_players() -> void:
 			row.add_child(remove)
 
 
-## The rooms found on this network, kept as they were chosen.
+## The rooms found on this network, and those on the internet's room list (one found both ways is this network's),
+## kept as they were chosen.
 func _fill_list() -> void:
 	var discovery = app.net.discovery
+	var room_list = app.net.room_list
 	var rooms: Array = discovery.found()
-	var shown := rooms.map(func(r): return [r.id, r.name, r.host, r.mode, r.players, r.most, r.locked, r.address])
-	var listed_hash := hash([shown, discovery.problem])
+	var here: Array = rooms.map(func(r): return str(r.id))
+	var nearby := rooms.size()
+	rooms.append_array(room_list.found().filter(func(r): return not here.has(str(r.id))))
+	rooms.sort_custom(func(a, b): return str(a.name).naturalnocasecmp_to(str(b.name)) < 0)
+	var shown := rooms.map(func(r): return [r.id, r.name, r.host, r.mode, r.players, r.most, r.locked, r.address, r.get("open", true)])
+	var listed_hash := hash([shown, discovery.problem, room_list.problem])
 	if listed_hash == _listed_hash:
 		return
 	_listed_hash = listed_hash
@@ -369,8 +381,12 @@ func _fill_list() -> void:
 		item.set_text(2, "%s room" % ("Record" if str(room.mode) == "record" else "Jam"))
 		item.set_text(3, "%d / %d" % [int(room.players), int(room.most)])
 		item.set_text(4, "Password" if bool(room.locked) else "")
-		for column in [1, 2, 3, 4]:
+		var internet: bool = str(room.get("where", "")) == "internet"
+		item.set_text(5, "This network" if not internet else ("Internet" if bool(room.get("open", true)) else "Internet (ports may be closed)"))
+		for column in [1, 2, 3, 4, 5]:
 			item.set_custom_color(column, DIM)
+		if internet and not bool(room.get("open", true)):
+			item.set_tooltip_text(5, "Its host's router didn't say it had opened the ports: unless they were forwarded by hand, it may not be reached")
 		if int(room.get("protocol", 0)) != Net.PROTOCOL:
 			item.set_text(4, "Another version")
 			item.set_custom_color(4, WARN)
@@ -378,13 +394,17 @@ func _fill_list() -> void:
 		if str(room.id) == was:
 			item.select(0)
 	_follow_choice()
+	var far := rooms.size() - nearby
 	if discovery.problem != "":
 		tell("Rooms on this network can't be found: %s." % discovery.problem)
+	elif room_list.problem != "":
+		tell("%d room%s on this network. Rooms on the internet can't be listed: %s." % [nearby, "" if nearby == 1 else "s", room_list.problem])
 	elif rooms.is_empty():
-		_status.text = "Looking for rooms on this network…  None yet. A room hosted on another network is joined under Direct connect."
+		_status.text = "Looking for rooms%s…  None yet. A room that isn't listed is joined under Direct connect." % (
+			" on this network and the internet" if room_list.address != "" else " on this network")
 		_status.add_theme_color_override("font_color", DIM)
 	else:
-		_status.text = "%d room%s on this network" % [rooms.size(), "" if rooms.size() == 1 else "s"]
+		_status.text = "%d room%s on this network%s" % [nearby, "" if nearby == 1 else "s", ", %d on the internet" % far if room_list.address != "" else ""]
 		_status.add_theme_color_override("font_color", DIM)
 
 
@@ -489,21 +509,22 @@ func _page(parent: Control, key: String) -> VBoxContainer:
 func _build_rooms(box: Control) -> void:
 	var page := _page(box, "rooms")
 	_list = Tree.new()
-	_list.columns = 5
+	_list.columns = 6
 	_list.column_titles_visible = true
-	for column in 5:
-		_list.set_column_title(column, ["Room", "Host", "Kind", "Players", ""][column])
+	for column in 6:
+		_list.set_column_title(column, ["Room", "Host", "Kind", "Players", "", "Where"][column])
 		_list.set_column_expand(column, column < 2)
 		_list.set_column_title_alignment(column, HORIZONTAL_ALIGNMENT_LEFT)
 	_list.set_column_custom_minimum_width(2, 110)
-	_list.set_column_custom_minimum_width(3, 80)
-	_list.set_column_custom_minimum_width(4, 120)
+	_list.set_column_custom_minimum_width(3, 72)
+	_list.set_column_custom_minimum_width(4, 90)
+	_list.set_column_custom_minimum_width(5, 120)
 	_list.hide_root = true
 	_list.select_mode = Tree.SELECT_ROW
 	_list.custom_minimum_size.y = 220
 	_list.item_selected.connect(_follow_choice)
 	_list.item_activated.connect(_join_listed)
-	Hints.give(_list, "The rooms hosted on this network that are listed, found by themselves. Double-click one to join it")
+	Hints.give(_list, "The listed rooms hosted on this network, found by themselves, and those hosted over the internet. Double-click one to join it")
 	page.add_child(_list)
 	var row := _row(page)
 	_label(row, "Password")
@@ -553,7 +574,7 @@ func _build_host(box: Control) -> void:
 	_listed = CheckBox.new()
 	_listed.text = "Listed under Rooms"
 	_listed.toggled.connect(func(_on: bool) -> void: _on_rule_changed())
-	Hints.give(_listed, "Shown in the room browser of everyone on this network. Unlisted, it is joined only by its address")
+	Hints.give(_listed, "Shown in the room browser of everyone on this network, and, hosted over the internet, of everyone anywhere. Unlisted, it is joined only by its address")
 	options_row.add_child(_listed)
 	var gap := Control.new()
 	gap.custom_minimum_size.x = 18
@@ -591,7 +612,7 @@ func _build_host(box: Control) -> void:
 	var internet_row := _row(page)
 	_internet = CheckBox.new()
 	_internet.text = "Over the internet"
-	Hints.give(_internet, "Asks your router (by UPnP, which most home routers allow) to open the session's two ports to this computer while you host, and shows the address others join at from anywhere (closed again when the session ends). With a session server, the room also gets a code that others join with, which works where the router won't open them")
+	Hints.give(_internet, "Asks your router (by UPnP, which most home routers allow) to open the session's two ports to this computer while you host, and shows the address others join at from anywhere (closed again when the session ends); listed, the room is on the internet's room list too. With a session server, the room also gets a code that others join with, which works where the router won't open them")
 	internet_row.add_child(_internet)
 	_label(internet_row, "Port")
 	_port = SpinBox.new()

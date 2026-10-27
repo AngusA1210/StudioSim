@@ -27,6 +27,7 @@ signal reported(from: int, data: Dictionary)  # (the automated checks: what the 
 const Avatar := preload("res://scripts/avatar.gd")
 const Discovery := preload("res://scripts/discovery.gd")
 const Meeting := preload("res://scripts/meeting.gd")
+const RoomList := preload("res://scripts/room_list.gd")
 const RoomSync := preload("res://scripts/room_sync.gd")
 const PORT := 47130
 const PROTOCOL := 1
@@ -83,6 +84,8 @@ var _router_thread: Thread
 var _password := ""  # (the host's) what a joining player must give, if anything
 var rules := RULES.duplicate(true)  # the session's (the host's, as it set them; a joining player's, as told)
 var discovery  # discovery.gd: the room browser's finding rooms on this network, and the host's answering it
+var room_list  # room_list.gd: rooms listed across the internet
+var over_internet := false  # (the host's) hosted over the internet: listed on the room list too, if listed
 var _hosted_port := PORT  # (the host's) the session's port
 var _denied_at := {}  # (the host's) "player:what" → when they were last told they may not
 var _host_ended := false  # (a joining player) the host ended the session, rather than the connection being lost
@@ -107,6 +110,10 @@ func setup(the_app) -> void:
 	sync = RoomSync.new()
 	sync.setup(app, self)
 	discovery = Discovery.new(self)
+	room_list = RoomList.new()
+	room_list.name = "RoomList"
+	add_child(room_list)
+	room_list.setup(self)
 	multiplayer.peer_connected.connect(_on_peer_connected)
 	multiplayer.peer_disconnected.connect(_on_peer_disconnected)
 	multiplayer.connected_to_server.connect(_on_connected)
@@ -139,6 +146,7 @@ func host(port := PORT, bind := "*", open_router := false, password := "", sessi
 		rules.name = app.session.room_name
 	rules.most = clampi(int(rules.most), 2, MAX_GUESTS + 1)
 	_hosted_port = port
+	over_internet = open_router
 	var peer := ENetMultiplayerPeer.new()
 	peer.set_bind_ip(bind)
 	var problem := peer.create_server(port, MAX_GUESTS, CHANNELS)
@@ -441,6 +449,7 @@ func leave() -> void:
 func _end(why: String) -> void:
 	var was := role
 	role = ""
+	over_internet = false
 	me = 0
 	players = {}
 	for id in _bodies.keys():

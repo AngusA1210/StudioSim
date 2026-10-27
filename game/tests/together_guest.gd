@@ -143,10 +143,13 @@ func _on_asked(_from: int, ask: Dictionary) -> void:
 			main.set_tempo(float(ask.bpm))
 			await main.get_tree().create_timer(1.5).timeout
 			main.net.report({"step": "try_tempo", "tempo": main.tempo, "notices": notices.duplicate()})
-		"browse":  # the rooms this player's room browser finds
+		"browse":  # the rooms this player's room browser finds: on this network, and on the internet's room list
 			main.net.discovery.look(true)
+			main.net.room_list.look(true)
 			await main.get_tree().create_timer(3.0).timeout
-			main.net.report({"step": "browse", "rooms": main.net.discovery.found(), "problem": main.net.discovery.problem})
+			main.net.report({"step": "browse", "rooms": main.net.discovery.found(), "problem": main.net.discovery.problem,
+				"internet": main.net.room_list.found(), "internet_problem": main.net.room_list.problem})
 			main.net.discovery.look(false)
+			main.net.room_list.look(false)
 		"leave":
 			main.net.leave()

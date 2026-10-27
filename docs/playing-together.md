@@ -9,8 +9,9 @@ and the players can talk to each other.
 **Play together…** on the title screen opens the page for it, in three tabs. No server is needed to play on one
 network, nor over the internet where the host's router opens its ports.
 
-- **Rooms**: the rooms hosted on this network, found by themselves: their names, hosts, Jam or Record, how many are in
-  them, and whether they have a password. Double-click one to join it (with its password, if it has one).
+- **Rooms**: the rooms hosted on this network, found by themselves, and those hosted over the internet, from the
+  [room list](room-list.md): their names, hosts, Jam or Record, how many are in them, whether they have a password,
+  and where they are. Double-click one to join it (with its password, if it has one).
 - **Host**: the room to host, which is the one open, or a new one or a saved one (**New room…** and **Open a
   room…** make or open it, then come back here). Then its **name** (the room's own, unless you give another), a
   **password** if it is to have one, whether it is **listed** under Rooms, the most **players** in it at once (you
@@ -26,8 +27,9 @@ after you leave.
 
 **Over the internet**: tick it before hosting, and Studiolator asks your router, by UPnP, to open the session's port
 and the next one (47131: the sound between players) to this computer while you host. Most home routers allow it.
-The page then shows your public address, for the others to join at from anywhere under Direct connect, and the
-ports are closed again when the session ends. If the router won't (UPnP switched off, or a network that is itself
+The page then shows your public address, for the others to join at from anywhere under Direct connect, and a
+listed room is put on the [room list](room-list.md), for everyone's Rooms tab. The ports are closed again, and the
+room taken off the list, when the session ends. If the router won't (UPnP switched off, or a network that is itself
 behind another, as on some mobile and student connections), the page says why. Then forward both ports (UDP) to
 this computer in the router by hand, or meet through a session server.
 
@@ -179,5 +181,4 @@ voice opens the audio input for the whole session, so that holding the key never
 
 ## What comes next
 
-- Rooms listed across the internet, not only on one network: that needs something always on that everyone can reach,
-  to keep the list.
+- The room list set up on Cloudflare, and its address put into the game ([Setting up the room list](room-list.md)).

@@ -44,6 +44,17 @@ case "$(uname -s)" in
     "$ROOT/audio_core/build/session_server_tests" ;;
 esac
 
+# The internet's room list (services/room-list): its SQL on SQLite, and the Worker itself, with Node or a Mac's own
+# JavaScript shell.
+PYTHON="$(command -v python3 || command -v python || true)"
+[ -n "$PYTHON" ] && "$PYTHON" -I "$ROOT/services/room-list/stand_in.py" --check
+JSC=/System/Library/Frameworks/JavaScriptCore.framework/Versions/Current/Helpers/jsc
+if command -v node >/dev/null; then
+  node "$ROOT/services/room-list/tests.mjs"
+elif [ -x "$JSC" ]; then
+  "$JSC" -m "$ROOT/services/room-list/tests.mjs"
+fi
+
 if command -v godot >/dev/null; then
   godot --headless --path "$ROOT/game" --import >/dev/null 2>&1 || true
   # Drive the game itself with pretend keys and clicks (silent, and it leaves saved settings alone). Godot exits

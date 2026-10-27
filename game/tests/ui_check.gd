@@ -3736,7 +3736,13 @@ func _run() -> void:
 	var server_port := port + 10
 	var server_run := OS.create_process(server_program, ["--port", str(server_port), "--bind", "127.0.0.1", "--quiet"]) if \
 		FileAccess.file_exists(server_program) else -1
-	await seconds(0.3)
+	# And a room list of the checks' own (services/room-list's stand-in, on this computer): hosted over the internet,
+	# the room is put on it, for every player's room browser.
+	var list_port := port + 20
+	var list_run := OS.create_process("python" if OS.get_name() == "Windows" else "python3", ["-I", ProjectSettings.globalize_path("res://").path_join(
+		"../services/room-list/stand_in.py").simplify_path(), "--port", str(list_port)])
+	main.net.room_list.address = "http://127.0.0.1:%d" % list_port
+	await seconds(0.6)
 	main.settings.session_server = "127.0.0.1:%d" % server_port
 	main.together_page._internet.button_pressed = true
 	hosted = main.together_page.host(port, "127.0.0.1")
@@ -3750,11 +3756,18 @@ func _run() -> void:
 		main.net.router == "", "hosted over the internet with a session server, the room is given a code to join with (no router asked, in these runs)",
 		code if code != "" else (main.net.meeting.problem if main.net.meeting != null else server_program))
 	var meet_args := ["--headless", "--path", ProjectSettings.globalize_path("res://"), "--script", "res://tests/together_guest.gd", "--", "--silent",
-		"--join=" + code.to_lower(), "--server=127.0.0.1:%d" % server_port]
+		"--join=" + code.to_lower(), "--server=127.0.0.1:%d" % server_port, "--room-list=http://127.0.0.1:%d" % list_port]
 	guest_run = OS.create_process(OS.get_executable_path(), meet_args)
 	joined = await wait_for.call("joined", 45.0)
 	check(not joined.is_empty() and not bool(joined.get("by_relay", true)) and main.net.players.size() == 2,
 		"another player joins with the code (typed in small letters), the two computers talking directly", str(joined.get("status", "")))
+	main.net.report({"ask": "browse"})
+	browsed = await wait_for.call("browse", 10.0)
+	var internet_rooms: Array = browsed.get("internet", [])
+	check(list_run > 0 and main.net.room_list.listed and internet_rooms.size() == 1 and str(internet_rooms[0].name) == str(main.net.rules.name) and
+		str(internet_rooms[0].address) == "127.0.0.1" and int(internet_rooms[0].port) == port and int(internet_rooms[0].players) == 2 and
+		not bool(internet_rooms[0].open), "hosted over the internet, the room is on the internet's room list for every player's browser (its router not asked, in these runs)",
+		str(internet_rooms) + str(browsed.get("internet_problem", "")))
 	# The room full (two at most, and two in it): another player is turned away. And a player the host asks to leave
 	# is out of the session, their copy of the game knowing it.
 	main.net.set_rules({"most": 2})
@@ -3796,8 +3809,14 @@ func _run() -> void:
 		await process_frame
 	main.net.leave()
 	main.settings.session_server = ""
+	main.net.room_list.look(true)
+	await seconds(1.5)
+	check(main.net.room_list.problem == "" and main.net.room_list.found().is_empty(), "the session over, the room is taken off the room list",
+		str(main.net.room_list.found()) + main.net.room_list.problem)
+	main.net.room_list.look(false)
+	main.net.room_list.address = ""
 	await seconds(0.5)
-	for each in [guest_run, server_run]:
+	for each in [guest_run, server_run, list_run]:
 		if each > 0 and OS.is_process_running(each):
 			OS.kill(each)
 	timeline.set_mode("record")
