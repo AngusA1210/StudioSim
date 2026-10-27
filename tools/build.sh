@@ -5,6 +5,30 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 CONFIG="${1:-Release}"
+case "$CONFIG" in
+  Release|Debug|RelWithDebInfo|MinSizeRel) ;;
+  *) echo "Usage: tools/build.sh [Release|Debug]   (then run the game on its own: godot --path game)"; exit 1 ;;
+esac
+
+# Visual Studio brings its own CMake, which Git Bash doesn't see unless it is on the PATH.
+if ! command -v cmake >/dev/null; then
+  case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*)
+      VS="$("/c/Program Files (x86)/Microsoft Visual Studio/Installer/vswhere.exe" -latest -property installationPath 2>/dev/null | tr -d '\r' || true)"
+      [ -n "$VS" ] && export PATH="$(cygpath "$VS")/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin:$PATH" ;;
+  esac
+  command -v cmake >/dev/null || { echo "CMake isn't installed (on Windows it comes with Visual Studio's C++ workload)."; exit 1; }
+fi
+
+# One build at a time: two in the same build folder trip over each other's files (on Windows, as "being used by another
+# process").
+mkdir -p "$ROOT/audio_core/build"
+LOCK="$ROOT/audio_core/build/.building"
+if ! mkdir "$LOCK" 2>/dev/null; then
+  echo "Another build is running here (or one was stopped part-way: if none is, delete $LOCK and try again)."
+  exit 1
+fi
+trap 'rmdir "$LOCK" 2>/dev/null || true' EXIT
 
 git -C "$ROOT" submodule update --init --recursive
 "$ROOT/tools/fetch_deps.sh"
