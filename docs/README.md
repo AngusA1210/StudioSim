@@ -1,6 +1,6 @@
-# SoundRoom documentation
+# Studiolator documentation
 
-In-depth notes on each part of SoundRoom. The project's [README](../README.md) gives the overview.
+In-depth notes on each part of Studiolator. The project's [README](../README.md) gives the overview.
 
 - [Building and running](building.md): what each platform needs, what the build script does, headphones
 - [Controls](controls.md): every key and shortcut

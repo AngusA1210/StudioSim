@@ -34,7 +34,7 @@ const STILL_SECONDS := 0.6  # a plug-in's control unmoved this long is taken to 
 
 var app
 var timeline
-var audio: SoundRoomAudio
+var audio: StudiolatorAudio
 var _held := {}         # track → {param: true} while one of its controls is held (the mix window, an amp's panel)
 var _writing := {}      # track → {param: [[step, value], ...] written so far this pass}
 var _moved_at := {}     # track → {param: when a plug-in's control last moved, while it is written}

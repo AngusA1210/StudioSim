@@ -21,7 +21,7 @@
 namespace sr {
 namespace {
 
-constexpr int kMaxChannels = 64;  // of each, inputs and outputs: more than any interface SoundRoom routes to
+constexpr int kMaxChannels = 64;  // of each, inputs and outputs: more than any interface Studiolator routes to
 
 std::string narrow(const wchar_t* text) {
     const int size = WideCharToMultiByte(CP_UTF8, 0, text, -1, nullptr, 0, nullptr, nullptr);
@@ -295,7 +295,7 @@ bool AsioStream::open(const std::string& name, int buffer_size, bool with_input,
         detail.isInput = info.isInput;
         if (driver->getChannelInfo(&detail) != ASE_OK) return fail(driver_name + " did not describe its channels");
         if (!readable(detail.type))
-            return fail(driver_name + " uses a sample format SoundRoom can't read (ASIO type " + std::to_string(detail.type) + ")");
+            return fail(driver_name + " uses a sample format Studiolator can't read (ASIO type " + std::to_string(detail.type) + ")");
         Channel c;
         c.buffers[0] = info.buffers[0];
         c.buffers[1] = info.buffers[1];

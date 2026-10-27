@@ -60,4 +60,4 @@ can only be passed at its free end.
 The room is lit by a grid of lamps that grows with it, so a large room is no darker than the default one. Settings
 has a Room lighting slider if it is still too dim or too bright for your screen.
 
-The room goes back to the default each time SoundRoom starts, until rooms can be saved.
+The room goes back to the default each time Studiolator starts, until rooms can be saved.

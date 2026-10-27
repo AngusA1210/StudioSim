@@ -31,7 +31,7 @@ Steinberg): download it from [steinberg.net](https://www.steinberg.net/developer
 as "ASIO: " and the driver's name; the driver's own inputs are the live input, and its buffer sizes are the ones its
 control panel allows. `audio_core/build/Release/engine_tests.exe --device "ASIO: <driver>" 128` opens one on its own
 and prints its latency. MIDI keyboards are found as Windows lists them (plugged in while
-SoundRoom runs, they turn up within a few seconds). Plug-ins are VST3s (see [Plug-ins](plugins.md)).
+Studiolator runs, they turn up within a few seconds). Plug-ins are VST3s (see [Plug-ins](plugins.md)).
 
 Use **wired** headphones. Bluetooth headphones add 150–250 ms of delay that no software can remove; the
 "Output latency" readout shows what your current device adds.

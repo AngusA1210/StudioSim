@@ -1,5 +1,5 @@
 extends Node3D
-## Builds the Sound Room (room, instruments, player, HUD, title screen, menus, pattern editor), starts the native
+## Builds Studiolator (room, instruments, player, HUD, title screen, menus, pattern editor), starts the native
 ## audio core, and is the one place that changes settings and the tempo: the menus and the keyboard shortcuts all
 ## go through the functions below.
 ##
@@ -70,7 +70,7 @@ const CHANNEL_TRIM := 0.88
 const DEFAULT_TEMPO := 92.0
 const DEFAULT_SWING := 0.14
 
-var audio: SoundRoomAudio
+var audio: StudiolatorAudio
 var settings := Settings.new()
 var player
 var hud
@@ -145,12 +145,14 @@ var delays := {}
 func _ready() -> void:
 	_parse_options()
 	settings.persist = not options.has("silent")
+	if settings.persist:
+		_carry_over_settings()
 	settings.load_from_disk()
 	bindings = Bindings.new(settings.bindings)
 	if options.has("text-scale"):
 		settings.text_scale = float(options["text-scale"])
 
-	audio = SoundRoomAudio.new()
+	audio = StudiolatorAudio.new()
 	audio.name = "AudioCore"
 	if options.has("silent"):  # (automated runs see only the checks' own VST3 plug-in, never anyone's)
 		audio.set_vst3_search_paths(PackedStringArray([ProjectSettings.globalize_path("res://").path_join("../audio_core/build/vst3").simplify_path()]))
@@ -2160,6 +2162,18 @@ func _apply_display() -> void:
 
 # ── Setup ───────────────────────────────────────────────────────────────────────────────────────────────────
 
+## Studiolator was called SoundRoom, and Godot keeps each project's settings in a folder named after it: the first time
+## Studiolator starts, the settings (and the record of the VST3 plug-ins looked into) come over from SoundRoom's.
+func _carry_over_settings() -> void:
+	var here := OS.get_user_data_dir()
+	var before := here.get_base_dir().path_join("SoundRoom")
+	if FileAccess.file_exists(here.path_join("settings.cfg")) or not FileAccess.file_exists(before.path_join("settings.cfg")):
+		return
+	for file in ["settings.cfg", "vst3_scan.txt"]:
+		if FileAccess.file_exists(before.path_join(file)):
+			DirAccess.copy_absolute(before.path_join(file), here.path_join(file))
+
+
 func _parse_options() -> void:
 	for arg in OS.get_cmdline_user_args():
 		var a: String = arg.trim_prefix("--")
@@ -2179,7 +2193,7 @@ func _sit_at(kind: String) -> void:
 
 func _print_stats() -> void:
 	var s := audio.get_stats()
-	print("SoundRoom stats: device=%s backend=%s rate=%s block=%s device_period=%s buffer=%.2fms device=%.2fms binaural=%.2fms output=%.2fms cpu=%.1f%% blocks=%s" % [
+	print("Studiolator stats: device=%s backend=%s rate=%s block=%s device_period=%s buffer=%.2fms device=%.2fms binaural=%.2fms output=%.2fms cpu=%.1f%% blocks=%s" % [
 		s.get("output_device", "?"), s.get("backend", "?"), s.get("sample_rate", 0), s.get("block_size", 0),
 		s.get("device_period", 0), s.get("buffer_ms", 0.0), s.get("device_ms", 0.0), s.get("binaural_ms", 0.0), s.get("output_latency_ms", 0.0),
 		100.0 * s.get("cpu_load", 0.0), s.get("blocks", 0)])
@@ -2187,15 +2201,15 @@ func _print_stats() -> void:
 	for inst in instruments:
 		levels.append("%s=%.3f%s" % [inst.kind, audio.get_source_level(inst.source_id),
 			" (behind wall)" if audio.is_source_blocked(inst.source_id) else ""])
-	print("SoundRoom sources: ", ", ".join(levels))
-	print("SoundRoom midi: ", audio.get_midi_devices(), " live_input=", s.get("live_input", false))
+	print("Studiolator sources: ", ", ".join(levels))
+	print("Studiolator midi: ", audio.get_midi_devices(), " live_input=", s.get("live_input", false))
 	var patterns := []
 	for inst in instruments:
 		if inst.playable:
 			patterns.append("%s=%d notes/%d steps%s" % [inst.kind, audio.get_pattern(inst.source_id).size(),
 				audio.get_pattern_steps(inst.source_id), "" if inst.loop_on else " (loop off)"])
-	print("SoundRoom room: ", room.size, " walls=", room.walls.size(), " reverb=%.2fs" % audio.get_room_decay())
-	print("SoundRoom transport: ", audio.get_transport(), " playing=",
+	print("Studiolator room: ", room.size, " walls=", room.walls.size(), " reverb=%.2fs" % audio.get_room_decay())
+	print("Studiolator transport: ", audio.get_transport(), " playing=",
 		player.playing.kind if player.playing != null else "nothing", " patterns: ", ", ".join(patterns))
 
 

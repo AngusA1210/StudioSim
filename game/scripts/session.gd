@@ -73,7 +73,7 @@ func end_copy() -> void:
 	changed.emit()
 
 
-## Where new rooms go unless another folder is chosen: Rooms, in the SoundRoom folder (library.gd's home()).
+## Where new rooms go unless another folder is chosen: Rooms, in the Studiolator folder (library.gd's home()).
 func default_location() -> String:
 	return app.library.root.path_join("Rooms")
 
@@ -126,7 +126,7 @@ func create(the_name: String, folder: String, template_path: String, carry := {}
 func open(file: String) -> String:
 	var data: Dictionary = app.library.read_room_file(file)
 	if data.is_empty():
-		return "it isn't a room SoundRoom can read"
+		return "it isn't a room Studiolator can read"
 	path = file  # first, so that its recordings are found in its folder
 	copy = false
 	var problem: String = app.library.apply_room_data(data)
@@ -313,4 +313,4 @@ func _remember(file: String) -> void:
 	recent.push_front(file)
 	app.settings.recent_rooms = recent.slice(0, MAX_RECENT)
 	app.settings.save_to_disk()
-	DisplayServer.window_set_title("%s · SoundRoom" % room_name)
+	DisplayServer.window_set_title("%s · Studiolator" % room_name)

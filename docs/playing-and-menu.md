@@ -35,7 +35,7 @@ patterns go back to the defaults at each start until rooms can be saved.
   Live input always starts switched off, so an open microphone never meets a pair of speakers by surprise.
 - **MIDI**: every MIDI device the system sees, with a tick box each and a light that flashes when it sends notes.
 - **Settings**: binaural, distance falloff, the limiter's ceiling, delay compensation, text size, field of view, mouse sensitivity, room lighting, full screen (which
-  SoundRoom then opens in every time), whether the master meter and the audio readout are shown on screen, where the
+  Studiolator then opens in every time), whether the master meter and the audio readout are shown on screen, where the
   free camera hears from (see [Controls](controls.md#you-and-the-free-camera)), and auto-save and backups for the
   room. Your name and height are on the title screen's **You** page.
 

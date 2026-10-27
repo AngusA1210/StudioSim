@@ -15,7 +15,7 @@ audio_core/thirdparty/asiosdk/
 
 .DS_Store
 
-# What SoundRoom keeps for you when run from here (rooms, templates, instrument presets): yours, not the project's
+# What Studiolator keeps for you when run from here (rooms, templates, instrument presets): yours, not the project's
 /Rooms/
 /Templates/
 /Instrument Presets/

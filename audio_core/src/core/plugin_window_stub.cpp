@@ -1,4 +1,4 @@
-// Plug-in windows where SoundRoom has none to offer yet (Linux): a plug-in is heard, and its controls automated, but its
+// Plug-in windows where Studiolator has none to offer yet (Linux): a plug-in is heard, and its controls automated, but its
 // own window can't be shown.
 
 #include "plugin_window.h"

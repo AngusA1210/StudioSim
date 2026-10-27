@@ -1,4 +1,4 @@
-# SoundRoom's audio core on Windows: built with Visual Studio (the engine, the Godot extension, the checks' own VST3
+# Studiolator's audio core on Windows: built with Visual Studio (the engine, the Godot extension, the checks' own VST3
 # plug-in) and its offline checks run, whenever the audio core changes. The Mac is where it is played and tested by
 # hand; this keeps it building and working on Windows too.
 
@@ -54,9 +54,9 @@ jobs:
         if: ${{ !cancelled() && steps.configure.outcome == 'success' }}
         shell: bash
         run: |
-          cmake --build audio_core/build --config Release --parallel --target session_server_tests soundroom_session_server
+          cmake --build audio_core/build --config Release --parallel --target session_server_tests studiolator_session_server
           audio_core/build/Release/session_server_tests.exe
 
       - name: Build the Godot extension
         if: ${{ !cancelled() && steps.configure.outcome == 'success' }}
-        run: cmake --build audio_core/build --config Release --parallel --target soundroom_audio
+        run: cmake --build audio_core/build --config Release --parallel --target studiolator_audio

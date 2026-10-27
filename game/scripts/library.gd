@@ -1,15 +1,15 @@
 extends RefCounted
-## What SoundRoom keeps on disk, and copying and pasting settings.
+## What Studiolator keeps on disk, and copying and pasting settings.
 ##
 ## - Rooms and templates: what a room holds (room_data: its size and walls, every instrument where it stands with its
 ##   fader, mute, solo, pattern, pedals and plug-ins with their settings, the tempo and swing, and where you stand),
 ##   and putting it back (apply_room_data). session.gd keeps rooms, each a .sroom file in a folder of its own, in
-##   SoundRoom/Rooms; templates are .srtemplate files in SoundRoom/Templates, two built in (the default room, an empty
-##   one), and a new room starts from one, carrying over as much of it as is chosen. (SoundRoom/ is the folder the
+##   Studiolator/Rooms; templates are .srtemplate files in Studiolator/Templates, two built in (the default room, an empty
+##   one), and a new room starts from one, carrying over as much of it as is chosen. (Studiolator/ is the folder the
 ##   game runs from: see home().)
 ## - Instrument presets: an instrument's sound, without where it stands or what it plays: the plug-ins on its inserts,
 ##   an amp's head, cabinet, knobs and pedals, a Speaker's volume, a plug-in instrument's plug-in. A .srpreset file in
-##   SoundRoom/Instrument Presets, in a folder for each family (amps, Speakers, MIDI instruments, plug-in instruments). One loads onto any instrument of its
+##   Studiolator/Instrument Presets, in a folder for each family (amps, Speakers, MIDI instruments, plug-in instruments). One loads onto any instrument of its
 ##   family, or comes into the room as a new instrument from the instrument menu.
 ## - Plug-in presets: a plug-in's settings as an .aupreset file (an Audio Unit's) or a .vstpreset (a VST3's) in
 ##   Maker/Plug-in, under ~/Library/Audio/Presets on macOS (where every host keeps them, so presets saved in Logic show
@@ -30,9 +30,9 @@ const EMPTY_TEMPLATE := "builtin:empty"
 const FAMILIES := {"amp": "Amps", "speaker": "Speakers", "midi": "MIDI instruments", "plugin": "Plug-in instruments", "mic": "Microphones"}
 
 var app
-var audio: SoundRoomAudio
+var audio: StudiolatorAudio
 var automated := false
-var root := ""         # SoundRoom (see home())
+var root := ""         # Studiolator (see home())
 var plugin_root := ""  # ~/Library/Audio/Presets, or Documents/VST3 Presets
 var copied_instrument := {}  # instrument_settings() of what was copied
 var copied_plugin := {}      # {plugin_id, plugin_name, state}
@@ -54,11 +54,16 @@ func _init(the_app, automated_run: bool) -> void:
 			plugin_root = OS.get_system_dir(OS.SYSTEM_DIR_DOCUMENTS).path_join("VST3 Presets")
 
 
-## Where rooms, templates and instrument presets are kept: the SoundRoom folder the game runs from (the one holding
-## game/), or for a build made to be handed out, which has no such folder, Music/SoundRoom.
+## Where rooms, templates and instrument presets are kept: the Studiolator folder the game runs from (the one holding
+## game/), or for a build made to be handed out, which has no such folder, Music/Studiolator (Music/SoundRoom, from
+## before Studiolator had its name, is moved there).
 static func home() -> String:
 	if OS.has_feature("template"):
-		return OS.get_system_dir(OS.SYSTEM_DIR_MUSIC).path_join("SoundRoom")
+		var music := OS.get_system_dir(OS.SYSTEM_DIR_MUSIC)
+		if not DirAccess.dir_exists_absolute(music.path_join("Studiolator")) and DirAccess.dir_exists_absolute(music.path_join("SoundRoom")):
+			if DirAccess.rename_absolute(music.path_join("SoundRoom"), music.path_join("Studiolator")) != OK:
+				return music.path_join("SoundRoom")
+		return music.path_join("Studiolator")
 	return ProjectSettings.globalize_path("res://").get_base_dir().get_base_dir()
 
 
@@ -327,14 +332,14 @@ func instrument_presets(family := "") -> Array:
 
 func save_instrument_preset(inst, preset_name: String) -> String:
 	var data := instrument_settings(inst)
-	data.merge({"soundroom": "instrument preset", "version": VERSION, "name": preset_name})
+	data.merge({"studiolator": "instrument preset", "version": VERSION, "name": preset_name})
 	return write_file(presets_dir(family_of(inst)).path_join(_safe(preset_name) + "." + PRESET_EXT), data)
 
 
 ## An instrument preset file's settings, or {} if it can't be read.
 func read_instrument_preset(path: String) -> Dictionary:
 	var data := read_file(path)
-	return data if data.get("soundroom", "") == "instrument preset" and FAMILIES.has(data.get("family", "")) else {}
+	return data if kind_of(data) == "instrument preset" and FAMILIES.has(data.get("family", "")) else {}
 
 
 func load_instrument_preset(inst, path: String) -> String:
@@ -409,7 +414,7 @@ func room_data() -> Dictionary:
 	for master in app.master_tracks():  # (each master's name, colour, inserts and automation)
 		masters[master.which] = {"name": master.display_name, "color": _color_data(master.color), "inserts": inserts_data(master),
 			"automation": master.automation.duplicate(true), "auto_mode": master.auto_mode, "lanes": master.lanes.duplicate()}
-	return {"soundroom": "room", "version": VERSION, "mode": app.timeline.mode, "timeline": app.timeline.to_data(),
+	return {"studiolator": "room", "version": VERSION, "mode": app.timeline.mode, "timeline": app.timeline.to_data(),
 		"tempo": app.tempo, "swing": app.swing, "master_db": app.master_volume_db, "room_master_db": app.room_volume_db, "reverb_db": app.reverb_db,
 		"room": {"size": [size.x, size.y, size.z], "walls": walls, "surfaces": app.room.surfaces.duplicate()},
 		"player": {"position": [stood.x, stood.z], "yaw": spot.yaw}, "instruments": instruments, "folders": folders, "auxes": auxes,
@@ -445,7 +450,7 @@ static func _color_from(data, otherwise: Color) -> Color:
 	return Color(float(data[0]), float(data[1]), float(data[2])) if data is Array and data.size() >= 3 else otherwise
 
 
-## The room SoundRoom starts with, as data: its size and its one wall, the instruments playing the default groove, all
+## The room Studiolator starts with, as data: its size and its one wall, the instruments playing the default groove, all
 ## turned to face where you come in. `empty`: the same room bare, with no instruments and no wall.
 func default_room_data(empty := false) -> Dictionary:
 	var instruments := []
@@ -462,7 +467,7 @@ func default_room_data(empty := false) -> Dictionary:
 	var size: Vector3 = app.Room.DEFAULT_SIZE
 	# The empty room starts at a plain 90 BPM, and in a Record room stopped, with nothing looping: there is nothing to
 	# hear yet. The default room plays its groove round its four bars.
-	return {"soundroom": "template", "version": VERSION, "tempo": 90.0 if empty else app.DEFAULT_TEMPO, "swing": app.DEFAULT_SWING,
+	return {"studiolator": "template", "version": VERSION, "tempo": 90.0 if empty else app.DEFAULT_TEMPO, "swing": app.DEFAULT_SWING,
 		"room": {"size": [size.x, size.y, size.z], "walls": walls}, "player": {"position": [spawn.x, spawn.z], "yaw": 0.0},
 		"instruments": instruments, "timeline": {"playing": not empty, "loop_on": not empty}}
 
@@ -474,10 +479,16 @@ func template_data(path: String) -> Dictionary:
 	return read_room_file(path)
 
 
+## What one of Studiolator's files is ("room", "template", "instrument preset"): as it says, or as one saved while
+## Studiolator was called SoundRoom says.
+static func kind_of(data: Dictionary) -> String:
+	return str(data.get("studiolator", data.get("soundroom", "")))
+
+
 ## A room's file, or a template's: what it holds, or {} if it isn't one.
 func read_room_file(path: String) -> Dictionary:
 	var data := read_file(path)
-	return data if data.get("soundroom", "") in ["room", "template"] else {}
+	return data if kind_of(data) in ["room", "template"] else {}
 
 
 ## The size a room or template is, or the default room's.
@@ -488,7 +499,7 @@ static func size_of(data: Dictionary) -> Vector3:
 
 func save_template(template_name: String) -> String:
 	var data := room_data()
-	data.soundroom = "template"
+	data.studiolator = "template"
 	data.erase("mode")  # chosen when a room is made from it
 	data.erase("timeline")
 	for entry in data.instruments:
@@ -542,7 +553,7 @@ func apply_room_data(data: Dictionary, carry := {}, size = null, mode := "") -> 
 		var inst = app.add_instrument(kind, Vector3(float(at[0]), 0.0, float(at[1]))) if app.Catalog.KINDS.has(kind) else null
 		made.append(inst)
 		if inst == null:
-			problems.append("a %s (%s)" % [kind, "the room is full" if app.Catalog.KINDS.has(kind) else "not a kind SoundRoom knows"])
+			problems.append("a %s (%s)" % [kind, "the room is full" if app.Catalog.KINDS.has(kind) else "not a kind Studiolator knows"])
 			continue
 		inst.rotation.y = float(entry.get("yaw", 0.0))
 		inst.set_locked(bool(entry.get("locked", false)))

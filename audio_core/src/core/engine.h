@@ -1,6 +1,6 @@
 #pragma once
 
-// The SoundRoom audio core. Pure C++ with no Godot dependency, so it can be driven by any host:
+// The Studiolator audio core. Pure C++ with no Godot dependency, so it can be driven by any host:
 // the Godot extension, the offline tests, and later other engines.
 //
 // Threading: one game thread calls the public API, which only pushes small commands onto a lock-free queue.

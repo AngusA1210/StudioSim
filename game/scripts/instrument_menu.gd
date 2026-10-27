@@ -17,7 +17,7 @@ const WARN := Color(1.0, 0.61, 0.48)
 
 var app
 var _close_button: Button  # its label says which key closes it too
-var audio: SoundRoomAudio
+var audio: StudiolatorAudio
 
 var _root: Control
 var _panel: PanelContainer

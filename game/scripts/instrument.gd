@@ -91,7 +91,7 @@ var clips := []        # its clips on a Record room's timeline (timeline.gd)
 var armed := false     # armed for recording
 var glow := 0.0
 
-var _audio: SoundRoomAudio
+var _audio: StudiolatorAudio
 var _normal_gain := 1.0  # what 0 dB on its fader means to the audio core
 var _sent_position := Vector3.INF  # where the audio core last heard this instrument was
 var _sent_aim := Vector3.INF       # and, a microphone, which way it points
@@ -113,7 +113,7 @@ var _pedal_signature := ""
 var _collider: CollisionShape3D
 
 
-func setup(spec: Dictionary, audio: SoundRoomAudio) -> void:
+func setup(spec: Dictionary, audio: StudiolatorAudio) -> void:
 	_audio = audio
 	kind = spec.kind
 	display_name = spec.name

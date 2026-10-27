@@ -8,7 +8,7 @@
 // a router won't (some mobile networks, some offices), it passes everything between them itself: the session's
 // messages and the sound between players, on two ports of its own for each player joining (a relay).
 //
-// It knows nothing of SoundRoom's rooms: it only introduces players, and passes packets on. All of it is UDP:
+// It knows nothing of Studiolator's rooms: it only introduces players, and passes packets on. All of it is UDP:
 //
 //   from a player's own socket to the server's port, at least 128 bytes each (so that no answer is bigger than what
 //   asked for it, and the server can't be used to flood someone else):

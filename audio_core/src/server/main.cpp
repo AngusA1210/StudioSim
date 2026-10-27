@@ -1,6 +1,6 @@
-// SoundRoom's session server (session_server.h), as a program of its own, for a machine the internet can reach:
+// Studiolator's session server (session_server.h), as a program of its own, for a machine the internet can reach:
 //
-//   soundroom-session-server [--port 47100] [--bind 0.0.0.0] [--relay-ports 47200-47455] [--quiet]
+//   studiolator-session-server [--port 47100] [--bind 0.0.0.0] [--relay-ports 47200-47455] [--quiet]
 //
 // It goes on until stopped (Ctrl-C, or the system's stop). Every player who meets through it needs its port, and its
 // relays' ports, open to UDP in the machine's firewall (with --relay-ports, that range: two ports for each player
@@ -24,7 +24,7 @@ std::atomic<bool> stopping{false};
 void onSignal(int) { stopping.store(true); }
 
 int usage() {
-    std::fprintf(stderr, "Usage: soundroom-session-server [--port %d] [--bind 0.0.0.0] [--relay-ports FIRST-LAST] [--quiet]\n",
+    std::fprintf(stderr, "Usage: studiolator-session-server [--port %d] [--bind 0.0.0.0] [--relay-ports FIRST-LAST] [--quiet]\n",
         sr::SessionServer::kPort);
     return 2;
 }
@@ -63,7 +63,7 @@ int main(int argc, char** argv) {
         return 1;
     }
     if (options.log) {
-        std::printf("SoundRoom's session server, on UDP port %d%s.\n", server.port(),
+        std::printf("Studiolator's session server, on UDP port %d%s.\n", server.port(),
             options.relay_from > 0 ? (", relaying on ports " + std::to_string(options.relay_from) + " to " + std::to_string(options.relay_to)).c_str() : "");
         std::fflush(stdout);
     }

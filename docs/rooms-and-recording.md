@@ -5,9 +5,9 @@ instrument where it stands, with its fader, mute and solo, its pattern (the MIDI
 whether its loop is on), its inserts, an amp's head, cabinet, knobs and pedals, a Speaker's volume and input, and
 every plug-in's settings. It also holds the master fader, the tempo and swing, and where you were standing. Each room has a folder of
 its own, named after it, as a Pro Tools session does: the room's `.sroom` file (JSON) and a **Room Backups** folder.
-Recorded audio will go there too once recording comes. Rooms go in the **Rooms** folder of the SoundRoom folder the
-game runs from (here, `SoundRoom/Rooms`, beside `game/`) unless you choose another; git leaves it alone. A build made to
-hand out keeps them in `~/Music/SoundRoom` instead.
+Recorded audio will go there too once recording comes. Rooms go in the **Rooms** folder of the Studiolator folder the
+game runs from (here, `Studiolator/Rooms`, beside `game/`) unless you choose another; git leaves it alone. A build made to
+hand out keeps them in `~/Music/Studiolator` instead.
 
 - **New room…** (title screen): name the room, choose where it goes, choose its **mode** (Jam or Record, see below),
   pick a **template**, set its width, length and
@@ -28,7 +28,7 @@ hand out keeps them in `~/Music/SoundRoom` instead.
 
 **Templates** appear only when making a room. Two are built in: the default room, and an empty room with no
 instruments and no wall (made as a Record room, it starts stopped with nothing looping, at 90 BPM). Save a room as a template from the menu's Room button. Templates hold everything a room does,
-and are kept in `SoundRoom/Templates` as `.srtemplate` files.
+and are kept in `Studiolator/Templates` as `.srtemplate` files.
 
 ## Jam rooms and Record rooms
 

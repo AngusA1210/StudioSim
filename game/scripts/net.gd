@@ -192,8 +192,8 @@ func _ask_router(port: int) -> void:
 		var answer := {"ok": false, "why": "no router answered (UPnP may be off in it)"}
 		if upnp.discover(2000, 2, "InternetGatewayDevice") == UPNP.UPNP_RESULT_SUCCESS and upnp.get_gateway() != null and \
 				upnp.get_gateway().is_valid_gateway():
-			var first := upnp.add_port_mapping(port, port, "SoundRoom", "UDP", 0)
-			var second := upnp.add_port_mapping(port + 1, port + 1, "SoundRoom (sound)", "UDP", 0)
+			var first := upnp.add_port_mapping(port, port, "Studiolator", "UDP", 0)
+			var second := upnp.add_port_mapping(port + 1, port + 1, "Studiolator (sound)", "UDP", 0)
 			if first == UPNP.UPNP_RESULT_SUCCESS and second == UPNP.UPNP_RESULT_SUCCESS:
 				answer = {"ok": true, "address": upnp.query_external_address(), "upnp": upnp, "port": port}
 			else:
@@ -679,7 +679,7 @@ func _on_hello(id: int, data: Dictionary) -> void:
 	if role != "host":
 		return
 	if int(data.get("protocol", 0)) != PROTOCOL:
-		_send("refused", {"why": "it is another version of SoundRoom"}, id)
+		_send("refused", {"why": "it is another version of Studiolator"}, id)
 		return
 	if _password != "" and str(data.get("password", "")) != _password:
 		_send("refused", {"why": "the password isn't right"}, id)

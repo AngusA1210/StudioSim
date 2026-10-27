@@ -27,15 +27,15 @@ together is encrypted, through the server or not.
 On the machine it will run on (Linux, macOS or Windows), with a C++17 compiler and nothing else:
 
 ```bash
-c++ -std=c++17 -O2 -pthread -o soundroom-session-server audio_core/src/server/session_server.cpp audio_core/src/server/main.cpp
+c++ -std=c++17 -O2 -pthread -o studiolator-session-server audio_core/src/server/session_server.cpp audio_core/src/server/main.cpp
 ```
 
-`tools/build.sh` builds it too, as `audio_core/build/soundroom-session-server`.
+`tools/build.sh` builds it too, as `audio_core/build/studiolator-session-server`.
 
 ## Running it
 
 ```bash
-./soundroom-session-server --relay-ports 47200-47455
+./studiolator-session-server --relay-ports 47200-47455
 ```
 
 - `--port N`: the port players reach it on (UDP; 47100 unless given). Players add `:N` to its address if it isn't 47100.
@@ -52,15 +52,15 @@ sudo ufw allow 47100/udp
 sudo ufw allow 47200:47455/udp
 ```
 
-To keep it running and start it with the machine, a systemd unit (`/etc/systemd/system/soundroom-session-server.service`):
+To keep it running and start it with the machine, a systemd unit (`/etc/systemd/system/studiolator-session-server.service`):
 
 ```ini
 [Unit]
-Description=SoundRoom session server
+Description=Studiolator session server
 After=network-online.target
 
 [Service]
-ExecStart=/usr/local/bin/soundroom-session-server --relay-ports 47200-47455
+ExecStart=/usr/local/bin/studiolator-session-server --relay-ports 47200-47455
 Restart=always
 DynamicUser=yes
 
@@ -68,7 +68,7 @@ DynamicUser=yes
 WantedBy=multi-user.target
 ```
 
-then `sudo systemctl enable --now soundroom-session-server`.
+then `sudo systemctl enable --now studiolator-session-server`.
 
 ## What it costs
 

@@ -16,7 +16,7 @@ var delay_name := "AUDelay" if on_mac else "SR Test Echo"
 var reverb_name := "AUReverb2" if on_mac else "SR Test Gain"
 var synth_name := "DLSMusicDevice" if on_mac else "SR Test Tone"
 var sampler_name := "AUSampler" if on_mac else "SR Test Tone"
-var plugin_maker := "Apple" if on_mac else "SoundRoom checks"
+var plugin_maker := "Apple" if on_mac else "Studiolator checks"
 var preset_extension := ".aupreset" if on_mac else ".vstpreset"
 const TrackMenu := preload("res://scripts/track_menu.gd")
 const KitMics := preload("res://scripts/kit_mics.gd")
@@ -3731,7 +3731,7 @@ func _run() -> void:
 	# Meeting through a session server (one started here, on this computer alone, as someone would run one on a machine
 	# the internet reaches): hosted over the internet, the room is given a code; a player joins with it, the two
 	# computers talking directly, and another by way of the server's relay, as where they can't, the sound too.
-	var server_program := ProjectSettings.globalize_path("res://").path_join("../audio_core/build/soundroom-session-server" +
+	var server_program := ProjectSettings.globalize_path("res://").path_join("../audio_core/build/studiolator-session-server" +
 		(".exe" if OS.get_name() == "Windows" else "")).simplify_path()
 	var server_port := port + 10
 	var server_run := OS.create_process(server_program, ["--port", str(server_port), "--bind", "127.0.0.1", "--quiet"]) if \

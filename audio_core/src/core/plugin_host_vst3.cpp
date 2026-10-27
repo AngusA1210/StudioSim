@@ -60,7 +60,7 @@ namespace Hosting = VST3::Hosting;
 
 class Host final : public HostApplication {
 public:
-    tresult PLUGIN_API getName(String128 name) override { return StringConvert::convert("SoundRoom", name) ? kResultTrue : kInternalError; }
+    tresult PLUGIN_API getName(String128 name) override { return StringConvert::convert("Studiolator", name) ? kResultTrue : kInternalError; }
 };
 
 Host& host() {
@@ -84,7 +84,7 @@ bool g_search_set = false;
 std::map<std::string, Scanned> g_scanned;          // each module found, by its path
 std::string g_record;                              // the file it is kept in between sessions (setVst3ScanRecord), if any
 int g_scans = 0;                                   // modules looked into so far
-std::map<std::string, Hosting::Module::Ptr> g_loaded;  // each module loaded (kept for as long as SoundRoom runs)
+std::map<std::string, Hosting::Module::Ptr> g_loaded;  // each module loaded (kept for as long as Studiolator runs)
 
 bool isBundle(const std::filesystem::path& p) {
     std::string ext = p.extension().string();
@@ -180,7 +180,7 @@ std::string clean(std::string s) {
 void readRecord() {
     std::ifstream file(pathOf(g_record), std::ios::binary);
     std::string line;
-    if (!file || !std::getline(file, line) || line != "SoundRoom VST3 scan 1") return;
+    if (!file || !std::getline(file, line) || line != "Studiolator VST3 scan 1") return;
     Scanned* module = nullptr;
     std::string path;
     while (std::getline(file, line)) {
@@ -214,7 +214,7 @@ void readRecord() {
 void writeRecord() {
     std::ofstream file(pathOf(g_record), std::ios::binary | std::ios::trunc);
     if (!file) return;
-    file << "SoundRoom VST3 scan 1\n";
+    file << "Studiolator VST3 scan 1\n";
     for (const auto& [path, scanned] : g_scanned) {
         file << "M\t" << clean(path) << '\t' << int64_t(scanned.when.time_since_epoch().count()) << '\t' << clean(scanned.problem) << '\n';
         for (const Found& f : scanned.classes)

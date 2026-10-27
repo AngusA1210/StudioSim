@@ -15,7 +15,7 @@
 namespace sr {
 namespace {
 
-const wchar_t* const kClassName = L"SoundRoomPluginWindow";
+const wchar_t* const kClassName = L"StudiolatorPluginWindow";
 
 std::wstring wide(const std::string& utf8) {
     if (utf8.empty()) return {};

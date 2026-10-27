@@ -126,7 +126,7 @@ int main() {
     WSADATA wsa;
     WSAStartup(MAKEWORD(2, 2), &wsa);
 #endif
-    std::printf("SoundRoom's session server: checks\n\n");
+    std::printf("Studiolator's session server: checks\n\n");
     sr::SessionServer server;
     sr::SessionServer::Options options;
     options.bind = "127.0.0.1";

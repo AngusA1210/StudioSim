@@ -464,7 +464,7 @@ class Factory final : public U::Implements<U::Directly<IPluginFactory2>, U::Indi
 public:
     tresult PLUGIN_API getFactoryInfo(PFactoryInfo* info) override {
         *info = {};
-        std::strcpy(info->vendor, "SoundRoom checks");
+        std::strcpy(info->vendor, "Studiolator checks");
         info->flags = PFactoryInfo::kUnicode;
         return kResultOk;
     }
@@ -489,7 +489,7 @@ public:
         std::strcpy(info->category, kVstAudioEffectClass);
         std::strcpy(info->name, names[index]);
         std::strcpy(info->subCategories, kinds[index]);
-        std::strcpy(info->vendor, "SoundRoom checks");
+        std::strcpy(info->vendor, "Studiolator checks");
         std::strcpy(info->version, "1.0.0");
         std::strcpy(info->sdkVersion, kVstVersionString);
         return kResultOk;

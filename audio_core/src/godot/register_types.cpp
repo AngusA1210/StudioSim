@@ -3,7 +3,7 @@
 #include <godot_cpp/core/defs.hpp>
 #include <godot_cpp/godot.hpp>
 
-#include "sound_room_audio.h"
+#include "studiolator_audio.h"
 
 using namespace godot;
 
@@ -11,7 +11,7 @@ namespace {
 
 void initialize(ModuleInitializationLevel level) {
     if (level != MODULE_INITIALIZATION_LEVEL_SCENE) return;
-    GDREGISTER_CLASS(SoundRoomAudio);
+    GDREGISTER_CLASS(StudiolatorAudio);
 }
 
 void uninitialize(ModuleInitializationLevel) {}
@@ -19,7 +19,7 @@ void uninitialize(ModuleInitializationLevel) {}
 }  // namespace
 
 extern "C" {
-GDExtensionBool GDE_EXPORT soundroom_audio_init(GDExtensionInterfaceGetProcAddress get_proc_address,
+GDExtensionBool GDE_EXPORT studiolator_audio_init(GDExtensionInterfaceGetProcAddress get_proc_address,
                                                 GDExtensionClassLibraryPtr library,
                                                 GDExtensionInitialization* initialization) {
     GDExtensionBinding::InitObject init_obj(get_proc_address, library, initialization);

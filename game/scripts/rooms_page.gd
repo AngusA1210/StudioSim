@@ -336,7 +336,7 @@ func _build() -> void:
 	_file_dialog.access = FileDialog.ACCESS_FILESYSTEM
 	_file_dialog.use_native_dialog = true
 	_file_dialog.title = "Open a room"
-	_file_dialog.filters = PackedStringArray(["*.%s ; SoundRoom rooms" % app.library.ROOM_EXT])
+	_file_dialog.filters = PackedStringArray(["*.%s ; Studiolator rooms" % app.library.ROOM_EXT])
 	_file_dialog.file_selected.connect(open_room)
 	_root.add_child(_file_dialog)
 
