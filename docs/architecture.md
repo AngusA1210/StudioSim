@@ -23,6 +23,7 @@ game/                      Godot project: the room, player, instruments, HUD, me
                            and the patterns kept in step with it, notes played
   scripts/room_sync.gd     the room kept the same for everyone: what changed sent, what came applied, in the host's order
   scripts/meeting.gd       meeting through a session server: the host's code, finding a session by it, a relay
+  scripts/discovery.gd     the room browser: the rooms hosted on this network, found by a broadcast, and the host's answers
   scripts/together_page.gd hosting or joining, from the title screen
   scripts/library.gd       what a room holds, templates, instrument and plug-in presets, and copied settings
   scripts/timeline.gd      a room's mode; a Record room's transport, recording and clips

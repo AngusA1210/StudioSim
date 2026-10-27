@@ -33,7 +33,7 @@ func _initialize() -> void:
 	main = load("res://main.tscn").instantiate()
 	view.add_child(main)
 	view.notification(Node.NOTIFICATION_VP_MOUSE_ENTER)  # as a real window does when the mouse is over it
-	create_timer(150.0).timeout.connect(_on_timeout)  # a script error would otherwise leave this running for ever
+	create_timer(200.0).timeout.connect(_on_timeout)  # a script error would otherwise leave this running for ever
 	_run()
 
 
@@ -3462,9 +3462,24 @@ func _run() -> void:
 		return true
 	var sync = main.net.sync
 	var port := 48000 + randi() % 2000
-	main.together_page._password.text = "jam"
+	# The page: tabs for the room browser, hosting and joining by address; a long hint (the session server's) shown
+	# whole at its foot, on as many lines as it needs.
+	main.together_page.open()
+	main.together_page.show_tab("host")
+	await frames(3)
+	await hover(main.together_page._server.get_global_rect().get_center())
+	await frames(2)
+	var page_foot: Label = main.together_page._hint
+	check(main.together_page._pages.host.visible and not main.together_page._pages.rooms.visible and
+		main.together_page._room_label.text == session.room_name and page_foot.text.begins_with("Not needed on one network") and
+		page_foot.get_line_count() > 1 and page_foot.get_visible_line_count() == page_foot.get_line_count() and
+		page_foot.size.y >= page_foot.get_line_count() * 14.0,
+		"the Play together page hosts the room that is open; a long hint at its foot is shown whole, on as many lines as it needs",
+		"%d lines, %.0f px high" % [page_foot.get_line_count(), page_foot.size.y])
+	main.together_page.close()
+	main.together_page._host_password.text = "jam"
 	var hosted: String = main.together_page.host(port, "127.0.0.1")  # (this computer alone: no firewall to ask)
-	main.together_page._password.text = ""
+	main.together_page._host_password.text = ""
 	check(hosted == "" and main.net.role == "host" and main.net.players.size() == 1 and main.instruments.all(func(i): return sync.id_of(i) != "") and
 		main.net.router == "", "the room is hosted, for others to join (with a password), each instrument named for the network (no router asked)", hosted)
 	var guest_args := ["--headless", "--path", ProjectSettings.globalize_path("res://"), "--script", "res://tests/together_guest.gd", "--", "--silent",
@@ -3491,6 +3506,15 @@ func _run() -> void:
 	check(guest_body != null and Vector2(guest_body.global_position.x, guest_body.global_position.z).distance_to(
 		Vector2(float(joined.at[0]), float(joined.at[1]))) < 0.1 and guest_body.get_child(0).height > 1.6 and guest_body.get_child(0).height < 1.64,
 		"and their body stands where they do, as tall as they are, for this player to see", str(guest_body.global_position) if guest_body else "none")
+	# The room browser of a player on this network finds the room by itself: its name, its host, who is in it, that it
+	# has a password.
+	main.net.report({"ask": "browse"})
+	var browsed: Dictionary = await wait_for.call("browse", 10.0)
+	var browsed_rooms: Array = browsed.get("rooms", [])
+	check(browsed_rooms.size() == 1 and str(browsed_rooms[0].name) == str(main.net.rules.name) and str(browsed_rooms[0].host) == main.net.host_name and
+		int(browsed_rooms[0].players) == 2 and bool(browsed_rooms[0].locked) and int(browsed_rooms[0].port) == port and str(browsed_rooms[0].address) == "127.0.0.1",
+		"a player's room browser finds the room hosted on their network by itself: its name, host, players, and that it has a password",
+		str(browsed_rooms) + str(browsed.get("problem", "")))
 	# What they move moves here; what is changed here changes there.
 	var bells_shared = main.find_instrument("bells")
 	main.net.report({"ask": "move", "id": sync.id_of(bells_shared), "x": bells_shared.global_position.x + 1.0, "z": bells_shared.global_position.z - 0.5})
@@ -3498,6 +3522,24 @@ func _run() -> void:
 	await seconds(0.4)
 	check(not moved.is_empty() and close_to.call([moved.place], [sync.place_of(bells_shared)]), "an instrument they carry and put down moves here too",
 		"%s there, %s here" % [str(moved.get("place", [])), str(sync.place_of(bells_shared))])
+	# What the host hasn't let joining players do stays as it is, and they're told: an instrument they move goes back;
+	# the tempo they change, the room being the host's unless they're let.
+	main.net.set_rules({"may": {"move": false, "sound": true, "room": false, "transport": true}})
+	await seconds(0.4)
+	var bells_was: Array = sync.place_of(bells_shared)
+	main.net.report({"ask": "try_move", "id": sync.id_of(bells_shared), "x": bells_shared.global_position.x - 1.0, "z": bells_shared.global_position.z})
+	var tried: Dictionary = await wait_for.call("try_move", 10.0)
+	check(not tried.is_empty() and not bool(tried.may) and close_to.call([tried.place], [bells_was]) and close_to.call([sync.place_of(bells_shared)], [bells_was]) and
+		tried.notices.any(func(n): return str(n).contains("move")),
+		"an instrument a joining player moves, when the host hasn't let them, goes back where it was, and they're told", str(tried.get("notices", [])))
+	main.net.set_rules({"may": {"move": true, "sound": true, "room": false, "transport": true}})
+	var tempo_kept: float = main.tempo
+	main.net.report({"ask": "try_tempo", "bpm": tempo_kept + 7.0})
+	var tempo_tried: Dictionary = await wait_for.call("try_tempo", 10.0)
+	check(not tempo_tried.is_empty() and absf(float(tempo_tried.tempo) - tempo_kept) < 0.01 and absf(main.tempo - tempo_kept) < 0.01 and
+		tempo_tried.notices.any(func(n): return str(n).contains("room")),
+		"and so does the tempo they change: the room is the host's to change, unless they let joining players",
+		"%.2f there, %.2f here; %s" % [float(tempo_tried.get("tempo", 0.0)), main.tempo, str(tempo_tried.get("notices", []))])
 	var drums_shared = main.find_instrument("drums")
 	var bass_shared = main.find_instrument("bass")
 	main.set_room_level(bass_shared, -4.5)
@@ -3713,11 +3755,22 @@ func _run() -> void:
 	joined = await wait_for.call("joined", 45.0)
 	check(not joined.is_empty() and not bool(joined.get("by_relay", true)) and main.net.players.size() == 2,
 		"another player joins with the code (typed in small letters), the two computers talking directly", str(joined.get("status", "")))
-	main.net.report({"ask": "leave"})
-	left_until = Time.get_ticks_msec() + 8000
-	while main.net.players.size() > 1 and Time.get_ticks_msec() < left_until:
+	# The room full (two at most, and two in it): another player is turned away. And a player the host asks to leave
+	# is out of the session, their copy of the game knowing it.
+	main.net.set_rules({"most": 2})
+	var third := OS.create_process(OS.get_executable_path(), guest_args)
+	var third_until := Time.get_ticks_msec() + 45000
+	while OS.is_process_running(third) and Time.get_ticks_msec() < third_until:
 		await process_frame
-	await seconds(0.5)
+	check(not OS.is_process_running(third) and OS.get_process_exit_code(third) == 3 and main.net.players.size() == 2,
+		"with the room full, another player is turned away", "it ended with %d" % OS.get_process_exit_code(third))
+	main.net.set_rules({"most": 8})
+	main.net.remove_player(int(joined.get("me", 0)))
+	left_until = Time.get_ticks_msec() + 10000
+	while (main.net.players.size() > 1 or OS.is_process_running(guest_run)) and Time.get_ticks_msec() < left_until:
+		await process_frame
+	check(main.net.players.size() == 1 and not OS.is_process_running(guest_run), "a player the host asks to leave is out of the session",
+		"%d in it" % main.net.players.size())
 	if OS.is_process_running(guest_run):
 		OS.kill(guest_run)
 	guest_run = OS.create_process(OS.get_executable_path(), meet_args + ["--relay"])

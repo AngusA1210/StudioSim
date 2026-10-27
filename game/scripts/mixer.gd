@@ -1541,6 +1541,8 @@ func _on_name_menu_chosen(id: int) -> void:
 		return
 	if id == 0:
 		open_editor(inst)
+	elif id in [1, 2] and not app.net.check("move"):
+		pass
 	elif id == 2:
 		duplicate_instrument(inst)
 	elif id == 1:

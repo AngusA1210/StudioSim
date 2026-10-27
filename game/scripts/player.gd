@@ -418,10 +418,11 @@ func _handle_key(event: InputEventKey) -> void:
 			if at != null and at.plays_plugin and not notes:
 				open_plugin_window(at)
 		"add":
-			app.instrument_menu.open()
+			if app.net.check("move"):
+				app.instrument_menu.open()
 		"duplicate":  # a second of what you face or carry, with its settings, in your hands to be put down
 			var original = carried if carried != null else at
-			if original != null and not notes:
+			if original != null and not notes and app.net.check("move"):
 				var copy = app.duplicate_instrument(original, original.global_position)
 				if copy != null:
 					carry(copy)
@@ -648,7 +649,7 @@ func _held(action: String) -> float:
 
 ## Removing takes two presses, so a slip of the finger doesn't cost an instrument and its pattern.
 func _ask_to_remove(inst) -> void:
-	if inst == null:
+	if inst == null or not app.net.check("move"):
 		return
 	if remove_pending == inst and Time.get_ticks_msec() < _remove_deadline:
 		app.remove_instrument(inst)
@@ -706,6 +707,8 @@ func _grab_or_drop() -> void:
 		app.session.notice.emit("%s is carrying %s" % [app.net.carried_by_another(target), target.display_name])
 	elif target != null and target.locked:
 		app.session.notice.emit("%s is locked in place (%s unlocks it)" % [target.display_name, app.bindings.label("lock")])
+	elif target != null and not app.net.check("move"):
+		pass
 	elif target != null:
 		app.note_move(target)  # (Cmd-Z puts it back where it was picked up from)
 		carried = target

@@ -6,32 +6,49 @@ and the players can talk to each other.
 
 ## Hosting and joining
 
-**Play together…** on the title screen opens the page for it.
+**Play together…** on the title screen opens the page for it, in three tabs. No server is needed to play on one
+network, nor over the internet where the host's router opens its ports.
 
-- **Host**: open a room (a Jam room or a Record room), then press Host. The page shows the address others join at, which is this computer's on
-  the local network (192.168…), with the port (47130 unless you change it).
-- **Join**: type the host's address (add `:port` if it isn't 47130), or the session's code, and its password if it has
-  one, and press Join. Your room becomes a copy of theirs, and you go into it beside where the host stands. The room
-  you had open is left as it was last saved. The copy goes in a folder of its own in **Together**, in your rooms
-  folder: what you record goes there, and what the others record comes there. It is saved there when you save it,
-  and it stays yours after you leave.
+- **Rooms**: the rooms hosted on this network, found by themselves: their names, hosts, Jam or Record, how many are in
+  them, and whether they have a password. Double-click one to join it (with its password, if it has one).
+- **Host**: the room to host, which is the one open, or a new one or a saved one (**New room…** and **Open a
+  room…** make or open it, then come back here). Then its **name** (the room's own, unless you give another), a
+  **password** if it is to have one, whether it is **listed** under Rooms, the most **players** in it at once (you
+  included), and what joining players may do (see [The host's rules](#the-hosts-rules)). Press **Host**: the page
+  then shows the session, with where others join, who is in it, its rules, and **Into the room**.
+- **Direct connect**: a room joined by its host's address (and `:port` if it isn't 47130), or by the session's
+  code, with its password if it has one. A room on another network is joined this way, as is an unlisted one.
+
+Joining, your room becomes a copy of theirs, and you go into it beside where the host stands. The room you had open
+is left as it was last saved. The copy goes in a folder of its own in **Together**, in your rooms folder: what you
+record goes there, and what the others record comes there. It is saved there when you save it, and it stays yours
+after you leave.
 
 **Over the internet**: tick it before hosting, and SoundRoom asks your router, by UPnP, to open the session's port
 and the next one (47131: the sound between players) to this computer while you host. Most home routers allow it.
-The page then shows your public address, for the others to join at from anywhere, and the ports are closed again
-when the session ends. If the router won't (UPnP switched off, or a network that is itself behind another, as on
-some mobile and student connections), the page says why. Then forward both ports (UDP) to this computer in the
-router by hand, or meet through a session server.
+The page then shows your public address, for the others to join at from anywhere under Direct connect, and the
+ports are closed again when the session ends. If the router won't (UPnP switched off, or a network that is itself
+behind another, as on some mobile and student connections), the page says why. Then forward both ports (UDP) to
+this computer in the router by hand, or meet through a session server.
 
-**Session server**: a program on a machine the internet can reach, which players meet through (see
-[Running a session server](session-server.md)). Put its address on the Play together page (and `:port` if it
-isn't 47100). Everyone uses the same one. Hosting over the internet with one given, the page shows a code
-("K7Q-M2D") as well as the address, and the others can join with that from anywhere, whatever their routers do.
-The two computers are introduced, and talk directly where their routers allow it (most do). Where they don't, the
-server passes everything between them itself, a little later than directly, and the page says so.
+**Session server**: a program on a machine the internet can reach, which players meet through, for when a router
+won't open its ports (see [Running a session server](session-server.md)). Put its address on the Host tab (and
+`:port` if it isn't 47100). Everyone uses the same one. Hosting over the internet with one given, the page shows a
+code ("K7Q-M2D") as well as the address, and the others can join with that from anywhere, whatever their routers
+do. The two computers are introduced, and talk directly where their routers allow it (most do). Where they don't,
+the server passes everything between them itself, a little later than directly, and the page says so.
 
-**Password**: set before hosting, only those who give it can join. It keeps out anyone who comes across an open
-port; it isn't encryption.
+**Password**: only those who give it can join. It keeps out anyone who comes across the room; it isn't encryption.
+
+**When a room can't be reached**: the host's firewall is the usual reason. Windows asks, the first time a room is
+hosted, whether to let Godot through Windows Defender Firewall: allow it for private networks, and set the network
+itself to Private (Settings > Network & internet > its connection > Network profile type). If it was turned down
+once, allow Godot in Windows Security > Firewall & network protection > Allow an app through firewall. A Mac with
+its firewall on asks too. A Mac may also ask whether Godot (or the app it was started from, such as Terminal) can
+find devices on the local network; it must be let (System Settings > Privacy & Security > Local Network): the Rooms
+tab says when it can't ask the network. Both computers must be on the same network, and not a guest Wi-Fi, which
+often keeps its computers apart. Both must run the same version of SoundRoom: a room hosted by another shows so
+under Rooms.
 
 **Losing the connection**: a player whose connection to the host drops tries to get back in by themselves (by the
 address or code they joined with), every few seconds for half a minute, and their copy of the room is brought up to
@@ -42,6 +59,24 @@ While you're together, a **TOGETHER** chip on screen shows how many are in the r
 the time a message takes to reach the host and back. The floor plan shows each other player as an arrowhead in their
 colour. **Leave** (or **End the session**, as the host) is on the same page. A player who joined keeps their copy of
 the room when they leave. To make or open another room, a player who joined leaves first.
+
+## The host's rules
+
+Every player can play the instruments, play through a live input and talk. Besides that, the host chooses what
+joining players may do, on the Host tab, and can change it while the session goes on:
+
+- **Move, add and take out instruments** (and mike up a kit, and lock one in place).
+- **Change instruments' sound, patterns and names**: an amp's head, cabinet, knobs and pedals, a microphone's
+  settings, inserts and plug-ins, levels in the room, patterns, names and colours.
+- **Change the room**: its size, walls and surfaces, the tempo and swing, the reverb, and Jam or Record.
+- **Play, stop and record, and edit the timeline**: the transport, arming tracks, and a Record room's clips, loop
+  and playhead.
+
+All but changing the room are let to begin with. A joining player who tries what they aren't let is told so ("The
+host hasn't let players move, add or take out instruments"), and it stays as the host has it (the host's copy
+decides, and puts back anything changed). The host can also **ask a player to leave**, beside their name in the
+session; they can join again, with the password if it has one. A room with as many players as it allows turns
+others away.
 
 ## What everyone shares
 
@@ -144,4 +179,5 @@ voice opens the audio input for the whole session, so that holding the key never
 
 ## What comes next
 
-- A session server run for everyone, so that nobody has to run their own.
+- Rooms listed across the internet, not only on one network: that needs something always on that everyone can reach,
+  to keep the list.

@@ -25,6 +25,9 @@ const CARRY := [
 ]
 
 var app
+## Where to go once a room is made or opened, or the page is closed, in place of going into the room: the Play
+## together page, hosting a new room or a saved one.
+var back_to := Callable()
 var _root: Control
 var _panel: PanelContainer
 var _new_tab: Button
@@ -91,6 +94,18 @@ func close() -> void:
 	_root.visible = false
 	_folder_dialog.hide()
 	_file_dialog.hide()
+	if back_to.is_valid():
+		var going := back_to
+		back_to = Callable()
+		going.call()
+
+
+## A room made or opened: into it (or back to where the page was opened from).
+func _into_room() -> void:
+	var returning := back_to.is_valid()
+	close()
+	if not returning:
+		app.title.enter()
 
 
 func _show(new_room: bool) -> void:
@@ -195,8 +210,7 @@ func create() -> void:
 		if not app.session.has_room() or app.session.room_name != the_name:
 			_new_status.text = "It couldn't be made: %s." % problem
 			return
-		close()
-		app.title.enter()
+		_into_room()
 		if problem != "":
 			app.session.notice.emit("Not all of the template came over: %s" % problem), "making a new room")
 
@@ -250,8 +264,7 @@ func _chosen_room() -> Dictionary:
 ## Opens a room's file, once any changes to the one open are saved or let go, and goes into it.
 func open_room(file: String) -> void:
 	if file == app.session.path:  # the one that is open: just go back in
-		close()
-		app.title.enter()
+		_into_room()
 		return
 	app.session.then_if_saved(func() -> void:
 		var problem: String = app.session.open(file)
@@ -259,8 +272,7 @@ func open_room(file: String) -> void:
 			_open_status.text = "It couldn't be opened: %s." % problem
 			_open_status.add_theme_color_override("font_color", WARN)
 			return
-		close()
-		app.title.enter()
+		_into_room()
 		if problem != "":
 			app.session.notice.emit("Not all of it could be set up: %s" % problem), "opening another room")
 

@@ -2,7 +2,8 @@ extends SceneTree
 ## The other player, for the automated checks: ui_check.gd hosts a room and starts this, a second copy of the game,
 ## which joins it and then does what the checks ask, saying what it found (over the session itself).
 ## Run by ui_check.gd: godot --headless --path game --script tests/together_guest.gd -- --silent --join=127.0.0.1:<port>
-## [--password=<the host's>] (turned away, it quits with 2); or --join=<code> --server=<the session server> [--relay]
+## [--password=<the host's>] (turned away for its password, it quits with 2; the room being full, with 3); or
+## --join=<code> --server=<the session server> [--relay]
 
 const RoomSync := preload("res://scripts/room_sync.gd")
 
@@ -11,6 +12,7 @@ var view: SubViewport
 var address := ""
 var password := ""
 var server := ""
+var notices := []  # what the game has told this player, lately
 
 
 func _initialize() -> void:
@@ -36,14 +38,15 @@ func _run() -> void:
 	main.settings.height = 1.62
 	main.player.set_height(1.62)
 	main.net.reported.connect(_on_asked)
+	main.session.notice.connect(func(text: String) -> void: notices.append(text))
 	main.settings.session_server = server
 	main.net.join(address, password)
 	var until := Time.get_ticks_msec() + 20000
-	while main.net.role != "guest" and Time.get_ticks_msec() < until:
-		await process_frame
+	while main.net.role != "guest" and not (main.net.role == "" and main.net.status != "") and Time.get_ticks_msec() < until:
+		await process_frame  # (until in, or turned away)
 	if main.net.role != "guest":
 		print("GUEST: couldn't join %s (%s)" % [address, main.net.status])
-		quit(2 if main.net.status.contains("password") else 1)
+		quit(2 if main.net.status.contains("password") else (3 if main.net.status.contains("full") else 1))
 		return
 	main.title.enter()
 	for i in 20:
@@ -128,5 +131,22 @@ func _on_asked(_from: int, ask: Dictionary) -> void:
 			main.net.report({"step": "transport", "mode": main.timeline.mode, "playing": main.timeline.playing, "recording": main.timeline.recording,
 				"at": main.timeline.position(), "folder": main.session.room_folder(), "speaker_clips": speaker_clips, "armed": main.instruments.filter(
 				func(i): return i.armed).map(func(i): return i.display_name)})
+		"try_move":  # an instrument moved (as the move ask), which the host may put back; where it is a second later
+			notices.clear()
+			var inst = sync.find(str(ask.id))
+			inst.global_position = Vector3(float(ask.x), inst.global_position.y, float(ask.z))
+			inst.sync_position()
+			await main.get_tree().create_timer(1.5).timeout
+			main.net.report({"step": "try_move", "place": sync.place_of(inst), "notices": notices.duplicate(), "may": main.net.may("move")})
+		"try_tempo":  # the tempo changed, which the host may put back; what it is a second and a half later
+			notices.clear()
+			main.set_tempo(float(ask.bpm))
+			await main.get_tree().create_timer(1.5).timeout
+			main.net.report({"step": "try_tempo", "tempo": main.tempo, "notices": notices.duplicate()})
+		"browse":  # the rooms this player's room browser finds
+			main.net.discovery.look(true)
+			await main.get_tree().create_timer(3.0).timeout
+			main.net.report({"step": "browse", "rooms": main.net.discovery.found(), "problem": main.net.discovery.problem})
+			main.net.discovery.look(false)
 		"leave":
 			main.net.leave()

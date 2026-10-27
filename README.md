@@ -17,9 +17,10 @@ It is also a workstation: rooms can be recorded, edited and mixed the way a DAW 
 - **A mix window** laid out like a DAW's: inserts, sends, folders, aux tracks, delay compensation, and the room and the
   mix as separate masters.
 - **Plug-ins**: VST3 on macOS and Windows, Audio Units on macOS.
-- **Playing together**: one player hosts their room and others join it, on one network or over the internet, each
-  hearing it from where they stand, with the patterns in step on a shared clock, live inputs streamed between
-  players, voices, and Record rooms recorded together.
+- **Playing together**: one player hosts their room and others join it, from a room browser on one network or by
+  address over the internet, with no server needed. The host sets a name, a password and what joining players may
+  do. Each player hears the room from where they stand, with the patterns in step on a shared clock, live inputs
+  streamed between players, voices, and Record rooms recorded together.
 
 ## Build and run
 

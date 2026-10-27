@@ -25,11 +25,19 @@ signal changed  # a player came or went; hosting, joining or leaving
 signal reported(from: int, data: Dictionary)  # (the automated checks: what the other copy of the game found)
 
 const Avatar := preload("res://scripts/avatar.gd")
+const Discovery := preload("res://scripts/discovery.gd")
 const Meeting := preload("res://scripts/meeting.gd")
 const RoomSync := preload("res://scripts/room_sync.gd")
 const PORT := 47130
 const PROTOCOL := 1
 const MAX_GUESTS := 15
+## A session's rules, as the host sets them: its name (the room's, unless given), whether it is listed in room browsers,
+## the most players in it at once, and what joining players may do besides playing and talking (MAY).
+const RULES := {"name": "", "listed": true, "most": 8, "may": {"move": true, "sound": true, "room": false, "transport": true}}
+## What joining players may be let do, as a player who may not is told it ("The host hasn't let players …").
+const MAY := {"move": "move, add or take out instruments", "sound": "change the instruments' sound, patterns or names",
+	"room": "change the room (its size, walls, surfaces or tempo)", "transport": "play, stop or record the session, or edit the timeline"}
+const DENIED_EVERY := 3000  # ms: a player is told they may not do something once in this long, at most
 const POSE_EVERY := 1.0 / 15.0
 const PING_EVERY := 1.0
 const KEEP_IN_STEP_EVERY := 0.5
@@ -73,6 +81,10 @@ var router := ""  # (the host's) how asking the router went: "", "asking", "open
 var _upnp = null  # (the host's) the router that opened the ports, to close them again
 var _router_thread: Thread
 var _password := ""  # (the host's) what a joining player must give, if anything
+var rules := RULES.duplicate(true)  # the session's (the host's, as it set them; a joining player's, as told)
+var discovery  # discovery.gd: the room browser's finding rooms on this network, and the host's answering it
+var _hosted_port := PORT  # (the host's) the session's port
+var _denied_at := {}  # (the host's) "player:what" → when they were last told they may not
 var _host_ended := false  # (a joining player) the host ended the session, rather than the connection being lost
 var _rejoin := {}  # (a joining player whose connection was lost) {given, password, tries, next}: trying to get back in
 var meeting = null  # meeting.gd: (the host's) its code, from the session server; (joining by a code) finding it
@@ -94,6 +106,7 @@ func setup(the_app) -> void:
 	audio = app.audio
 	sync = RoomSync.new()
 	sync.setup(app, self)
+	discovery = Discovery.new(self)
 	multiplayer.peer_connected.connect(_on_peer_connected)
 	multiplayer.peer_disconnected.connect(_on_peer_disconnected)
 	multiplayer.connected_to_server.connect(_on_connected)
@@ -115,10 +128,17 @@ func session_us() -> int:
 ## "127.0.0.1" for this computer alone, as the checks do). Returns what went wrong, or "".
 ## With `open_router`, the router is asked (UPnP) to open the session's two ports to this computer, so that others can
 ## join over the internet at the address it gives (public_address) without anyone forwarding them by hand. With a
-## `password`, only those who give it can join.
-func host(port := PORT, bind := "*", open_router := false, password := "") -> String:
+## `password`, only those who give it can join. `session_rules`: the session's name, whether it is listed, the most
+## players, what they may do (RULES, for what isn't given).
+func host(port := PORT, bind := "*", open_router := false, password := "", session_rules := {}) -> String:
 	leave()
 	_password = password
+	rules = RULES.duplicate(true)
+	rules.merge(session_rules.duplicate(true), true)
+	if str(rules.name).strip_edges() == "":
+		rules.name = app.session.room_name
+	rules.most = clampi(int(rules.most), 2, MAX_GUESTS + 1)
+	_hosted_port = port
 	var peer := ENetMultiplayerPeer.new()
 	peer.set_bind_ip(bind)
 	var problem := peer.create_server(port, MAX_GUESTS, CHANNELS)
@@ -140,6 +160,7 @@ func host(port := PORT, bind := "*", open_router := false, password := "") -> St
 		status += " (no sound between players: %s)" % trouble
 	_tell_engine_who()
 	follow_voices()
+	discovery.answer(bind)
 	if open_router and not app.options.has("silent"):  # (never in the automated runs: nobody's router is theirs to open)
 		_ask_router(port)
 	if open_router and app.settings.session_server.strip_edges() != "":  # (a code, for others to join with from anywhere)
@@ -292,6 +313,112 @@ func by_relay() -> bool:
 	return meeting != null and meeting.by_relay
 
 
+# ── The session's rules ─────────────────────────────────────────────────────────────────────────────────────
+
+## (The host) the session as the room browser shows it (discovery.gd), `id` being this session's there.
+func listing(id: String) -> Dictionary:
+	return {"id": id, "name": str(rules.name), "host": host_name, "mode": app.timeline.mode, "players": players.size(),
+		"most": int(rules.most), "locked": _password != "", "port": _hosted_port, "protocol": PROTOCOL}
+
+
+## (The host) the session's rules changed while it goes on: everyone told.
+func set_rules(new_rules: Dictionary) -> void:
+	if role != "host":
+		return
+	rules.merge(new_rules.duplicate(true), true)
+	if str(rules.name).strip_edges() == "":
+		rules.name = app.session.room_name
+	rules.most = clampi(int(rules.most), 2, MAX_GUESTS + 1)
+	_send("rules", rules)
+	changed.emit()
+
+
+## Whether this player may do `what` (a key of MAY): always, unless they joined and the host hasn't let them.
+func may(what: String) -> bool:
+	return role != "guest" or bool(rules.get("may", {}).get(what, true))
+
+
+## As may, the player told when they may not.
+func check(what: String) -> bool:
+	if may(what):
+		return true
+	app.session.notice.emit("The host hasn't let players %s" % MAY.get(what, "do that"))
+	return false
+
+
+## (The host) a player asked to leave: told so, and their connection closed (they close it themselves on hearing).
+func remove_player(id: int) -> void:
+	if role != "host" or not players.has(id):
+		return
+	_send("refused", {"why": "the host has asked you to leave"}, id)
+	(multiplayer.multiplayer_peer as ENetMultiplayerPeer).host.flush()
+	get_tree().create_timer(1.0).timeout.connect(func() -> void:
+		if role == "host" and multiplayer.multiplayer_peer != null and players.has(id):
+			(multiplayer.multiplayer_peer as ENetMultiplayerPeer).disconnect_peer(id))
+
+
+## (Turned away, or asked to leave) the connection to the host closed.
+func _drop_connection() -> void:
+	if role == "" and multiplayer.multiplayer_peer != null:
+		multiplayer.multiplayer_peer.close()
+		multiplayer.multiplayer_peer = null
+
+
+## (The host) a joining player's change, as far as they may make it: what they may not is put back as it is here, and
+## they're told. False if none of it stands (they alone are sent the room as it is, theirs undone).
+func _allowed(kind: String, data: Dictionary, id: int) -> bool:
+	var may_do: Dictionary = rules.get("may", {})
+	var needs: String = {"add": "move", "remove": "move", "place": "move", "states": "sound"}.get(kind, "")
+	if needs != "":
+		if bool(may_do.get(needs, true)):
+			return true
+		var inst = sync.find(str(data.get("id", "")))
+		var undo := {"id": str(data.get("id", "")), "from": id, "refused": true}
+		match kind:
+			"add":
+				_send("remove", undo, id)
+			"remove", "place", "states":
+				if inst != null:
+					undo.place = sync.place_of(inst)
+					if kind != "place":
+						undo.state = sync.state_of(inst)
+						undo.states = sync.states_of(inst)
+					_send("add" if kind == "remove" else kind, undo, id)
+		_deny(id, needs)
+		return false
+	if kind != "state" and kind != "room":
+		return true
+	var inst = sync.find(str(data.get("id", ""))) if kind == "state" else null
+	if kind == "state" and inst == null:
+		return true
+	var here: Dictionary = sync.state_of(inst) if kind == "state" else sync.room_entry()
+	var asked: Dictionary = data[kind]
+	var needed: Dictionary = RoomSync.STATE_NEEDS if kind == "state" else RoomSync.ROOM_NEEDS
+	var refused := ""
+	for key in needed:
+		var what: String = needed[key]
+		if bool(may_do.get(what, true)) or hash(asked.get(key)) == hash(here.get(key)):
+			continue
+		if here.has(key):
+			asked[key] = here[key]
+		else:
+			asked.erase(key)
+		refused = what
+	if refused != "":
+		data.refused = true  # (everyone, they too, takes it as the host has it)
+		_deny(id, refused)
+	return true
+
+
+func _deny(id: int, what: String) -> void:
+	var key := "%d:%s" % [id, what]
+	var now := Time.get_ticks_msec()
+	if now - int(_denied_at.get(key, -DENIED_EVERY)) < DENIED_EVERY:
+		return
+	_denied_at[key] = now
+	_send("denied", {"what": what}, id)
+
+
 ## Leaves the session (as the host, ends it). A player who joined keeps a copy of the room, as it was.
 func leave() -> void:
 	_rejoin = {}
@@ -327,6 +454,8 @@ func _end(why: String) -> void:
 	_outgoing.clear()
 	_incoming.clear()
 	_waiting_clock = {}
+	discovery.stop_answering()
+	_denied_at.clear()
 	if meeting != null:
 		meeting.end()
 		meeting = null
@@ -408,6 +537,8 @@ func _on_connected() -> void:
 ## The host gone without saying so (the connection lost, as a network can drop out): tried again every few seconds for
 ## half a minute, the copy of the room kept as it is meanwhile. Ended by the host, or left: over.
 func _lost() -> void:
+	if role == "":  # (ended already: turned away, say)
+		return
 	if role != "guest" or _host_ended:
 		_end("the host has ended the session" if _host_ended else "the host has left")
 		return
@@ -474,9 +605,16 @@ func _on_packet(id: int, bytes: PackedByteArray) -> void:
 			_on_hello(id, data)
 		"welcome":
 			_on_welcome(data)
-		"refused":
+		"refused":  # (turned away, or asked to leave)
 			_rejoin = {}
 			_end(str(data.get("why", "the host said no")))
+			_drop_connection.call_deferred()
+		"denied":  # (something the host hasn't let players do, put back as it was)
+			app.session.notice.emit("The host hasn't let players %s" % MAY.get(str(data.get("what", "")), "do that"))
+		"rules":
+			if role == "guest":
+				rules = data
+				changed.emit()
 		"ending":  # (the host is ending the session: not a connection lost)
 			_host_ended = true
 		"players":
@@ -529,6 +667,8 @@ func _on_packet(id: int, bytes: PackedByteArray) -> void:
 		"add", "remove", "place", "state", "states", "room":
 			if role == "host":
 				data.from = id
+				if not _allowed(kind, data, id):
+					return
 				sync.receive(kind, data)
 				_send(kind, data)  # (to everyone, the player it came from too: the host's order is everyone's)
 			else:
@@ -544,12 +684,15 @@ func _on_hello(id: int, data: Dictionary) -> void:
 	if _password != "" and str(data.get("password", "")) != _password:
 		_send("refused", {"why": "the password isn't right"}, id)
 		return
+	if players.size() >= int(rules.most):
+		_send("refused", {"why": "the room is full (%d players)" % int(rules.most)}, id)
+		return
 	players[id] = {"name": str(data.get("name", "Player")), "height": float(data.get("height", 1.75)),
 		"color": _color_data(COLORS[players.size() % COLORS.size()])}
 	_tell_engine_who()
 	_send("welcome", {"you": id, "host": host_name, "room_name": app.session.room_name, "room": app.library.room_data(), "ids": sync.ids(),
 		"feeds": app.instruments.map(func(i): return [int(i.get_meta("fed_by", 0)), int(i.get_meta("stream", 0))]),
-		"players": players, "clock": clock}, id)
+		"players": players, "clock": clock, "rules": rules}, id)
 	_send("players", players, -id)
 	app.session.notice.emit("%s has joined" % players[id].name)
 	changed.emit()
@@ -581,7 +724,8 @@ func _on_welcome(data: Dictionary) -> void:
 		follow_feed(inst)
 		need_files(inst.clips)
 	follow_voices()
-	app.session.begin_copy("%s (%s's)" % [str(data.room_name), host_name])
+	rules = data.get("rules", RULES.duplicate(true))
+	app.session.begin_copy("%s (%s's)" % [str(rules.get("name", data.room_name)), host_name])
 	_stand_beside_host()
 	audio.share_played_notes(true)
 	_pings.clear()
@@ -623,6 +767,8 @@ func _on_pong(data: Dictionary) -> void:
 
 ## Space, while playing together: the patterns started or stopped for everyone at once.
 func request_running(on: bool) -> void:
+	if not check("transport"):
+		return
 	if role == "host":
 		set_running(on)
 	else:
@@ -734,6 +880,8 @@ func is_recording() -> bool:
 ## Space, Cmd-Space, or the playhead moved while playing, in a Record room: the timeline started (recording too, with
 ## `record`; from `from`, or the playhead), or stopped, for everyone at once. (A Jam room's: its patterns.)
 func request_transport(on: bool, record := false, from := -1.0) -> void:
+	if not check("transport"):
+		return
 	var timeline = app.timeline
 	var ask := {"on": on, "record": record, "from": timeline.playhead if from < 0.0 else from,
 		"preroll": float(app.settings.preroll_bars * timeline.STEPS_PER_BAR), "loop_record": record and app.settings.loop_record,
@@ -840,6 +988,8 @@ func arm_switched(inst, on: bool) -> bool:
 		return true
 	var by := int(inst.get_meta("armed_by", 0))
 	if on:
+		if not check("transport"):
+			return false
 		if by != 0 and by != me:
 			app.session.notice.emit("%s has %s armed" % [name_of(by), inst.display_name])
 			return false
@@ -1244,6 +1394,7 @@ func carried_by_another(inst) -> String:
 # ── Each frame ──────────────────────────────────────────────────────────────────────────────────────────────
 
 func _process(delta: float) -> void:
+	discovery.tick(delta)
 	if meeting != null:
 		meeting.tick(delta)
 	if not _rejoin.is_empty():

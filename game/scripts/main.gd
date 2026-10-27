@@ -1897,6 +1897,8 @@ func set_mic_gain(mic, db: float) -> void:
 ## An acoustic kit miked up in one go (kit_mics.gd's setups: "full", "close", "four"): its mics, in a folder of their
 ## own, or [] (and a notice) if the room hasn't space for them.
 func mic_kit(kit, setup: String) -> Array:
+	if not net.check("move"):
+		return []
 	var mics: Array = await KitMics.place(self, kit, setup)
 	if mics.is_empty():
 		session.notice.emit("There isn't space in the room for %d more microphones" % KitMics.plan(setup).size())

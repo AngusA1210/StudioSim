@@ -189,9 +189,7 @@ func _build() -> void:
 	_preset_cards.add_theme_constant_override("v_separation", 10)
 	_preset_box.add_child(_preset_cards)
 
-	_hint = Hints.line()
-	_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_hint.custom_minimum_size.y = 20
+	_hint = Hints.line(20)
 	_hint.add_theme_font_size_override("font_size", 14)
 	_hint.add_theme_color_override("font_color", Color(0.85, 0.87, 0.92))
 	outer.add_child(_hint)

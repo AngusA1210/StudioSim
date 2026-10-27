@@ -14,6 +14,12 @@ extends RefCounted
 ## faders, mute and solo, pans, folders, aux tracks, sends and masters), which inputs are on, and what they hear.
 
 const Library := preload("res://scripts/library.gd")
+## What a joining player needs the host to have let them do (net.gd's MAY) to change each part of an instrument's
+## state, and of the room's (whose input plays through a live input needs nothing: it is playing).
+const STATE_NEEDS := {"name": "sound", "color": "sound", "room_db": "sound", "room_muted": "sound", "locked": "move", "settings": "sound",
+	"stereo": "sound", "loop_on": "sound", "steps": "sound", "pattern": "sound", "armed_by": "transport", "clips": "transport"}
+const ROOM_NEEDS := {"size": "room", "walls": "room", "surfaces": "room", "tempo": "room", "swing": "room", "reverb_db": "room",
+	"mode": "room", "loop": "transport", "playhead": "transport"}
 const PLACE_EVERY := 0.1
 const STATE_EVERY := 0.3
 const STATES_EVERY := 3.0
@@ -208,19 +214,22 @@ func _mine(key: String) -> void:
 # ── Applying what came from elsewhere ────────────────────────────────────────────────────────────────────────
 
 ## A change from the network: `from` is the player it came from (this one's own, coming back from the host, is let be
-## unless someone else's came in between, when it is applied again, the host's order being everyone's).
+## unless someone else's came in between, when it is applied again, the host's order being everyone's; or unless the
+## host has put back what this player wasn't let change: `refused`).
 func receive(kind: String, data: Dictionary) -> void:
 	var id := str(data.get("id", ""))
 	var key := "room" if kind == "room" else "%s:%s" % [id, kind]
+	var refused := bool(data.get("refused", false))
 	if int(data.get("from", 0)) == net.me:
-		if kind in ["add", "remove"]:
+		if kind in ["add", "remove"] and not refused:
 			return
-		_in_flight[key] = maxi(int(_in_flight.get(key, 0)) - 1, 0)
-		var again: bool = _overridden.get(key, false)
-		if _in_flight[key] == 0:
-			_overridden.erase(key)
-		if not again:
-			return
+		if not kind in ["add", "remove"]:
+			_in_flight[key] = maxi(int(_in_flight.get(key, 0)) - 1, 0)
+			var again: bool = _overridden.get(key, false) or refused
+			if _in_flight[key] == 0:
+				_overridden.erase(key)
+			if not again:
+				return
 	elif int(_in_flight.get(key, 0)) > 0:
 		_overridden[key] = true
 	applying = true

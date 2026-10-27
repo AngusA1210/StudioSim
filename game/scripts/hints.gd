@@ -39,12 +39,18 @@ static func under_mouse(within: Control) -> String:
 	return ""
 
 
-## A panel's hint line: one dim line that keeps its place whether or not there is anything to say.
-static func line() -> Label:
+## A panel's hint line: dim, keeping its place whether or not there is anything to say (at least `least` high), and
+## wrapped onto as many lines as a hint needs, all of it shown. It keeps the height of the tallest hint shown while its
+## panel is open, so that what is under the mouse isn't moved from under it as hints come and go.
+static func line(least := 18.0) -> Label:
 	var label := Label.new()
 	label.add_theme_font_size_override("font_size", 12)
 	label.add_theme_color_override("font_color", Color(0.62, 0.65, 0.74))
-	label.clip_text = true
-	label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	label.custom_minimum_size.y = 18
+	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	label.custom_minimum_size.y = least
+	label.minimum_size_changed.connect(func() -> void:
+		label.custom_minimum_size.y = maxf(label.custom_minimum_size.y, label.get_minimum_size().y))
+	label.visibility_changed.connect(func() -> void:
+		if not label.is_visible_in_tree():  # (the panel closed: as short as it can be, until a hint needs more)
+			label.custom_minimum_size.y = least)
 	return label

@@ -678,7 +678,5 @@ func _build() -> void:
 	_distances.add_theme_constant_override("v_separation", 2)
 	Hints.give(_distances, "How far each instrument is, in a straight line (round a wall it is further), how late its sound arrives, how loud it is here against 1.5 m away, and how far off its axis")
 	right.add_child(_distances)
-	_hint = Hints.line()
-	_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_hint.custom_minimum_size.y = 34
+	_hint = Hints.line(34)
 	outer.add_child(_hint)
