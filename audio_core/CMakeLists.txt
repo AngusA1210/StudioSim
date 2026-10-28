@@ -14,7 +14,7 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
 
-set(GAME_BIN_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../game/bin")
+set(GAME_BIN_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../game/bin" CACHE PATH "Where the Godot extension (and Steam Audio beside it) is put")
 set(STEAMAUDIO_DIR "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/steamaudio")
 set(VST3SDK_DIR "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/vst3sdk")
 if(NOT EXISTS "${STEAMAUDIO_DIR}/include/phonon.h" OR NOT EXISTS "${VST3SDK_DIR}/pluginterfaces/base/funknown.h")
@@ -202,8 +202,15 @@ add_library(studiosim_audio SHARED
     src/godot/studiosim_audio.cpp
 )
 target_link_libraries(studiosim_audio PRIVATE sr_core godot::cpp)
+# Godot's release runtime (an exported StudioSim, made by tools/export.sh) needs the extension's godot-cpp built for it:
+# that one is built in a folder of its own, with -DGODOTCPP_TARGET=template_release, and named apart (.release),
+# beside the one the editor and the checks load (studiosim_audio.gdextension says which is which).
+set(EXTENSION_NAME "studiosim_audio")
+if(GODOTCPP_TARGET STREQUAL "template_release")
+    set(EXTENSION_NAME "studiosim_audio.release")
+endif()
 set_target_properties(studiosim_audio PROPERTIES
-    OUTPUT_NAME "studiosim_audio"
+    OUTPUT_NAME "${EXTENSION_NAME}"
     LIBRARY_OUTPUT_DIRECTORY "${GAME_BIN_DIR}"
     RUNTIME_OUTPUT_DIRECTORY "${GAME_BIN_DIR}"
 )
@@ -212,8 +219,8 @@ foreach(cfg DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)
         LIBRARY_OUTPUT_DIRECTORY_${cfg} "${GAME_BIN_DIR}" RUNTIME_OUTPUT_DIRECTORY_${cfg} "${GAME_BIN_DIR}")
 endforeach()
 if(APPLE)
-    # Find libphonon.dylib next to the extension at runtime.
-    set_target_properties(studiosim_audio PROPERTIES BUILD_RPATH "@loader_path" INSTALL_RPATH "@loader_path")
+    # Find libphonon.dylib next to the extension at runtime (and only there: not where this computer keeps it).
+    set_target_properties(studiosim_audio PROPERTIES BUILD_WITH_INSTALL_RPATH TRUE INSTALL_RPATH "@loader_path")
 endif()
 add_custom_command(TARGET studiosim_audio POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${PHONON_LIBRARY}" "${GAME_BIN_DIR}/"

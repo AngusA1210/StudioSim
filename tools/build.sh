@@ -32,6 +32,12 @@ trap 'rmdir "$LOCK" 2>/dev/null || true' EXIT
 
 git -C "$ROOT" submodule update --init --recursive
 "$ROOT/tools/fetch_deps.sh"
+# A build folder made where the project was before it was moved (or its folder renamed) is set up again here.
+CACHE="$ROOT/audio_core/build/CMakeCache.txt"
+HERE="$(cygpath -m "$ROOT" 2>/dev/null || echo "$ROOT")/audio_core"
+if [ -f "$CACHE" ] && ! grep -qx "CMAKE_HOME_DIRECTORY:INTERNAL=$HERE" "$CACHE"; then
+  rm -rf "$CACHE" "$ROOT/audio_core/build/CMakeFiles"
+fi
 cmake -S "$ROOT/audio_core" -B "$ROOT/audio_core/build" -DCMAKE_BUILD_TYPE="$CONFIG"
 cmake --build "$ROOT/audio_core/build" --config "$CONFIG" --target engine_tests session_server_tests studiosim_session_server studiosim_audio \
   -j "$(sysctl -n hw.ncpu 2>/dev/null || nproc)"

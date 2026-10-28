@@ -8,11 +8,11 @@ reloadable = false
 [libraries]
 
 macos.debug = "res://bin/libstudiosim_audio.dylib"
-macos.release = "res://bin/libstudiosim_audio.dylib"
+macos.release = "res://bin/libstudiosim_audio.release.dylib"
 windows.debug.x86_64 = "res://bin/studiosim_audio.dll"
-windows.release.x86_64 = "res://bin/studiosim_audio.dll"
+windows.release.x86_64 = "res://bin/studiosim_audio.release.dll"
 linux.debug.x86_64 = "res://bin/libstudiosim_audio.so"
-linux.release.x86_64 = "res://bin/libstudiosim_audio.so"
+linux.release.x86_64 = "res://bin/libstudiosim_audio.release.so"
 
 [dependencies]
 

@@ -3,7 +3,10 @@ game/.godot/
 
 # Build output (the extension and Steam Audio are copied into game/bin by the build)
 audio_core/build/
+audio_core/build-release/
 game/bin/
+# The double-clickable StudioSim, made by tools/export.sh
+dist/
 
 # Third-party downloads, fetched by tools/fetch_deps.sh
 audio_core/thirdparty/steamaudio/

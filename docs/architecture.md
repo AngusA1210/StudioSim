@@ -73,7 +73,7 @@ game/tests/ui_check.gd     the game driven by pretend keys and clicks: title, pl
 game/tests/together_guest.gd  a second copy of the game that joins the room ui_check.gd hosts, and does what it asks
 services/room-list/        the room list: a Cloudflare Worker (worker.js) and its D1 table, its checks, and a stand-in
 prototypes/studiosim/    the original browser prototype, for reference
-tools/                     build and dependency scripts
+tools/                     build, export (the app) and dependency scripts, and the icon's drawing (make_icon.py)
 ```
 
 Godot owns the world: rendering, input, physics, and where the walls and instruments are. It tells the audio core
