@@ -48,16 +48,47 @@ func _init(the_app, automated_run: bool) -> void:
 		_remove_tree(root)
 		plugin_root = root.path_join("Audio Presets")
 	else:
-		root = home()
+		root = _chosen_root()
 		if OS.get_name() == "macOS":
 			plugin_root = OS.get_environment("HOME").path_join("Library/Audio/Presets")
 		else:
 			plugin_root = OS.get_system_dir(OS.SYSTEM_DIR_DOCUMENTS).path_join("VST3 Presets")
 
 
-## Where rooms, templates and instrument presets are kept: the StudioSim folder the game runs from (the one holding
-## game/), or for a build made to be handed out, which has no such folder, Music/StudioSim (the folder from before
-## StudioSim had its name, Music/Studiolator or Music/SoundRoom, is moved there).
+## The StudioSim folder: the one chosen (Settings), shared by StudioSim run from Godot and the app made of it. Until one
+## is, run from Godot, it is the project's folder, and kept as the one chosen, so that the app uses it too; the app,
+## with none chosen, takes the folder the latest room opened is in (it being a Rooms folder's), or else home().
+func _chosen_root() -> String:
+	var settings = app.settings
+	if settings.library_folder != "" and DirAccess.dir_exists_absolute(settings.library_folder):
+		return settings.library_folder
+	var found := ""
+	if OS.has_feature("template"):
+		for recent in settings.recent_rooms:
+			var rooms_folder := str(recent).get_base_dir().get_base_dir()
+			if FileAccess.file_exists(recent) and rooms_folder.get_file() == "Rooms":
+				found = rooms_folder.get_base_dir()
+				break
+	if found == "":
+		found = home()
+	if found != home() or not OS.has_feature("template"):
+		settings.library_folder = found
+		settings.save_to_disk()
+	return found
+
+
+## (Settings) StudioSim's folder chosen: its rooms, templates and presets are those from now on.
+func choose_root(folder: String) -> void:
+	if automated or folder == "":
+		return
+	root = folder
+	app.settings.library_folder = folder
+	app.settings.save_to_disk()
+
+
+## Where rooms, templates and instrument presets are kept unless another folder is chosen: the StudioSim folder the game
+## runs from (the one holding game/), or for a build made to be handed out, which has no such folder, Music/StudioSim (the
+## folder from before StudioSim had its name, Music/Studiolator or Music/SoundRoom, is moved there).
 static func home() -> String:
 	if OS.has_feature("template"):
 		var music := OS.get_system_dir(OS.SYSTEM_DIR_MUSIC)

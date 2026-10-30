@@ -45,6 +45,8 @@ var _autosave_toggle: CheckButton
 var _autosave_slider: HSlider
 var _autosave_value: Label
 var _backup_toggle: CheckButton
+var _library_label: Label  # where StudioSim keeps its rooms, templates and presets
+var _library_dialog: FileDialog
 var _backup_slider: HSlider
 var _backup_value: Label
 var _kept_slider: HSlider
@@ -607,6 +609,28 @@ func _build_settings_page(page: VBoxContainer) -> void:
 
 	page.add_child(HSeparator.new())
 	_heading(page, "Saving the room")
+	var library_row := _field(page, "StudioSim folder")
+	_library_label = Label.new()
+	_library_label.clip_text = true
+	_library_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	_library_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	library_row.add_child(_library_label)
+	var choose := Button.new()
+	choose.text = "Choose…"
+	choose.pressed.connect(func() -> void:
+		_library_dialog.current_dir = app.library.root
+		_library_dialog.popup_centered_ratio(0.6))
+	library_row.add_child(choose)
+	Hints.give(library_row, "Where StudioSim keeps its rooms (in its Rooms folder), templates and instrument presets: one folder, for StudioSim run from Godot and the app alike")
+	_library_dialog = FileDialog.new()
+	_library_dialog.file_mode = FileDialog.FILE_MODE_OPEN_DIR
+	_library_dialog.access = FileDialog.ACCESS_FILESYSTEM
+	_library_dialog.use_native_dialog = true
+	_library_dialog.title = "StudioSim's folder"
+	_library_dialog.dir_selected.connect(func(folder: String) -> void:
+		app.library.choose_root(folder)
+		_library_label.text = folder.replace(OS.get_environment("HOME"), "~"))
+	page.add_child(_library_dialog)
 	_autosave_toggle = CheckButton.new()
 	_autosave_toggle.toggled.connect(func(on: bool) -> void: _set_saving("autosave", on))
 	_field(page, "Auto-save").add_child(_autosave_toggle)
@@ -797,6 +821,7 @@ func _refresh_live() -> void:
 	_hears_option.select(1 if settings.free_camera_hears == "you" else 0)
 	_stats_toggle.set_pressed_no_signal(settings.show_stats)
 	_stats_toggle.text = "On" if settings.show_stats else "Off"
+	_library_label.text = app.library.root.replace(OS.get_environment("HOME"), "~")
 	_autosave_toggle.set_pressed_no_signal(settings.autosave)
 	_autosave_toggle.text = "On" if settings.autosave else "Off"
 	_autosave_slider.set_value_no_signal(settings.autosave_minutes)

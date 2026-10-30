@@ -58,9 +58,10 @@ What to know about the app:
   allow it in **System Settings › Privacy & Security**. Opening anywhere without that needs an Apple Developer ID
   ($99 a year) and Apple's notarization. Windows likewise warns about an app from an unknown publisher until it is
   signed with a code-signing certificate.
-- Its rooms, templates and presets are kept in **Music/StudioSim**, not in the project's folder as when it runs from
-  Godot. A room from the project's `Rooms` folder opens with **Open room › Browse**. Its settings are the same as
-  Godot's runs, though.
+- It keeps its rooms, templates and presets in the same folder as StudioSim run from Godot: the **StudioSim folder**
+  in Settings, which is the project's folder until another is chosen there. (Given to someone who has never run
+  StudioSim from Godot, it uses the folder their latest room is in, or else **Music/StudioSim**.) Its other settings
+  are the same as Godot's runs too.
 - On Windows it is built with ASIO only if the ASIO SDK is in place (as for `tools/build.sh`). Giving that build to
   anyone else needs Steinberg's ASIO licence agreement signed first.
 

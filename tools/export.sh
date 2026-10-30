@@ -5,8 +5,8 @@
 #   tools/export.sh
 #
 # It builds the audio core's extension first, for Godot's release runtime (in audio_core/build-release: the editor and
-# the checks use audio_core/build's), so that what goes in is up to date. Godot's export templates must be installed for the Godot version used here (Editor › Manage Export
-# Templates, once). See docs/building.md.
+# the checks use audio_core/build's), so that what goes in is up to date. Godot's export templates must be installed
+# for the Godot version used here (Editor › Manage Export Templates, once). See docs/building.md.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

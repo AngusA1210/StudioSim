@@ -46,6 +46,7 @@ var session_server := ""  # playing together: the session server players meet th
 var session_rules := {}  # playing together: the rules a room is last hosted with (listed, most, may: net.gd's RULES)
 
 # Rooms
+var library_folder := ""   # the StudioSim folder: its rooms (in Rooms), templates and presets; "" until known (library.gd)
 var rooms_location := ""   # the folder new rooms go in; "" for StudioSim/Rooms (see library.gd's home())
 var recent_rooms: Array = []  # the rooms opened or saved lately, the latest first (their files)
 var room_mode := "jam"     # what a new room is made as, to begin with: "jam" or "record" (the last chosen)
@@ -110,6 +111,7 @@ func load_from_disk() -> void:
 	free_camera_hears = "you" if file.get_value("sound", "free_camera_heard_from", free_camera_hears) == "you" else "camera"
 	bindings = file.get_value("controls", "keys", bindings)
 	rooms_location = file.get_value("rooms", "location", rooms_location)
+	library_folder = str(file.get_value("rooms", "library", library_folder))
 	recent_rooms = file.get_value("rooms", "recent", recent_rooms)
 	room_mode = file.get_value("rooms", "mode", room_mode)
 	autosave = file.get_value("rooms", "autosave", autosave)
@@ -164,6 +166,7 @@ func save_to_disk() -> void:
 	file.set_value("sound", "free_camera_heard_from", free_camera_hears)
 	file.set_value("controls", "keys", bindings)
 	file.set_value("rooms", "location", rooms_location)
+	file.set_value("rooms", "library", library_folder)
 	file.set_value("rooms", "recent", recent_rooms)
 	file.set_value("rooms", "mode", room_mode)
 	file.set_value("rooms", "autosave", autosave)
