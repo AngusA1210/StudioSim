@@ -1677,15 +1677,9 @@ func _run() -> void:
 	main.set_speaker_volume(speaker, 0.0)
 	await tap(KEY_TAB)
 	await tap(KEY_T)
-	check(im.is_open() and im._preset_box.visible and im._preset_buttons.size() == 1 and im._preset_buttons[0].text.begins_with("Lead rig"),
-		"the instrument menu offers the presets saved")
-	(im._preset_box.get_parent().get_parent() as ScrollContainer).ensure_control_visible(im._preset_buttons[0])
-	await frames(3)
-	await click(im._preset_buttons[0].get_global_rect().get_center())
-	var from_preset = player.carried
-	check(not im.is_open() and from_preset != null and from_preset.kind == "guitar_combo" and from_preset.amp_head == "high_gain" and
-		from_preset.pedals.size() == 3, "picking one brings a new amp in, set up as the preset says", from_preset.display_name if from_preset else "nothing")
-	await tap(KEY_G)
+	check(im.is_open() and not im.get("_preset_box") and im._cards.all(func(c): return not c.text.begins_with("Lead rig")),
+		"the instrument menu offers the kinds of instrument alone: a preset is loaded from an instrument's own window, once it is in the room")
+	await tap(KEY_T)
 
 	print("More instruments")
 	player.place(Vector3(0.0, 0.0, 3.6), 0.0)

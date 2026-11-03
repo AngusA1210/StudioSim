@@ -52,8 +52,8 @@ inserts, an amp's head, cabinet, knobs and pedals (the plug-ins on its pedals to
 instrument's plug-in with its settings. They are on
 the **Presets** button of an amp's or a Speaker's panel, and under **Presets** when you right-click an instrument's name
 in the mix window. A preset loads onto any instrument of its family (an amp's onto any amp, a guitar combo's onto a bass
-stack even), and the instrument menu (T) lists them under **Your presets**, to bring one into the room as a new
-instrument. They are kept in `StudioSim/Instrument Presets`.
+stack even), once it is in the room: the instrument menu (T) brings in the kinds of instrument alone, each as it is
+made. They are kept in `StudioSim/Instrument Presets`.
 
 **Copy settings** and **Paste settings** sit in the same Presets menus, as in Pro Tools: a plug-in's settings paste
 onto the same plug-in anywhere (on an insert or a pedal), an instrument's onto another of its family.

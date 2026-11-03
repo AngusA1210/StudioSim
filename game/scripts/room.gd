@@ -24,25 +24,7 @@ const LIGHT_SPACING := 7.0
 const LIGHT_RANGE := 12.0
 const LIGHT_ENERGY := 0.3
 
-const GRID_SHADER := """
-shader_type spatial;
-uniform vec3 base_color : source_color = vec3(0.1);
-uniform float line_strength = 0.035;
-varying vec3 world_pos;
-varying vec3 world_normal;
-void vertex() {
-	world_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
-	world_normal = normalize((MODEL_MATRIX * vec4(NORMAL, 0.0)).xyz);
-}
-void fragment() {
-	vec3 n = abs(world_normal);
-	vec2 p = n.y > 0.5 ? world_pos.xz : (n.x > 0.5 ? world_pos.zy : world_pos.xy);
-	vec2 g = abs(fract(p - 0.5) - 0.5) / fwidth(p);
-	float line = 1.0 - min(min(g.x, g.y), 1.0);
-	ALBEDO = base_color + vec3(line * line_strength);
-	ROUGHNESS = 0.92;
-}
-"""
+const Surfaces := preload("res://scripts/room_surfaces.gd")
 
 var size := DEFAULT_SIZE
 var walls: Array = []
@@ -90,16 +72,9 @@ var surfaces := DEFAULT_SURFACES.duplicate()
 var _shell: Node3D
 var _wall_nodes: Node3D
 var _lights: Array = []  # [light, its energy at normal brightness]
-var _shader: Shader
-var _clear_shader: Shader
 
 
 func setup() -> void:
-	_shader = Shader.new()
-	_shader.code = GRID_SHADER
-	_clear_shader = Shader.new()  # the same, see-through
-	_clear_shader.code = GRID_SHADER.replace("uniform float line_strength", "uniform float alpha = 1.0;\nuniform float line_strength").replace(
-		"ROUGHNESS = 0.92;", "ROUGHNESS = 0.1;\n\tALPHA = alpha;")
 	_shell = Node3D.new()
 	add_child(_shell)
 	_wall_nodes = Node3D.new()
@@ -286,13 +261,13 @@ func _build_shell() -> void:
 	var h := size.y
 	var d := size.z
 	var t := SHELL_THICKNESS
-	# Each in its material's colour (the ceiling a little darker, as it is lit from below).
-	_block(_shell, Vector3(0, -t / 2, 0), Vector3(w + 2 * t, t, d + 2 * t), material_color(surfaces.floor))
-	_block(_shell, Vector3(0, h + t / 2, 0), Vector3(w + 2 * t, t, d + 2 * t), material_color(surfaces.ceiling).darkened(0.3))
-	_block(_shell, Vector3(-w / 2 - t / 2, h / 2, 0), Vector3(t, h, d), material_color(surfaces.west))
-	_block(_shell, Vector3(w / 2 + t / 2, h / 2, 0), Vector3(t, h, d), material_color(surfaces.east))
-	_block(_shell, Vector3(0, h / 2, -d / 2 - t / 2), Vector3(w, h, t), material_color(surfaces.north))
-	_block(_shell, Vector3(0, h / 2, d / 2 + t / 2), Vector3(w, h, t), material_color(surfaces.south))
+	# Each drawn as its material (room_surfaces.gd), the ceiling a little darker, as it is lit from below.
+	_block(_shell, Vector3(0, -t / 2, 0), Vector3(w + 2 * t, t, d + 2 * t), surfaces.floor)
+	_block(_shell, Vector3(0, h + t / 2, 0), Vector3(w + 2 * t, t, d + 2 * t), surfaces.ceiling, func(c: Color) -> Color: return c.darkened(0.3))
+	_block(_shell, Vector3(-w / 2 - t / 2, h / 2, 0), Vector3(t, h, d), surfaces.west)
+	_block(_shell, Vector3(w / 2 + t / 2, h / 2, 0), Vector3(t, h, d), surfaces.east)
+	_block(_shell, Vector3(0, h / 2, -d / 2 - t / 2), Vector3(w, h, t), surfaces.north)
+	_block(_shell, Vector3(0, h / 2, d / 2 + t / 2), Vector3(w, h, t), surfaces.south)
 	# Lights in a grid about seven metres apart, so a big room is lit as evenly as a small one. They hang at the
 	# default room's ceiling height, where they light the floor and what stands on it; a tall room gets a second
 	# set under its own ceiling for the upper walls.
@@ -329,11 +304,11 @@ func _build_walls() -> void:
 		var along: Vector2 = wall.b - wall.a
 		# Sound has to bend round these, and the player has to walk round them.
 		var material: String = wall.get("material", DEFAULT_WALL_MATERIAL)
-		_block(_wall_nodes, Vector3(centre.x, top / 2, centre.y), Vector3(wall_length(wall), top, WALL_THICKNESS),
-			material_color(material).lightened(0.15), atan2(-along.y, along.x), 0.35 if material == "glass" else 1.0)
+		_block(_wall_nodes, Vector3(centre.x, top / 2, centre.y), Vector3(wall_length(wall), top, WALL_THICKNESS), material,
+			func(c: Color) -> Color: return c.lightened(0.15), atan2(-along.y, along.x))
 
 
-func _block(parent: Node3D, centre: Vector3, block_size: Vector3, color: Color, turn := 0.0, alpha := 1.0) -> void:
+func _block(parent: Node3D, centre: Vector3, block_size: Vector3, material: String, tint: Callable = Callable(), turn := 0.0) -> void:
 	var body := StaticBody3D.new()
 	body.position = centre
 	body.rotation.y = turn
@@ -346,11 +321,6 @@ func _block(parent: Node3D, centre: Vector3, block_size: Vector3, color: Color, 
 	var box_mesh := BoxMesh.new()
 	box_mesh.size = block_size
 	mesh.mesh = box_mesh
-	var material := ShaderMaterial.new()
-	material.shader = _shader if alpha >= 1.0 else _clear_shader  # (glass: seen through)
-	material.set_shader_parameter("base_color", color)
-	if alpha < 1.0:
-		material.set_shader_parameter("alpha", alpha)
-	mesh.material_override = material
+	mesh.material_override = Surfaces.made_of(material, material_color(material), tint)
 	body.add_child(mesh)
 	parent.add_child(body)

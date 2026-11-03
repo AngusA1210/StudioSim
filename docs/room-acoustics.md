@@ -11,7 +11,10 @@ The Room page of the menu changes the room itself, while the music plays:
   material from its menu: drywall, plaster, brick, concrete, wood panelling, glass, heavy curtain, acoustic foam,
   acoustic panels, diffuser panels or bookshelves for the walls; acoustic tiles and most of those for the ceiling; a
   wooden floor, tiles, concrete, a rug or carpet underfoot. Hover over one for what it does. A room starts with drywall walls, a wooden floor and an
-  acoustic-tile ceiling, and rings for about 0.7 s. Kept with the room.
+  acoustic-tile ceiling, and rings for about 0.7 s. Kept with the room. Each looks like what it is, at its real
+  size: the floor's planks, tiles, rug or carpet; brick in running bond, wood boards, plaster, drywall with its skirting
+  board, curtain folds, foam wedges, fabric panels, a diffuser's wells between its fins, shelves of books; a suspended
+  ceiling's tiles on their T-bars (`game/scripts/room_surfaces.gd`).
 - **Walls**: a floor plan of the room, seen from above with the instruments and yourself marked on it (the room's own
   walls in their materials' colours). Drag on the floor to draw a wall, drag a wall to move it, drag the dot at either
   end to turn and stretch it. Drag one of the room's own walls to move that wall alone. Walls can stand at any angle and there can be up to 16. Each has its own height, and its
