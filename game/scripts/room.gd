@@ -58,7 +58,7 @@ const MATERIALS := {
 		Color(0.19, 0.12, 0.07), ["walls", "ceiling"]],
 	"bookshelf": ["Bookshelves", "Full shelves of books: they take some of everything and scatter much of what they send back.", Color(0.16, 0.1, 0.12), ["walls"]],
 	"wood_floor": ["Wooden floor", "Wood: it sends most back. A mic a little way off a floor-standing amp hears a strong bounce off it (notches, where it arrives half a wave late).",
-		Color(0.11, 0.065, 0.04), ["floor"]],
+		Color(0.15, 0.09, 0.055), ["floor"]],
 	"tile": ["Tiles", "Tiles: as hard as a floor gets, a strong, bright bounce.", Color(0.17, 0.17, 0.19), ["floor"]],
 	"rug": ["A rug", "A rug under the band: a softer bounce, without its highs.", Color(0.17, 0.08, 0.05), ["floor"]],
 	"carpet": ["Carpet", "Thick carpet: hardly any bounce, and little of the highs comes back off it.", Color(0.09, 0.07, 0.1), ["floor"]],

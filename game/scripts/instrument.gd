@@ -151,6 +151,9 @@ func setup(spec: Dictionary, audio: StudioSimAudio) -> void:
 	_light = OmniLight3D.new()
 	_light.light_color = color
 	_light.omni_range = 4.0
+	# Its glow lights what is round it, a pool of its colour on the floor about it, the same from wherever it is seen;
+	# little of a glint off a shiny floor, which would follow the eye about rather than the instrument.
+	_light.light_specular = 0.12
 	_light.shadow_enabled = true  # (a wall standing in the room stops it: only those cast its shadows)
 	_light.shadow_caster_mask = 1 << (Room.SHADOW_LAYER - 1)
 	add_child(_light)
@@ -227,7 +230,7 @@ func set_hidden_layer(bit: int) -> void:
 
 
 func _place_parts() -> void:
-	_light.position = Vector3(0, top - source_height + 0.15, 0.6)  # above and in front, lighting it from the player's side
+	_light.position = Vector3(0, top - source_height + 0.15, 0)  # (just over it: its glow comes from it)
 	_label.position = Vector3(0, top - source_height + 0.3, 0)
 	_input_badge.position = _label.position - Vector3(0, 0.15, 0)
 	_lock_badge.position = _label.position + Vector3(0, 0.17, 0)
@@ -262,7 +265,7 @@ func _process(delta: float) -> void:
 	glow = lerpf(glow, target, minf(1.0, delta * (40.0 if target > glow else 7.0)))
 	var on := 0.25 if (room_muted or (is_mic and muted)) else 1.0
 	_accent.emission_energy_multiplier = (0.12 + 1.5 * glow) * on
-	_light.light_energy = (0.1 + 1.6 * glow) * on
+	_light.light_energy = (0.15 + 2.4 * glow) * on
 	inserts = _audio.get_inserts(source_id)
 	if plays_plugin:
 		instrument_plugin = _audio.get_instrument_plugin(source_id)

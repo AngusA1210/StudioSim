@@ -1431,6 +1431,9 @@ func _run() -> void:
 	var shadow_bit: int = 1 << (main.room.SHADOW_LAYER - 1)
 	check(bass._light.shadow_enabled and bass._light.shadow_caster_mask == shadow_bit and wall_mesh != null and wall_mesh.layers & shadow_bit != 0 and
 		wall_mesh.layers & 1 != 0, "and its light: the wall stops it, as it does its sound (the walls alone cast the instruments' lights' shadows)")
+	check(is_zero_approx(bass._light.position.x) and is_zero_approx(bass._light.position.z) and bass._light.position.y > 0.0 and
+		bass._light.light_specular < 0.2, "an instrument's glow comes from it (just over it), a pool round it rather than a glint that follows the eye",
+		str(bass._light.position))
 	menu._tabs.current_tab = menu.ROOM_TAB
 	await frames(4)
 	var plan = menu._plan
