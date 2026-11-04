@@ -1426,6 +1426,11 @@ func _run() -> void:
 	player.place(Vector3(0.5, 0.0, -2.0), 0.0)  # the bass is on the other side of the wall from here
 	await frames(4)
 	check(audio.is_source_blocked(bass.source_id) and not audio.is_source_blocked(drums.source_id), "from behind the wall, the bass is hidden and the drums are not")
+	var wall_meshes: Array = main.room._wall_nodes.find_children("*", "MeshInstance3D", true, false)
+	var wall_mesh: MeshInstance3D = wall_meshes[0] if not wall_meshes.is_empty() else null
+	var shadow_bit: int = 1 << (main.room.SHADOW_LAYER - 1)
+	check(bass._light.shadow_enabled and bass._light.shadow_caster_mask == shadow_bit and wall_mesh != null and wall_mesh.layers & shadow_bit != 0 and
+		wall_mesh.layers & 1 != 0, "and its light: the wall stops it, as it does its sound (the walls alone cast the instruments' lights' shadows)")
 	menu._tabs.current_tab = menu.ROOM_TAB
 	await frames(4)
 	var plan = menu._plan

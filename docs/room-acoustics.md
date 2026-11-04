@@ -62,7 +62,8 @@ shuts an instrument away, heard only through its walls: drywall lets a little th
 nothing, glass a little more in the highs, a curtain or a gobo a good deal. A wall built out from the side of the room
 can only be passed at its free end.
 
-The room is lit by a grid of lamps that grows with it, so a large room is no darker than the default one. Settings
+A wall standing in the room stops an instrument's light as it does its sound: what glows behind it lights only its
+own side (glass lets the light through). The room is lit by a grid of lamps that grows with it, so a large room is no darker than the default one. Settings
 has a Room lighting slider if it is still too dim or too bright for your screen.
 
 The room's size, walls and surfaces are saved with it (see [Rooms](rooms-and-recording.md)).

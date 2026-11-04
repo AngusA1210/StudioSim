@@ -23,6 +23,10 @@ const GRID := 0.25         # wall ends snap to this
 const LIGHT_SPACING := 7.0
 const LIGHT_RANGE := 12.0
 const LIGHT_ENERGY := 0.3
+## The 3D layer the walls standing in the room are drawn on as well as the first: the instruments' lights take their
+## shadows from it alone, so that a wall stops an instrument's light (as it does its sound), and nothing else need be
+## drawn into their shadows. Glass isn't on it: light goes through glass.
+const SHADOW_LAYER := 18
 
 const Surfaces := preload("res://scripts/room_surfaces.gd")
 
@@ -304,11 +308,13 @@ func _build_walls() -> void:
 		var along: Vector2 = wall.b - wall.a
 		# Sound has to bend round these, and the player has to walk round them.
 		var material: String = wall.get("material", DEFAULT_WALL_MATERIAL)
-		_block(_wall_nodes, Vector3(centre.x, top / 2, centre.y), Vector3(wall_length(wall), top, WALL_THICKNESS), material,
+		var block := _block(_wall_nodes, Vector3(centre.x, top / 2, centre.y), Vector3(wall_length(wall), top, WALL_THICKNESS), material,
 			func(c: Color) -> Color: return c.lightened(0.15), atan2(-along.y, along.x))
+		if material != "glass":
+			block.layers |= 1 << (SHADOW_LAYER - 1)
 
 
-func _block(parent: Node3D, centre: Vector3, block_size: Vector3, material: String, tint: Callable = Callable(), turn := 0.0) -> void:
+func _block(parent: Node3D, centre: Vector3, block_size: Vector3, material: String, tint: Callable = Callable(), turn := 0.0) -> MeshInstance3D:
 	var body := StaticBody3D.new()
 	body.position = centre
 	body.rotation.y = turn
@@ -324,3 +330,4 @@ func _block(parent: Node3D, centre: Vector3, block_size: Vector3, material: Stri
 	mesh.material_override = Surfaces.made_of(material, material_color(material), tint)
 	body.add_child(mesh)
 	parent.add_child(body)
+	return mesh

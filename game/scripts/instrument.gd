@@ -7,6 +7,7 @@ extends Node3D
 
 const Models := preload("res://scripts/instrument_models.gd")
 const Catalog := preload("res://scripts/catalog.gd")
+const Room := preload("res://scripts/room.gd")
 const INPUT_GREEN := Color(0.36, 0.9, 0.5)
 # A padlock, yellow, over a locked instrument's name.
 const LOCK_SVG := "<svg xmlns='http://www.w3.org/2000/svg' width='64' height='64' viewBox='0 0 64 64'><path d='M20 29 V20 a12 12 0 0 1 24 0 V29' fill='none' stroke='#1a1408' stroke-width='11' stroke-linecap='round'/><path d='M20 29 V20 a12 12 0 0 1 24 0 V29' fill='none' stroke='#f5c542' stroke-width='6' stroke-linecap='round'/><rect x='12' y='27' width='40' height='31' rx='6' fill='#f5c542' stroke='#1a1408' stroke-width='3'/><circle cx='32' cy='40' r='4.5' fill='#1a1408'/><rect x='30' y='41' width='4' height='9' rx='2' fill='#1a1408'/></svg>"
@@ -150,6 +151,8 @@ func setup(spec: Dictionary, audio: StudioSimAudio) -> void:
 	_light = OmniLight3D.new()
 	_light.light_color = color
 	_light.omni_range = 4.0
+	_light.shadow_enabled = true  # (a wall standing in the room stops it: only those cast its shadows)
+	_light.shadow_caster_mask = 1 << (Room.SHADOW_LAYER - 1)
 	add_child(_light)
 
 	_label = Label3D.new()
