@@ -24,7 +24,7 @@ It is also a workstation: rooms can be recorded, edited and mixed the way a DAW 
 
 ## Build and run
 
-macOS needs the Xcode command-line tools, CMake, git and Godot 4.5 or newer. Windows needs Visual Studio 2022 or newer,
+macOS needs the Xcode command-line tools, CMake, git and Godot 4.7 or newer. Windows needs Visual Studio 2022 or newer,
 CMake, Python, Git for Windows and Godot. Then, in a terminal (Git Bash on Windows):
 
 ```bash
@@ -40,13 +40,13 @@ can remove.
 ## Documentation
 
 The details of each feature live in [docs/](docs/README.md): controls, instruments and microphones, plug-ins, rooms and
-recording, mixing, room acoustics, and how the code is put together.
+recording, mixing, room acoustics, playing together, making the app, and how the code is put together.
 
 ## Roadmap
 
-1. Multiplayer: begun (hosting and joining, over the internet too, through a session server where routers won't
-   open ports, the room shared, a shared clock, live inputs and voices streamed, Record rooms together); next, a
-   session server run for everyone.
+1. Multiplayer: working, on one network and over the internet (a room browser, the host's rules, a shared clock,
+   live inputs and voices streamed, Record rooms together); next, playing between computers on different networks.
+2. Releasing it: the app signed for macOS and Windows.
 
 The full list is in [docs/roadmap.md](docs/roadmap.md).
 

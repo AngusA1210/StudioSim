@@ -1,6 +1,6 @@
 // StudioSim's room list: the rooms hosted over the internet, for every player's room browser. A Cloudflare Worker
-// with a D1 database (both free), set up as docs/room-list.md says. It only lists rooms: players connect to each other
-// directly, to the address the host's computer has on the internet.
+// with a D1 database, both on the free plan (docs/playing-together.md, The room list). It only lists rooms: players
+// connect to each other directly, to the address the host's computer has on the internet.
 //
 //   GET    /rooms        the rooms whose hosts have been heard from lately: {"rooms": [{id, name, host, mode, players,
 //                        most, locked, address, port, protocol, open}, ...]}

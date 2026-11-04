@@ -1,6 +1,6 @@
 # Building and running
 
-**macOS** needs Xcode command-line tools, CMake, git, and Godot 4.5 or newer (`brew install --cask godot`).
+**macOS** needs Xcode command-line tools, CMake, git, and Godot 4.7 or newer (`brew install --cask godot`).
 
 ```bash
 tools/build.sh
@@ -8,7 +8,7 @@ godot --path game
 ```
 
 **Windows** needs Visual Studio 2022 or newer (its C++ workload), CMake, Python, Git for Windows (whose Git Bash runs the
-build script), and Godot 4.5 or newer. In Git Bash:
+build script), and Godot 4.7 or newer. In Git Bash:
 
 ```bash
 tools/build.sh
@@ -18,10 +18,11 @@ then open `game/project.godot` in Godot (or run it with `godot --path game`).
 
 `tools/build.sh` fetches the libraries that aren't kept in git (Steam Audio, miniaudio, the VST 3 SDK, Opus), builds the
 audio core, the Godot extension and the [session server](session-server.md), runs the offline audio and session server
-checks, registers the extension with the Godot project,
+checks and the [room list](playing-together.md#the-room-list)'s, registers the extension with the Godot project,
 and then runs the game silently with pretend key presses and clicks to check the controls and menus
 (`game/tests/ui_check.gd`). Open `game/project.godot` in the Godot editor to work on the scene and scripts. Every
-change to the audio core is also built and checked on Windows by GitHub Actions (`.github/workflows/windows.yml`).
+change to the audio core or the room list is also built and checked on Windows by GitHub Actions
+(`.github/workflows/windows.yml`).
 
 On Windows the keys are as on a Mac with Ctrl for Cmd and Alt for Option, and the screen names them that way. The
 sound goes through Windows' own audio (WASAPI), or through an interface's ASIO driver, which most interfaces need for

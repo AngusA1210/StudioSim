@@ -389,7 +389,7 @@ func _build_metronome_page(page: VBoxContainer) -> void:
 	_click_slider = _slider(page, "Click volume", -24.0, 6.0, 0.5, _click_value)
 	_click_slider.value_changed.connect(_on_click_volume_changed)
 	_note(page, "The click is on every beat, higher on the first beat of the bar. It plays straight into your ears rather than from somewhere in the room.")
-	_note(page, "Space starts and stops the patterns and C switches the click, without opening this menu. To change what an instrument plays, walk up to it and press Tab. The tempo and the patterns go back to the defaults each time StudioSim starts, until rooms can be saved.")
+	_note(page, "Space starts and stops the patterns and C switches the click, without opening this menu. To change what an instrument plays, walk up to it and press P. The tempo and the patterns are saved with the room.")
 
 
 func _build_room_page(page: VBoxContainer) -> void:

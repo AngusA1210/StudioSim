@@ -4,6 +4,7 @@
 game/                      Godot project: the room, player, instruments, HUD, menus, mix window, pattern editor (GDScript)
   scripts/catalog.gd       every kind of instrument (and the microphone) and the groups the instrument menu shows them in
   scripts/room.gd          the room's floor, ceiling and walls, built to whatever size and layout is set
+  scripts/room_surfaces.gd how each material looks: one shader drawing planks, brick, tiles, folds and the rest
   scripts/instrument_models.gd   what each instrument looks like, built from simple shapes
   scripts/player.gd        you: walking, looking, carrying, playing (on a kit's stool), the free camera, and where the
                            room is heard from
@@ -25,7 +26,7 @@ game/                      Godot project: the room, player, instruments, HUD, me
   scripts/meeting.gd       meeting through a session server: the host's code, finding a session by it, a relay
   scripts/discovery.gd     the room browser: the rooms hosted on this network, found by a broadcast, and the host's answers
   scripts/room_list.gd     the rooms hosted over the internet: a hosted room put on the room list, the list fetched
-  scripts/together_page.gd hosting or joining, from the title screen
+  scripts/together_page.gd playing together, from the title screen: the room browser, hosting, direct connect, the session
   scripts/library.gd       what a room holds, templates, instrument and plug-in presets, and copied settings
   scripts/timeline.gd      a room's mode; a Record room's transport, recording and clips
   scripts/edit_window.gd   the edit window (its tracks and clips drawn by timeline_view.gd, a clip's notes by midi_editor.gd)
@@ -37,20 +38,18 @@ audio_core/
   src/core/                the audio engine, plain C++ with no Godot dependency
     engine.*               device, command queue, the room and the mix, the shared clock; microphones hearing the room
     radiation.*            how a cabinet's cones radiate (beaming, the near field, open and closed backs), and a kit's heads and cymbals
-    plugin_host*           plug-ins: which format a plug-in is in, Audio Units (macOS), VST3 (everywhere)
     net_audio.*            playing together: live inputs' sound and voices between players (Opus over UDP, through
                            the host), held back just enough to ride out the network
     plugin_window_*        a plug-in's own window, on each platform
     plugin_panel_mac       on a Mac, the floating panel every plug-in's window is: the keyboard left with the room,
                            unless something in it is typed into
-    midi_input_*           MIDI keyboards, on each platform (CoreMIDI, WinMM)
     microphones.*          the microphone models: their pickup patterns, responses and sensitivities
     instruments.*          synthesized drums, the garage kit, bass, pad, bells and keys (each playable live or by pattern), live input
     plugin_synth.*         a plug-in instrument: an instrument plug-in played by MIDI, live and by pattern, to the sample
     amp.*                  the guitar and bass amps: preamp drive (oversampled), tone stack, presence, cabinet
     looper.*               the loop pedal: record, overdub, undo/redo, synced to the bars
     pedals.*               the pedals in front of an amp: tuner, gate, compressor, drives, modulation, delay, reverb, looper
-    plugin_host*           the effect plug-ins installed on the computer: Audio Units on macOS, their windows, presets
+    plugin_host*           the plug-ins installed on the computer: VST3 (everywhere) and Audio Units (macOS), their presets
     plugin_category.cpp    what kind of effect a plug-in seems to be, from its name
     sequencer.*            the clock (tempo, swing, playing from a step, loop playback), pattern notes, and the default groove
     recorder.* wav.*       recording: what armed tracks take in, written to WAV files on a thread of its own; reading them
@@ -60,7 +59,7 @@ audio_core/
     room_geometry.*        the walls: which way round them sound reaches the listener, how much further that is, and their faces as mirrors
     materials.*            what each material absorbs, scatters and lets through, band by band, and the reverb a room of them has
     acoustics.h            how much each frequency band dims when sound bends around a wall edge
-    midi_input.*           MIDI controllers, read straight into the audio thread (CoreMIDI on a Mac, WinMM on Windows)
+    midi_input*            MIDI controllers, read straight into the audio thread (CoreMIDI on a Mac, WinMM on Windows)
     mix.*                  room reverb (feedback delay network, sized to the room) and output limiter
                            (the output meter and the distance law live in engine.* and spatializer.*)
     compensation.h         the delay lines delay compensation is made of
@@ -72,7 +71,7 @@ game/tests/ui_check.gd     the game driven by pretend keys and clicks: title, pl
                            presets, and rooms (making, saving, backups, opening), and playing together
 game/tests/together_guest.gd  a second copy of the game that joins the room ui_check.gd hosts, and does what it asks
 services/room-list/        the room list: a Cloudflare Worker (worker.js) and its D1 table, its checks, and a stand-in
-prototypes/studiosim/    the original browser prototype, for reference
+prototypes/studiosim/      the original browser prototype, for reference
 tools/                     build, export (the app) and dependency scripts, and the icon's drawing (make_icon.py)
 ```
 

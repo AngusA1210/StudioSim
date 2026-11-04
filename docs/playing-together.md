@@ -10,7 +10,7 @@ and the players can talk to each other.
 network, nor over the internet where the host's router opens its ports.
 
 - **Rooms**: the rooms hosted on this network, found by themselves, and those hosted over the internet, from the
-  [room list](room-list.md): their names, hosts, Jam or Record, how many are in them, whether they have a password,
+  [room list](#the-room-list): their names, hosts, Jam or Record, how many are in them, whether they have a password,
   and where they are. Double-click one to join it (with its password, if it has one).
 - **Host**: the room to host, which is the one open, or a new one or a saved one (**New room…** and **Open a
   room…** make or open it, then come back here). Then its **name** (the room's own, unless you give another), a
@@ -28,7 +28,7 @@ after you leave.
 **Over the internet**: tick it before hosting, and StudioSim asks your router, by UPnP, to open the session's port
 and the next one (47131: the sound between players) to this computer while you host. Most home routers allow it.
 The page then shows your public address, for the others to join at from anywhere under Direct connect, and a
-listed room is put on the [room list](room-list.md), for everyone's Rooms tab. The ports are closed again, and the
+listed room is put on the [room list](#the-room-list), for everyone's Rooms tab. The ports are closed again, and the
 room taken off the list, when the session ends. If the router won't (UPnP switched off, or a network that is itself
 behind another, as on some mobile and student connections), the page says why. Then forward both ports (UDP) to
 this computer in the router by hand, or meet through a session server.
@@ -48,9 +48,9 @@ itself to Private (Settings > Network & internet > its connection > Network prof
 once, allow Godot in Windows Security > Firewall & network protection > Allow an app through firewall. A Mac with
 its firewall on asks too. A Mac may also ask whether Godot (or the app it was started from, such as Terminal) can
 find devices on the local network; it must be let (System Settings > Privacy & Security > Local Network): the Rooms
-tab says when it can't ask the network. Both computers must be on the same network, and not a guest Wi-Fi, which
-often keeps its computers apart. Both must run the same version of StudioSim: a room hosted by another shows so
-under Rooms.
+tab says when it can't ask the network. On one network, both computers must be on the same one, and not a guest Wi-Fi, which
+often keeps its computers apart (over the internet, the host's router must have its ports open, as above). Both
+must run the same version of StudioSim: a room hosted by another shows so under Rooms.
 
 **Losing the connection**: a player whose connection to the host drops tries to get back in by themselves (by the
 address or code they joined with), every few seconds for half a minute, and their copy of the room is brought up to
@@ -179,6 +179,22 @@ own delay over the internet.
 you too. Your own voice isn't sent back to you. While someone talks, their name says so. Choosing an input for your
 voice opens the audio input for the whole session, so that holding the key never has to wait for it.
 
-## What comes next
+## The room list
 
-- The room list set up on Cloudflare, and its address put into the game ([Setting up the room list](room-list.md)).
+Rooms hosted over the internet are listed for everyone's Rooms tab by a small program on Cloudflare's free plan, at
+`https://studiosim-rooms.aja662.workers.dev` (`ADDRESS` in `game/scripts/room_list.gd`): a Worker
+(`services/room-list/worker.js`) keeping the rooms in a D1 database (its table is `schema.sql`, the Worker's binding
+to it named `DB`). A hosted, listed room is put on it every 30 seconds, and taken off when the session ends; one not
+heard from for 75 seconds drops off, and one address lists four rooms at most. It lists each room's name, host,
+kind, players, whether it has a password, and the public address and port of the host's computer, as any game's
+server list does. The password itself never goes to it, and only the host that listed a room can change or remove
+it. It only lists: players connect straight to the host's computer.
+
+That address must be the host's IPv4 address, the one its router opens and the sound between players goes to, so
+the host reaches the list over IPv4 alone, though its computer may have IPv6 too. The free plan allows 100,000
+requests a day: a room hosted all day is about 2,900, and an open Rooms tab about 720 an hour.
+
+To change the Worker, paste the new `worker.js` over the old in the Worker's **Edit code** in Cloudflare's dashboard,
+and deploy. `tools/build.sh` checks it first (`services/room-list/tests.mjs`, with Node or a Mac's own JavaScript
+shell), and its SQL on SQLite, which D1 is (`python3 services/room-list/stand_in.py --check`); the game's checks host
+a room on the list's stand-in, on the same computer, never on the list itself.

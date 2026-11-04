@@ -2,7 +2,8 @@
 
 In-depth notes on each part of StudioSim. The project's [README](../README.md) gives the overview.
 
-- [Building and running](building.md): what each platform needs, what the build script does, headphones
+- [Building and running](building.md): what each platform needs, what the build script does, making the app,
+  headphones
 - [Controls](controls.md): every key and shortcut
 - [Instruments, microphones and amps](instruments.md): the instruments, microphones and stereo pairs, live inputs,
   amps' speakers, effect pedals and the loop pedal
@@ -13,8 +14,8 @@ In-depth notes on each part of StudioSim. The project's [README](../README.md) g
   delay compensation
 - [The room: size, walls and materials](room-acoustics.md): walls, materials, reverb, reflections and diffusers
 - [Playing, sequencing and the menu](playing-and-menu.md): patterns, the metronome, the menu's pages
-- [Playing together](playing-together.md): hosting a room and joining one, what is shared, the session's clock
-- [Setting up the room list](room-list.md): the free list of rooms hosted over the internet, for every room browser
+- [Playing together](playing-together.md): the room browser, hosting and joining, the host's rules, what is shared,
+  the session's clock, the room list
 - [Running a session server](session-server.md): the program players meet through, where routers won't open ports
 - [How it's put together](architecture.md): the source tree and the audio engine
 - [Roadmap](roadmap.md): what's done and what comes next

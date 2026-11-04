@@ -21,12 +21,16 @@ instrument to edit its pattern on a step grid, one bar at a time:
 
 All patterns follow one tempo (40 to 240 BPM) with adjustable swing. The metronome click marks each beat, higher on
 the first beat of the bar, and plays straight into your ears rather than from a place in the room. The tempo and the
-patterns go back to the defaults at each start until rooms can be saved.
+patterns are saved with the room (see [Rooms](rooms-and-recording.md)).
 
 ## The menu
 
+Its header names the room, with **Save** and a **Room** button (Save as…, Save as template…, Jam or Record, Show in
+Finder: see [Rooms](rooms-and-recording.md)). Its pages:
+
 - **Metronome**: start and stop the patterns, tempo, swing, the click and its volume.
-- **Room**: the room's size and the walls inside it (see above).
+- **Room**: the room's size, what its surfaces are made of, and the walls standing in it (see
+  [The room](room-acoustics.md)).
 - **Playback Engine**: which output device the audio engine runs on, and the hardware buffer size (32–1024 samples).
   The sample rate follows the device. Shows the resulting latency (the buffer, the device, and what binaural rendering
   adds while it is switched on: about a quarter of a buffer, measured as the engine starts; while the mix is heard,
@@ -36,8 +40,10 @@ patterns go back to the defaults at each start until rooms can be saved.
 - **MIDI**: every MIDI device the system sees, with a tick box each and a light that flashes when it sends notes.
 - **Settings**: binaural, distance falloff, the limiter's ceiling, delay compensation, text size, field of view, mouse sensitivity, room lighting, full screen (which
   StudioSim then opens in every time), whether the master meter and the audio readout are shown on screen, where the
-  free camera hears from (see [Controls](controls.md#you-and-the-free-camera)), and auto-save and backups for the
-  room. Your name and height are on the title screen's **You** page.
+  free camera hears from (see [Controls](controls.md#you-and-the-free-camera)), the **StudioSim folder** (where its
+  rooms, templates and instrument presets are kept), and auto-save and backups for the room. Your name and height are
+  on the title screen's **You** page.
+- **Controls**: every key, each changeable (see [Controls](controls.md)).
 
 Choices are saved (Godot's user data folder, `settings.cfg`) and restored at the next start. If a saved device
 isn't connected, the system default is used until it is.

@@ -21,20 +21,23 @@ bleed, where across a head or cymbal a mic is placed, the kick's port and a mic 
 mic panel's distances drum by drum, and a kit miked up in one go); and you in the room: a body as tall as you set,
 hearing from between its ears and seeing from its eyes, seated on a kit's stool to play it, and a free camera that
 flies about the room, heard from it or from you; and Windows played on a real machine, every check passing, with ASIO
-for an interface's own driver.
+for an interface's own driver; the room's surfaces drawn as their materials; and StudioSim made into an app of its
+own, opened with a double-click, without Godot.
 
 To do, roughly in this order:
 
-1. **Multiplayer**, the final goal (begun: a player hosts their room and others join it by address, the room and
+1. **Multiplayer**, the final goal (working: a player hosts their room and others join it, the room and
    everything in it kept the same for everyone, each player's body seen by the others, notes played heard by all,
    the patterns in step on the session's clock, live inputs' sound streamed between players with Opus, voices from
    the players' bodies, and Record rooms together: one transport, each player recording what they arm, recordings'
    files sent to everyone, with a count-in and punching together; hosting over the internet, the router asked to
    open the ports by UPnP, or meeting through a session server by a code, directly or by way of its relay; a room
-   browser for the rooms on one network; the host's rules (a name, a password, listed or not, the most players,
-   what joining players may do, asking a player to leave); getting back in after a lost connection; see
-   [Playing together](playing-together.md)); rooms listed across the internet, on a free Cloudflare Worker. Next: the
-   room list set up and its address put in ([Setting up the room list](room-list.md)).
+   browser for the rooms on one network and those listed across the internet (on a free Cloudflare Worker); the
+   host's rules (a name, a password, listed or not, the most players, what joining players may do, asking a player
+   to leave); getting back in after a lost connection; see [Playing together](playing-together.md)). Next: playing
+   between computers on different networks, tried by ear.
+2. **Releasing** it: the app signed and notarized for macOS (Intel Macs too) and signed for Windows, an About page
+   with the third-party licences, and Steinberg's ASIO licence agreement for a Windows build with ASIO.
 
 Also wanted along the way: MIDI on Linux, and VR through OpenXR. Perhaps later a free version with Jam rooms
 only, Record rooms coming with the full one.

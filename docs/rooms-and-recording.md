@@ -4,10 +4,11 @@ A **room** is what a session is in a DAW: everything about it in one file. That 
 instrument where it stands, with its fader, mute and solo, its pattern (the MIDI notes, the pattern's length and
 whether its loop is on), its inserts, an amp's head, cabinet, knobs and pedals, a Speaker's volume and input, and
 every plug-in's settings. It also holds the master fader, the tempo and swing, and where you were standing. Each room has a folder of
-its own, named after it, as a Pro Tools session does: the room's `.sroom` file (JSON) and a **Room Backups** folder.
-Recorded audio will go there too once recording comes. Rooms go in the **Rooms** folder of the StudioSim folder the
-game runs from (here, `StudioSim/Rooms`, beside `game/`) unless you choose another; git leaves it alone. A build made to
-hand out keeps them in `~/Music/StudioSim` instead.
+its own, named after it, as a Pro Tools session does: the room's `.sroom` file (JSON), an **Audio Files** folder for
+what is recorded in it, and a **Room Backups** folder. Rooms go in the **Rooms** folder of the **StudioSim folder**
+(Settings), unless you choose another for a room as you make it. Run from Godot, the StudioSim folder is the
+project's to begin with (`StudioSim/Rooms`, beside `game/`; git leaves it alone), and the app made of it uses the same
+one; someone given the app who has never run it from Godot starts with `~/Music/StudioSim`.
 
 - **New room…** (title screen): name the room, choose where it goes, choose its **mode** (Jam or Record, see below),
   pick a **template**, set its width, length and
