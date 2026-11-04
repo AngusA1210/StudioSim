@@ -42,7 +42,7 @@ Finder: see [Rooms](rooms-and-recording.md)). Its pages:
   StudioSim then opens in every time), whether the master meter and the audio readout are shown on screen, where the
   free camera hears from (see [Controls](controls.md#you-and-the-free-camera)), the **StudioSim folder** (where its
   rooms, templates and instrument presets are kept), and auto-save and backups for the room. Your name and height are
-  on the title screen's **You** page.
+  on the title screen's **Avatar customization** page, with how your body looks.
 - **Controls**: every key, each changeable (see [Controls](controls.md)).
 
 Choices are saved (Godot's user data folder, `settings.cfg`) and restored at the next start. If a saved device

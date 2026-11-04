@@ -40,6 +40,7 @@ var room_brightness := 1.0
 # You (set on the title screen's You page)
 var player_name := ""  # shown over your body
 var height := 1.75  # how tall you are, metres: your eyes and ears, and your body
+var appearance := {}  # how your body looks (avatar.gd's LOOK: its build, skin, hair and clothes)
 var free_camera_hears := "camera"  # while the free camera flies, the room is heard from the "camera" or "you" (your ears)
 var voice_input := -1  # playing together: which hardware input is your voice (0-based), held key to talk; -1, none
 var session_server := ""  # playing together: the session server players meet through (its address, and :port if not 47100)
@@ -107,6 +108,8 @@ func load_from_disk() -> void:
 	var rules = file.get_value("together", "rules", session_rules)
 	session_rules = rules if rules is Dictionary else {}
 	height = clampf(float(file.get_value("you", "height", height)), 1.4, 2.1)
+	var look = file.get_value("you", "look", appearance)
+	appearance = look if look is Dictionary else {}
 	# (a key of its own: the one it had when it was heard from you to begin with is left behind)
 	free_camera_hears = "you" if file.get_value("sound", "free_camera_heard_from", free_camera_hears) == "you" else "camera"
 	bindings = file.get_value("controls", "keys", bindings)
@@ -163,6 +166,7 @@ func save_to_disk() -> void:
 	file.set_value("together", "session_server", session_server)
 	file.set_value("together", "rules", session_rules)
 	file.set_value("you", "height", height)
+	file.set_value("you", "look", appearance)
 	file.set_value("sound", "free_camera_heard_from", free_camera_hears)
 	file.set_value("controls", "keys", bindings)
 	file.set_value("rooms", "location", rooms_location)

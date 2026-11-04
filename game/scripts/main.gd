@@ -43,7 +43,8 @@ const Room := preload("res://scripts/room.gd")
 const Library := preload("res://scripts/library.gd")
 const Session := preload("res://scripts/session.gd")
 const RoomsPage := preload("res://scripts/rooms_page.gd")
-const YouPage := preload("res://scripts/you_page.gd")
+const AvatarPage := preload("res://scripts/avatar_page.gd")
+const Avatar := preload("res://scripts/avatar.gd")
 const Net := preload("res://scripts/net.gd")
 const TogetherPage := preload("res://scripts/together_page.gd")
 const Timeline := preload("res://scripts/timeline.gd")
@@ -86,7 +87,7 @@ var bindings  # the keys, as set on the Controls page
 var library  # rooms' and templates' contents, presets, and settings copied to be pasted
 var session  # the room that is open: its file, saving, backups
 var rooms_page  # making a new room, or opening one
-var you_page  # your name and height, from the title screen
+var avatar_page  # your name, height and look, from the title screen
 var net  # playing together
 var together_page  # hosting or joining, from the title screen
 var timeline  # the room's mode, and a Record room's transport, recording and clips
@@ -249,9 +250,9 @@ func _ready() -> void:
 	rooms_page = RoomsPage.new()
 	add_child(rooms_page)
 	rooms_page.setup(self)
-	you_page = YouPage.new()
-	add_child(you_page)
-	you_page.setup(self)
+	avatar_page = AvatarPage.new()
+	add_child(avatar_page)
+	avatar_page.setup(self)
 	together_page = TogetherPage.new()
 	add_child(together_page)
 	together_page.setup(self)
@@ -298,7 +299,7 @@ func _notification(what: int) -> void:
 ## face. Undo and redo have two histories: in the room, the instruments' moves; in the mix and edit windows (a Record
 ## room), the edits to the clips. Space starts and stops the music in the mix and edit windows too.
 func _input(event: InputEvent) -> void:
-	if not (event is InputEventKey and event.pressed and not event.echo) or name_prompt.is_open() or rooms_page.is_open() or you_page.is_open() or together_page.is_open():
+	if not (event is InputEventKey and event.pressed and not event.echo) or name_prompt.is_open() or rooms_page.is_open() or avatar_page.is_open() or together_page.is_open():
 		return
 	if get_viewport().gui_get_focus_owner() is LineEdit:  # being typed in (the edit window's counter, say)
 		return
@@ -1446,6 +1447,14 @@ func listener_position() -> Vector3:
 func set_height(metres: float) -> void:
 	player.set_height(metres)
 	settings.height = player.height
+	settings.save_to_disk()
+	net.me_changed()
+
+
+## How your body looks (avatar.gd's LOOK): made again so, and the others told.
+func set_appearance(look: Dictionary) -> void:
+	settings.appearance = Avatar.look_of(look)
+	player.set_height(player.height)
 	settings.save_to_disk()
 	net.me_changed()
 

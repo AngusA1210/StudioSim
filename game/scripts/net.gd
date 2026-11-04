@@ -486,7 +486,8 @@ func _end(why: String) -> void:
 
 
 func _me(id: int) -> Dictionary:
-	return {"name": _my_name(), "height": app.settings.height, "color": _color_data(COLORS[(id - 1) % COLORS.size()])}
+	return {"name": _my_name(), "height": app.settings.height, "color": _color_data(COLORS[(id - 1) % COLORS.size()]),
+		"look": Avatar.look_of(app.settings.appearance)}
 
 
 ## This player's name, as the others see it.
@@ -511,7 +512,7 @@ func me_changed() -> void:
 		_send("players", players)
 		changed.emit()
 	else:
-		_send("me", {"name": _my_name(), "height": app.settings.height}, 1)
+		_send("me", {"name": _my_name(), "height": app.settings.height, "look": Avatar.look_of(app.settings.appearance)}, 1)
 
 
 # ── Messages ────────────────────────────────────────────────────────────────────────────────────────────────
@@ -540,7 +541,8 @@ func _on_connected() -> void:
 	if meeting != null:
 		meeting.connected()
 	me = multiplayer.get_unique_id()
-	_send("hello", {"protocol": PROTOCOL, "name": _my_name(), "height": app.settings.height, "password": _password}, 1)
+	_send("hello", {"protocol": PROTOCOL, "name": _my_name(), "height": app.settings.height, "look": Avatar.look_of(app.settings.appearance),
+		"password": _password}, 1)
 
 
 ## The host gone without saying so (the connection lost, as a network can drop out): tried again every few seconds for
@@ -628,15 +630,16 @@ func _on_packet(id: int, bytes: PackedByteArray) -> void:
 			_host_ended = true
 		"players":
 			players = data
-			for each in _bodies.keys():
-				if not players.has(each):
+			for each in _bodies.keys():  # (gone, or changed: their name, height or look; made again as they are now)
+				if not players.has(each) or _bodies[each].made_of != _made_of(players[each]):
 					_forget(each)
 			follow_voices()
 			changed.emit()
-		"me":  # (a player's name or height, changed)
+		"me":  # (a player's name, height or look, changed)
 			if role == "host" and players.has(id):
 				players[id].name = str(data.get("name", "Player"))
 				players[id].height = float(data.get("height", 1.75))
+				players[id].look = Avatar.look_of(data.get("look", {}))
 				_send("players", players)
 				_forget(id)  # (made again, as they are now)
 				changed.emit()
@@ -697,7 +700,7 @@ func _on_hello(id: int, data: Dictionary) -> void:
 		_send("refused", {"why": "the room is full (%d players)" % int(rules.most)}, id)
 		return
 	players[id] = {"name": str(data.get("name", "Player")), "height": float(data.get("height", 1.75)),
-		"color": _color_data(COLORS[players.size() % COLORS.size()])}
+		"color": _color_data(COLORS[players.size() % COLORS.size()]), "look": Avatar.look_of(data.get("look", {}))}
 	_tell_engine_who()
 	_send("welcome", {"you": id, "host": host_name, "room_name": app.session.room_name, "room": app.library.room_data(), "ids": sync.ids(),
 		"feeds": app.instruments.map(func(i): return [int(i.get_meta("fed_by", 0)), int(i.get_meta("stream", 0))]),
@@ -1347,12 +1350,12 @@ func _on_pose(data: Dictionary) -> void:
 		app.add_child(node)
 		var info: Dictionary = players[id]
 		var colour: Array = info.get("color", [0.6, 0.6, 0.6])
-		body.build(float(info.get("height", 1.75)), Color(float(colour[0]), float(colour[1]), float(colour[2])), 1)
+		body.build(float(info.get("height", 1.75)), info.get("look", {}), Color(float(colour[0]), float(colour[1]), float(colour[2])), 1)
 		body.set_name_tag(str(info.get("name", "Player")))
 		var at: Array = data.at
 		node.global_position = Vector3(float(at[0]), 0.0, float(at[1]))
 		node.rotation.y = float(data.yaw)
-		_bodies[id] = {"node": node, "body": body, "last": node.global_position}
+		_bodies[id] = {"node": node, "body": body, "last": node.global_position, "made_of": _made_of(info)}
 	var each: Dictionary = _bodies[id]
 	each.target = Vector3(float(data.at[0]), 0.0, float(data.at[1]))
 	each.yaw = float(data.yaw)
@@ -1387,6 +1390,11 @@ func _forget(id: int) -> void:
 
 
 ## Another player's body (for the checks), or null.
+## What a player's body is made from: if it changes, the body is made again.
+static func _made_of(info: Dictionary) -> int:
+	return hash([info.get("name", ""), info.get("height", 1.75), info.get("look", {})])
+
+
 func body_of(id: int):
 	return _bodies[id].node if _bodies.has(id) else null
 

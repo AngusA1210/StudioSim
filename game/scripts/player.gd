@@ -8,7 +8,7 @@ extends CharacterBody3D
 ## where it is and flies about the room, through anything; you hear from your body still, or from the camera.
 
 const Avatar := preload("res://scripts/avatar.gd")
-const COLOR := Color(0.4, 0.62, 0.9)  # your shirt and headphones
+const COLOR := Color(0.4, 0.62, 0.9)  # your headphones' rings (your shirt is as you choose it)
 const MIN_HEIGHT := 1.4
 const MAX_HEIGHT := 2.1
 const STOOL := Vector3(0.0, Avatar.STOOL_TOP, 0.66)  # the top of a kit's stool, on its model (instrument_models.gd)
@@ -116,7 +116,7 @@ func set_height(tall: float) -> void:
 	height = clampf(tall, MIN_HEIGHT, MAX_HEIGHT)
 	(_shape.shape as CapsuleShape3D).height = height
 	_shape.position.y = height / 2.0
-	avatar.build(height, COLOR)
+	avatar.build(height, app.settings.appearance, COLOR)
 	_place_head()
 
 
@@ -323,7 +323,7 @@ func forget(inst) -> void:
 ## (unless something in it is being typed into).
 func _can_move() -> bool:
 	for panel in [app.title, app.menu, app.sequencer, app.amp_panel, app.speaker_panel, app.mic_panel, app.instrument_menu, app.name_prompt, app.rooms_page,
-			app.you_page, app.together_page]:
+			app.avatar_page, app.together_page]:
 		if panel != null and panel.is_open():
 			return false
 	if app.session != null and app.session.is_asking():  # "Save the changes?": the arrows are for its buttons
@@ -337,7 +337,7 @@ func _ui_open() -> bool:
 	if app.session != null and app.session.is_asking():
 		return true
 	for panel in [app.title, app.menu, app.sequencer, app.mixer, app.amp_panel, app.speaker_panel, app.mic_panel, app.instrument_menu, app.name_prompt, app.edit_window,
-			app.rooms_page, app.you_page, app.together_page]:
+			app.rooms_page, app.avatar_page, app.together_page]:
 		if panel != null and panel.is_open():
 			return true
 	return false

@@ -40,13 +40,20 @@ Facing an instrument, a card at the right of the screen lists what each key does
 
 ## You, and the free camera
 
-You have a body, as tall as you set it on the title screen's **You** page (140 to 210 cm), with your name over it
+You have a body, as tall as you set it on the title screen's **Avatar customization** page (140 to 210 cm), looking
+as you choose it there, with your name over it
 there too: both are set outside any room, as a player joining others would be. You hear the room from the
 middle of your head, between your ears, and see it from your eyes, 2.5 cm above and 8.5 cm in front of them, as on a
 real head: so the taller you are, the higher you hear and see from, and turning your head swings your eyes round
 your ears. Your own eyes don't see your body, but a microphone's view, the free camera and the title screen do: a
 figure in headphones (where its ears are), its head turned the way you look, stepping as you walk and holding out
-what you carry. At a kit you sit on its stool, facing it, your feet on its pedals and your sticks over its hi-hat and
+what you carry.
+
+**How it looks** is chosen on the same page, beside it as it turns: a man's or a woman's build, its skin (eight tones),
+its hair (short, a buzz cut, long, a ponytail, a bun, curly or bald) and its colour, and a shirt (a T-shirt, long
+sleeves, a hoodie or a tank top), pants (trousers, shorts or a skirt) and shoes (sneakers, boots or dress shoes), each
+in a colour of its own. The other players see you so, and see you change it. The rings on your headphones are in your
+player's colour, as your arrowhead on the floor plan is, to tell you apart. At a kit you sit on its stool, facing it, your feet on its pedals and your sticks over its hi-hat and
 snare, and you hear it from where a seated drummer does; getting up puts you back where you stood. Seated, the arrow
 keys turn you; they don't walk.
 

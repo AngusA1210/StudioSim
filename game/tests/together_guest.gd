@@ -35,6 +35,7 @@ func _run() -> void:
 	for i in 30:
 		await process_frame
 	main.settings.player_name = "Guest"
+	main.settings.appearance = {"body": "female", "hair": "bun", "hair_color": 2, "shirt_color": 7}
 	main.settings.height = 1.62
 	main.player.set_height(1.62)
 	main.net.reported.connect(_on_asked)
@@ -151,5 +152,10 @@ func _on_asked(_from: int, ask: Dictionary) -> void:
 				"internet": main.net.room_list.found(), "internet_problem": main.net.room_list.problem})
 			main.net.discovery.look(false)
 			main.net.room_list.look(false)
+		"dress":  # this player's look changed, as their Avatar customization page would
+			var look: Dictionary = main.settings.appearance.duplicate()
+			look.shirt = str(ask.shirt)
+			main.set_appearance(look)
+			main.net.report({"step": "dress"})
 		"leave":
 			main.net.leave()

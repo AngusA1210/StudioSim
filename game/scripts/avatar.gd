@@ -1,7 +1,8 @@
 extends Node3D
 ## A body in the room: yours (seen from a microphone, the free camera or the title screen, never from your own eyes),
-## and in time the other players'. Built in proportion to its height (Winter's anthropometric fractions of it),
-## wearing headphones where its ears are, which is where it hears from. Each frame its legs and arms are placed from
+## and the other players'. Built in proportion to its height (Winter's anthropometric fractions of it), as its player
+## has chosen it to look (LOOK: a male or female build, skin, hair, and a shirt, trousers and shoes), wearing
+## headphones where its ears are, which is where it hears from. Each frame its legs and arms are placed from
 ## where its feet and hands should be (two-bone IK): walking, its feet step and its arms swing; carrying something,
 ## its hands hold it out; seated at a kit, its feet are on the pedals and its sticks over the hi-hat and the snare.
 ## It faces -z, as the player does; its left is -x.
@@ -27,8 +28,34 @@ const HIP_OVER_SEAT := 0.05  # (seated, the hip joints over the seat)
 const STICK := 0.4  # a drumstick's length, metres
 const STOOL_TOP := 0.56  # a kit's stool's top (instrument_models.gd)
 
+## What a body can look like, as the title screen's Avatar customization page sets it: each choice a name (a build, a
+## hair style, a piece of clothing) or a place in one of these lists of colours, so that it goes to the other players
+## as it is. Shown in this order.
+const BODIES := {"male": "Male", "female": "Female"}
+const SKINS := [Color(0.97, 0.86, 0.78), Color(0.93, 0.77, 0.65), Color(0.86, 0.67, 0.53), Color(0.77, 0.57, 0.43),
+	Color(0.65, 0.46, 0.33), Color(0.53, 0.36, 0.25), Color(0.41, 0.27, 0.19), Color(0.29, 0.19, 0.13)]
+const HAIRS := {"short": "Short", "buzz": "Buzz cut", "long": "Long", "ponytail": "Ponytail", "bun": "Bun", "curly": "Curly",
+	"bald": "Bald"}
+const HAIR_COLORS := [Color(0.06, 0.05, 0.045), Color(0.18, 0.11, 0.06), Color(0.33, 0.2, 0.11), Color(0.5, 0.2, 0.08),
+	Color(0.78, 0.62, 0.36), Color(0.88, 0.84, 0.74), Color(0.58, 0.58, 0.6), Color(0.2, 0.35, 0.75), Color(0.85, 0.36, 0.62)]
+const SHIRTS := {"tshirt": "T-shirt", "long": "Long sleeves", "hoodie": "Hoodie", "tank": "Tank top"}
+const PANTS := {"trousers": "Trousers", "shorts": "Shorts", "skirt": "Skirt"}
+const SHOES := {"sneakers": "Sneakers", "boots": "Boots", "dress": "Dress shoes"}
+const CLOTHES := [Color(0.08, 0.08, 0.09), Color(0.24, 0.25, 0.28), Color(0.55, 0.56, 0.58), Color(0.92, 0.92, 0.9),
+	Color(0.12, 0.16, 0.32), Color(0.26, 0.45, 0.78), Color(0.22, 0.33, 0.5), Color(0.12, 0.5, 0.5), Color(0.22, 0.42, 0.24),
+	Color(0.4, 0.4, 0.22), Color(0.7, 0.16, 0.14), Color(0.42, 0.1, 0.16), Color(0.85, 0.5, 0.15), Color(0.86, 0.75, 0.3),
+	Color(0.42, 0.26, 0.6), Color(0.66, 0.55, 0.4)]
+## How a body looks until its player chooses otherwise.
+const LOOK := {"body": "male", "skin": 3, "hair": "short", "hair_color": 1, "shirt": "tshirt", "shirt_color": 5,
+	"pants": "trousers", "pants_color": 1, "shoes": "sneakers", "shoes_color": 0}
+const CHOICES := {"body": BODIES, "hair": HAIRS, "shirt": SHIRTS, "pants": PANTS, "shoes": SHOES}
+const PALETTES := {"skin": SKINS, "hair_color": HAIR_COLORS, "shirt_color": CLOTHES, "pants_color": CLOTHES, "shoes_color": CLOTHES}
+
 var height := 1.75
 var layer := LAYER
+var look := LOOK.duplicate()
+var _shoulder_out := SHOULDER_OUT
+var _hip_out := HIP_OUT
 var _name_text := ""
 var _tag: Label3D  # its name, over its head
 var _parts := {}  # name → MeshInstance3D
@@ -52,10 +79,29 @@ static func eyes_from_ears(tall: float) -> Vector3:
 	return Vector3(0.0, EYES_UP * tall, -EYES_AHEAD * tall)
 
 
-## Its bones, in proportion to `tall` (metres), in `color` (its shirt, and its headphones' rings), drawn on `on_layer`.
-func build(tall: float, color: Color, on_layer := LAYER) -> void:
+## A look as it can be (from the settings, or another player): whatever isn't one of the choices is as LOOK has it.
+static func look_of(given) -> Dictionary:
+	var out := LOOK.duplicate()
+	if not given is Dictionary:
+		return out
+	for key in CHOICES:
+		if CHOICES[key].has(str(given.get(key, ""))):
+			out[key] = str(given[key])
+	for key in PALETTES:
+		if given.has(key) and (given[key] is int or given[key] is float):
+			out[key] = clampi(int(given[key]), 0, PALETTES[key].size() - 1)
+	return out
+
+
+## Its bones, in proportion to `tall` (metres), looking as `chosen` says (look_of), its headphones' rings in `accent`
+## (its player's colour), drawn on `on_layer`.
+func build(tall: float, chosen: Dictionary, accent: Color, on_layer := LAYER) -> void:
 	height = tall
 	layer = on_layer
+	look = look_of(chosen)
+	var female: bool = look.body == "female"
+	_shoulder_out = 0.116 if female else SHOULDER_OUT  # (narrower shoulders, wider hips)
+	_hip_out = 0.056 if female else HIP_OUT
 	for part in get_children():  # (gone at once, so the new pieces have their names)
 		remove_child(part)
 		part.queue_free()
@@ -71,14 +117,35 @@ func build(tall: float, color: Color, on_layer := LAYER) -> void:
 	_tag.layers = 1 << (layer - 1)
 	add_child(_tag)
 	set_name_tag(_name_text)
-	var shirt := _material(color.darkened(0.15), 0.8)
-	var trousers := _material(Color(0.2, 0.22, 0.27), 0.85)
-	var skin := _material(Color(0.74, 0.72, 0.7), 0.6)  # (a mannequin's)
+	var shirt := _material(CLOTHES[look.shirt_color], 0.8)
+	var trousers := _material(CLOTHES[look.pants_color], 0.85)
+	var shoes := _material(CLOTHES[look.shoes_color], 0.2 if look.shoes == "dress" else 0.55)
+	var skin := _material(SKINS[look.skin], 0.6)
+	var hair := _material(HAIR_COLORS[look.hair_color], 0.75)
+	hair.cull_mode = BaseMaterial3D.CULL_DISABLED  # (seen from below, inside it too)
 	var dark := _material(Color(0.06, 0.06, 0.07), 0.45)
 	var glossy := _material(Color(0.05, 0.06, 0.08), 0.15)  # (its eyes)
 	var h := tall
-	_capsule("torso", 0.075 * h, 0.16 * h, shirt, Vector3(1.4, 1.0, 0.85))  # (0.31 of its height, end to end)
-	_capsule("pelvis", 0.065 * h, 0.07 * h, trousers, Vector3(1.0, 1.0, 0.8))
+	# (0.31 of its height, end to end)
+	var torso := _capsule("torso", 0.075 * h, 0.16 * h, shirt, Vector3(1.25, 1.0, 0.85) if female else Vector3(1.4, 1.0, 0.85))
+	if female:  # (a little fuller at the chest)
+		var chest := CapsuleMesh.new()
+		chest.radius = 0.027 * h
+		chest.height = 0.105 * h
+		var bust := _part("chest", chest, shirt, torso)
+		bust.rotation = Vector3(0.0, 0.0, PI / 2.0)
+		bust.position = Vector3(0.0, 0.035 * h, -0.056 * h)
+	if look.shirt == "hoodie":  # (its hood rolled round the neck, and its pocket in front)
+		var rolled := TorusMesh.new()
+		rolled.inner_radius = 0.022 * h
+		rolled.outer_radius = 0.05 * h
+		rolled.rings = 16
+		rolled.ring_segments = 10
+		_part("hood", rolled, shirt, torso).position = Vector3(0.0, 0.15 * h, 0.012 * h)
+		var flat := BoxMesh.new()
+		flat.size = Vector3(0.1 * h, 0.045 * h, 0.012 * h)
+		_part("pocket", flat, _material(CLOTHES[look.shirt_color].darkened(0.18), 0.85), torso).position = Vector3(0.0, -0.075 * h, -0.072 * h)
+	_capsule("pelvis", 0.065 * h, (0.085 if female else 0.07) * h, trousers, Vector3(1.0, 1.0, 0.8))
 	_capsule("neck", 0.03 * h, 0.024 * h, skin)
 	var head := _sphere("head", HEAD * h, skin)
 	# Its eyes, so others can see where it looks.
@@ -103,9 +170,9 @@ func build(tall: float, color: Color, on_layer := LAYER) -> void:
 		var ring := TorusMesh.new()
 		ring.inner_radius = 0.3 * HEAD * h
 		ring.outer_radius = 0.42 * HEAD * h
-		var accent := _part("ring_%d" % side, ring, _material(color.lightened(0.2), 0.4), head)
-		accent.rotation = Vector3(0.0, 0.0, PI / 2.0)
-		accent.position = Vector3(side * 1.15 * HEAD * h, -0.08 * HEAD * h, 0.0)
+		var lit := _part("ring_%d" % side, ring, _material(accent.lightened(0.2), 0.4), head)
+		lit.rotation = Vector3(0.0, 0.0, PI / 2.0)
+		lit.position = Vector3(side * 1.15 * HEAD * h, -0.08 * HEAD * h, 0.0)
 	var arc := 9
 	for i in arc:  # (the band: short rods round a half circle)
 		var a0 := PI * float(i) / arc
@@ -120,15 +187,25 @@ func build(tall: float, color: Color, on_layer := LAYER) -> void:
 		rod.radial_segments = 6
 		var piece := _part("band_%d" % i, rod, dark, head)
 		piece.transform = _between(from, to)
+	_hair(hair, head, h)
+	var sleeve := skin if look.shirt == "tank" else shirt
+	var cuff := shirt if look.shirt in ["long", "hoodie"] else skin
+	var upper_leg := skin if look.pants == "skirt" else trousers
+	var lower_leg := trousers if look.pants == "trousers" else skin
+	if look.pants == "skirt":  # (flaring from the waist to above the knee: placed each frame, as the legs are)
+		var flare := CylinderMesh.new()
+		flare.top_radius = 0.115 * h  # (its top is at the hem, as it is placed: from the waist down)
+		flare.bottom_radius = 0.072 * h
+		flare.height = 0.2 * h
+		flare.radial_segments = 18
+		_part("skirt", flare, trousers)
 	for side in ["l", "r"]:
-		_capsule("upper_arm_" + side, 0.026 * h, UPPER_ARM * h, shirt)
-		_capsule("forearm_" + side, 0.021 * h, FOREARM * h, skin)
+		_capsule("upper_arm_" + side, 0.026 * h, UPPER_ARM * h, sleeve)
+		_capsule("forearm_" + side, 0.021 * h, FOREARM * h, cuff)
 		_sphere("hand_" + side, 0.028 * h, skin, Vector3(0.7, 1.3, 1.0))
-		_capsule("thigh_" + side, 0.042 * h, THIGH * h, trousers)
-		_capsule("shank_" + side, 0.031 * h, SHANK * h, trousers)
-		var shoe := BoxMesh.new()
-		shoe.size = Vector3(0.056 * h, 0.042 * h, FOOT * h)
-		_part("foot_" + side, shoe, dark)
+		_capsule("thigh_" + side, 0.042 * h, THIGH * h, upper_leg)
+		_capsule("shank_" + side, 0.031 * h, SHANK * h, lower_leg)
+		_shoe(side, shoes, h)
 		var stick := CylinderMesh.new()
 		stick.top_radius = 0.006
 		stick.bottom_radius = 0.008
@@ -177,6 +254,8 @@ func pose(state: Dictionary, delta: float) -> void:
 	_place("pelvis", Transform3D(Basis(Vector3.BACK, PI / 2.0), hips))
 	_place("torso", _between(hips + spine * 0.095 * h, hips + spine * 0.255 * h))
 	_place("neck", _between(shoulders, ears - spine * 0.02 * h))
+	if _parts.has("skirt"):
+		_place("skirt", _between(hips + spine * 0.03 * h, hips - spine * 0.17 * h))
 	var look := clampf(float(state.get("pitch", 0.0)), -1.1, 0.9)
 	_place("head", Transform3D(Basis(Vector3.RIGHT, look), ears + Vector3(0.0, 0.01 * h, 0.0)))
 	_tag.position = ears + Vector3(0.0, 0.14 * h, 0.0)
@@ -188,13 +267,13 @@ func pose(state: Dictionary, delta: float) -> void:
 		var tag := "l" if i == 0 else "r"
 		var phase := _phase + (0.0 if i == 0 else PI)
 		# A leg: from its hip to where its foot goes, the knee bending forward.
-		var hip := hips + Vector3(side * HIP_OUT * h, 0.0, 0.0)
+		var hip := hips + Vector3(side * _hip_out * h, 0.0, 0.0)
 		var ankle: Vector3
 		if feet.size() == 2:
 			ankle = feet[i]
 		else:
 			var lift := maxf(cos(phase), 0.0) * 0.25 * _stride
-			ankle = Vector3(side * HIP_OUT * h * 1.2, ANKLE * h + lift, 0.0) + _travel * _stride * sin(phase)
+			ankle = Vector3(side * _hip_out * h * 1.2, ANKLE * h + lift, 0.0) + _travel * _stride * sin(phase)
 		var leg := _bend(hip, ankle, THIGH * h, SHANK * h, Vector3(0.0, 0.1, -1.0))
 		_place("thigh_" + tag, _between(hip, leg[0]))
 		_place("shank_" + tag, _between(leg[0], leg[1]))
@@ -202,7 +281,7 @@ func pose(state: Dictionary, delta: float) -> void:
 		_place("foot_" + tag, Transform3D(Basis(Vector3.RIGHT, -toe_down),
 			leg[1] + Vector3(0.0, -0.4 * ANKLE * h, -0.3 * FOOT * h)))
 		# An arm: from its shoulder to where its hand goes, the elbow bending back and out.
-		var shoulder := shoulders + Vector3(side * SHOULDER_OUT * h, -0.02 * h, 0.0)
+		var shoulder := shoulders + Vector3(side * _shoulder_out * h, -0.02 * h, 0.0)
 		var hand: Vector3
 		if hands.size() == 2:
 			hand = hands[i]
@@ -239,6 +318,83 @@ static func state_for(at: Transform3D, tall: float, pitch: float, going: Vector3
 	elif holding == "play":
 		state.hands = [Vector3(-0.15, 0.98, -0.38) * k, Vector3(0.15, 0.98, -0.38) * k]
 	return state
+
+
+## Its hair, on its head (turning with it), as its look has it: a cap from high over the brow to low at the nape, so
+## its face shows and its headphones' cups stand out of it, and what a style adds to that.
+func _hair(finish: Material, head: Node3D, h: float) -> void:
+	if look.hair == "bald":
+		return
+	var r := HEAD * h
+	var size: float = {"buzz": 1.03, "short": 1.09, "long": 1.08, "ponytail": 1.06, "bun": 1.06, "curly": 1.2}[look.hair]
+	var dome := SphereMesh.new()
+	dome.radius = size * r
+	dome.height = size * r
+	dome.is_hemisphere = true
+	dome.radial_segments = 20
+	dome.rings = 8
+	var cap := _part("hair_cap", dome, finish, head)
+	cap.rotation.x = 0.42  # (its edge tilted: high at the front, low at the back)
+	cap.position = Vector3(0.0, 0.06 * r, 0.02 * r)
+	if look.hair == "curly":  # (curls all over it)
+		cap.scale = Vector3(0.93, 1.1, 1.0)
+		var curl := SphereMesh.new()
+		curl.radius = 0.3 * r
+		curl.height = 0.6 * r
+		curl.radial_segments = 10
+		curl.rings = 5
+		var n := 0
+		for ring in [[0.25, 9], [0.7, 8], [1.1, 5], [1.57, 1]]:  # (how far up from its edge, and how many round it)
+			for k in ring[1]:
+				var round_it: float = TAU * (float(k) + 0.5 * float(n % 2)) / float(ring[1])
+				var up: float = ring[0]
+				_part("hair_curl_%d" % n, curl, finish, cap).position = size * r * Vector3(cos(up) * sin(round_it), sin(up), cos(up) * cos(round_it))
+				n += 1
+	match look.hair:
+		"long":  # falling behind, over the shoulders
+			var fall := CapsuleMesh.new()
+			fall.radius = 0.75 * r
+			fall.height = 2.5 * r
+			var back := _part("hair_long", fall, finish, head)
+			back.position = Vector3(0.0, -1.0 * r, 0.75 * r)
+			back.scale = Vector3(1.15, 1.0, 0.55)
+		"ponytail":
+			var knot := SphereMesh.new()
+			knot.radius = 0.3 * r
+			knot.height = 0.6 * r
+			_part("hair_tie", knot, finish, head).position = Vector3(0.0, 0.25 * r, 1.0 * r)
+			var tail := CapsuleMesh.new()
+			tail.radius = 0.24 * r
+			tail.height = 1.7 * r
+			var hanging := _part("hair_ponytail", tail, finish, head)
+			hanging.position = Vector3(0.0, -0.5 * r, 1.2 * r)
+			hanging.rotation.x = -0.25
+		"bun":
+			var knot := SphereMesh.new()
+			knot.radius = 0.42 * r
+			knot.height = 0.84 * r
+			_part("hair_bun", knot, finish, head).position = Vector3(0.0, 0.75 * r, 0.75 * r)
+
+
+## A shoe on the `side` foot, as its look has it: sneakers (a white sole under them), boots (up over the ankle), or
+## dress shoes (low and glossy).
+func _shoe(side: String, finish: Material, h: float) -> void:
+	var box := BoxMesh.new()
+	box.size = Vector3((0.05 if look.shoes == "dress" else 0.056) * h, (0.034 if look.shoes == "dress" else 0.042) * h,
+		(1.05 if look.shoes == "dress" else 1.0) * FOOT * h)
+	var foot := _part("foot_" + side, box, finish)
+	if look.shoes == "sneakers":
+		var sole := BoxMesh.new()
+		sole.size = Vector3(0.058 * h, 0.012 * h, 1.02 * FOOT * h)
+		_part("sole_" + side, sole, _material(Color(0.9, 0.9, 0.88), 0.7), foot).position.y = -0.018 * h
+	elif look.shoes == "boots":
+		var shaft := CylinderMesh.new()
+		shaft.top_radius = 0.034 * h
+		shaft.bottom_radius = 0.034 * h
+		shaft.height = 0.1 * h
+		shaft.radial_segments = 12
+		# (the ankle is up from the foot's middle and back: where it is placed from)
+		_part("boot_" + side, shaft, finish, foot).position = Vector3(0.0, 0.4 * ANKLE * h + 0.05 * h, 0.3 * FOOT * h)
 
 
 ## Where a two-bone limb's middle joint goes, from its root towards `end`, its bones `a` and `b` long, bending

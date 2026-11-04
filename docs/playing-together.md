@@ -96,9 +96,9 @@ others away.
 - **Live inputs**: a player who switches on a Speaker's or an amp's input plays through it, and nobody else can
   meanwhile (its label shows their name). Its sound goes to everyone (see below).
 - **Voices**: each player can talk to the others (see below).
-- **Each player**: their body, at their height and in their colour, with their name over it (from the title screen's
-  **You** page), where they stand, the way they look, sitting at a kit or carrying an instrument. An instrument
-  someone else is carrying can't be picked up.
+- **Each player**: their body, as tall as they are and looking as they chose (both on the title screen's **Avatar
+  customization** page), with their name over it and their colour on its headphones; where they stand, which way
+  they face, sitting at a kit or carrying an instrument. An instrument someone else is carrying can't be picked up.
 
 Each player keeps their own:
 

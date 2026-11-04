@@ -8,7 +8,8 @@ game/                      Godot project: the room, player, instruments, HUD, me
   scripts/instrument_models.gd   what each instrument looks like, built from simple shapes
   scripts/player.gd        you: walking, looking, carrying, playing (on a kit's stool), the free camera, and where the
                            room is heard from
-  scripts/avatar.gd        a body as tall as it is set, in proportion, posed each frame (two-bone IK for its limbs)
+  scripts/avatar.gd        a body as tall as it is set, in proportion, looking as its player chose, posed each frame
+                           (two-bone IK for its limbs)
   scripts/mixer.gd         the mix window: channel strips, faders (fader.gd), pan pots (pan_control.gd), levels in the
                            room (mini_fader.gd) and meters (level_meter.gd)
   scripts/amp_panel.gd     an amp's knobs (knob.gd) and its pedalboard
@@ -19,7 +20,8 @@ game/                      Godot project: the room, player, instruments, HUD, me
   scripts/plugin_browser.gd  the plug-ins installed, by type or by maker, for an insert or a Plug-in pedal
   scripts/session.gd       the open room: its file, saving, auto-save and backups
   scripts/rooms_page.gd    making a new room (from a template) and opening one
-  scripts/you_page.gd      your name and height, from the title screen, your body turning beside them
+  scripts/avatar_page.gd   Avatar customization: your name, height and look, from the title screen, your body turning
+                           beside them
   scripts/net.gd           playing together: hosting and joining, the players and their bodies, the session's clock
                            and the patterns kept in step with it, notes played
   scripts/room_sync.gd     the room kept the same for everyone: what changed sent, what came applied, in the host's order

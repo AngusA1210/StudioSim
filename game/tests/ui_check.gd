@@ -2357,17 +2357,39 @@ func _run() -> void:
 		"ears %.3f m up; eyes %.3f m ahead, %.3f m above" % [player.ear_position().y, eyes_over_ears.dot(facing), eyes_over_ears.y])
 	main.show_title()
 	await frames(3)
-	await click(title.buttons.you.get_global_rect().get_center())
+	var avatar_button: Button = title.buttons.avatar
+	await click(avatar_button.get_global_rect().get_center())
 	await frames(2)
-	var you_open: bool = main.you_page.is_open() and not title._ui.visible
-	main.you_page._height.value = 160.0
-	main.you_page._name.text = "Drummer"
-	main.you_page._name.text_changed.emit("Drummer")
+	var page = main.avatar_page
+	var you_open: bool = page.is_open() and not title._ui.visible and avatar_button.text == "Avatar customization"
+	page._height.value = 160.0
+	page._name.text = "Drummer"
+	page._name.text_changed.emit("Drummer")
 	await frames(2)
-	var height_said: String = main.you_page._height_value.text
+	var height_said: String = page._height_value.text
 	var tag: Label3D = player.avatar._tag
 	check(you_open and main.settings.player_name == "Drummer" and tag.visible and tag.text == "Drummer" and tag.layers == body_layer and
-		main.you_page._body._tag.text == "Drummer", "the title screen's You page: your name, over your body where others see it", tag.text)
+		page._body._tag.text == "Drummer", "the title screen's Avatar customization page: your name, over your body where others see it", tag.text)
+	# How your body looks, chosen there: its build, skin, hair and clothes, each a click, and your body in the room so.
+	await click(page._builds.female.get_global_rect().get_center())
+	await click(page._swatches.skin[6].get_global_rect().get_center())
+	page._styles.hair.select(Avatar.HAIRS.keys().find("ponytail"))
+	page._styles.hair.item_selected.emit(Avatar.HAIRS.keys().find("ponytail"))
+	await click(page._swatches.hair_color[3].get_global_rect().get_center())
+	page._styles.pants.select(Avatar.PANTS.keys().find("skirt"))
+	page._styles.pants.item_selected.emit(Avatar.PANTS.keys().find("skirt"))
+	await click(page._swatches.shirt_color[10].get_global_rect().get_center())
+	await frames(2)
+	var chosen: Dictionary = main.settings.appearance
+	var shirt_mesh: MeshInstance3D = player.avatar.find_child("torso", true, false)
+	var skin_mesh: MeshInstance3D = player.avatar.find_child("neck", true, false)
+	check(chosen.body == "female" and chosen.skin == 6 and chosen.hair == "ponytail" and chosen.hair_color == 3 and chosen.pants == "skirt" and
+		chosen.shirt_color == 10 and player.avatar.find_child("hair_ponytail", true, false) != null and player.avatar.find_child("skirt", true, false) != null and
+		player.avatar.find_child("chest", true, false) != null and page._body.find_child("hair_ponytail", true, false) != null and
+		(shirt_mesh.material_override as StandardMaterial3D).albedo_color.is_equal_approx(Avatar.CLOTHES[10]) and
+		(skin_mesh.material_override as StandardMaterial3D).albedo_color.is_equal_approx(Avatar.SKINS[6]) and
+		page._swatches.skin[6].get_theme_stylebox("normal").border_width_left == 2,
+		"and how your body looks: a woman's build, darker skin, auburn hair in a ponytail, a red shirt and a skirt, there and in the room", str(chosen))
 	await tap(KEY_ESCAPE)
 	await frames(2)
 	var settings_page_heightless: bool = not main.menu.get("_height_slider")
@@ -2376,11 +2398,12 @@ func _run() -> void:
 	var head_mesh: MeshInstance3D = player.avatar.find_child("head", true, false)
 	check(is_equal_approx(player.height, 1.6) and is_equal_approx(main.settings.height, 1.6) and absf(player.ear_position().y - 0.922 * 1.6) < 0.005 and
 		is_equal_approx((player._shape.shape as CapsuleShape3D).height, 1.6) and head_mesh != null and absf(head_mesh.position.y - 0.932 * 1.6) < 0.02 and
-		height_said == "160 cm  ·  5′ 3″" and settings_page_heightless and not main.you_page.is_open() and not title.is_open(),
+		height_said == "160 cm  ·  5′ 3″" and settings_page_heightless and not main.avatar_page.is_open() and not title.is_open(),
 		"and your height there (not in the room's menu): your eyes, ears and body go with it",
 		"%s; ears %.3f m up, its head %.3f, %.2f m tall" % [height_said, player.ear_position().y, head_mesh.position.y if head_mesh else -1.0, player.height])
 	main.set_height(1.75)
 	main.set_player_name("")
+	main.set_appearance({})
 	main._sit_at("drums")
 	await frames(3)
 	# The free camera: off from your eyes, flying the way it looks, through anything, your body staying put.
@@ -3500,6 +3523,17 @@ func _run() -> void:
 	check(guest_body != null and Vector2(guest_body.global_position.x, guest_body.global_position.z).distance_to(
 		Vector2(float(joined.at[0]), float(joined.at[1]))) < 0.1 and guest_body.get_child(0).height > 1.6 and guest_body.get_child(0).height < 1.64,
 		"and their body stands where they do, as tall as they are, for this player to see", str(guest_body.global_position) if guest_body else "none")
+	var their_look: Dictionary = guest_body.get_child(0).look if guest_body else {}
+	main.net.report({"ask": "dress", "shirt": "hoodie"})
+	await wait_for.call("dress", 10.0)
+	var dressed_until := Time.get_ticks_msec() + 5000
+	while Time.get_ticks_msec() < dressed_until and (main.net.body_of(guest_id) == null or main.net.body_of(guest_id).get_child(0).look.shirt != "hoodie"):
+		await process_frame
+	var redressed = main.net.body_of(guest_id)
+	check(their_look.get("body", "") == "female" and their_look.get("hair", "") == "bun" and guest_body.find_child("hair_bun", true, false) != null and
+		redressed != null and redressed.get_child(0).look.shirt == "hoodie" and redressed.find_child("hood", true, false) != null,
+		"looking as they chose (a woman's build, her hair in a bun), and as they change it, a hoodie on, while they're in the room",
+		str(their_look))
 	# The room browser of a player on this network finds the room by itself: its name, its host, who is in it, that it
 	# has a password.
 	main.net.report({"ask": "browse"})
