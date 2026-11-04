@@ -44,9 +44,13 @@ recording, mixing, room acoustics, playing together, making the app, and how the
 
 ## Roadmap
 
-1. Multiplayer: working, on one network and over the internet (a room browser, the host's rules, a shared clock,
-   live inputs and voices streamed, Record rooms together); next, playing between computers on different networks.
-2. Releasing it: the app signed for macOS and Windows.
+Playing together works, on one network and over the internet. Next, in this order:
+
+1. **A website** for StudioSim, where it can be downloaded for macOS and Windows.
+2. **Demonstration videos** of what it does, for the website and to show it.
+3. **A public release**, free and open source: a licence, the repository made public, apps signed for macOS and
+   Windows, numbered versions with release notes, and a place to report problems.
+4. **More for playing and recording music**, from then on: VR among the first.
 
 The full list is in [docs/roadmap.md](docs/roadmap.md).
 
