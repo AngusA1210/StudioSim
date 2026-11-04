@@ -82,15 +82,6 @@ bool readBetween(FloatRing& ring, double& frac, double step, float& out) {
 
 }  // namespace
 
-size_t FloatRing::write(const float* in, size_t n) {
-    const size_t head = head_.load(std::memory_order_relaxed);
-    const size_t room = buf_.size() - (head - tail_.load(std::memory_order_acquire));
-    const size_t take = std::min(n, room);
-    for (size_t i = 0; i < take; ++i) buf_[(head + i) & mask_] = in[i];
-    head_.store(head + take, std::memory_order_release);
-    return take;
-}
-
 NetAudio::NetAudio() {
     Sinc16::prepare();
 #ifdef _WIN32

@@ -54,11 +54,11 @@ static func add_items(menu: PopupMenu, app, track, colors: PopupMenu, modes: Pop
 	menu.add_separator()
 	if track.get("is_master"):
 		return
-	if track.is_folder:  # its format: two channels, its pan a balance; or one, its pan placing it
+	if track.is_folder:  # its format: two channels, each side panned; or one, its pan placing it
 		var kind := "aux track" if track.is_aux else "folder"
 		menu.add_radio_check_item("Stereo", STEREO)
 		menu.set_item_checked(menu.get_item_index(STEREO), not track.mono)
-		menu.set_item_tooltip(menu.get_item_index(STEREO), "A stereo %s: two channels, its inserts in stereo, its pan a balance" % kind)
+		menu.set_item_tooltip(menu.get_item_index(STEREO), "A stereo %s: two channels, its inserts in stereo, a pan for each side" % kind)
 		menu.add_radio_check_item("Mono", MONO)
 		menu.set_item_checked(menu.get_item_index(MONO), track.mono)
 		menu.set_item_tooltip(menu.get_item_index(MONO),

@@ -348,13 +348,9 @@ Amp::Amp(float sample_rate, InstrumentKind kind, const InputBus* bus, int max_bl
     model_.init(kind, sample_rate);
 }
 
-bool Amp::readInput(float* out, int n) const {  // as the Speaker takes it in: one input, or all of them together
+bool Amp::readInput(float* out, int n) const {  // as the Speaker takes it in: one input, all of them together, desktop audio
     if (!bus_) return false;
-    const int first = channel_ < 0 ? 0 : channel_, last = channel_ < 0 ? bus_->active : channel_ + 1;
-    for (int c = first; c < last && c < bus_->active; ++c) {
-        const float* in = bus_->channel[size_t(c)].data();
-        for (int i = 0; i < n; ++i) out[i] += in[i];
-    }
+    bus_->read(channel_, out, n);
     return true;
 }
 

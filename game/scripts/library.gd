@@ -135,6 +135,9 @@ func instrument_settings(inst, with_states := true) -> Dictionary:
 		out.mic_model = inst.mic_model
 		out.mic_pattern = inst.mic_pattern
 		out.pan = inst.pan
+		if inst.is_stereo_mic:
+			out.pan_left = inst.pan_left
+			out.pan_right = inst.pan_right
 	var played: Dictionary = audio.get_instrument_plugin(inst.source_id) if inst.plays_plugin else {}
 	if str(played.get("plugin_id", "")) != "":  # a plug-in instrument's plug-in, which is the instrument itself
 		out.instrument_plugin = {"plugin_id": played.plugin_id, "plugin_name": played.plugin_name, "plugin_maker": played.plugin_maker}
@@ -219,6 +222,8 @@ func apply_instrument_settings(inst, settings: Dictionary, include := {}) -> Str
 		inst.set_mic_polarity(bool(settings.get("mic_inverted", false)))
 		if settings.has("pan"):
 			inst.set_pan(float(settings.pan))
+		if inst.is_stereo_mic and (settings.has("pan_left") or settings.has("pan")):
+			_set_pans(inst, settings)
 	var problem := apply_inserts(inst, settings.get("inserts", []) if with_plugins else [])
 	if problem != "":
 		problems.append(problem)
@@ -226,14 +231,29 @@ func apply_instrument_settings(inst, settings: Dictionary, include := {}) -> Str
 
 
 
-## A stereo folder's (or aux track's) two pans, as kept; a room kept before it had them gave it a balance, which the
-## nearest pair stands for (turned right: its left side moved over towards the right).
-func _set_pans(folder, entry: Dictionary) -> void:
+## A stereo track's two pans (a folder's, an aux track's, a stereo mic's), as kept; a room kept before it had them
+## gave it a balance, which the nearest pair stands for (turned right: its left side moved over towards the right).
+func _set_pans(track, entry: Dictionary) -> void:
 	if entry.has("pan_left"):
-		app.set_folder_pans(folder, float(entry.get("pan_left", -1.0)), float(entry.get("pan_right", 1.0)))
+		app.set_pans(track, float(entry.get("pan_left", -1.0)), float(entry.get("pan_right", 1.0)))
 	elif not bool(entry.get("mono", false)):
 		var balance := float(entry.get("pan", 0.0))
-		app.set_folder_pans(folder, -1.0 + 2.0 * maxf(balance, 0.0), 1.0 - 2.0 * maxf(-balance, 0.0))
+		app.set_pans(track, -1.0 + 2.0 * maxf(balance, 0.0), 1.0 - 2.0 * maxf(-balance, 0.0))
+
+
+## A stereo mic's balance automation, from a room kept before its track had two pans: as its two pans' lanes (each
+## point's balance as _set_pans has one).
+func _pans_from_balance(inst) -> void:
+	var lane = inst.automation.get("pan")
+	if not lane is Array:
+		return
+	inst.automation.erase("pan")
+	inst.automation.pan_left = lane.map(func(point): return [point[0], -1.0 + 2.0 * maxf(float(point[1]), 0.0)])
+	inst.automation.pan_right = lane.map(func(point): return [point[0], 1.0 - 2.0 * maxf(-float(point[1]), 0.0)])
+	var at: int = inst.lanes.find("pan")
+	if at >= 0:
+		inst.lanes[at] = "pan_left"
+		inst.lanes.insert(at + 1, "pan_right")
 
 
 ## A track's inserts (an instrument's or a folder's), as saved: each slot's plug-in with its settings (unless not
@@ -421,6 +441,8 @@ func room_data() -> Dictionary:
 			entry.tilt = inst.mic_tilt
 			if inst.is_stereo_mic:
 				entry.stereo = {"technique": inst.pair_technique, "spacing": inst.pair_spacing, "side_model": inst.side_model, "width": inst.ms_width}
+				entry.pan_left = inst.pan_left
+				entry.pan_right = inst.pan_right
 		if inst.playable:
 			entry.loop_on = inst.loop_on
 			entry.steps = audio.get_pattern_steps(inst.source_id)
@@ -453,7 +475,7 @@ func room_data() -> Dictionary:
 		"tempo": app.tempo, "swing": app.swing, "master_db": app.master_volume_db, "room_master_db": app.room_volume_db, "reverb_db": app.reverb_db,
 		"room": {"size": [size.x, size.y, size.z], "walls": walls, "surfaces": app.room.surfaces.duplicate()},
 		"player": {"position": [stood.x, stood.z], "yaw": spot.yaw}, "instruments": instruments, "folders": folders, "auxes": auxes,
-		"masters": masters}
+		"masters": masters, "monitor": app.settings.monitor}
 
 
 func _track_ref(track):
@@ -610,6 +632,8 @@ func apply_room_data(data: Dictionary, carry := {}, size = null, mode := "") -> 
 			app.set_room_level(inst, float(entry.get("room_db", entry.get("level_db", 0.0))))
 			inst.set_room_muted(bool(entry.get("room_muted", false)))
 			inst.set_pan(float(entry.get("pan", 0.0)))
+			if inst.is_stereo_mic:
+				_set_pans(inst, entry)
 			inst.muted = bool(entry.get("muted", false))
 			inst.soloed = bool(entry.get("soloed", false))
 		if inst.playable and keep.call("patterns"):
@@ -627,6 +651,8 @@ func apply_room_data(data: Dictionary, carry := {}, size = null, mode := "") -> 
 			inst.automation = entry.get("automation", {}).duplicate(true)
 			inst.auto_mode = str(entry.get("auto_mode", "read"))
 			inst.lanes = entry.get("lanes", ["volume"]).duplicate()
+			if inst.is_stereo_mic:
+				_pans_from_balance(inst)
 	var made_folders := []  # the routing folders (their tracks put in them once the aux tracks are made too)
 	for entry in data.get("folders", []) if keep.call("instruments") else []:
 		var folder = app.add_folder([], str(entry.get("name", "")))

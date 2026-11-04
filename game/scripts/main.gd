@@ -24,6 +24,9 @@ extends Node3D
 
 const Instrument := preload("res://scripts/instrument.gd")
 const Folder := preload("res://scripts/folder.gd")
+const DESKTOP_LEFT := 100  # desktop audio's inputs, past the interface's (the audio core's): its left, its right,
+const DESKTOP_RIGHT := 101  # and the two together
+const DESKTOP := 102
 const Player := preload("res://scripts/player.gd")
 const Hud := preload("res://scripts/hud.gd")
 const Menu := preload("res://scripts/menu.gd")
@@ -121,6 +124,8 @@ var sequence_running := true  # whether the sequencer is playing the patterns
 var options := {}
 var live_input := false   # the audio input is open: some Speaker's input is on. Every Speaker starts with it off,
                           # since an open microphone next to speakers would feed back
+var desktop_audio := false  # the audio bridge (the I/O page): what the computer's other apps play, taken in as inputs
+                            # (DESKTOP...). Off at each start, as every input is
 var audio_error := ""     # the last problem opening a device, shown in the menu
 var copy_problem := ""    # what the last duplicate_instrument couldn't copy, if anything
 var _stage_gain := 1.0    # the title screen turns the music down a little; 1 in the room
@@ -292,6 +297,16 @@ func _ready() -> void:
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_CLOSE_REQUEST and session != null:
 		session.request_quit()
+
+
+## Quitting, once the room is saved (or let go): the others told it is over (playing together), the router's ports
+## closed, then the audio core shut down (the device closed, each plug-in let go) and StudioSim ended there, without
+## unloading the plug-ins' own code, as some of them crash a process that unloads them as it ends.
+func quit_now() -> void:
+	net.leave()
+	if audio != null and audio.has_method("quit_process"):
+		audio.quit_process(0)
+	get_tree().quit()  # (without the audio core)
 
 
 ## The Cmd shortcuts (Ctrl off a Mac; bindings.gd lists them): saving the room, from anywhere but a box being typed
@@ -610,6 +625,51 @@ func set_input_device(device_name: String) -> void:
 	if live_input:
 		open_audio()
 	settings.save_to_disk()
+
+
+## The audio bridge: desktop audio, what the computer's other apps play, taken in (or no longer) as three more inputs
+## for a Speaker or an amp (DESKTOP_LEFT, DESKTOP_RIGHT, DESKTOP), as Pro Tools' Audio Bridge brings a Mac's sound into
+## its mixer. On a Mac their sound plays through StudioSim alone while it is on. (A silent run takes in nothing: it is
+## on, and silent.) Returns why it couldn't be, or "".
+func set_desktop_audio(on: bool) -> String:
+	var problem := ""
+	if on:
+		problem = audio.start_desktop_audio(not options.has("silent"))
+	else:
+		audio.stop_desktop_audio()
+	desktop_audio = on and problem == ""
+	return problem
+
+
+## The inputs a Speaker or an amp can play, as [input, name]: every one of the interface's together, each of them, and
+## desktop audio's while the bridge is on (or while `keep` is one of them: chosen, though silent until it is on).
+func input_choices(short := false, keep := -1) -> Array:
+	var out := [[-1, "All in" if short else "All inputs"]]
+	for i in input_channel_count():
+		out.append([i, ("In %d" if short else "Input %d") % (i + 1)])
+	if desktop_audio or keep >= DESKTOP_LEFT:
+		out.append([DESKTOP, "Desktop" if short else "Desktop audio"])
+		out.append([DESKTOP_LEFT, "Desktop L" if short else "Desktop audio, left"])
+		out.append([DESKTOP_RIGHT, "Desktop R" if short else "Desktop audio, right"])
+	return out
+
+
+## The inputs in a menu of them (listed again when they change), `input` chosen.
+func show_input_choice(choice: OptionButton, input: int, short := false) -> void:
+	var choices := input_choices(short, input)
+	var inputs: Array = choices.map(func(c): return c[0])
+	if choice.get_meta("inputs", []) != inputs:
+		choice.clear()
+		for c in choices:
+			choice.add_item(c[1])
+		choice.set_meta("inputs", inputs)
+	choice.select(maxi(inputs.find(input), 0))
+
+
+## Which input a menu of them (show_input_choice) has at `index`.
+func input_at(choice: OptionButton, index: int) -> int:
+	var inputs: Array = choice.get_meta("inputs", [])
+	return inputs[index] if index >= 0 and index < inputs.size() else -1
 
 
 ## Every Speaker's input on or off at once (the I/O page's switch).
@@ -1520,6 +1580,7 @@ func add_instrument(kind: String, at: Vector3, with_default_pattern := false):
 ## default groove, all facing where you come in, and the tempo. `empty`: the same room bare ("Empty room").
 func load_default_room(empty := false) -> void:
 	library.apply_room_data(library.default_room_data(empty))
+	set_monitor("room")
 
 
 ## Takes everything out of the room, ready for another: its instruments go, with their windows.
@@ -1572,6 +1633,8 @@ func duplicate_instrument(inst, at = null):
 	set_room_level(copy, inst.room_db)  # (as loud in the room, as muted there, as panned)
 	set_room_muted(copy, inst.room_muted)
 	set_pan(copy, inst.pan)
+	if inst.is_stereo_mic:
+		set_pans(copy, inst.pan_left, inst.pan_right)
 	if folder_of(inst) != null:  # in the same folder, just after it
 		put_in_folder(copy, folder_of(inst), inst)
 	for slot in inst.sends.size():  # its sends, to the same auxes
@@ -1709,11 +1772,11 @@ func set_room_volume_db(db: float) -> void:
 
 
 ## What the main outputs play (H): "room", what you hear standing there; or "mix", what the tracks put out (the
-## microphones, each instrument's direct output), as a control room's monitor switch.
+## microphones, each instrument's direct output), as a control room's monitor switch. The room keeps it (its file's
+## "monitor"); StudioSim itself starts in the room.
 func set_monitor(which: String) -> void:
 	settings.monitor = "mix" if which == "mix" else "room"
 	audio.set_monitor(settings.monitor)
-	settings.save_to_disk()
 
 
 func toggle_monitor() -> void:
@@ -1966,8 +2029,8 @@ func set_mic_model(mic, model: String, pattern := "") -> void:
 				mic.set_display_name(unique_name(Catalog.KINDS[kind].name, mic))
 
 
-## Where a track sits in the stereo (-1 left, 1 right): an instrument's direct output, a microphone's track; a stereo
-## mic's, its balance.
+## Where a track sits in the stereo (-1 left, 1 right): an instrument's direct output, a microphone's track, a mono
+## folder (a stereo mic's track, and a stereo folder, have two: set_pans).
 func set_pan(track, pan: float) -> void:
 	if track is Folder:  # a mono folder's (or aux track's) place, after its fader
 		track.pan = clampf(pan, -1.0, 1.0)
@@ -1976,11 +2039,12 @@ func set_pan(track, pan: float) -> void:
 		track.set_pan(pan)
 
 
-## A stereo folder's (or aux track's) two pans, as a stereo track's in Pro Tools: where its left side sits, and its right.
-func set_folder_pans(folder, left: float, right: float) -> void:
-	folder.pan_left = clampf(left, -1.0, 1.0)
-	folder.pan_right = clampf(right, -1.0, 1.0)
-	audio.set_bus_pans(folder.source_id, folder.pan_left, folder.pan_right)
+## A stereo track's two pans, as a stereo track's in Pro Tools: where its left side sits, and its right. A stereo
+## folder's, an aux track's, or a stereo mic's.
+func set_pans(track, left: float, right: float) -> void:
+	track.pan_left = clampf(left, -1.0, 1.0)
+	track.pan_right = clampf(right, -1.0, 1.0)
+	audio.set_bus_pans(track.source_id, track.pan_left, track.pan_right)
 
 
 ## A folder (or an aux track) in stereo, each side placed by a pan of its own as a stereo track's, or summed to mono,

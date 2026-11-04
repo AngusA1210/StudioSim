@@ -42,6 +42,9 @@ audio_core/
     radiation.*            how a cabinet's cones radiate (beaming, the near field, open and closed backs), and a kit's heads and cymbals
     net_audio.*            playing together: live inputs' sound and voices between players (Opus over UDP, through
                            the host), held back just enough to ride out the network
+    desktop_audio*         the audio bridge: the computer's other apps' sound as inputs (a Core Audio process tap
+                           on a Mac, WASAPI loopback on Windows), read at the engine's rate on the engine's clock
+    float_ring.h           a lock-free ring of samples from one thread to another (the network's, the desktop's)
     plugin_window_*        a plug-in's own window, on each platform
     plugin_panel_mac       on a Mac, the floating panel every plug-in's window is: the keyboard left with the room,
                            unless something in it is typed into

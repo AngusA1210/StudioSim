@@ -21,7 +21,8 @@ var limiter := true             # hold the mix under full scale; off = hear and 
 var room_limiter := true        # and the room
 var limiter_ceiling_db := -1.0  # where both limiters (after the master faders) hold the peaks, dBFS
 var delay_compensation := true  # the mix's tracks held back to meet the latest of them at the master (plug-ins' delays)
-var monitor := "room"           # what the main outputs play (H): "room", what you hear standing there, or "mix"
+var monitor := "room"           # what the main outputs play (H): "room", what you hear standing there, or "mix" (kept with
+                                # each room, not here: StudioSim starts in the room, and a room opens as it was left)
 var mix_output := -1            # the mix on a pair of outputs of its own too (its first, 0-based), or -1 for none
 var room_output := -1           # and the room
 
@@ -91,7 +92,6 @@ func load_from_disk() -> void:
 	delay_compensation = bool(file.get_value("sound", "delay_compensation", delay_compensation))
 	limiter = file.get_value("sound", "limiter", limiter)
 	room_limiter = file.get_value("sound", "room_limiter", room_limiter)
-	monitor = file.get_value("sound", "monitor", monitor)
 	mix_output = file.get_value("engine", "mix_output", mix_output)
 	room_output = file.get_value("engine", "room_output", room_output)
 	text_scale = clampf(file.get_value("display", "text_scale", text_scale), 0.75, 2.0)
@@ -151,7 +151,6 @@ func save_to_disk() -> void:
 	file.set_value("sound", "delay_compensation", delay_compensation)
 	file.set_value("sound", "limiter", limiter)
 	file.set_value("sound", "room_limiter", room_limiter)
-	file.set_value("sound", "monitor", monitor)
 	file.set_value("engine", "mix_output", mix_output)
 	file.set_value("engine", "room_output", room_output)
 	file.set_value("display", "text_scale", text_scale)

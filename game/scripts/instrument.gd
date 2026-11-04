@@ -68,6 +68,8 @@ var mic_inverted := false  # and its polarity there (Ø)
 var mic_model := ""    # which model it is (microphones.h: "flat", "dynamic", "kick", "condenser", "pencil", "ribbon")
 var mic_pattern := ""  # and which of its pickup patterns ("omni", "cardioid", "supercardioid", "figure8")
 var pan := 0.0         # where its track sits in the stereo (its direct output; a microphone's track): -1 left, 1 right
+var pan_left := -1.0   # a stereo mic's two pans in its place, as a stereo track's: where its left side sits, and its right
+var pan_right := 1.0   # (hard apart to begin with)
 # A stereo mic: how its two are set up (catalog.gd's MIC_PAIRS), how far apart they are, and for a mid-side pair its
 # side mic's model and how wide it is decoded (1: as it hears it).
 var is_stereo_mic := false

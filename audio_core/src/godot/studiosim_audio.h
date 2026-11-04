@@ -42,6 +42,8 @@ public:
     void set_output_channels(int left, int right);
     bool set_live_input(bool enabled);
     void stop();
+    // Ends StudioSim at once (see the .cpp): the engine stopped, then the process gone, `code` its exit code.
+    void quit_process(int code);
     bool is_running() const;
     String get_error() const { return error_; }
 
@@ -83,7 +85,7 @@ public:
     float get_mic_noise(const String& model) const;  // its noise and its preamp's, as a sound level (dB SPL)
     void set_source_pan(int id, float pan);
     void set_bus_mono(int id, bool mono);  // a folder's bus: summed to mono (its pan places it), or stereo (its pan a balance)
-    void set_bus_pans(int id, float left, float right);  // a stereo bus's two pans: its left side's and its right's
+    void set_bus_pans(int id, float left, float right);  // a stereo bus's (or stereo mic's) two pans: its left side's and its right's
     // An acoustic kit's parts (each drum's heads, each cymbal), in its own order: where each is, the way it faces, how
     // big it is, whether it is a cymbal, which drum it is part of (-1: none), and, a drum's inside (the kick's), how
     // deep the shell it is heard within is (0: not an inside).
@@ -265,6 +267,12 @@ public:
     void set_sustain(int id, bool down);
     void share_played_notes(bool on);
     Array take_played_notes();
+    // Desktop audio, as an audio bridge (desktop_audio.h): what the computer's other apps play, as inputs 100 (its
+    // left), 101 (its right) and 102 (the two together) for a Speaker or an amp, while it is on. "" if it began, else
+    // why not. Without `capture` it takes in nothing (a silent run): on, and silent.
+    String start_desktop_audio(bool capture = true);
+    void stop_desktop_audio();
+    bool is_desktop_audio_on() const;
     // The sound between players: begun ("" if it was, else why not) as the host on `port` (every network, "*", or
     // `address`'s alone), or as player `me` sending to the host at `address`:`port`; the session's players (the
     // host's); a source's sound sent as this player's sound `number` (0: no longer); a source fed by another player's

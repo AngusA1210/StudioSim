@@ -22,6 +22,7 @@
 #include "looper.h"
 #include "microphones.h"
 #include "midi_input.h"
+#include "desktop_audio.h"
 #include "net_audio.h"
 #include "mix.h"
 #include "pedals.h"
@@ -154,7 +155,8 @@ struct AutoPoint {
 struct ParamLane {
     // A stock pedal's knob (PedalKnob) is `param` of the pedal at `index` on the board, 0 to 10; a plug-in's control
     // (Insert, Pedal, Instrument) is its parameter `param`, in its own units.
-    // Pan is a microphone track's, -1 to 1.
+    // Pan is a track's pan, -1 to 1: `index` 0 its one (a microphone's track, an instrument's direct output), 1 a stereo
+    // track's left side's, 2 its right's.
     enum Target : uint8_t { AmpKnob, Insert, Pedal, Instrument, Send, PedalKnob, Pan } target = AmpKnob;
     int index = 0;
     uint32_t param = 0;
@@ -296,8 +298,8 @@ public:
     // A folder's bus: stereo (its two sides each placed by a pan of its own, setBusPans, as a stereo track's) or summed
     // to mono (its pan, setSourcePan, placing it, as a mono track's). Stereo to begin with.
     void setBusMono(int id, bool mono);
-    // A stereo bus's two pans, as a stereo track's in Pro Tools: where its left channel and its right each sit in the
-    // stereo (-1 left to 1 right; hard left and hard right to begin with, as it is).
+    // A stereo bus's two pans (or a stereo mic's track's), as a stereo track's in Pro Tools: where its left channel and
+    // its right each sit in the stereo (-1 left to 1 right; hard left and hard right to begin with, as it is).
     void setBusPans(int id, float left, float right);
     // A loudspeaker cabinet's cones (an amp's: radiation.h), in the room: each heard by the microphones on its own way,
     // beaming, with its near field and its open back; and the cabinet heard by the listener from where they stand
@@ -501,6 +503,13 @@ public:
     };
     void sharePlayedNotes(bool on) { share_played_.store(on, std::memory_order_relaxed); }
     void takePlayedNotes(std::vector<PlayedNote>& out);
+    // Desktop audio (desktop_audio.h): what the computer's other apps play, as two more inputs (InputBus's kDesktop...)
+    // while it is on; how much of it is held back, to ride out its own clock's. False, with why, where it couldn't be.
+    bool startDesktopAudio(std::string* error, bool capture = true) { return desktop_->start(error, capture); }
+    void stopDesktopAudio() { desktop_->stop(); }
+    bool desktopAudioRunning() const { return desktop_->running(); }
+    float desktopAudioHeldMs() const { return desktop_->heldMs(); }
+    DesktopAudio& desktopAudio() { return *desktop_; }  // (the checks feed it)
     // The sound between players (net_audio.h): begun as the host, on `port` (every network, or `address`'s alone), or
     // as another player, `me`, sending to the host at `address`:`port`; the players in the session (the host's); a
     // source's sound, as it leaves it (after its pedals, amp and inserts), sent as this player's sound `number` (1 to
@@ -773,6 +782,7 @@ private:
     SpscQueue<Command> commands_{8192};
     SpscQueue<PlayedNote> played_{2048};  // audio thread → game thread: what the controllers played, for the network
     std::unique_ptr<NetAudio> net_audio_ = std::make_unique<NetAudio>();  // (made once: the audio thread holds on to it)
+    std::unique_ptr<DesktopAudio> desktop_ = std::make_unique<DesktopAudio>();  // (likewise)
     std::atomic<bool> share_played_{false};
     std::atomic<int64_t> rendered_at_us_{0};  // when the last block was rendered (steady clock), and the patterns' pace then
     std::atomic<double> steps_per_second_{0.0};

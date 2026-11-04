@@ -118,6 +118,7 @@ func create(the_name: String, folder: String, template_path: String, carry := {}
 	copy = false
 	room_name = the_name
 	var problem: String = app.library.apply_room_data(data, carry, size, mode)
+	app.set_monitor("room")  # (a new room starts in the room, whatever its template was left on)
 	var unsaved := save()
 	return unsaved if unsaved != "" else problem
 
@@ -130,6 +131,7 @@ func open(file: String) -> String:
 	path = file  # first, so that its recordings are found in its folder
 	copy = false
 	var problem: String = app.library.apply_room_data(data)
+	app.set_monitor(str(data.get("monitor", "room")))  # (the room, or the mix if that is what it was left on)
 	room_name = str(data.get("name", file.get_file().get_basename()))
 	saved_at = FileAccess.get_modified_time(file)
 	_mark_saved()
@@ -227,7 +229,7 @@ func is_asking() -> bool:
 
 
 func request_quit() -> void:
-	then_if_saved(func() -> void: get_tree().quit(), "quitting")
+	then_if_saved(func() -> void: app.quit_now(), "quitting")
 
 
 func _carry_on() -> void:
@@ -291,10 +293,11 @@ func backups() -> Array:
 	return out
 
 
-## The room as a string to compare, leaving out where you stand.
+## The room as a string to compare, leaving out where you stand, and what you are listening to.
 func _signature() -> String:
 	var data: Dictionary = app.library.room_data()
 	data.erase("player")
+	data.erase("monitor")
 	data.timeline.erase("playhead")  # neither where you stand nor where the music is counts as a change
 	data.timeline.erase("playing")
 	return JSON.stringify(data)

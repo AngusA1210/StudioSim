@@ -93,6 +93,27 @@ its mix window strip or on the I/O page; several Speakers can each play a differ
 it can fill a large room; it comes after the Speaker's inserts and before its fader. A second instrument of a kind is numbered and a
 paler colour, to tell them apart. Everything in the room is saved with it (see [Rooms](rooms-and-recording.md)).
 
+## Desktop audio
+
+The I/O page's **audio bridge** brings what the computer's other apps play (a browser, a music player, a call) into
+StudioSim as inputs, as Pro Tools' Audio Bridge does: choose **Desktop audio** there, and every input list (a Speaker's,
+an amp's, the mix window's, the I/O page's rows) offers **Desktop audio** (its two sides together), or its left or
+right side alone, for a Speaker in the room to play, or an amp. A pair of Speakers, one on each side, plays it in
+stereo. StudioSim's own sound is left out of it, so nothing comes round again. It starts off each time StudioSim does,
+as every input does.
+
+- **On a Mac** (macOS 14.2 or later) it is a Core Audio process tap on every other app's sound, which is muted where it
+  would have played while it is taken in: the computer's sound goes through StudioSim and nowhere else, as through a
+  bridge chosen as the computer's output, until the bridge is set to None or StudioSim quits, when it plays as it did.
+  The first time, macOS asks whether StudioSim may record this computer's audio (System Settings › Privacy & Security
+  › Screen & System Audio Recording, if it was refused).
+- **On Windows** it is WASAPI's loopback of Windows' sound output (leaving StudioSim's own out from Windows 10 2004 on),
+  which goes on playing there too: set Windows' sound output to one you aren't listening to (an output of the interface
+  that StudioSim doesn't use, say), and it is heard through StudioSim alone.
+
+It comes on the computer's own clock, at its own rate, and is read at StudioSim's, held back a few tens of milliseconds
+to keep it steady, as the other players' sound is when playing together.
+
 ## Microphones
 
 A **microphone** is a track of its own that records what the room sounds like from where it stands, rather than an
@@ -162,7 +183,8 @@ to another in its panel:
   played live along with it is heard by it as late as you play it, though, as in a real room with headphones that
   are late.
 - **Stereo pairs**: two mics on a bar on one stand, as one **stereo track**: they record one stereo file, and it plays
-  back in two channels, through stereo inserts, its fader, and its pan (a balance, as a stereo track's). Its panel
+  back in two channels, through stereo inserts, its fader, and its two pans (its left side's and its right's, hard
+  left and hard right to begin with, as a stereo track's). Its panel
   sets it up as one of the classic ways: **XY** (two cardioids at one point, 90° apart: mono-safe, the image from
   their angles), **ORTF** (two cardioids 17 cm apart, 110° apart: angles and timing both, as ears have it), a
   **spaced pair** (A/B: two omnis side by side, as far apart as you like, wide and roomy), **Blumlein** (two
@@ -172,10 +194,11 @@ to another in its panel:
   as its **width** says: 0 is mono, 100 % as the two hear it, more wider still, and it can be changed after recording.
   The pair takes the patterns its setup wants (pencils for the cardioids and omnis, ribbons for Blumlein, a large
   condenser's figure-8 for the side, unless their model has them), and is placed and pointed as one.
-- **Its pan** (a stereo mic's balance) can be automated, as a lane under its track, and written as it plays by turning
+- **Its pan** (a stereo mic's two, each) can be automated, as a lane under its track, and written as it plays by turning
   its pot in the mix window.
 - It is kept with the room: where it stands, how high, how it points, its model, pattern, gain and pan, and a pair's
-  setup. (A stereo pair kept as two mono mics, as rooms had it for a while, opens as two mics.)
+  setup. (A stereo pair kept as two mono mics, as rooms had it for a while, opens as two mics; one kept with a
+  balance, before it had two pans, opens with its sides where the balance put them.)
 
 ## Inputs
 

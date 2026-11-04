@@ -22,27 +22,12 @@
 #include <thread>
 #include <vector>
 
+#include "float_ring.h"
+
 struct OpusEncoder;
 struct OpusDecoder;
 
 namespace sr {
-
-// Samples from one thread to another, neither waiting (a single producer and a single consumer).
-class FloatRing {
-public:
-    explicit FloatRing(size_t capacity_pow2) : buf_(capacity_pow2, 0.0f), mask_(capacity_pow2 - 1) {}
-    size_t write(const float* in, size_t n);  // as many as there is room for
-    size_t available() const { return head_.load(std::memory_order_acquire) - tail_.load(std::memory_order_relaxed); }
-    float at(size_t i) const { return buf_[(tail_.load(std::memory_order_relaxed) + i) & mask_]; }  // the i-th unread
-    void skip(size_t n) { tail_.store(tail_.load(std::memory_order_relaxed) + n, std::memory_order_release); }
-    void reset() { tail_.store(head_.load(std::memory_order_acquire), std::memory_order_release); }  // (consumer)
-
-private:
-    std::vector<float> buf_;
-    size_t mask_;
-    alignas(64) std::atomic<size_t> head_{0};
-    alignas(64) std::atomic<size_t> tail_{0};
-};
 
 class NetAudio {
 public:

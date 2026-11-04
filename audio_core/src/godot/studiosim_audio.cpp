@@ -1,6 +1,8 @@
 #include "studiosim_audio.h"
 
 #include <algorithm>
+#include <cstdio>
+#include <cstdlib>
 
 #include <godot_cpp/classes/os.hpp>
 #include <godot_cpp/core/class_db.hpp>
@@ -124,6 +126,16 @@ bool StudioSimAudio::set_live_input(bool enabled) {
 }
 
 void StudioSimAudio::stop() { engine_.reset(); }
+
+// Quitting: the engine stopped (the device closed, each plug-in let go as a DAW lets it go), then the process ended
+// there and then, without the static destructors and exit handlers that plug-ins' own code leaves behind. Some of
+// those crash a process as it ends (a plug-in's timer thread still running as its library is torn down, a module's
+// bundleExit), and macOS then says it "quit unexpectedly", though nothing was lost: what had to be saved was.
+void StudioSimAudio::quit_process(int code) {
+    stop();
+    std::fflush(nullptr);
+    std::_Exit(code);
+}
 
 bool StudioSimAudio::is_running() const { return engine_ && engine_->stats().device_running; }
 
@@ -698,6 +710,8 @@ Dictionary StudioSimAudio::get_stats() const {
     const sr::EngineStats s = engine_->stats();
     d["device_running"] = s.device_running;
     d["device_reset"] = s.device_reset;
+    d["desktop_audio"] = engine_->desktopAudioRunning();
+    d["desktop_audio_ms"] = engine_->desktopAudioHeldMs();
     d["backend"] = str(s.backend);
     d["output_device"] = str(s.output_device);
     d["output_channels"] = s.output_channels;
@@ -763,6 +777,14 @@ void StudioSimAudio::nudge_sequencer(double seconds) { if (engine_) engine_->nud
 double StudioSimAudio::get_sequencer_step_now() const { return engine_ ? engine_->sequencerStepNow() : -1.0; }
 void StudioSimAudio::set_sustain(int id, bool down) { if (engine_) engine_->setSustain(id, down); }
 void StudioSimAudio::share_played_notes(bool on) { if (engine_) engine_->sharePlayedNotes(on); }
+
+String StudioSimAudio::start_desktop_audio(bool capture) {
+    if (!ensureEngine()) return error_;
+    std::string error;
+    return engine_->startDesktopAudio(&error, capture) ? String() : String(error.c_str());
+}
+void StudioSimAudio::stop_desktop_audio() { if (engine_) engine_->stopDesktopAudio(); }
+bool StudioSimAudio::is_desktop_audio_on() const { return engine_ && engine_->desktopAudioRunning(); }
 
 String StudioSimAudio::start_net_audio(bool host, const String& address, int port, int me) {
     if (!engine_) return "the audio isn't running";
@@ -1028,6 +1050,7 @@ void StudioSimAudio::_bind_methods() {
     ClassDB::bind_method(D_METHOD("set_mic_capsule", "id", "capsule", "position"), &StudioSimAudio::set_mic_capsule);
     ClassDB::bind_method(D_METHOD("set_mic_mid_side", "id", "mid_side", "width"), &StudioSimAudio::set_mic_mid_side, DEFVAL(1.0f));
     ClassDB::bind_method(D_METHOD("get_mic_noise", "model"), &StudioSimAudio::get_mic_noise);
+    ClassDB::bind_method(D_METHOD("quit_process", "code"), &StudioSimAudio::quit_process);
     ClassDB::bind_method(D_METHOD("set_source_pan", "id", "pan"), &StudioSimAudio::set_source_pan);
     ClassDB::bind_method(D_METHOD("set_bus_mono", "id", "mono"), &StudioSimAudio::set_bus_mono);
     ClassDB::bind_method(D_METHOD("set_bus_pans", "id", "left", "right"), &StudioSimAudio::set_bus_pans);
@@ -1132,6 +1155,9 @@ void StudioSimAudio::_bind_methods() {
     ClassDB::bind_method(D_METHOD("set_sustain", "id", "down"), &StudioSimAudio::set_sustain);
     ClassDB::bind_method(D_METHOD("share_played_notes", "on"), &StudioSimAudio::share_played_notes);
     ClassDB::bind_method(D_METHOD("take_played_notes"), &StudioSimAudio::take_played_notes);
+    ClassDB::bind_method(D_METHOD("start_desktop_audio", "capture"), &StudioSimAudio::start_desktop_audio, DEFVAL(true));
+    ClassDB::bind_method(D_METHOD("stop_desktop_audio"), &StudioSimAudio::stop_desktop_audio);
+    ClassDB::bind_method(D_METHOD("is_desktop_audio_on"), &StudioSimAudio::is_desktop_audio_on);
     ClassDB::bind_method(D_METHOD("start_net_audio", "host", "address", "port", "me"), &StudioSimAudio::start_net_audio);
     ClassDB::bind_method(D_METHOD("stop_net_audio"), &StudioSimAudio::stop_net_audio);
     ClassDB::bind_method(D_METHOD("send_net_datagram", "address", "port", "data"), &StudioSimAudio::send_net_datagram);

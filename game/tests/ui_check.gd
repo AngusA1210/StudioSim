@@ -411,8 +411,16 @@ func _run() -> void:
 	check(drums.loop_on, "M works while playing too, and brings the loop back")
 
 	print("The pattern editor")
+	key(KEY_P)
+	await frames(2)
+	var p_played: bool = player.held.has(KEY_P) and not seq.is_open()
+	key(KEY_P, false)
+	await frames(2)
+	check(p_played and main.hud._piano_keys[KEY_P].label.text == "P", "seated, P is a key like the others: labelled on the keyboard, and played")
+	await tap(KEY_Q)
 	await tap(KEY_P)
-	check(seq.is_open() and seq.inst == drums and seq._title.text == "Drums pattern", "P opens the drums' pattern", seq._title.text)
+	check(seq.is_open() and seq.inst == drums and seq._title.text == "Drums pattern" and player.playing == drums,
+		"up again, P opens the drums' pattern (and sits you at them)", seq._title.text)
 	check(seq._grid.rows.size() == 8 and seq._grid.rows[7].label == "Kick" and seq._grid.rows[0].label == "Crash", "eight rows, kick at the bottom",
 		"%d rows" % seq._grid.rows.size())
 	check(not seq._note_length_box.visible, "no note-length choice for drums")
@@ -480,7 +488,10 @@ func _run() -> void:
 	await frames(2)
 	check(main.settings.click and audio.get_transport().click, "the click switch turns the metronome on")
 	await tap(KEY_P)
-	check(not seq.is_open() and player.playing == drums, "P closes the editor; you are still at the drums")
+	check(not seq.is_open() and player.playing == null, "P closes the editor, and stands you up again as it sat you down",
+		"open %s, at %s" % [seq.is_open(), player.playing.display_name if player.playing else "nothing"])
+	await tap(KEY_E)
+	check(player.playing == drums, "E, and you are at the drums again")
 	await tap(KEY_C)
 	check(not main.settings.click, "C switches the click off")
 	check(main.hud._beat.text.contains("120 BPM"), "the beat readout shows the tempo", main.hud._beat.text)
@@ -566,6 +577,7 @@ func _run() -> void:
 	var sounding: float = audio.get_source_level(bass2.source_id)
 	key(KEY_A, false)
 	check(player.playing == bass2 and silent_before < 0.0005 and sounding > 0.01, "it is silent until you play it", "before %.4f, playing %.3f" % [silent_before, sounding])
+	await tap(KEY_Q)
 	await tap(KEY_P)
 	check(seq.is_open() and seq._title.text == "Bass 2 pattern", "and it has its own pattern to edit", seq._title.text)
 	await tap(KEY_BACKSPACE)
@@ -601,7 +613,7 @@ func _run() -> void:
 	check(main.mixer.is_open() and strip2.source is OptionButton and strip2.input.button_pressed, "its strip in the mix window has an input list, and its input lit",
 		strip2.source.get_item_text(strip2.source.selected))
 	strip2.source.select(0)
-	main.mixer._on_source_selected(0, speaker2)
+	strip2.source.item_selected.emit(0)
 	check(speaker2.input_channel == -1, "choosing All in there sets which input it plays")
 	await click(strip2.input.get_global_rect().get_center())
 	check(not speaker2.input_on and not main.live_input, "its I button switches the input off, and the audio input closes")
@@ -611,6 +623,24 @@ func _run() -> void:
 	check(main.menu._live_rows.get_child_count() == 2, "the I/O page has a row for each Speaker", "%d rows" % main.menu._live_rows.get_child_count())
 	main.menu._on_live_clicked(1, speaker2)
 	check(speaker2.input_channel == 1 and speaker.input_channel == main.settings.speaker_input, "each Speaker's input is set on its own row")
+	var bridge_before: bool = main.desktop_audio or audio.is_desktop_audio_on()
+	main.menu._bridge_option.select(1)
+	main.menu._bridge_option.item_selected.emit(1)
+	await frames(3)
+	var offered_desktop: Array = main.menu._live_rows.find_children("*", "Button", true, false).map(func(b): return b.text)
+	check(not bridge_before and main.desktop_audio and audio.is_desktop_audio_on() and main.menu._bridge_problem == "" and
+		offered_desktop.count("Desktop") == 2 and offered_desktop.has("Desktop L") and offered_desktop.has("Desktop R"),
+		"the audio bridge starts off; chosen on the I/O page, desktop audio comes in, and each Speaker's row offers it", str(offered_desktop))
+	main.menu._on_live_clicked(main.DESKTOP, speaker2)
+	var desktop_names: Array = main.input_choices().map(func(c): return c[1])
+	check(speaker2.input_channel == main.DESKTOP and desktop_names.slice(-3) == ["Desktop audio", "Desktop audio, left", "Desktop audio, right"],
+		"a Speaker set to play it, and the other input lists offer it too", str(desktop_names))
+	main.menu._bridge_option.select(0)
+	main.menu._bridge_option.item_selected.emit(0)
+	await frames(3)
+	check(not main.desktop_audio and not audio.is_desktop_audio_on() and main.input_choices().size() == main.input_channel_count() + 1 and
+		main.input_choices(false, main.DESKTOP).size() == main.input_channel_count() + 4,
+		"None takes it out again (the Speaker keeps its choice, silent until it is back)")
 	await tap(KEY_ESCAPE)
 	await tap(KEY_BACKSPACE)
 	await tap(KEY_BACKSPACE)
@@ -1780,7 +1810,7 @@ func _run() -> void:
 	await tap(KEY_TAB)
 	await frames(3)
 	var synth_strip: Dictionary = mix._strip_for(synth)
-	(mix._strip_row.get_parent() as ScrollContainer).ensure_control_visible(synth_strip.source)
+	mix._strip_scroll.ensure_control_visible(synth_strip.source)
 	await frames(3)
 	check(synth_strip.source is Button and synth_strip.source.text == synth_name and synth_strip.plate.text == synth_name,
 		"its strip shows its plug-in where others show their input")
@@ -1868,6 +1898,11 @@ func _run() -> void:
 	check(not session.has_unsaved_changes() and is_equal_approx(float(library.read_room_file(room_file).tempo), 127.0) and main.hud._notice.text == "Auto-saved Test room",
 		"with auto-save on, it is saved every so many minutes", main.hud._notice.text)
 	main.settings.autosave = false
+	main.set_monitor("mix")
+	var listening_unsaved: bool = session.has_unsaved_changes()
+	session.save()
+	check(not listening_unsaved and library.read_room_file(room_file).get("monitor", "") == "mix",
+		"what you listen to (the room or the mix) isn't a change to the room, though it is saved with it")
 
 	main.set_tempo(128.0)  # a change left unsaved
 	main.show_title()
@@ -1897,6 +1932,7 @@ func _run() -> void:
 		"Don't Save lets it go, and the new room is the template at the size asked for, without the patterns and plug-ins left unticked")
 	check(main.instruments.any(func(i): return i.plays_plugin and i.instrument_plugin.get("plugin_name", "") == sampler_name),
 		"though a plug-in instrument keeps its plug-in: it is the instrument")
+	check(main.settings.monitor == "room" and main.hud._monitor_chip.text == "ROOM", "a new room starts in the room", main.settings.monitor)
 	check(is_equal_approx(float(library.read_room_file(room_file).tempo), 127.0), "the first room's file is as it was last saved")
 
 	main.show_title()
@@ -1912,6 +1948,7 @@ func _run() -> void:
 	await seconds(1.0)
 	check(session.room_name == "Test room" and is_equal_approx(main.tempo, 127.0) and main.room.size.is_equal_approx(Vector3(18.0, 5.0, 12.0)) and
 		not session.has_unsaved_changes() and not title.is_open(), "opening one brings it back as it was saved, and goes in")
+	check(main.settings.monitor == "mix" and main.hud._monitor_chip.text == "HEADPHONE MIX", "listening to the mix, as it was left", main.settings.monitor)
 	check(main.instruments.any(func(i): return i.plays_plugin and i.display_name == sampler_name and i.instrument_plugin.get("plugin_name", "") == sampler_name) and
 		main.instruments.any(func(i): return i.kind == "garage_drums"), "the garage kit and the plug-in instrument come back with it")
 	main.set_tempo(90.0)
@@ -2766,6 +2803,13 @@ func _run() -> void:
 	await frames(3)
 	var stereo_strip: Dictionary = main.mixer._strip_for(stereo)
 	check(stereo_strip.small.text == "STEREO MIC" and stereo_strip.source.text.ends_with("· M/S"), "its strip says what it is", stereo_strip.source.text)
+	check(not stereo_strip.pan.visible and stereo_strip.pans.left.is_visible_in_tree() and stereo_strip.pans.right.is_visible_in_tree() and
+		stereo_strip.pans.left.value == -1.0 and stereo_strip.pans.right.value == 1.0,
+		"it has two pans, as a stereo track has: its left side hard left, its right hard right")
+	stereo_strip.pans.right.value_changed.emit(0.5)
+	await frames(2)
+	check(is_equal_approx(stereo.pan_right, 0.5) and is_equal_approx(stereo.pan_left, -1.0) and stereo_strip.pans.right.value == 0.5,
+		"turning its right side's pan moves only that side", "%.2f, %.2f" % [stereo.pan_left, stereo.pan_right])
 	main.mixer.close()
 	timeline.set_armed(stereo, true)
 	timeline.locate(0.0)
@@ -2789,13 +2833,25 @@ func _run() -> void:
 	var stereo_entry: Array = main.library.room_data().instruments.filter(func(e): return e.kind == "mic_pair")
 	check(stereo_entry.size() == 1 and stereo_entry[0].stereo.technique == "ms" and is_equal_approx(float(stereo_entry[0].stereo.width), 0.5),
 		"it is kept with the room, set up as it is")
-	stereo.automation["pan"] = [[0.0, -1.0], [16.0, 1.0]]
-	stereo.lanes = ["pan"]
+	check(stereo_entry[0].pan_left == -1.0 and stereo_entry[0].pan_right == 0.5, "and its two pans", str([stereo_entry[0].pan_left, stereo_entry[0].pan_right]))
+	stereo.automation["pan_left"] = [[0.0, -1.0], [16.0, 1.0]]
+	stereo.lanes = ["pan_left"]
 	timeline.sync(stereo)
 	timeline.locate(12.0)
 	await frames(3)
-	check(main.automation.params_for(stereo).has("pan") and is_equal_approx(stereo.pan, 0.5) and main.automation.value_text(stereo, "pan", 0.5) == "50>",
-		"a mic's pan (a stereo mic's balance) can be automated: stopped, it is where its lane has it", "%.2f" % stereo.pan)
+	check(main.automation.params_for(stereo).has("pan_left") and main.automation.params_for(stereo).has("pan_right") and not main.automation.params_for(stereo).has("pan") and
+		is_equal_approx(stereo.pan_left, 0.5) and main.automation.value_text(stereo, "pan_left", 0.5) == "50>" and main.automation.name_of(stereo, "pan_left") == "Pan left",
+		"a stereo mic's two pans can be automated, each: stopped, it is where its lane has it", "%.2f" % stereo.pan_left)
+	var old_room := {"kind": "mic_pair", "pan": 0.5, "automation": {"pan": [[0.0, -0.5]]}, "lanes": ["volume", "pan"]}
+	stereo.automation = old_room.automation.duplicate(true)
+	stereo.lanes = old_room.lanes.duplicate()
+	main.library._set_pans(stereo, old_room)
+	main.library._pans_from_balance(stereo)
+	check(is_equal_approx(stereo.pan_left, 0.0) and is_equal_approx(stereo.pan_right, 1.0) and stereo.lanes == ["volume", "pan_left", "pan_right"] and
+		stereo.automation.pan_right[0][1] == 0.0 and stereo.automation.pan_left[0][1] == -1.0 and not stereo.automation.has("pan"),
+		"a room kept with a stereo mic's balance has its two pans where the balance put its sides", str(stereo.automation))
+	main.set_pans(stereo, -1.0, 1.0)
+	stereo.lanes = ["volume"]
 	stereo.automation = {}
 	timeline.locate(0.0)
 	mp.open(stereo)
@@ -2970,7 +3026,7 @@ func _run() -> void:
 	check(two_pans and is_equal_approx(the_folder.pan_left, -0.3) and is_equal_approx(the_folder.pan_right, 1.0) and
 		is_equal_approx(float(folder_kept.pan_left), -0.3),
 		"a stereo folder has two pans, one for each side, hard left and hard right to begin with, kept with the room")
-	main.set_folder_pans(the_folder, -1.0, 1.0)
+	main.set_pans(the_folder, -1.0, 1.0)
 	check(not new_folder_strip.get("reduction") == null and new_folder_strip.reduction is Control and main.mixer._master.reduction is Control and
 		main.mixer._strips.all(func(strip: Dictionary) -> bool: return strip.get("reduction") is Control),
 		"every strip, the masters' too, has a gain reduction meter beside its meter")
@@ -3263,6 +3319,35 @@ func _run() -> void:
 	main.mixer.open()
 	await frames(3)
 	var drums_send_strip: Dictionary = main.mixer._strip_for(drums_send)
+	var mix_space: ScrollContainer = main.mixer._strip_scroll
+	var editing: bool = main.edit_window.is_open()  # (left open by the checks above: in StudioSim one closes as the other opens)
+	main.edit_window.close()
+	var space_tracks_before := [main.auxes.size(), main.folders.size()]
+	await click(drums_send_strip.panel.get_global_rect().position + Vector2(3, 3), MOUSE_BUTTON_RIGHT)
+	var mix_on_strip: bool = main.mixer._name_menu.visible and not main.mixer._space_menu.visible
+	main.mixer._name_menu.hide()
+	mix_space.scroll_horizontal = 100000  # (to the end, past the last strip)
+	await frames(3)
+	var mix_empty_at := Vector2(mix_space.get_global_rect().end.x - 40.0, mix_space.get_global_rect().get_center().y)
+	await click(mix_empty_at, MOUSE_BUTTON_RIGHT)
+	var mix_space_menu: PopupMenu = main.mixer._space_menu
+	var space_offered: Array = range(mix_space_menu.item_count).map(func(i): return mix_space_menu.get_item_text(i)).filter(func(t): return t != "")
+	var mix_space_shown: bool = mix_space_menu.visible
+	mix_space_menu.hide()
+	mix_space_menu.id_pressed.emit(main.mixer.TrackMenu.NEW_MONO_AUX)
+	mix_space_menu.id_pressed.emit(main.mixer.TrackMenu.NEW_FOLDER)
+	await frames(3)
+	check(mix_on_strip and mix_space_shown and space_offered == ["New stereo aux track", "New mono aux track", "New stereo folder", "New mono folder"] and
+		main.auxes.size() == space_tracks_before[0] + 1 and main.auxes.back().mono and main.folders.size() == space_tracks_before[1] + 1 and
+		main.folders.back().members.is_empty() and not main.folders.back().mono and not main.mixer._strip_for(main.folders.back()).is_empty(),
+		"a right-click on the mix window's empty space (not on a strip) offers a new aux track or folder, stereo or mono",
+		"on a strip %s, menu %s: %s" % [mix_on_strip, mix_space_shown, space_offered])
+	main.remove_aux(main.auxes.back())
+	main.remove_folder(main.folders.back())
+	if editing:
+		main.edit_window.open()
+	await frames(3)
+	drums_send_strip = main.mixer._strip_for(drums_send)
 	var aux_strip: Dictionary = main.mixer._strip_for(aux)
 	main.mixer.show_send_menu(drums_send, 0, drums_send_strip.sends[0].button)
 	var offered_aux: bool = main.mixer._send_menu.get_item_index(100) >= 0

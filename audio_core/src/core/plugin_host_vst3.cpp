@@ -84,7 +84,9 @@ bool g_search_set = false;
 std::map<std::string, Scanned> g_scanned;          // each module found, by its path
 std::string g_record;                              // the file it is kept in between sessions (setVst3ScanRecord), if any
 int g_scans = 0;                                   // modules looked into so far
-std::map<std::string, Hosting::Module::Ptr> g_loaded;  // each module loaded (kept for as long as StudioSim runs)
+// Each module loaded, kept for as long as StudioSim runs and never let go: not even as it ends, when a map's destructor
+// would unload them, and some plug-ins' bundleExit crashes a process that is ending (macOS's "quit unexpectedly").
+auto& g_loaded = *new std::map<std::string, Hosting::Module::Ptr>();
 
 bool isBundle(const std::filesystem::path& p) {
     std::string ext = p.extension().string();

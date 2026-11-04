@@ -4190,6 +4190,21 @@ int main(int argc, char** argv) {
         renderSeconds(room.engine, 0.6);
         check(xy.rms_l > 0.003 && db(xy.rms_l) - db(xy.rms_r) > 6.0, "an XY pair hears the drums on its left louder on the left",
               fmt("left %+.1f dB", db(xy.rms_l) - db(xy.rms_r)));
+        // Its track's two pans, as a stereo track's: both hard right, all of it on the right; swapped, the drums go right.
+        room.engine.setBusPans(pair, 1.0f, 1.0f);
+        renderSeconds(room.engine, 0.6);  // (its pans glide there)
+        room.engine.noteOn(room.drums, 36, 0.9f);
+        const Render panned = renderSeconds(room.engine, 0.4);
+        renderSeconds(room.engine, 0.6);
+        room.engine.setBusPans(pair, 1.0f, -1.0f);
+        renderSeconds(room.engine, 0.6);
+        room.engine.noteOn(room.drums, 36, 0.9f);
+        const Render swapped = renderSeconds(room.engine, 0.4);
+        renderSeconds(room.engine, 0.6);
+        room.engine.setBusPans(pair, -1.0f, 1.0f);
+        check(panned.rms_r > 0.003 && panned.rms_l < 0.001 * panned.rms_r && db(swapped.rms_r) - db(swapped.rms_l) > 6.0,
+              "a stereo mic's track has two pans: both hard right, all of it on the right; swapped, the drums on the right",
+              fmt("both right: left %+.1f dB, ", db(panned.rms_l) - db(panned.rms_r)) + fmt("swapped: right %+.1f dB", db(swapped.rms_r) - db(swapped.rms_l)));
 
         // Mid-side: a cardioid facing east (mid) and a figure-8 facing north (side): decoded, the drums on the left;
         // the side's width taken away, the two channels alike (mono).
@@ -4994,6 +5009,118 @@ int main(int argc, char** argv) {
         Render full = renderSeconds(room.engine, 2.0);
         check(std::fabs((db(full.rms_l) - db(half.rms_l)) - 6.0) < 2.5, "the room's master volume scales what is heard of the room",
               fmt("half volume is %.1f dB quieter", db(full.rms_l) - db(half.rms_l)));
+    }
+
+    {
+        std::printf("\nDesktop audio\n");
+        // What the computer's other apps play, fed straight in (the checks never take in the computer's own): a 1 kHz
+        // tone at 44.1 kHz on its left, half as loud on its right, coming in 441 frames at a time.
+        auto tone = [](int64_t n) { return 0.5f * float(std::sin(6.2831853 * 1000.0 * double(n) / 44100.0)); };
+        auto crossings = [](const std::vector<float>& x, size_t from) {  // upward, through nothing
+            int count = 0;
+            for (size_t i = from + 1; i < x.size(); ++i) count += x[i - 1] < 0.0f && x[i] >= 0.0f;
+            return count;
+        };
+        DesktopAudio desktop;
+        std::string why;
+        const bool began = desktop.start(&why, false);
+        // Read at 48 kHz in blocks of 256, the tone coming in a touch fast (its clock 0.1 % ahead of what it says).
+        std::vector<float> left, right, chunk(882), l(256), r(256);
+        int64_t fed = 0;
+        double owed = 0.0;
+        float most_held = 0.0f;
+        for (int block = 0; block < 48000 * 20 / 256; ++block) {
+            owed += 256.0 * 44144.1 / 48000.0;
+            while (owed >= 441.0) {
+                for (int i = 0; i < 441; ++i) {
+                    chunk[size_t(2 * i)] = tone(fed + i);
+                    chunk[size_t(2 * i + 1)] = 0.5f * tone(fed + i);
+                }
+                desktop.captured(chunk.data(), 441, 44100.0);
+                fed += 441;
+                owed -= 441.0;
+            }
+            desktop.read(l.data(), r.data(), 256, 48000.0);
+            left.insert(left.end(), l.begin(), l.end());
+            right.insert(right.end(), r.begin(), r.end());
+            if (block > 48000 * 2 / 256) most_held = std::max(most_held, desktop.heldMs());
+        }
+        const size_t from = left.size() - 48000 * 5;  // its last five seconds
+        double el = 0.0, er = 0.0;
+        int gaps = 0, quiet = 0;
+        for (size_t i = from; i < left.size(); ++i) {
+            el += double(left[i]) * left[i];
+            er += double(right[i]) * right[i];
+            quiet = std::fabs(left[i]) < 1e-6f ? quiet + 1 : 0;
+            gaps += quiet == 8;
+        }
+        const double rms_l = std::sqrt(el / 240000.0), rms_r = std::sqrt(er / 240000.0);
+        const double hz = crossings(left, from) / 5.0;
+        check(began && std::fabs(hz - 1000.0 * 44144.1 / 44100.0) < 3.0 && std::fabs(db(rms_l) - db(0.5 / std::sqrt(2.0))) < 0.3 &&
+                  std::fabs(db(rms_l) - db(rms_r) - 6.02) < 0.3 && gaps == 0 && most_held > 0.0f && most_held < 60.0f,
+              "taken in at 44.1 kHz and played at 48 kHz, its clock running fast: the tone kept, both sides as loud as they came, no gaps, held back steadily",
+              why + fmt("%.1f Hz, ", hz) + fmt("left %.1f dB, ", db(rms_l)) + fmt("right %+.2f dB, ", db(rms_r) - db(rms_l)) +
+                  fmt("%d gaps, ", double(gaps)) + fmt("at most %.1f ms held", most_held));
+        desktop.stop();
+        desktop.read(l.data(), r.data(), 256, 48000.0);
+        check(!desktop.running() && std::all_of(l.begin(), l.end(), [](float v) { return v == 0.0f; }), "stopped, it is silent", "");
+
+        // A Speaker playing it: desktop audio's left (input 100), its right (101), both together (102), and none while off.
+        Room room;
+        room.hearMix();
+        room.quietRoom(room.speaker);
+        room.engine.setSourceInput(room.speaker, true);
+        DesktopAudio& fed_in = room.engine.desktopAudio();
+        const int blk = room.engine.blockSize();
+        const double engine_rate = double(room.engine.sampleRate());
+        int64_t at = 0;
+        double due = 0.0;
+        auto play = [&](int input, double seconds) {  // (fed as it plays, a block at a time; what the last block was)
+            room.engine.setSourceInputChannel(room.speaker, input);
+            Render out;
+            for (int block = 0; block < std::max(1, int(seconds * engine_rate / blk)); ++block) {
+                due += blk * 44100.0 / engine_rate;
+                while (due >= 441.0) {
+                    for (int i = 0; i < 441; ++i) {
+                        chunk[size_t(2 * i)] = tone(at + i);
+                        chunk[size_t(2 * i + 1)] = 0.5f * tone(at + i);
+                    }
+                    fed_in.captured(chunk.data(), 441, 44100.0);
+                    at += 441;
+                    due -= 441.0;
+                }
+                out = renderSeconds(room.engine, (blk + 0.5) / engine_rate);
+            }
+            return out;
+        };
+        const bool on = fed_in.start(&why, false);
+        play(InputBus::kDesktopLeft, 0.5);
+        double heard[3] = {};
+        const int inputs[3] = {InputBus::kDesktopLeft, InputBus::kDesktopRight, InputBus::kDesktop};
+        for (int k = 0; k < 3; ++k) {
+            play(inputs[k], 0.3);  // (its new input settled in)
+            double energy = 0.0;
+            int blocks = 0;
+            for (int b = 0; b < 40; ++b) {
+                const Render one = play(inputs[k], 0.0);
+                energy += one.rms_l * one.rms_l;
+                ++blocks;
+            }
+            heard[k] = std::sqrt(energy / blocks);
+        }
+        fed_in.stop();
+        play(InputBus::kDesktopLeft, 0.3);
+        double off_energy = 0.0;
+        for (int b = 0; b < 40; ++b) {
+            const Render one = play(InputBus::kDesktopLeft, 0.0);
+            off_energy += one.rms_l * one.rms_l;
+        }
+        const double off = std::sqrt(off_energy / 40.0);
+        check(on && heard[0] > 0.01 && std::fabs(db(heard[0]) - db(heard[1]) - 6.02) < 0.5 && std::fabs(db(heard[0]) - db(heard[2]) - 2.5) < 0.5 &&
+                  off < 1e-5,
+              "a Speaker plays desktop audio's left, its right (half as loud here), or the two together (halved); and nothing once it is off",
+              fmt("left %.1f dB, ", db(heard[0])) + fmt("right %+.1f dB, ", db(heard[1]) - db(heard[0])) +
+                  fmt("both %+.1f dB, ", db(heard[2]) - db(heard[0])) + fmt("off %.1f dB", db(off)));
     }
 
     std::printf("\n%s\n", failures ? "SOME CHECKS FAILED" : "All checks passed");

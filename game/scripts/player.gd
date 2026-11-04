@@ -389,7 +389,7 @@ func _handle_key(event: InputEventKey) -> void:
 			app.menu.open()
 		return
 	var notes := playing != null or typing or plugin_open != null  # the letter keys are a piano
-	if notes and Bindings.NOTES.has(key) and app.bindings.action_for(key) != "edit":  # (the panel's key opens it, seated too)
+	if notes and Bindings.NOTES.has(key):  # (every note key a note, the panel's too: it opens the panel once you're up)
 		_note_on(key)
 		return
 	if flying and (key == RISE or key == SINK):  # (held, up and down: see _fly)

@@ -511,7 +511,7 @@ func _label_piano(inst) -> void:
 		_piano_title.add_theme_color_override("font_color", inst.color.lightened(0.3))
 	for key in _piano_keys:
 		var entry: Dictionary = _piano_keys[key]
-		entry.label.text = "" if app.bindings.action_for(key) == "edit" else entry.letter  # (that key opens the panel instead)
+		entry.label.text = entry.letter
 		entry.piece.visible = drums
 		if drums:
 			var piece: String = audio.get_drum_piece_name(60 + int(entry.semitone), inst.kind)

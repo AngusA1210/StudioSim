@@ -44,6 +44,8 @@ a control room hears them: the microphones' tracks, and each instrument's direct
 out), through their faders, pans, sends, folders and aux tracks to the mix's master and its inserts. The main outputs
 play one or the other: **H** switches between them (or HEAR on either master in the mix window), and the screen says
 which. So with microphones up you can hear the mix alone, as headphones would, without the room's own sound on top.
+StudioSim starts in the room; a room keeps which you were hearing when it was saved, and opens so (switching isn't a
+change to the room, so it doesn't ask to be saved on its own account).
 Each master can go to a pair of outputs of its own as well, all the time (its output menu): headphones of their own,
 say, or a recorder. Both masters are masters as a DAW has them: inserts A to E, a limiter, a fader that can be
 automated (a row each at the foot of the edit window), a name and a colour (crimson to begin with; right-click the name
@@ -86,7 +88,8 @@ in Touch, Latch or Write, holding one writes it.
 - **Pan**: a pot, as Pro Tools has: drag up or right to turn it right, down or left to turn it left (Shift for fine
   moves), turn the scroll wheel to nudge it, double-click or Alt-click it for the middle. It reads as Pro Tools reads
   it: "<50" to the left, "50>" to the right, "C" in the middle. An instrument's pans its direct output in the mix (in the
-  room it is where it stands); a stereo mic's is its balance. Every instrument's pan can be automated. Faders run from +12 dB down to silence, spaced as on a console.
+  room it is where it stands). A stereo mic's track has two, side by side, as a stereo track has in Pro Tools: where its
+  left side sits and where its right does, hard left and hard right to begin with. Every pan can be automated. Faders run from +12 dB down to silence, spaced as on a console.
   Drag one to move it (Shift for fine moves), turn the scroll wheel to nudge it, or double-click or Alt-click it for
   0 dB. 0 dB is the level the instrument was made at, heard from right beside it, and the strip's meter reads it at
   that level, as a DAW's track meter reads what the track sends to the master.
@@ -113,7 +116,8 @@ in Touch, Latch or Write, holding one writes it.
 - **Folders**: a routing folder's strip comes before its tracks', in a frame of the folder's colour that holds them
   all (a folder in it framed within): its inserts (plug-ins, on what its tracks play into it), its pan, mute and solo,
   and its fader and meter. A folder is **stereo** or **mono**, as made (a track's menu offers a new stereo folder or a
-  new mono one, and likewise aux tracks) or changed by right-clicking its name. A stereo one has two channels, its
+  new mono one, and likewise aux tracks; so does a right-click on the empty space past the last strip, the folder
+  empty) or changed by right-clicking its name. A stereo one has two channels, its
   inserts in stereo, its meter two bars, and two pans, one for each side, as a stereo track has in Pro Tools (hard left
   and hard right to begin with, its stereo as it is); a mono one sums what reaches it
   to one channel as it arrives, its inserts and its meter that one, and its pan places it, as a mono track's does. In

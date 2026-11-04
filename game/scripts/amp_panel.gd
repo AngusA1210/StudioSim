@@ -146,10 +146,7 @@ func open(amp, from_mixer := false) -> void:
 	_title.text = inst.display_name
 	_title.add_theme_color_override("font_color", inst.color.lightened(0.3))
 	_faceplate.border_color = inst.color
-	_source.clear()
-	_source.add_item("All inputs")
-	for i in app.input_channel_count():
-		_source.add_item("Input %d" % (i + 1))
+	app.show_input_choice(_source, inst.input_channel)
 	_board_signature = "-"
 	_shown = ""
 	_refresh()
@@ -242,7 +239,7 @@ func _refresh() -> void:
 	_cabinet_on.text = "In use" if inst.cabinet_on else "Bypassed"
 	_input_switch.set_pressed_no_signal(inst.input_on)
 	_input_switch.text = "Input on" if inst.input_on else "Input off"
-	_source.select(clampi(inst.input_channel + 1, 0, _source.item_count - 1))
+	app.show_input_choice(_source, inst.input_channel)
 	selected = mini(selected, inst.pedals.size() - 1)
 	var unfolded: bool = app.settings.pedalboard_open
 	_board_toggle.text = ("▾  " if unfolded else "▸  ") + "Pedalboard"
@@ -806,7 +803,7 @@ func _build() -> void:
 	input_row.add_child(_input_switch)
 	_source = OptionButton.new()
 	_source.item_selected.connect(_on_source_selected)
-	Hints.give(_source, "Which of your interface's inputs the guitar or bass is plugged into")
+	Hints.give(_source, "Which of your interface's inputs the guitar or bass is plugged into (or desktop audio, while the I/O page's audio bridge is on)")
 	input_row.add_child(_source)
 
 	# The pedalboard, in the order the signal passes along it, under a heading that folds it away.
@@ -1113,7 +1110,7 @@ func _on_input_toggled(on: bool) -> void:
 
 
 func _on_source_selected(index: int) -> void:
-	app.set_input_channel(inst, index - 1)
+	app.set_input_channel(inst, app.input_at(_source, index))
 
 
 func _on_tile_input(event: InputEvent, index: int) -> void:

@@ -12,11 +12,11 @@
 | V | duplicate the instrument you're facing or carrying, with its settings, pedals and plug-ins: the copy is in your hands to put down |
 | Backspace, twice | remove the instrument you're facing or carrying |
 | E | play the instrument you're next to (at a kit, you sit on its stool); Q stops |
-| A S D F G H J K L ; | white keys while playing (W E T Y U O are the black keys, Z/X change octave; P opens the panel, seated too) |
+| A S D F G H J K L ; | white keys while playing (W E T Y U O P are the black keys, Z/X change octave) |
 | K | the keyboard: the letter keys play every instrument whose input is on, from wherever you stand. The arrow keys walk and turn meanwhile; Q or Esc closes it |
 | I | that instrument's input on/off (see below) |
 | MIDI keyboard | plays every instrument whose input is on, with velocity (and the sustain pedal on the Keys); plug in any time |
-| P | open the panel of the instrument you're facing: its pattern editor (at an amp: its knobs and pedals; at a Speaker: its volume and input; at a microphone: its place, seen from its capsule) |
+| P | open the panel of the instrument you're facing, standing (seated, or with the keyboard open, P is a note): its pattern editor, which sits you down and stands you up again when it closes (at an amp: its knobs and pedals; at a Speaker: its volume and input; at a microphone: its place, seen from its capsule) |
 | ' (beside Return) | at a plug-in instrument, open its plug-in's window above the on-screen keyboard, the letter keys playing it; a click in the room, Esc or Q puts it away |
 | M | switch that instrument's loop off or on (for a Speaker or an amp: mute it in the room; for a microphone: mute its track) |
 | L O U J | at an amp with a loop pedal: L the footswitch (record, close the loop, overdub), O stop or play, U undo or redo the last overdub, J twice to clear. Elsewhere in a Record room, L switches loop playback on and off |

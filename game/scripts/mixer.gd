@@ -41,6 +41,7 @@ const Catalog := preload("res://scripts/catalog.gd")
 const MiniFader := preload("res://scripts/mini_fader.gd")
 
 const STRIP_WIDTH := 96.0
+const SPACE_PAST_STRIPS := 120  # (empty, after the last strip: a right-click there makes a new aux track or folder)
 const STRIP_BG := Color(0.16, 0.17, 0.19, 0.98)
 const DIM := Color(0.62, 0.65, 0.74)
 const WARN := Color(1.0, 0.61, 0.48)
@@ -56,6 +57,7 @@ var audio: StudioSimAudio
 var _root: Control
 var _panel: PanelContainer
 var _strip_row: HBoxContainer
+var _strip_scroll: ScrollContainer  # the strips, scrolled across; past the last of them, room to right-click for a new one
 var _strip_parent: Container  # where the strip being built goes: the row, or its folder's frame
 var _strips: Array = []  # {inst (an instrument or a folder), fader, meter, value, peak, input, mute, solo, source, output, inserts: [{button, style}], plate, frame}
 var _colors: PopupMenu   # the Colour submenu of a track's menu
@@ -74,10 +76,10 @@ var _name_menu: PopupMenu  # what a right-click on a strip's name offers
 var _name_menu_for = null
 var _confirm: ConfirmationDialog  # removing an instrument
 var _meter_menu: PopupMenu  # what a right-click on a fader or meter offers: the meters before the fader or after it
+var _space_menu: PopupMenu  # what a right-click on the empty space beside the strips offers: a new aux track or folder
 var _hint: Label  # the line at the foot: what the mouse is over
 var _to_edit: Button  # over to the edit window, in a Record room
 var _signature := ""
-var _input_channels := -1
 var _master := {}  # the mix's master strip
 var _room := {}    # the room's master strip
 var _reverb := {}  # the room reverb's strip
@@ -101,7 +103,7 @@ func open() -> void:
 	app.player.release_keys()
 	_root.visible = true
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
-	_input_channels = -1  # the hardware may have changed: list its inputs, and its outputs, again
+	# (the hardware may have changed: its inputs are listed again as they change, its outputs here)
 	for master in [_master, _room]:
 		master.outputs = -1
 	_refresh()
@@ -227,11 +229,19 @@ func _build() -> void:
 	var scroll := ScrollContainer.new()
 	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.gui_input.connect(_on_space_input.bind(scroll))
+	Hints.give(scroll, "Right-click the empty space for a new aux track or folder")
 	desk.add_child(scroll)
+	_strip_scroll = scroll
+	var past_the_end := MarginContainer.new()  # (however many strips there are, some empty space after them)
+	past_the_end.add_theme_constant_override("margin_right", SPACE_PAST_STRIPS)
+	past_the_end.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	past_the_end.mouse_filter = Control.MOUSE_FILTER_PASS
+	scroll.add_child(past_the_end)
 	_strip_row = HBoxContainer.new()
 	_strip_row.add_theme_constant_override("separation", 4)
 	_strip_row.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	scroll.add_child(_strip_row)
+	past_the_end.add_child(_strip_row)
 	desk.add_child(VSeparator.new())
 	desk.add_child(_build_reverb())
 	desk.add_child(_build_master_strip(app.room_master_track))
@@ -279,6 +289,14 @@ func _build() -> void:
 	_meter_menu.add_radio_check_item("Post-fader metering", 1)
 	_meter_menu.id_pressed.connect(func(id: int) -> void: app.set_pre_fader_meters(id == 0))
 	_root.add_child(_meter_menu)
+	_space_menu = PopupMenu.new()
+	_space_menu.add_item("New stereo aux track", TrackMenu.NEW_AUX)
+	_space_menu.add_item("New mono aux track", TrackMenu.NEW_MONO_AUX)
+	_space_menu.add_separator()
+	_space_menu.add_item("New stereo folder", TrackMenu.NEW_FOLDER)
+	_space_menu.add_item("New mono folder", TrackMenu.NEW_MONO_FOLDER)
+	_space_menu.id_pressed.connect(_on_space_menu_chosen)
+	_root.add_child(_space_menu)
 
 	_hint = Hints.line()
 	box.add_child(_hint)
@@ -426,13 +444,15 @@ func _build_strip(inst) -> Dictionary:
 		choice.add_theme_font_size_override("font_size", 12)
 		choice.fit_to_longest_item = false
 		choice.custom_minimum_size = Vector2(STRIP_WIDTH - 16, 24)
-		choice.item_selected.connect(_on_source_selected.bind(inst))
-		Hints.give(choice, "Which of your interface's inputs it plays")
+		choice.item_selected.connect(func(index: int) -> void: app.set_input_channel(inst, app.input_at(choice, index)))
+		Hints.give(choice, "Which of your interface's inputs it plays (or desktop audio, while the I/O page's audio bridge is on)")
 		source = choice
 	box.add_child(source)
 	var output := _output_button(inst)
 	box.add_child(output)
+	var pans := _pan_pair(box, inst) if inst.is_stereo_mic else {}  # (a stereo mic's two, in place of the one)
 	var pan := _pan_pot(box, inst)
+	pan.visible = not inst.is_stereo_mic
 	var buttons := HBoxContainer.new()
 	buttons.add_theme_constant_override("separation", 3)
 	buttons.alignment = BoxContainer.ALIGNMENT_CENTER
@@ -462,11 +482,11 @@ func _build_strip(inst) -> Dictionary:
 	strip.gui_input.connect(_on_strip_input.bind(inst, plate))
 	return {"inst": inst, "fader": pair.fader, "meter": pair.meter, "reduction": pair.reduction, "value": readouts.value, "peak": readouts.peak, "input": input,
 		"mute": mute, "solo": solo, "source": source, "output": output, "inserts": inserts, "sends": sends, "plate": plate,
-		"frame": strip.get_theme_stylebox("panel"), "panel": strip, "small": small_label, "pan": pan, "room": room, "delay": delay}
+		"frame": strip.get_theme_stylebox("panel"), "panel": strip, "small": small_label, "pan": pan, "pans": pans, "room": room, "delay": delay}
 
 
 ## Where a track sits in the mix's stereo, as Pro Tools' pan pot (an instrument's direct output, a microphone's track; a
-## stereo mic's balance between its two sides; a mono folder's or aux's place).
+## mono folder's or aux's place).
 func _pan_pot(box: Control, track) -> Control:
 	var pan := PanControl.new()
 	pan.custom_minimum_size = Vector2(STRIP_WIDTH - 24, PAN_HEIGHT)
@@ -477,17 +497,17 @@ func _pan_pot(box: Control, track) -> Control:
 		Hints.give(pan, "Pan: where its sound, summed to mono, sits in the mix (after its fader). Right-click its name for stereo." +
 			"  Drag up or down (Shift: fine), double-click for the middle")
 	else:
-		Hints.give(pan, ("Balance: the stereo mic's two sides" if track.is_stereo_mic else ("Pan: where its track sits in the mix" if track.is_mic else
-			"Pan: where its direct output sits in the mix (in the room it is where it stands)")) +
+		Hints.give(pan, ("Pan: where its track sits in the mix" if track.is_mic else
+			"Pan: where its direct output sits in the mix (in the room it is where it stands)") +
 			".  Drag up or down (Shift: fine), double-click for the middle")
 	box.add_child(pan)
 	return pan
 
 
-## A stereo folder's or aux's two pans, side by side as on a Pro Tools stereo track: where its left side sits in the
-## mix and where its right does, hard left and hard right to begin with (its stereo as it is). In place of its one
-## pan, while it is stereo.
-func _pan_pair(box: VBoxContainer, folder) -> Dictionary:
+## A stereo track's two pans, side by side as on a Pro Tools stereo track: where its left side sits in the mix and
+## where its right does, hard left and hard right to begin with (its stereo as it is). A stereo mic's; a folder's or
+## an aux's in place of its one pan, while it is stereo.
+func _pan_pair(box: VBoxContainer, track) -> Dictionary:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 2)
 	row.alignment = BoxContainer.ALIGNMENT_CENTER
@@ -497,11 +517,12 @@ func _pan_pair(box: VBoxContainer, folder) -> Dictionary:
 	for side in ["left", "right"]:
 		var pan := PanControl.new()
 		pan.custom_minimum_size = Vector2((STRIP_WIDTH - 24) / 2.0 - 1.0, PAN_HEIGHT)
-		pan.ink = folder.color.lightened(0.2)
+		pan.ink = track.color.lightened(0.2)
 		pan.value_changed.connect(func(v: float) -> void:
-			app.set_folder_pans(folder, v if side == "left" else folder.pan_left, v if side == "right" else folder.pan_right))
-		Hints.give(pan, "Pan, its %s side: where it sits in the mix (after its fader), %s to begin with.  Right-click its name for mono." % [
-			side, "hard left" if side == "left" else "hard right"] + "  Drag up or down (Shift: fine), double-click for the middle")
+			app.set_pans(track, v if side == "left" else track.pan_left, v if side == "right" else track.pan_right))
+		Hints.give(pan, "Pan, its %s side: where it sits in the mix (after its fader), %s to begin with.%s" % [side,
+			"hard left" if side == "left" else "hard right", "  Right-click its name for mono." if track.is_folder else ""] +
+			"  Drag up or down (Shift: fine), double-click for the middle")
 		row.add_child(pan)
 		made[side] = pan
 	return made
@@ -1114,11 +1135,7 @@ func _refresh() -> void:
 		for track in app.track_order():
 			if app.folder_of(track) == null:
 				_build_track(track, _strip_row)
-		_input_channels = -1
 	_show_delays()
-	var channels: int = app.input_channel_count()
-	var relist := channels != _input_channels
-	_input_channels = channels
 	for strip in _strips:
 		var inst = strip.inst
 		var held: bool = strip.fader._dragging
@@ -1157,13 +1174,15 @@ func _refresh() -> void:
 		if inst.is_mic:  # its model and pattern
 			strip.source.text = "%s · %s" % [Catalog.MIC_MODELS_SHORT.get(inst.mic_model, "MIC"), Catalog.MIC_PAIRS_SHORT.get(inst.pair_technique, "")
 				if inst.is_stereo_mic else Catalog.MIC_PATTERNS_SHORT.get(app.mic_pattern_of(inst), "")]
-		var pan: Control = strip.pan
-		var pan_held: bool = pan._dragging
-		if pan_held != pan.get_meta("held", false):  # (Touch and Latch write it while it is held)
-			pan.set_meta("held", pan_held)
-			app.automation.touch(inst, pan_held, "pan")
-		if not pan_held:  # (as its automation has it, while that is read)
-			pan.set_value_no_signal(app.automation.shown(inst, "pan"))
+		var knobs := {"pan": strip.pan} if strip.pans.is_empty() else {"pan_left": strip.pans.left, "pan_right": strip.pans.right}
+		for param in knobs:  # (its one pan, or a stereo mic's two)
+			var pan: Control = knobs[param]
+			var pan_held: bool = pan._dragging
+			if pan_held != pan.get_meta("held", false):  # (Touch and Latch write it while it is held)
+				pan.set_meta("held", pan_held)
+				app.automation.touch(inst, pan_held, param)
+			if not pan_held:  # (as its automation has it, while that is read)
+				pan.set_value_no_signal(app.automation.shown(inst, param))
 		if not strip.room.is_empty():  # and in the room
 			var room: Dictionary = strip.room
 			if not room.level._dragging:
@@ -1174,12 +1193,7 @@ func _refresh() -> void:
 		if inst.plays_plugin:
 			strip.source.text = inst.instrument_plugin.get("plugin_name", "")
 		if strip.source is OptionButton:
-			if relist:
-				strip.source.clear()
-				strip.source.add_item("All in")
-				for i in channels:
-					strip.source.add_item("In %d" % (i + 1))
-			strip.source.select(clampi(inst.input_channel + 1, 0, strip.source.item_count - 1))
+			app.show_input_choice(strip.source, inst.input_channel, true)
 		strip.output.select(strip.output.get_meta("choices").find(app.folder_of(inst)))
 
 	var m: Dictionary = app.meter
@@ -1325,10 +1339,6 @@ func _on_many(what: String, on: bool, inst) -> bool:
 	else:
 		app.set_on_all(what, on)
 	return true
-
-
-func _on_source_selected(index: int, inst) -> void:
-	app.set_input_channel(inst, index - 1)
 
 
 ## A click on an insert (on letting go, so that a drag doesn't count): an empty one offers the plug-ins, a full one opens
@@ -1533,6 +1543,33 @@ func open_editor(inst) -> void:
 		app.mic_panel.open(inst, true)
 	else:
 		app.speaker_panel.open(inst, true)
+
+
+## A right-click on the empty space beside the strips (not on one, nor in a folder's frame): a new aux track or an
+## empty folder, stereo or mono, as Pro Tools' New Track dialog makes them.
+func _on_space_input(event: InputEvent, space: Control) -> void:
+	if not (event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_RIGHT):
+		return
+	var at: Vector2 = space.get_global_transform() * event.position
+	if _strip_row.get_children().any(func(child: Control) -> bool: return child.get_global_rect().has_point(at)):
+		return
+	_space_menu.reset_size()
+	_space_menu.position = Vector2i(space.get_screen_position() + event.position)
+	_space_menu.popup()
+	space.accept_event()
+
+
+func _on_space_menu_chosen(id: int) -> void:
+	match id:
+		TrackMenu.NEW_AUX, TrackMenu.NEW_MONO_AUX:
+			if app.add_aux("", id == TrackMenu.NEW_MONO_AUX) == null:
+				_report("There's no room for another aux track.")
+		TrackMenu.NEW_FOLDER, TrackMenu.NEW_MONO_FOLDER:
+			var folder = app.add_folder([])
+			if folder == null:
+				_report("There's no room for another folder.")
+			elif id == TrackMenu.NEW_MONO_FOLDER:
+				app.set_folder_mono(folder, true)
 
 
 func _on_name_menu_chosen(id: int) -> void:

@@ -16,7 +16,8 @@ extends Node
 ## A track keeps its points as `automation`: {param: [[step, value], ...]}, in steps (they follow the tempo), and the
 ## lanes the edit window shows it in as `lanes`. A param is "volume" (dB), "mute" and "sustain" (1 on, 0 off),
 ## "amp:gain" and the other knobs (0 to 10), a stock pedal's knob "stomp:<place on the board>:<knob>" (0 to 10), a
-## track's "pan" (-1 left to 1 right: an instrument's direct output, a microphone's track; a stereo mic's balance),
+## track's "pan" (-1 left to 1 right: an instrument's direct output, a microphone's track; a stereo mic's two,
+## "pan_left" and "pan_right"),
 ## "send:0" to "send:4" (dB), or a plug-in's control: "insert:<slot>:<id>", "pedal:<place on the board>:<id>" or
 ## "instrument:<id>", kept from 0 to 1 across the control's range. A plug-in's automation (or a pedal's) goes where it
 ## goes: to another slot, another track, another place on the board. The audio core plays them all to the block
@@ -25,7 +26,8 @@ extends Node
 const MODES := ["off", "read", "touch", "latch", "write"]
 const MODE_NAMES := {"off": "Off", "read": "Read", "touch": "Touch", "latch": "Latch", "write": "Write"}
 const Catalog := preload("res://scripts/catalog.gd")
-const NAMES := {"volume": "Volume", "mute": "Mute", "sustain": "Sustain pedal", "pan": "Pan"}
+const NAMES := {"volume": "Volume", "mute": "Mute", "sustain": "Sustain pedal", "pan": "Pan", "pan_left": "Pan left", "pan_right": "Pan right"}
+const PANS := ["pan", "pan_left", "pan_right"]  # (a track's one pan; a stereo track's two: as the audio core numbers them)
 const PanControl := preload("res://scripts/pan_control.gd")
 const KNOB_NAMES := {"gain": "Gain", "bass": "Bass", "mid": "Middle", "treble": "Treble", "presence": "Presence", "master": "Master"}
 const RETURN_STEPS := 0.5   # how long Touch takes to go back to what was there, after a control is let go
@@ -99,7 +101,9 @@ func params_for(track) -> Array:
 	if not track.is_folder and track.is_amp:
 		for control in KNOB_NAMES:
 			out.append("amp:" + control)
-	if not track.is_folder:  # (its direct output's; a microphone's track's)
+	if not track.is_folder and track.is_stereo_mic:  # (its track's two, as a stereo track's)
+		out.append_array(["pan_left", "pan_right"])
+	elif not track.is_folder:  # (its direct output's; a microphone's track's)
 		out.append("pan")
 	for slot in track.sends.size():
 		if not track.sends[slot].is_empty():
@@ -182,7 +186,7 @@ func value_text(track, param: String, value: float) -> String:
 		return "-inf" if value <= -79.0 else "%+.1f dB" % value
 	if is_switch(param):
 		return "on" if value > 0.5 else "off"
-	if param == "pan":
+	if param in PANS:
 		return PanControl.readout(value)
 	if param.begins_with("amp:"):
 		return "%.1f" % value
@@ -207,7 +211,7 @@ static func height_of(param: String, value: float) -> float:
 		return preload("res://scripts/fader.gd").position_of(value)
 	if is_knob(param):
 		return value / 10.0
-	if param == "pan":  # (left at the foot, right at the top)
+	if param in PANS:  # (left at the foot, right at the top)
 		return (clampf(value, -1.0, 1.0) + 1.0) / 2.0
 	return clampf(value, 0.0, 1.0)
 
@@ -218,7 +222,7 @@ static func value_from(param: String, height: float) -> float:
 		return snappedf(preload("res://scripts/fader.gd").level_at(height), 0.1)
 	if is_knob(param):
 		return snappedf(height * 10.0, 0.05)
-	if param == "pan":
+	if param in PANS:
 		return snappedf(height * 2.0 - 1.0, 0.01)
 	if is_switch(param):
 		return 1.0 if height > 0.5 else 0.0
@@ -281,8 +285,8 @@ func now(track, param: String) -> float:
 		return track.level_db
 	if param == "mute":
 		return 1.0 if track.muted else 0.0
-	if param == "pan":
-		return float(track.get("pan")) if track.get("pan") != null else 0.0
+	if param in PANS:
+		return float(track.get(param)) if track.get(param) != null else 0.0
 	if param.begins_with("amp:"):
 		return float(track.amp_controls.get(param.substr(4), 5.0))
 	if param.begins_with("stomp:"):
@@ -489,6 +493,8 @@ func _apply(track, param: String, value: float) -> void:
 			audio.set_source_gain(track.source_id, gain * (1.0 if track.is_folder else track.normal_gain()))
 	elif param == "pan":
 		app.set_pan(track, value)
+	elif param == "pan_left" or param == "pan_right":
+		app.set_pans(track, value if param == "pan_left" else track.pan_left, value if param == "pan_right" else track.pan_right)
 	elif param.begins_with("amp:"):
 		app.set_amp_control(track, param.substr(4), value)
 	elif param.begins_with("stomp:"):
@@ -713,8 +719,8 @@ func param_lanes(track) -> Array:
 		var lane: Array = track.automation[param]
 		if lane.is_empty() or back.has(param) or param in ["volume", "mute", "sustain"]:
 			continue
-		if param == "pan":
-			out.append({"target": "pan", "index": 0, "param": 0, "points": lane})
+		if param in PANS:
+			out.append({"target": "pan", "index": PANS.find(param), "param": 0, "points": lane})
 		elif param.begins_with("amp:"):
 			out.append({"target": "amp", "index": KNOB_NAMES.keys().find(param.substr(4)), "param": 0, "points": lane})
 		elif param.begins_with("stomp:"):

@@ -107,6 +107,9 @@ var _output_grid: HBoxContainer
 var _output_signature := ""
 var _output_channels := 0
 var _input_toggle: CheckButton
+var _bridge_option: OptionButton  # the audio bridge: none, or desktop audio
+var _bridge_note: Label
+var _bridge_problem := ""  # why it couldn't be switched on, the last time it was tried
 var _input_option: OptionButton
 var _input_names: Array = []
 var _input_signature := ""
@@ -526,6 +529,10 @@ func _build_engine_page(page: VBoxContainer) -> void:
 	_note(page, "Recorded audio is read from disk a few seconds ahead of the music and let go once it has played, so long rooms need little memory. Disk says how much is read ahead, and how many buffers the disk was too slow for, if any (heard as a gap).")
 
 
+const BRIDGE_HINT_MAC := "What the Mac's other apps play (a browser, music, a call), as inputs for a Speaker or an amp: Desktop audio, or its left or right side alone. While it is on their sound plays through StudioSim and nowhere else, as through Pro Tools' Audio Bridge; once it is off, or StudioSim quits, it plays as before. StudioSim's own sound is left out of it. It needs macOS 14.2 or later; the first time, macOS asks whether StudioSim may record this computer's audio"
+const BRIDGE_HINT_WINDOWS := "What Windows plays on its sound output (a browser, music, a call), as inputs for a Speaker or an amp: Desktop audio, or its left or right side alone. StudioSim's own sound is left out of it (Windows 10 2004 or later). It goes on playing on that output too: set Windows' sound output to one you aren't listening to, and it is heard through StudioSim alone"
+
+
 func _build_io_page(page: VBoxContainer) -> void:
 	_heading(page, "Output")
 	_output_title = Label.new()
@@ -549,6 +556,16 @@ func _build_io_page(page: VBoxContainer) -> void:
 	_live_rows.add_theme_constant_override("separation", 12)
 	page.add_child(_live_rows)
 	_input_note = _note(page, "")
+
+	page.add_child(HSeparator.new())
+	_heading(page, "Audio Bridge")
+	_bridge_option = OptionButton.new()
+	_bridge_option.add_item("None")
+	_bridge_option.add_item("Desktop audio")
+	_bridge_option.item_selected.connect(_on_bridge_selected)
+	Hints.give(_bridge_option, BRIDGE_HINT_MAC if OS.get_name() == "macOS" else BRIDGE_HINT_WINDOWS)
+	_field(page, "Bridge").add_child(_bridge_option)
+	_bridge_note = _note(page, "")
 
 
 func _build_midi_page(page: VBoxContainer) -> void:
@@ -784,7 +801,7 @@ func _refresh_live() -> void:
 	_input_toggle.set_pressed_no_signal(app.live_input)
 	_input_toggle.text = "On (the audio input is open)" if app.live_input else "Off (the audio input is closed)"
 	var live_instruments: Array = app.instruments.filter(func(inst): return inst.is_live())
-	signature = str(_input_channels)
+	signature = "%d:%s" % [_input_channels, app.desktop_audio]
 	for inst in live_instruments:
 		signature += "|%s:%d" % [inst.display_name, inst.input_channel]
 	if signature != _live_signature:
@@ -797,6 +814,15 @@ func _refresh_live() -> void:
 		_input_note.text = ("The ASIO driver's own inputs are the input, whichever is chosen here. " if _is_asio(settings.output_device) else "") + \
 			"Switch a Speaker's input on (I when facing it, or its I button in the mix window) to hear a microphone or instrument through it. This switch does it for every Speaker. Inputs always start switched off. Wear headphones, or it will feed back."
 	_input_note.add_theme_color_override("font_color", DIM)
+	_bridge_option.select(1 if app.desktop_audio else 0)
+	if _bridge_problem != "":
+		_bridge_note.text = "Desktop audio couldn't be taken in: %s." % _bridge_problem
+	elif app.desktop_audio:
+		_bridge_note.text = "Desktop audio is coming in (%.0f ms held back to keep it steady): choose it as a Speaker's input above." % float(s.get("desktop_audio_ms", 0.0))
+	else:
+		_bridge_note.text = ""
+	_bridge_note.visible = _bridge_note.text != ""
+	_bridge_note.add_theme_color_override("font_color", WARN if _bridge_problem != "" else DIM)
 
 	# MIDI
 	var devices: Array = audio.get_midi_devices()
@@ -1005,6 +1031,11 @@ func _on_buffer_selected(index: int) -> void:
 	_refresh_live()
 
 
+func _on_bridge_selected(index: int) -> void:
+	_bridge_problem = app.set_desktop_audio(index == 1)
+	_refresh_live()
+
+
 func _on_input_toggled(on: bool) -> void:
 	app.set_live_input(on)
 	_refresh_devices()
@@ -1041,7 +1072,8 @@ func _fill_live_rows(live_instruments: Array) -> void:
 		var grid := HBoxContainer.new()
 		grid.add_theme_constant_override("separation", 4)
 		_field(_live_rows, "%s plays input" % inst.display_name).add_child(grid)
-		_fill_grid(grid, _input_channels, true, _live_label.bind(inst), _on_live_clicked.bind(inst))
+		var desktop: Array = app.input_choices(true, inst.input_channel).filter(func(c): return c[0] >= app.DESKTOP_LEFT)
+		_fill_grid(grid, _input_channels, true, _live_label.bind(inst), _on_live_clicked.bind(inst), desktop)
 	if live_instruments.is_empty():
 		_note(_live_rows, "There is no Speaker in the room to play an input. Add one from the instrument menu (%s)." % app.bindings.label("add"))
 
@@ -1140,15 +1172,18 @@ func _select(option: OptionButton, names: Array, wanted: String) -> void:
 ## A row of channel buttons, as in a DAW's I/O grid. `label_for` returns what an assigned channel shows ("" if
 ## it isn't assigned); `on_click` receives the channel that was clicked. With `with_all`, a first button stands
 ## for every channel at once (channel -1).
-func _fill_grid(grid: HBoxContainer, channels: int, with_all: bool, label_for: Callable, on_click: Callable) -> void:
+func _fill_grid(grid: HBoxContainer, channels: int, with_all: bool, label_for: Callable, on_click: Callable, extra := []) -> void:
 	for child in grid.get_children():
 		child.queue_free()
 	var first := -1 if with_all else 0
-	for ch in range(first, mini(channels, MAX_GRID_CHANNELS)):
+	var named := {}  # (beyond the interface's: [input, name] each)
+	for each in extra:
+		named[each[0]] = each[1]
+	for ch in range(first, mini(channels, MAX_GRID_CHANNELS)) + named.keys():
 		var button := Button.new()
 		var assigned: String = label_for.call(ch)
-		button.custom_minimum_size = Vector2(56 if ch < 0 else 44, 32)
-		var number := "All" if ch < 0 else str(ch + 1)
+		button.custom_minimum_size = Vector2(56 if ch < 0 or named.has(ch) else 44, 32)
+		var number: String = named.get(ch, "All" if ch < 0 else str(ch + 1))
 		button.text = number if assigned == "" else "%s %s" % [number, assigned]
 		for state in ["normal", "hover", "pressed", "focus"]:
 			button.add_theme_stylebox_override(state, _cell_style(assigned != "", state == "hover"))

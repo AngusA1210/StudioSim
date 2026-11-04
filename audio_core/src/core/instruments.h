@@ -393,8 +393,28 @@ private:
 // The audio captured for the block being rendered, one buffer per hardware input. Owned by the engine.
 struct InputBus {
     static constexpr int kMaxChannels = 8;
+    static constexpr int kAllInputs = -1;  // every hardware input, added together
+    // Desktop audio (desktop_audio.h), past the hardware's: its left side, its right, and the two together (half each).
+    static constexpr int kDesktopLeft = 100, kDesktopRight = 101, kDesktop = 102;
     std::array<std::vector<float>, kMaxChannels> channel;
+    std::array<std::vector<float>, 2> desktop;
     int active = 0;  // how many inputs the open device delivers
+    bool desktop_on = false;
+    // Adds input `which` (a hardware input, kAllInputs, or desktop audio's) into `out`.
+    void read(int which, float* out, int n) const {
+        if (which >= kDesktopLeft) {
+            if (!desktop_on) return;
+            const float* l = desktop[0].data();
+            const float* r = desktop[1].data();
+            for (int i = 0; i < n; ++i) out[i] += which == kDesktopLeft ? l[i] : which == kDesktopRight ? r[i] : 0.5f * (l[i] + r[i]);
+            return;
+        }
+        const int first = which < 0 ? 0 : which, last = which < 0 ? active : which + 1;
+        for (int c = first; c < last && c < active; ++c) {
+            const float* in = channel[size_t(c)].data();
+            for (int i = 0; i < n; ++i) out[i] += in[i];
+        }
+    }
 };
 
 // A bus's stand-in for an instrument: it plays nothing of its own (what it carries comes from the tracks routed to it).
@@ -405,10 +425,10 @@ public:
 };
 
 // Whatever is plugged into the audio input (a microphone, a guitar), placed in the room like any instrument.
-// It plays one hardware input, or all of them added together.
+// It plays one hardware input, or all of them added together, or desktop audio.
 class LiveInput : public Instrument {
 public:
-    static constexpr int kAllInputs = -1;
+    static constexpr int kAllInputs = InputBus::kAllInputs;
     LiveInput(float sample_rate, const InputBus* bus) : Instrument(sample_rate), bus_(bus) {}
     void setInputChannel(int channel) override { channel_ = channel; }
     void setInputEnabled(bool on) override { enabled_ = on; }  // off: silent, whatever comes in
@@ -419,11 +439,7 @@ public:
     }
     bool readInput(float* out, int n) const override {  // adds its input into `out`
         if (!bus_) return false;
-        const int first = channel_ < 0 ? 0 : channel_, last = channel_ < 0 ? bus_->active : channel_ + 1;
-        for (int c = first; c < last && c < bus_->active; ++c) {
-            const float* in = bus_->channel[size_t(c)].data();
-            for (int i = 0; i < n; ++i) out[i] += in[i];
-        }
+        bus_->read(channel_, out, n);
         return true;
     }
 

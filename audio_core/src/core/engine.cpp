@@ -385,9 +385,9 @@ struct AudioEngine::Source {
     bool mid_side = false;  // a stereo mic's capsules are mid and side, decoded to left and right
     float width = 1.0f, width_target = 1.0f;  // (how much of the side, decoding)
     std::vector<float> mono_r, pre_r, playback_r;  // a stereo mic's second channel
-    float pan = 0.0f, pan_target = 0.0f;  // a microphone's track: where it sits in the stereo (a stereo one's, its balance)
+    float pan = 0.0f, pan_target = 0.0f;  // a microphone's track: where it sits in the stereo (a mono folder's too)
     bool bus_mono = false;  // a folder's bus summed to mono, its pan placing it; else stereo, each side placed by its own
-    float pan_left = -1.0f, pan_left_target = -1.0f, pan_right = 1.0f, pan_right_target = 1.0f;  // (a stereo bus's two pans)
+    float pan_left = -1.0f, pan_left_target = -1.0f, pan_right = 1.0f, pan_right_target = 1.0f;  // (a stereo bus's or mic's two pans)
     bool hear_input = false;  // a microphone, this block: what it hears (rather than its clips) is its track's sound
     bool auto_sustain = false;  // the sustain pedal down by automation
     Track* track_rt = nullptr;
@@ -463,6 +463,7 @@ void AudioEngine::allocateBuffers() {
     split_lows_ = 1.0f - std::exp(-2.0f * float(kPi) * SourceSpatializer::kBandEdges[0] / float(sr_));
     split_highs_ = 1.0f - std::exp(-2.0f * float(kPi) * SourceSpatializer::kBandEdges[1] / float(sr_));
     for (auto& ch : input_bus_.channel) ch.assign(size_t(block_), 0.0f);
+    for (auto& side : input_bus_.desktop) side.assign(size_t(block_), 0.0f);
     block_seconds_.assign(size_t(block_), -1.0);
     take_.assign(size_t(block_), 0.0f);
     for (auto* delay : {&send_delay_, &click_delay_}) delay->init(steam_.binauralDelay());
@@ -3660,8 +3661,8 @@ void AudioEngine::applyParams(Source& s, double at) {
             case ParamLane::Send:
                 if (lane.index >= 0 && lane.index < kMaxSends) s.sends[size_t(lane.index)].gain_target = gainOf(value);
                 break;
-            case ParamLane::Pan:
-                s.pan_target = std::clamp(value, -1.0f, 1.0f);
+            case ParamLane::Pan:  // (a track's one pan; a stereo track's left side's, or its right's)
+                (lane.index == 1 ? s.pan_left_target : lane.index == 2 ? s.pan_right_target : s.pan_target) = std::clamp(value, -1.0f, 1.0f);
                 break;
             case ParamLane::PedalKnob:
                 if (lane.index >= 0 && lane.index < s.board.count && lane.param < uint32_t(kPedalControls) &&
@@ -4380,7 +4381,7 @@ void AudioEngine::playSource(size_t index, float binaural_from, float glide, flo
 }
 
 // A stereo mic's track (its mono and mono_r hold what it plays: what its two capsules hear, or its clips), as a bus's
-// strip is: mid and side decoded to left and right, its inserts in stereo, its fader and mute, its balance, metered,
+// strip is: mid and side decoded to left and right, its inserts in stereo, its fader and mute, its two pans, metered,
 // into its folder or the master, and its sends.
 void AudioEngine::playStereoMic(size_t index, float wall_glide, float mute_coef) {
     Source* s = sources_[index];
@@ -4416,8 +4417,9 @@ void AudioEngine::playStereoMic(size_t index, float wall_glide, float mute_coef)
     double energy = 0.0, pre_energy = 0.0;
     float peak = 0.0f, pre_peak = 0.0f;
     Automating automating(*this, *s);
-    const float pan_from = s->pan;
-    s->pan += (s->pan_target - s->pan) * wall_glide;
+    const float left_from = s->pan_left, right_from = s->pan_right;
+    s->pan_left += (s->pan_left_target - s->pan_left) * wall_glide;
+    s->pan_right += (s->pan_right_target - s->pan_right) * wall_glide;
     for (int i = 0; i < block_; ++i) {
         pre_energy += 0.5 * (double(l[i]) * l[i] + double(r[i]) * r[i]);
         pre_peak = std::max(pre_peak, std::max(std::fabs(l[i]), std::fabs(r[i])));
@@ -4432,11 +4434,13 @@ void AudioEngine::playStereoMic(size_t index, float wall_glide, float mute_coef)
         const float a = l[i] * g, b = r[i] * g;
         energy += 0.5 * (double(a) * a + double(b) * b);
         peak = std::max(peak, std::max(std::fabs(a), std::fabs(b)));
-        // Its balance: turned one way, the other side is turned down (equal power), as a stereo track's.
-        const float pan = pan_from + (s->pan - pan_from) * float(i + 1) / float(block_);
-        const float keep_l = pan > 0.0f ? std::cos(pan * 0.5f * float(kPi)) : 1.0f, keep_r = pan < 0.0f ? std::cos(-pan * 0.5f * float(kPi)) : 1.0f;
-        s->out_l[size_t(i)] = a * keep_l;
-        s->out_r[size_t(i)] = b * keep_r;
+        // Its two pans, as a stereo track's: where its left side sits in the mix, and where its right does (equal
+        // power: hard left and hard right, as they begin, leave it as it is).
+        const float t = float(i + 1) / float(block_);
+        const float left = (left_from + (s->pan_left - left_from) * t + 1.0f) * 0.25f * float(kPi);
+        const float right = (right_from + (s->pan_right - right_from) * t + 1.0f) * 0.25f * float(kPi);
+        s->out_l[size_t(i)] = a * std::cos(left) + b * std::cos(right);
+        s->out_r[size_t(i)] = a * std::sin(left) + b * std::sin(right);
     }
     playOut(*s, s->out_l.data(), s->out_r.data(), to_l, to_r);
     levels_[size_t(s->id)].store(float(std::sqrt(energy / block_)), std::memory_order_relaxed);
@@ -4481,6 +4485,8 @@ void AudioEngine::renderBlock() {
         input_read_ = (input_read_ + size_t(block_)) % kFifoFrames;
         input_count_ -= size_t(block_);
     }
+    // And desktop audio's, while it is taken in, at the engine's rate.
+    input_bus_.desktop_on = desktop_->read(input_bus_.desktop[0].data(), input_bus_.desktop[1].data(), block_, double(sr_));
 
     std::fill(mix_l_.begin(), mix_l_.end(), 0.0f);
     std::fill(mix_r_.begin(), mix_r_.end(), 0.0f);

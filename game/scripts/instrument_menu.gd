@@ -24,7 +24,7 @@ var _panel: PanelContainer
 var _cards: Array = []
 var _card_for := {}  # kind → its card
 var _input_option: OptionButton
-var _input_choice := -1  # the hardware input a new live instrument plays; -1 = all of them
+var _input_choice := -1  # the input a new live instrument plays; -1 = all of the interface's (or desktop audio's)
 var _footer: Label
 var _scroll: ScrollContainer
 var _hint: Label  # what the mouse is over
@@ -325,13 +325,9 @@ func _refresh() -> void:
 		_footer.text = "%d in the room, space for %d more. To remove one, face it (or carry it) and press Backspace twice." % [count, limit - count]
 	_footer.add_theme_color_override("font_color", WARN if full else DIM)
 
-	var inputs: int = app.input_channel_count()
-	_input_option.clear()
-	_input_option.add_item("all inputs")
-	for i in inputs:
-		_input_option.add_item("input %d" % (i + 1))
-	_input_choice = mini(_input_choice, inputs - 1)
-	_input_option.select(_input_choice + 1)
+	if _input_choice >= 0 and _input_choice < app.DESKTOP_LEFT:  # (an input the interface doesn't have now: all of them)
+		_input_choice = mini(_input_choice, app.input_channel_count() - 1)
+	app.show_input_choice(_input_option, _input_choice)
 
 
 ## A plug-in instrument: which of the instrument plug-ins, from the browser; then it comes into your hands holding it,
@@ -354,7 +350,7 @@ func _choose_plugin_instrument() -> void:
 
 
 func _on_input_selected(index: int) -> void:
-	_input_choice = index - 1
+	_input_choice = app.input_at(_input_option, index)
 
 
 func _on_picked(kind: String) -> void:

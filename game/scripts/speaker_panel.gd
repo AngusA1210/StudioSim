@@ -60,10 +60,7 @@ func open(speaker, from_mixer := false) -> void:
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	_title.text = inst.display_name
 	_title.add_theme_color_override("font_color", inst.color.lightened(0.3))
-	_source.clear()
-	_source.add_item("All inputs")
-	for i in app.input_channel_count():
-		_source.add_item("Input %d" % (i + 1))
+	app.show_input_choice(_source, inst.input_channel)
 	_refresh()
 
 
@@ -103,7 +100,7 @@ func _refresh() -> void:
 	_volume.queue_redraw()
 	_input_switch.set_pressed_no_signal(inst.input_on)
 	_input_switch.text = "Input on" if inst.input_on else "Input off"
-	_source.select(clampi(inst.input_channel + 1, 0, _source.item_count - 1))
+	app.show_input_choice(_source, inst.input_channel)
 	var names := []
 	for insert in inst.inserts:
 		if insert.plugin_name != "":
@@ -183,8 +180,8 @@ func _build() -> void:
 	Hints.give(_input_switch, "Input on: it plays what comes into your interface. Wear headphones")
 	input_row.add_child(_input_switch)
 	_source = OptionButton.new()
-	_source.item_selected.connect(func(index: int) -> void: app.set_input_channel(inst, index - 1))
-	Hints.give(_source, "Which of your interface's inputs it plays")
+	_source.item_selected.connect(func(index: int) -> void: app.set_input_channel(inst, app.input_at(_source, index)))
+	Hints.give(_source, "Which of your interface's inputs it plays (or desktop audio, the computer's other apps, while the I/O page's audio bridge is on)")
 	input_row.add_child(_source)
 	_inserts = Label.new()
 	_inserts.add_theme_color_override("font_color", DIM)

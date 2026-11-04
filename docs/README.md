@@ -6,7 +6,7 @@ In-depth notes on each part of StudioSim. The project's [README](../README.md) g
   headphones
 - [Controls](controls.md): every key and shortcut
 - [Instruments, microphones and amps](instruments.md): the instruments, microphones and stereo pairs, live inputs,
-  amps' speakers, effect pedals and the loop pedal
+  desktop audio (the audio bridge), amps' speakers, effect pedals and the loop pedal
 - [Plug-ins and presets](plugins.md): VST3 and Audio Unit hosting, plug-in instruments, presets
 - [Rooms, Jam rooms and Record rooms](rooms-and-recording.md): saving rooms, templates, the timeline, recording,
   editing, automation
