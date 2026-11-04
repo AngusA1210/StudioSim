@@ -2152,6 +2152,13 @@ func set_show_stats(on: bool) -> void:
 	settings.save_to_disk()
 
 
+## Shiny surfaces mirroring the room (screen-space reflections), or only the lamps' highlights.
+func set_reflections(on: bool) -> void:
+	settings.reflections = on
+	_environment.ssr_enabled = on
+	settings.save_to_disk()
+
+
 func set_fullscreen(on: bool) -> void:
 	settings.fullscreen = on
 	_apply_display()
@@ -2240,6 +2247,13 @@ func _build_environment() -> void:
 	env.fog_enabled = true
 	env.fog_light_color = Color(0.03, 0.035, 0.05)
 	env.fog_density = 0.02
+	# Shiny surfaces mirror what is in the room (the instruments and their glow), as rough as each is (room_surfaces.gd's
+	# roughness); matte ones, nothing to speak of.
+	env.ssr_enabled = settings.reflections
+	env.ssr_max_steps = 64
+	env.ssr_fade_in = 0.15
+	env.ssr_fade_out = 2.0
+	env.ssr_depth_tolerance = 0.2
 	var world_env := WorldEnvironment.new()
 	world_env.environment = env
 	add_child(world_env)

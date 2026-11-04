@@ -26,7 +26,9 @@ patterns are saved with the room (see [Rooms](rooms-and-recording.md)).
 ## The menu
 
 Its header names the room, with **Save** and a **Room** button (Save as…, Save as template…, Jam or Record, Show in
-Finder: see [Rooms](rooms-and-recording.md)). Its pages:
+Finder: see [Rooms](rooms-and-recording.md)). Opened from the title screen (Audio setup, Settings, Controls), it leaves
+out the room's own pages and buttons (Metronome, Room, Save, Room ▾): the room behind the title isn't to be changed
+from there. Its pages:
 
 - **Metronome**: start and stop the patterns, tempo, swing, the click and its volume.
 - **Room**: the room's size, what its surfaces are made of, and the walls standing in it (see
@@ -38,7 +40,7 @@ Finder: see [Rooms](rooms-and-recording.md)). Its pages:
 - **I/O**: which of the device's outputs carry the mix, the input device, and which hardware input each Speaker plays.
   Live input always starts switched off, so an open microphone never meets a pair of speakers by surprise.
 - **MIDI**: every MIDI device the system sees, with a tick box each and a light that flashes when it sends notes.
-- **Settings**: binaural, distance falloff, the limiter's ceiling, delay compensation, text size, field of view, mouse sensitivity, room lighting, full screen (which
+- **Settings**: binaural, distance falloff, the limiter's ceiling, delay compensation, text size, field of view, mouse sensitivity, room lighting, reflections (shiny surfaces mirroring the room; off for a slower graphics card), full screen (which
   StudioSim then opens in every time), whether the master meter and the audio readout are shown on screen, where the
   free camera hears from (see [Controls](controls.md#you-and-the-free-camera)), the **StudioSim folder** (where its
   rooms, templates and instrument presets are kept), and auto-save and backups for the room. Your name and height are

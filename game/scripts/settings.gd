@@ -35,6 +35,7 @@ var pre_fader_meters := true  # the mix window's channel meters read before the 
 var pedalboard_open := true    # an amp's panel shows its pedalboard, or folds it away
 var bindings := {}  # the keys changed on the Controls page: action → physical keycode (see bindings.gd)
 var fullscreen := false
+var reflections := true  # shiny surfaces mirror the room (screen-space reflections)
 var room_brightness := 1.0
 
 # You (set on the title screen's You page)
@@ -101,6 +102,7 @@ func load_from_disk() -> void:
 	pre_fader_meters = file.get_value("display", "metering", "pre") != "post"  # (the old "pre_fader_meters" key is left behind: before is the default now)
 	pedalboard_open = file.get_value("display", "pedalboard_open", pedalboard_open)
 	fullscreen = file.get_value("display", "fullscreen", fullscreen)
+	reflections = bool(file.get_value("display", "reflections", reflections))
 	room_brightness = clampf(file.get_value("display", "room_brightness", room_brightness), 0.5, 3.0)
 	player_name = str(file.get_value("you", "name", player_name)).left(24)
 	voice_input = int(file.get_value("io", "voice_input", voice_input))
@@ -160,6 +162,7 @@ func save_to_disk() -> void:
 	file.set_value("display", "metering", "pre" if pre_fader_meters else "post")
 	file.set_value("display", "pedalboard_open", pedalboard_open)
 	file.set_value("display", "fullscreen", fullscreen)
+	file.set_value("display", "reflections", reflections)
 	file.set_value("display", "room_brightness", room_brightness)
 	file.set_value("you", "name", player_name)
 	file.set_value("io", "voice_input", voice_input)

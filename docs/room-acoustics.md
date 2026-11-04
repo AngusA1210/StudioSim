@@ -14,7 +14,9 @@ The Room page of the menu changes the room itself, while the music plays:
   acoustic-tile ceiling, and rings for about 0.7 s. Kept with the room. Each looks like what it is, at its real
   size: the floor's planks, tiles, rug or carpet; brick in running bond, wood boards, plaster, drywall with its skirting
   board, curtain folds, foam wedges, fabric panels, a diffuser's wells between its fins, shelves of books; a suspended
-  ceiling's tiles on their T-bars (`game/scripts/room_surfaces.gd`).
+  ceiling's tiles on their T-bars (`game/scripts/room_surfaces.gd`). Each is as shiny as it is: glazed tiles,
+  varnished wood and sealed concrete mirror the instruments and their glow a little, blurred as rough as they are, and
+  drywall, curtains, foam and carpet don't (Settings' **Reflections**).
 - **Walls**: a floor plan of the room, seen from above with the instruments and yourself marked on it (the room's own
   walls in their materials' colours). Drag on the floor to draw a wall, drag a wall to move it, drag the dot at either
   end to turn and stretch it. Drag one of the room's own walls to move that wall alone. Walls can stand at any angle and there can be up to 16. Each has its own height, and its

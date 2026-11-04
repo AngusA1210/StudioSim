@@ -45,6 +45,7 @@ var _autosave_toggle: CheckButton
 var _autosave_slider: HSlider
 var _autosave_value: Label
 var _backup_toggle: CheckButton
+var _reflections_toggle: CheckButton
 var _library_label: Label  # where StudioSim keeps its rooms, templates and presets
 var _library_dialog: FileDialog
 var _backup_slider: HSlider
@@ -163,6 +164,12 @@ func open(tab := -1) -> void:
 	var on_title: bool = app.title != null and app.title.is_open()
 	_resume.text = "Back  (Esc)" if on_title else "Resume  (Esc)"
 	_to_title.visible = not on_title
+	# From the title screen, only what isn't the room's: the room behind it is the title's, not to be changed from there.
+	for page in [METRONOME_TAB, ROOM_TAB]:
+		_tabs.set_tab_hidden(page, on_title)
+	if on_title and _tabs.current_tab in [METRONOME_TAB, ROOM_TAB]:
+		_tabs.current_tab = ENGINE_TAB
+	_refresh_room()
 	_engine_signature = ""  # force the device lists to rebuild
 	_input_signature = ""
 	_refresh_devices()
@@ -599,6 +606,12 @@ func _build_settings_page(page: VBoxContainer) -> void:
 	_fullscreen_toggle = CheckButton.new()
 	_fullscreen_toggle.toggled.connect(_on_fullscreen_toggled)
 	_field(page, "Full screen").add_child(_fullscreen_toggle)
+	_reflections_toggle = CheckButton.new()
+	_reflections_toggle.toggled.connect(func(on: bool) -> void:
+		app.set_reflections(on)
+		_refresh_live())
+	Hints.give(_reflections_toggle, "Shiny surfaces (tiles, a varnished floor, sealed concrete) mirror the instruments and their glow, blurred as rough as each is; matte ones (drywall, curtains, foam, carpet) don't. Off, they show only the lamps' highlights: lighter work for a slower graphics card")
+	_field(page, "Reflections").add_child(_reflections_toggle)
 	_meter_toggle = CheckButton.new()
 	_meter_toggle.toggled.connect(_on_meter_toggled)
 	_field(page, "Master meter on screen").add_child(_meter_toggle)
@@ -837,6 +850,8 @@ func _refresh_live() -> void:
 	_kept_value.text = "the last %d" % settings.backups_kept
 	_refresh_room()
 	_fullscreen_toggle.set_pressed_no_signal(settings.fullscreen)
+	_reflections_toggle.set_pressed_no_signal(settings.reflections)
+	_reflections_toggle.text = "On" if settings.reflections else "Off"
 	_fullscreen_toggle.text = "On: StudioSim opens full screen" if settings.fullscreen else "Off"
 	_meter_toggle.set_pressed_no_signal(settings.show_meter)
 	_meter_toggle.text = "On" if settings.show_meter else "Off"
@@ -849,8 +864,10 @@ func _refresh_live() -> void:
 ## The header: the room's name, and when it was saved, or something just done.
 func _refresh_room() -> void:
 	var session = app.session
-	_room_title.text = (session.room_name if session.room_name.length() <= 28 else session.room_name.left(27) + "…") if session.has_room() else "StudioSim"
-	_save.visible = session.has_room() or (app.title == null or not app.title.is_open())
+	var on_title: bool = app.title != null and app.title.is_open()
+	_room_title.text = (session.room_name if session.room_name.length() <= 28 else session.room_name.left(27) + "…") if session.has_room() and \
+		not on_title else "StudioSim"
+	_save.visible = not on_title  # (the room is saved, and changed, from inside it)
 	_room_menu.visible = _save.visible
 	_room_menu.get_popup().set_item_disabled(_room_menu.get_popup().get_item_index(2), not session.has_room())
 	_room_menu.get_popup().set_item_text(_room_menu.get_popup().get_item_index(3),

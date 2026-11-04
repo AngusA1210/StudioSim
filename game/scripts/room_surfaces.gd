@@ -69,15 +69,22 @@ float seen(vec2 p, float size) {
 	return 1.0 - smoothstep(size * 0.3, size * 1.2, length(fwidth(p)));
 }
 
-// The normal, tilted as a height `h` (metres) across the surface would tilt it (Mikkelsen's surface gradient).
+// The normal, tilted as a height `h` (metres) across the surface would tilt it (Mikkelsen's surface gradient), but by
+// MOST_TILT at most: a joint a pixel wide and millimetres deep would otherwise turn the surface on its side there,
+// and catch the light as a mirror's edge does. (Called everywhere alike: its derivatives need every pixel's.)
+const float MOST_TILT = 0.35;
 vec3 bumped(vec3 n, vec3 pos, float h) {
 	vec3 sx = dFdx(pos);
 	vec3 sy = dFdy(pos);
 	vec3 r1 = cross(sy, n);
 	vec3 r2 = cross(n, sx);
 	float det = dot(sx, r1);
-	vec3 grad = sign(det) * (dFdx(h) * r1 + dFdy(h) * r2);
-	return normalize(abs(det) * n - grad);
+	vec3 grad = sign(det) * (dFdx(h) * r1 + dFdy(h) * r2) / max(abs(det), 1e-12);
+	float tilt = length(grad);
+	if (tilt > MOST_TILT) {
+		grad *= MOST_TILT / tilt;
+	}
+	return normalize(n - grad);
 }
 
 void fragment() {
@@ -211,9 +218,7 @@ void fragment() {
 	}
 	ALBEDO = color;
 	ROUGHNESS = r;
-	if (h != 0.0) {
-		NORMAL = bumped(NORMAL, VERTEX, h);
-	}
+	NORMAL = bumped(NORMAL, VERTEX, h * seen(p, 0.01));  // (relief too fine to see left out, as the colours' is)
 	// (see-through)
 }
 """

@@ -322,6 +322,10 @@ func _run() -> void:
 	check(not main.menu.is_open() and title.is_open() and title._ui.visible and title.buttons.new.has_focus(), "Esc comes back to the title")
 	await click(title.buttons.controls.get_global_rect().get_center())
 	check(main.menu.is_open() and main.menu._tabs.get_tab_title(main.menu._tabs.current_tab) == "Controls", "Controls opens the key list")
+	var tabs = main.menu._tabs
+	check(tabs.is_tab_hidden(main.menu.METRONOME_TAB) and tabs.is_tab_hidden(main.menu.ROOM_TAB) and not tabs.is_tab_hidden(main.menu.ENGINE_TAB) and
+		not main.menu._save.visible and not main.menu._room_menu.visible and main.menu._room_title.text == "StudioSim",
+		"from the title screen, the menu leaves out the room's pages (Metronome, Room) and its Save and Room buttons: the room behind it isn't to be changed")
 	await tap(KEY_ESCAPE)
 	await frames(3)
 	check(main.menu._tabs.get_tab_count() == 7 and not range(7).any(func(i): return main.menu._tabs.get_tab_title(i) == "Templates") and
@@ -1425,8 +1429,9 @@ func _run() -> void:
 	menu._tabs.current_tab = menu.ROOM_TAB
 	await frames(4)
 	var plan = menu._plan
-	check(menu._tabs.get_tab_title(menu.ROOM_TAB) == "Room" and plan.is_visible_in_tree() and plan.size.x > 250 and plan.size.y > 200,
-		"the Room page shows the floor plan", "%d x %d pixels" % [plan.size.x, plan.size.y])
+	check(menu._tabs.get_tab_title(menu.ROOM_TAB) == "Room" and plan.is_visible_in_tree() and plan.size.x > 250 and plan.size.y > 200 and
+		not menu._tabs.is_tab_hidden(menu.METRONOME_TAB) and menu._save.visible,
+		"the Room page shows the floor plan (in the room, the room's pages and its Save are there)", "%d x %d pixels" % [plan.size.x, plan.size.y])
 	var rang: float = audio.get_room_decay()
 	menu._size_sliders.x.value = 24.0
 	menu._size_sliders.z.value = 16.0
@@ -3838,7 +3843,10 @@ func _run() -> void:
 	main.net.leave()
 	main.settings.session_server = ""
 	main.net.room_list.look(true)
-	await seconds(1.5)
+	var off_until := Time.get_ticks_msec() + 8000  # (a fetch can go out before the room is taken off: the next comes 5 s later)
+	await seconds(1.0)
+	while not main.net.room_list.found().is_empty() and Time.get_ticks_msec() < off_until:
+		await process_frame
 	check(main.net.room_list.problem == "" and main.net.room_list.found().is_empty(), "the session over, the room is taken off the room list",
 		str(main.net.room_list.found()) + main.net.room_list.problem)
 	main.net.room_list.look(false)
