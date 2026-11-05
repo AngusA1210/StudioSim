@@ -70,19 +70,33 @@ func is_open() -> bool:
 	return _root.visible
 
 
-func open_new() -> void:
+## The New room page: named "Untitled room" (or the next free one), made as the last room was, from the template chosen
+## last; or, as the tutorial has it, named after `base`, as a `mode` room, from `template`.
+func open_new(base := "Untitled room", mode := "", template := "") -> void:
 	_show(true)
 	_folder = app.session.location()
 	_folder_label.text = _folder.replace(OS.get_environment("HOME"), "~")
-	_name.text = _unused_name()
-	(_record if app.settings.room_mode == "record" else _jam).button_pressed = true
-	_fill_templates()
+	_name.text = _unused_name(base)
+	(_record if (mode if mode != "" else app.settings.room_mode) == "record" else _jam).button_pressed = true
+	_fill_templates(template)
 	for key in _carry:
 		_carry[key].set_pressed_no_signal(true)
 	_follow_carry()
 	_check_name()
 	_name.grab_focus()
 	_name.select_all()
+
+
+## Where little is shown on the New room page (its template list, below the few templates there are): for the
+## tutorial's card. Nothing while the other page is shown.
+func spare_rect() -> Rect2:
+	if not is_open() or not _new_page.visible:
+		return Rect2()
+	var list := _template_list.get_global_rect()
+	var below := 0.0  # (below the last template)
+	if _template_list.item_count > 0:
+		below = _template_list.get_item_rect(_template_list.item_count - 1).end.y + 8.0
+	return Rect2(list.position.x, list.position.y + below, list.size.x, list.size.y - below)
 
 
 func open_existing() -> void:
@@ -138,17 +152,17 @@ func _process(_delta: float) -> void:
 # ── New room ─────────────────────────────────────────────────────────────────────────────────────────────────
 
 ## "Untitled room", or "Untitled room 2" and so on if that is taken.
-func _unused_name() -> String:
-	var candidate := "Untitled room"
+func _unused_name(base := "Untitled room") -> String:
+	var candidate := base
 	var number := 2
 	while app.session.exists(_folder, candidate):
-		candidate = "Untitled room %d" % number
+		candidate = "%s %d" % [base, number]
 		number += 1
 	return candidate
 
 
-func _fill_templates() -> void:
-	var was: String = _chosen_template().get("path", app.library.DEFAULT_TEMPLATE)
+func _fill_templates(choose := "") -> void:
+	var was: String = choose if choose != "" else _chosen_template().get("path", app.library.DEFAULT_TEMPLATE)
 	_templates = app.library.templates()
 	_template_list.clear()
 	var index := 0

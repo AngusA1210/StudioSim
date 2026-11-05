@@ -22,6 +22,8 @@ game/                      Godot project: the room, player, instruments, HUD, me
   scripts/rooms_page.gd    making a new room (from a template) and opening one
   scripts/avatar_page.gd   Avatar customization: your name, height and look, from the title screen, your body turning
                            beside them
+  scripts/tutorial.gd      the title screen's Tutorial: a card taking a newcomer through a room of their own, a step
+                           at a time, each step going on once it is done
   scripts/net.gd           playing together: hosting and joining, the players and their bodies, the session's clock
                            and the patterns kept in step with it, notes played
   scripts/room_sync.gd     the room kept the same for everyone: what changed sent, what came applied, in the host's order

@@ -1052,9 +1052,11 @@ func need_files(clips: Array) -> void:
 	for clip in clips:
 		if str(clip.get("kind", "")) == "audio":
 			names[str(clip.get("file", ""))] = true
+			names[str(clip.get("di", ""))] = true  # (an amp's DI: "" for none, passed over below)
 		for take in clip.get("takes", []):
 			if str(take.get("kind", "")) == "audio":
 				names[str(take.get("file", ""))] = true
+				names[str(take.get("di", ""))] = true
 	for name in names:
 		if name != "" and not has_file(name) and not _asked.has(name) and not _incoming.has(name):
 			_asked[name] = true

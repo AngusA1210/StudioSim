@@ -17,7 +17,8 @@ const Library := preload("res://scripts/library.gd")
 ## What a joining player needs the host to have let them do (net.gd's MAY) to change each part of an instrument's
 ## state, and of the room's (whose input plays through a live input needs nothing: it is playing).
 const STATE_NEEDS := {"name": "sound", "color": "sound", "room_db": "sound", "room_muted": "sound", "locked": "move", "settings": "sound",
-	"stereo": "sound", "loop_on": "sound", "steps": "sound", "pattern": "sound", "armed_by": "transport", "clips": "transport"}
+	"stereo": "sound", "loop_on": "sound", "steps": "sound", "pattern": "sound", "armed_by": "transport", "clips": "transport",
+	"keep_di": "transport", "reamp": "transport"}
 const ROOM_NEEDS := {"size": "room", "walls": "room", "surfaces": "room", "tempo": "room", "swing": "room", "reverb_db": "room",
 	"mode": "room", "loop": "transport", "playhead": "transport"}
 const PLACE_EVERY := 0.1
@@ -116,6 +117,9 @@ func state_of(inst) -> Dictionary:
 		out.stream = int(inst.get_meta("stream", 0))
 	out.armed_by = int(inst.get_meta("armed_by", 0))
 	out.clips = inst.clips
+	if inst.is_amp:  # (its DI kept as it records; played through the amp again)
+		out.keep_di = inst.keep_di
+		out.reamp = inst.reamp
 	return out
 
 
@@ -320,6 +324,11 @@ func _apply_state(inst, state: Dictionary) -> void:
 		net.follow_feed(inst)
 	inst.set_meta("armed_by", int(state.get("armed_by", 0)))
 	net.follow_arm(inst)
+	if inst.is_amp:
+		if bool(state.get("keep_di", false)) != inst.keep_di:
+			app.set_keep_di(inst, bool(state.get("keep_di", false)))
+		if bool(state.get("reamp", false)) != inst.reamp:
+			app.set_reamp(inst, bool(state.get("reamp", false)))
 	if state.has("clips") and hash(state.clips) != hash(inst.clips):
 		inst.clips = state.clips.duplicate(true)
 		app.timeline.sync(inst)

@@ -289,16 +289,18 @@ public:
     void play_from(double step, double in_seconds = -1.0);  // (in_seconds, 0 or more: reaching it that long from now)
     void set_loop_range(bool on, double start_step, double end_step);
     double get_timeline_position() const;
-    // A track's clips: notes [{step, length (steps), note, velocity}] and audio [{path, start, offset, length} (seconds)].
+    // A track's clips: notes [{step, length (steps), note, velocity}] and audio [{path, start, offset, length} (seconds),
+    // and fade_in, fade_out, gain, and direct: an amp's recording of what it played, played after its pedals and amp].
     // False with the reason in get_error() if a file couldn't be read (the rest are used).
     bool set_track(int id, const Array& notes, const Array& clips, const Dictionary& automation = Dictionary());  // (automation: {volume, mute, sustain}: [[step, value]])
     void set_automation_read(int id, bool volume, bool mute, bool sustain, bool params = true);
     PackedFloat32Array get_audio_peaks(const String& path, double per_second);  // the loudest sample in each slice
     double get_audio_seconds(const String& path);  // 0 if it can't be read
-    // Recording: arming a track; starting (`files` [[source id, WAV path]] for the armed Speakers and amps; the
-    // timeline plays on from where it is, or from `from_step` if it is stopped); stopping; and once the audio thread
-    // has stopped, what was taken: {start_step, end_step, step_seconds, audio: [{source, path, seconds, dropped}],
-    // notes: [{source, step, length, note, velocity}]}, or {} until then.
+    // Recording: arming a track; starting (`files` [[source id, WAV path]] for the armed Speakers and amps, and
+    // [source id, WAV path, true] for an amp's DI beside what it plays; the timeline plays on from where it is, or from
+    // `from_step` if it is stopped); stopping; and once the audio thread has stopped, what was taken: {start_step,
+    // end_step, step_seconds, audio: [{source, path, seconds, dropped, and di: true for a DI}], notes: [{source, step,
+    // length, note, velocity}]}, or {} until then.
     void set_record_arm(int id, bool armed);
     // (a count-in first, the timeline stopped; with `loop`, round the loop, a take a pass)
     bool start_recording(const Array& files, double from_step, double count_in_steps = 0.0, bool loop = false, double preroll_steps = 0.0,

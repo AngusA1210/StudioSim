@@ -3185,6 +3185,82 @@ int main(int argc, char** argv) {
                   played_to > 25.0,
               "with a pre-roll the music starts a bar early, and it records only from the punch in to the punch out, heard meanwhile, playing on after",
               punched_readable ? fmt("%.2f s recorded, ", punched_read.seconds()) + fmt("played on to step %.1f", played_to) : record_error);
+
+        // An armed amp records what it plays (through its pedals and the amp, before its inserts), and its DI beside it
+        // when given a file for that, the two lined up to the sample though a plug-in pedal makes the amp 1000 samples
+        // late. Played back as a direct clip, its recording is heard as the amp played it, in step with its DI played
+        // through the amp again (reamped), whatever the amp is set to since.
+        {
+            const auto plugins = PluginInstance::available();
+            const auto found = std::find_if(plugins.begin(), plugins.end(), [](const PluginDescription& p) { return p.name == "SR Test Lookahead"; });
+            Room amp_take;
+            amp_take.hearMix();
+            amp_take.quietRoom(-1);
+            amp_take.engine.setLimiter(false);
+            amp_take.engine.setTempo(120.0);
+            const int guitar = amp_take.engine.addSource(InstrumentKind::GuitarCombo, {0.0f, 0.55f, 0.0f}, 1.0f, 0.0f);
+            std::string why;
+            const int slow = amp_take.engine.addPedal(guitar, PedalKind::Plugin);
+            const bool late_pedal = found != plugins.end() && slow >= 0 && amp_take.engine.loadPedalPlugin(guitar, slow, found->id, &why);
+            amp_take.engine.setRecordArm(guitar, true);
+            renderSeconds(amp_take.engine, 0.1);
+            const std::string amp_file = (folder / "Guitar_01.wav").string(), di_file = (folder / "Guitar_01_DI.wav").string();
+            std::string amp_error;
+            const bool amp_started = amp_take.engine.startRecording({{guitar, amp_file}, {guitar + kDiTake, di_file}}, 16.0, &amp_error);
+            int64_t plucked = 0;
+            auto bursts = [&](int64_t) {  // a short burst every quarter second
+                const int64_t k = plucked++ % 12000;
+                return k < 480 ? 0.3f * float(std::sin(6.2831853 * 330.0 * double(k) / 48000.0)) : 0.0f;
+            };
+            renderSeconds(amp_take.engine, 1.0, bursts);
+            amp_take.engine.stopRecording();
+            renderSeconds(amp_take.engine, 0.02);
+            RecordingResult amp_result;
+            const bool amp_taken = amp_take.engine.takeRecording(&amp_result) && amp_result.audio.size() == 2;
+            AudioData played_file, di_read;
+            std::string amp_read_error;
+            const RecordingResult::Audio* played_take = nullptr;
+            const RecordingResult::Audio* di_take = nullptr;
+            for (const auto& a : amp_result.audio) (a.source == guitar + kDiTake ? di_take : played_take) = &a;
+            const bool both = amp_taken && played_take && di_take && readWav(played_take->path, &played_file, &amp_read_error) &&
+                              readWav(di_take->path, &di_read, &amp_read_error);
+            const int di_onset = both ? onsetAfter(di_read.samples, 0) : -1, played_onset = both ? onsetAfter(played_file.samples, 0) : -1;
+            double di_energy = 0.0;
+            for (float v : di_read.samples) di_energy += double(v) * v;
+            const double held_back = both ? double(di_read.samples.size()) - double(played_file.samples.size()) : 0.0;
+            check(amp_started && late_pedal && both && di_onset >= 0 && std::abs(played_onset - di_onset) < 100 && std::fabs(held_back - 1000.0) <= 128.0 &&
+                      di_energy > 0.0,
+                  "an armed amp records what it plays and its DI beside it, lined up though a plug-in pedal makes the amp late",
+                  both ? fmt("the amp's onset %+.0f samples from the DI's, ", double(played_onset - di_onset)) + fmt("%.0f samples left off its start", held_back)
+                       : amp_error + why + amp_read_error);
+
+            amp_take.engine.setRecordArm(guitar, false);
+            amp_take.engine.setSequencerRunning(false);
+            renderSeconds(amp_take.engine, 0.1);
+            const double from_s = amp_result.start_step * amp_result.step_seconds;
+            const ClipSpec as_recorded{both ? played_take->path : "", from_s, 0.0, both ? played_take->seconds : 0.0, 0.0, 0.0, 1.0f, true};
+            const ClipSpec reamp{both ? di_take->path : "", from_s, 0.0, both ? played_take->seconds : 0.0};
+            std::string clip_error;
+            auto play_once = [&](const ClipSpec& clip) {
+                amp_take.engine.setTrack(guitar, {}, {clip}, &clip_error);
+                amp_take.engine.playFrom(amp_result.start_step - 2.0);  // a quarter of a second before it
+                const Render r = renderSeconds(amp_take.engine, 1.0);
+                amp_take.engine.setSequencerRunning(false);
+                renderSeconds(amp_take.engine, 0.3);
+                return r;
+            };
+            const Render direct = play_once(as_recorded), reamped = play_once(reamp);
+            const int direct_onset = onsetAfter(direct.l, 0), reamped_onset = onsetAfter(reamped.l, 0);
+            check(both && direct.rms_l > 1e-3 && std::abs(direct_onset - reamped_onset) <= 4 && std::fabs(db(direct.rms_l) - db(reamped.rms_l)) < 0.5,
+                  "played back, the amp's recording sounds as its DI does through the amp, and in step with it",
+                  fmt("%+.0f samples, ", double(direct_onset - reamped_onset)) + fmt("%+.2f dB", db(direct.rms_l) - db(reamped.rms_l)));
+            amp_take.engine.setAmpControl(guitar, AmpControl::Master, 0.0f);  // the amp turned right down
+            renderSeconds(amp_take.engine, 0.2);
+            const Render direct_after = play_once(as_recorded), reamped_after = play_once(reamp);
+            check(both && std::fabs(db(direct_after.rms_l) - db(direct.rms_l)) < 0.1 && reamped_after.rms_l < 1e-5,
+                  "the amp turned down since, its recording plays as it was recorded, and its DI through the amp is silent",
+                  fmt("the recording %+.2f dB, ", db(direct_after.rms_l) - db(direct.rms_l)) + fmt("the DI %.0f dBFS", db(reamped_after.rms_l)));
+        }
         std::filesystem::remove_all(folder);
     }
 

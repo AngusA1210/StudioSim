@@ -133,13 +133,19 @@ struct TimelineNote {
 // An audio clip: part of a WAV file (from `offset` seconds into it, `length` long), placed `start` seconds from the
 // start of bar 1. Many clips can share one file, as Pro Tools' clips refer to their parent file. It fades in over its
 // first `fade_in` seconds and out over its last `fade_out` (equal-power curves), and is played at `gain` (Pro Tools'
-// clip gain).
+// clip gain). A `direct` clip is the track's own sound already, an amp's recording of what it played: it is played after
+// the amp's pedals and the amp, rather than through them (in step with them: as late as its pedals' plug-ins make the
+// amp), so that what was recorded is heard as it was, whatever the amp is set to now.
 struct ClipSpec {
     std::string path;
     double start = 0.0, offset = 0.0, length = 0.0;
     double fade_in = 0.0, fade_out = 0.0;
     float gain = 1.0f;
+    bool direct = false;
 };
+// An amp's DI, recorded beside what the amp plays: its source's id plus this, in startRecording's files and in what a
+// recording took.
+constexpr int kDiTake = 1 << 24;
 // A track's automation, as Pro Tools and Logic draw it under the track: breakpoints in steps (they follow the tempo).
 // Volume is in dB (-80 and below silent), glided between its points and held level before the first and after the
 // last, in place of the fader while it is read; mute and the sustain pedal (an instrument's) are on (1) or off (0)
@@ -579,8 +585,10 @@ public:
     void renderAsDevice(bool on) { realtime_.store(on, std::memory_order_release); }
 
     // ── Recording ────────────────────────────────────────────────────────────────────────────────────────
-    // Arming a track for recording. An armed Speaker or amp records its hardware input as it comes in (before its
-    // pedals, amp and inserts); an armed instrument records the notes played on it.
+    // Arming a track for recording. An armed Speaker records its hardware input as it comes in (before its inserts); an
+    // armed amp, what it plays (after its pedals and the amp, before its inserts), lined up with what came in (its pedals'
+    // plug-ins' latency taken off), and its DI as well if it is given a file for that (its id plus kDiTake); an armed
+    // instrument records the notes played on it.
     void setRecordArm(int id, bool armed);
     // From the next block: the armed tracks record (audio to `files`, one per armed audio track: [source, path]),
     // the timeline playing on from where it is, or from `from_step` if it is stopped. Loop playback waits meanwhile.

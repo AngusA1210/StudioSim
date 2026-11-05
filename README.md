@@ -33,7 +33,7 @@ godot --path game
 ```
 
 The build script fetches the libraries kept out of git, builds the audio core and the Godot extension, and runs the
-offline checks. `tools/export.sh` then makes StudioSim into an app that opens with a double-click, without Godot (see
+offline checks. New to it? **Tutorial**, on the title screen, takes you through a room of your own a step at a time. `tools/export.sh` then makes StudioSim into an app that opens with a double-click, without Godot (see
 [Building and running](docs/building.md#making-the-app)). Use wired headphones: Bluetooth adds a delay no software
 can remove.
 

@@ -4,7 +4,8 @@ extends RefCounted
 ## one (Cmd-G), into another folder, out of its own (an instrument's track, an aux track, or a folder with all in it);
 ## a new aux track; and for a folder or an aux, stereo or mono, and taking it away. A new folder or aux track can be
 ## stereo or mono, as in Pro Tools' New Track dialog. A microphone's track, its polarity (Ø); an acoustic kit's, its
-## microphones put up in one go. These are the ids it uses.
+## microphones put up in one go; an amp's, keeping its DI as it records, and playing that through the amp again
+## (reamping). These are the ids it uses.
 
 const RENAME := 500
 const NEW_FOLDER := 501
@@ -17,6 +18,8 @@ const MONO := 507
 const NEW_MONO_FOLDER := 508
 const NEW_MONO_AUX := 509
 const POLARITY := 510
+const KEEP_DI := 511
+const REAMP := 512
 const MIC_KIT := 520  # and on, a setup each (kit_mics.gd's)
 const INTO := 600  # and on, a folder each
 
@@ -70,6 +73,19 @@ static func add_items(menu: PopupMenu, app, track, colors: PopupMenu, modes: Pop
 		menu.set_item_tooltip(menu.get_item_index(POLARITY),
 			"Turns its signal over at its preamp, before it records: for a mic facing another the other way, as one under a snare against one over it")
 		menu.add_separator()
+	elif track.get("is_amp"):  # what it records: what the amp plays, and its DI too if it keeps it; and what it plays back
+		menu.add_check_item("Record the DI too", KEEP_DI)
+		menu.set_item_checked(menu.get_item_index(KEEP_DI), track.keep_di)
+		menu.set_item_tooltip(menu.get_item_index(KEEP_DI), "Recording, it keeps what you play as it comes in (before the pedals and the amp) " +
+			"as well as what the amp plays, in a file of its own beside it, so that it can be played through the amp again later")
+		var has_di: bool = track.clips.any(_has_di)
+		menu.add_check_item("Reamp: play the DI through the amp", REAMP)
+		menu.set_item_checked(menu.get_item_index(REAMP), track.reamp)
+		menu.set_item_disabled(menu.get_item_index(REAMP), not has_di and not track.reamp)
+		menu.set_item_tooltip(menu.get_item_index(REAMP), ("Its clips play their DI through the pedals and the amp as they are now, to dial " +
+			"in another sound, rather than what the amp played as they were recorded (marked DI in the edit window)") if has_di or track.reamp
+			else "None of its clips has a DI yet: tick Record the DI too before recording")
+		menu.add_separator()
 	elif track.has_parts():
 		for i in KitMics.ORDER.size():
 			var setup: Dictionary = KitMics.SETUPS[KitMics.ORDER[i]]
@@ -92,6 +108,11 @@ static func add_items(menu: PopupMenu, app, track, colors: PopupMenu, modes: Pop
 		menu.add_item("Remove the aux track (and the sends to it)", REMOVE_AUX)
 	elif track.is_folder:
 		menu.add_item("Remove the folder (its tracks go where it went)", REMOVE_FOLDER)
+
+
+## Whether a clip (or one of its takes) has a DI, an amp's, beside what the amp played.
+static func _has_di(clip: Dictionary) -> bool:
+	return str(clip.get("di", "")) != "" or clip.get("takes", []).any(func(take): return str(take.get("di", "")) != "")
 
 
 ## Acts on one of the track's items. Returns whether `id` was one of them.
@@ -125,6 +146,16 @@ static func chosen(app, track, id: int) -> bool:
 			app.set_folder_mono(track, id == MONO)
 		POLARITY:
 			app.set_mic_polarity(track, not track.mic_inverted)
+		KEEP_DI:  # (every amp chosen with it, as it is)
+			var keep: bool = not track.keep_di
+			for t in tracks:
+				if t.get("is_amp"):
+					app.set_keep_di(t, keep)
+		REAMP:
+			var on: bool = not track.reamp
+			for t in tracks:
+				if t.get("is_amp"):
+					app.set_reamp(t, on)
 		MIC_KIT, MIC_KIT + 1, MIC_KIT + 2:
 			app.mic_kit(track, KitMics.ORDER[id - MIC_KIT])
 		_:

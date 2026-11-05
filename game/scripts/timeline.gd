@@ -244,12 +244,7 @@ func start_recording() -> String:
 	var armed: Array = app.instruments.filter(func(inst): return inst.armed)
 	if armed.is_empty():
 		return "no track is armed (R on its row in the Edit window)"
-	var folder: String = app.session.room_folder().path_join(AUDIO_FOLDER)
-	DirAccess.make_dir_recursive_absolute(folder)
-	var files := []
-	for inst in armed:
-		if not inst.playable:
-			files.append([inst.source_id, folder.path_join(_take_name(folder, inst.display_name))])
+	var files := _take_files(armed)
 	var from := playhead if not playing else audio.get_timeline_position()
 	# Loop Record (from a stop): round the loop from its start, a take each time round. Or punching in and out (from a
 	# stop) over the range on the ruler, as over a selection in Pro Tools, the post-roll played after it.
@@ -315,12 +310,7 @@ func play_together(from: float, punch_in_step: float, in_seconds: float, record:
 
 ## (Recording the tracks armed here, as start_recording does, from a stop at a set moment or straight away.)
 func _record_armed(armed: Array, from: float, preroll: float, loop_record: bool, in_seconds: float, count_in := 0.0, punch_out_step := -1.0) -> bool:
-	var folder: String = app.session.room_folder().path_join(AUDIO_FOLDER)
-	DirAccess.make_dir_recursive_absolute(folder)
-	var files := []
-	for inst in armed:
-		if not inst.playable:
-			files.append([inst.source_id, folder.path_join(_take_name(folder, inst.display_name))])
+	var files := _take_files(armed)
 	var at: float = from if from >= 0.0 else audio.get_timeline_position()
 	if not audio.start_recording(files, at, count_in, loop_record, maxf(preroll, 0.0), punch_out_step, in_seconds):
 		app.session.notice.emit("It couldn't record here: %s" % audio.get_error())
@@ -350,9 +340,25 @@ func stop_together(at: float) -> void:
 func file_arrived(name: String) -> void:
 	_peaks.erase(app.session.room_folder().path_join(name))
 	for inst in app.instruments:
-		if inst.clips.any(func(clip): return str(clip.get("file", "")) == name):
+		if inst.clips.any(func(clip): return str(clip.get("file", "")) == name or str(clip.get("di", "")) == name):
 			sync(inst)
 	changed.emit()
+
+
+## The files the armed audio tracks record to, in the room's Audio Files folder: [source id, path] for each (a Speaker's
+## input, a microphone's sound, what an amp plays), and [source id, path, true] for an amp's DI beside what it plays,
+## if it keeps one ("Guitar_Combo_01_DI.wav", beside "Guitar_Combo_01.wav").
+func _take_files(armed: Array) -> Array:
+	var folder: String = app.session.room_folder().path_join(AUDIO_FOLDER)
+	DirAccess.make_dir_recursive_absolute(folder)
+	var files := []
+	for inst in armed:
+		if not inst.playable:
+			var path := folder.path_join(_take_name(folder, inst.display_name))
+			files.append([inst.source_id, path])
+			if inst.is_amp and inst.keep_di:
+				files.append([inst.source_id, path.get_basename() + "_DI.wav", true])
+	return files
 
 
 ## "Speaker_01.wav", "Speaker_02.wav"...: the first not in the folder yet.
@@ -411,14 +417,22 @@ func _add_takes(took: Dictionary) -> void:
 	var heard_late := float(stats.get("output_latency_ms", 0.0)) / 1000.0
 	var audio_late := heard_late + float(stats.get("input_latency_ms", 0.0)) / 1000.0
 	var passes := _passes(end_step) if looped else []
+	var di_of := {}  # an amp's DI, by its source: the file beside what it played (lined up with it to the sample)
+	for take in took.audio:
+		if take.get("di", false) and float(take.seconds) > 0.0:
+			di_of[int(take.source)] = AUDIO_FOLDER.path_join(str(take.path).get_file())
 	for take in took.audio:
 		var inst = by_id.get(int(take.source))
-		if inst == null or float(take.seconds) <= 0.0:
+		if inst == null or float(take.seconds) <= 0.0 or take.get("di", false):
 			continue
 		# (a microphone's take is what the room sounded like as it played, from the clock itself: nothing to undo)
 		var late: float = 0.0 if inst.is_mic else audio_late
 		var file: String = str(take.path).get_file()
 		var clip := {"kind": "audio", "file": AUDIO_FOLDER.path_join(file), "name": file.get_basename(), "fade_in": 0.0, "fade_out": 0.0}
+		if inst.is_amp:  # what the amp played (played as it was, after its pedals and the amp), and its DI if it was kept
+			clip.amped = true
+			if di_of.has(inst.source_id):
+				clip.di = di_of[inst.source_id]
 		if looped:  # each pass: the loop's span of the file, from where it was played
 			var stack := []
 			for k in passes.size():
@@ -743,13 +757,15 @@ func engine_clips(inst) -> Array:
 		var clip: Dictionary = inst.clips[c]
 		if clip.kind != "audio" or not FileAccess.file_exists(file_path(clip)):  # (playing together, its file still coming: silent)
 			continue
+		var reamped := reamping(inst, clip)  # (its DI through the amp, or what the amp played, played as it was)
 		var extra: Array = reach.get(c, [0.0, 0.0])
 		var into: float = crossfade_span(inst, c).x + crossfade_span(inst, c).y  # its crossfade out
 		var from_c: int = _met_by(inst, c)
 		var out_of: float = 0.0 if from_c < 0 else crossfade_span(inst, from_c).x + crossfade_span(inst, from_c).y  # and in
-		out.append({"path": file_path(clip), "start": float(clip.start) - extra[0], "offset": float(clip.offset) - extra[0],
+		out.append({"path": di_path(clip) if reamped else file_path(clip), "start": float(clip.start) - extra[0], "offset": float(clip.offset) - extra[0],
 			"length": float(clip.length) + extra[0] + extra[1], "fade_in": out_of if out_of > 0.0 else float(clip.get("fade_in", 0.0)),
-			"fade_out": into if into > 0.0 else float(clip.get("fade_out", 0.0)), "gain": gain_of(clip)})
+			"fade_out": into if into > 0.0 else float(clip.get("fade_out", 0.0)), "gain": gain_of(clip),
+			"direct": bool(clip.get("amped", false)) and not reamped})
 	return out
 
 
@@ -806,6 +822,19 @@ func set_crossfade(inst, c: int, seconds: float, send := true) -> void:
 
 func file_path(clip: Dictionary) -> String:
 	return app.session.room_folder().path_join(str(clip.get("file", ""))) if app.session.has_room() else str(clip.get("file", ""))
+
+
+## Where an amp's clip's DI is on disk ("" for a clip without one).
+func di_path(clip: Dictionary) -> String:
+	var di := str(clip.get("di", ""))
+	if di == "":
+		return ""
+	return app.session.room_folder().path_join(di) if app.session.has_room() else di
+
+
+## Whether a clip plays its DI through the amp (its track reamping, its DI there) rather than what the amp played.
+func reamping(inst, clip: Dictionary) -> bool:
+	return inst != null and bool(inst.get("reamp")) and di_path(clip) != "" and FileAccess.file_exists(di_path(clip))
 
 
 ## Where a clip starts and ends, in steps.
@@ -1105,8 +1134,8 @@ func _restore(shot: Dictionary) -> void:
 
 
 ## A clip's file's loudest moments, a hundred to the second, for drawing it (read once).
-func peaks(clip: Dictionary) -> PackedFloat32Array:
-	var path := file_path(clip)
+func peaks(clip: Dictionary, inst = null) -> PackedFloat32Array:  # (what it plays: reamping, its DI)
+	var path := di_path(clip) if reamping(inst, clip) else file_path(clip)
 	if not _peaks.has(path):
 		_peaks[path] = audio.get_audio_peaks(path, 100.0)
 	return _peaks[path]

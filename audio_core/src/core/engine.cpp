@@ -207,6 +207,9 @@ struct AudioEngine::Source {
     AmpSpeaker amp_speaker = AmpSpeaker::AmericanVintage;
     float loop_mix = 0.5f;  // its effects loop's Mix
     int loop_delay = 0;     // how late its loop's plug-ins make what comes back (its preamp's own signal is held back as much)
+    int pedal_delay = 0;    // how late all its pedals' plug-ins make it (the game thread's)
+    int pedal_delay_rt = 0;  // (the audio thread's)
+    int print_skip = 0;      // recording what it plays: samples still to leave out at its start (as late as its pedals make it)
     bool head_on = true, cabinet_on = true;
     // An amp's effect pedals, the loop pedal among them if it has one. They live here rather than in the amp, so that
     // a loop survives a change of buffer size. The game thread owns them, in order, with what it last set on each; the audio thread
@@ -233,6 +236,7 @@ struct AudioEngine::Source {
             double start = 0.0, offset = 0.0, length = 0.0, fade_in = 0.0, fade_out = 0.0;
             float gain = 1.0f;
             std::shared_ptr<StreamedFile> file;  // read from disk as it plays (see disk_stream.h)
+            bool direct = false;  // (see ClipSpec)
         };
         std::vector<Clip> clips;
         TrackAutomation automation;
@@ -394,6 +398,7 @@ struct AudioEngine::Source {
     std::vector<std::pair<std::unique_ptr<Track>, uint32_t>> retired_tracks;
     bool armed = false;            // armed for recording (the audio thread's copy)
     std::vector<float> playback;   // this block's recorded audio, played into it
+    std::vector<float> direct;     // and its direct clips', played after it (a Speaker's or an amp's)
     std::vector<std::pair<std::unique_ptr<Pedal>, uint32_t>> retired;
     uint32_t board_sent = 0;
     std::atomic<uint32_t> board_applied{0};
@@ -499,6 +504,8 @@ std::unique_ptr<Instrument> AudioEngine::makeInstrument(InstrumentKind kind) con
 
 void AudioEngine::connect(Source& s) {
     s.playback.assign(size_t(block_), 0.0f);
+    if (isLiveInput(s.kind)) s.direct.assign(size_t(block_), 0.0f);
+    s.pedal_delay_rt = s.pedal_delay;
     s.instrument->setPlayback(isLiveInput(s.kind) ? s.playback.data() : nullptr);
     if (s.kind == InstrumentKind::PluginSynth) {
         auto* holder = static_cast<PluginPedal*>(s.synth.pedal.get());
@@ -991,7 +998,7 @@ bool AudioEngine::setTrack(int id, const std::vector<TimelineNote>& notes, const
             continue;
         }
         const double fade_in = std::clamp(spec.fade_in, 0.0, spec.length), fade_out = std::clamp(spec.fade_out, 0.0, spec.length - fade_in);
-        track->clips.push_back({spec.start, spec.offset, spec.length, fade_in, fade_out, std::max(spec.gain, 0.0f), audio});
+        track->clips.push_back({spec.start, spec.offset, spec.length, fade_in, fade_out, std::max(spec.gain, 0.0f), audio, spec.direct});
     }
     std::vector<StreamRegion> regions;  // for the disk thread to read ahead of
     for (const auto& clip : track->clips) regions.push_back({clip.file, clip.start, clip.offset, clip.length});
@@ -2465,18 +2472,19 @@ int AudioEngine::ownDelay(Source& s) {
     }
     if (isAmp(s.kind)) {  // its pedals: those in front, and those in its loop (the preamp's signal held back to meet them)
         const int front = int(s.pedals.size()) - std::clamp(s.fx_loop, 0, int(s.pedals.size()));
-        int loop = 0;
+        int loop = 0, in_front = 0;
         for (int p = 0; p < int(s.pedals.size()); ++p) {
             const int d = pedalDelay(s.pedals[size_t(p)].pedal.get());
-            if (p < front) delay += d;
+            if (p < front) in_front += d;
             else loop += d;
         }
         loop = std::min(loop, kMaxCompensation);
-        if (loop != s.loop_delay) {
+        if (loop != s.loop_delay || in_front + loop != s.pedal_delay) {  // (and all of it: for its direct clips, and recording)
             s.loop_delay = loop;
-            Command c; c.type = Command::AmpLoopDelay; c.id = s.id; c.v[0] = float(loop); push(c);
+            s.pedal_delay = in_front + loop;
+            Command c; c.type = Command::AmpLoopDelay; c.id = s.id; c.v[0] = float(loop); c.v[1] = float(s.pedal_delay); push(c);
         }
-        delay += loop;
+        delay += in_front + loop;
     }
     return delay;
 }
@@ -2941,7 +2949,10 @@ void AudioEngine::drainCommands() {
                 }
                 break;
             case Command::AmpLoopDelay:
-                if (s && isAmp(s->kind)) static_cast<Amp*>(s->instrument.get())->setLoopDelay(int(c.v[0]));
+                if (s && isAmp(s->kind)) {
+                    static_cast<Amp*>(s->instrument.get())->setLoopDelay(int(c.v[0]));
+                    s->pedal_delay_rt = int(c.v[1]);
+                }
                 break;
             case Command::RemoveSource:
                 if (s) {  // fade it out first, so it doesn't leave with a click
@@ -3083,6 +3094,8 @@ void AudioEngine::drainCommands() {
                 sequencer_.suspendLoop(c.v[2] < 0.5f);  // round the loop only when loop recording
                 recorder_rt_ = static_cast<Recorder*>(c.data);
                 recording_ = true;
+                for (Source* each : sources_)  // (what an amp plays starts as late as its pedals make it: that much is left out)
+                    if (each) each->print_skip = isAmp(each->kind) ? each->pedal_delay_rt : 0;
                 record_start_.store(from);
                 record_step_seconds_.store(sequencer_.stepSamples() / sr_);
                 break;
@@ -3492,29 +3505,37 @@ void AudioEngine::renderTimeline() {
         }
         if (!s || !isLiveInput(s->kind)) continue;
         std::fill(s->playback.begin(), s->playback.end(), 0.0f);
+        std::fill(s->direct.begin(), s->direct.end(), 0.0f);
         // What is heard from it, as Pro Tools has it: its input while input monitoring (I) is on, or while it is armed
         // and either stopped or recording (Auto Input: punched in, not in the pre-roll or post-roll); what it recorded
         // before, otherwise.
         const bool hear_input = s->input_on || (s->armed && (punching || !playing));
         s->instrument->setInputEnabled(hear_input);
-        if (punching && s->armed && recorder_rt_ && record_to > record_from) {  // its input as it comes in, before the pedals, amp and inserts
+        // A Speaker's input as it comes in, before its inserts; an amp's DI, if it is kept, before its pedals and the amp
+        // (what the amp plays is recorded as it plays it: playSource).
+        const int slot = !(punching && s->armed && recorder_rt_ && record_to > record_from) ? -1
+                         : recorder_rt_->slotOf(isAmp(s->kind) ? s->id + kDiTake : s->id);
+        if (slot >= 0) {
             std::fill(take_.begin(), take_.end(), 0.0f);
             s->instrument->readInput(take_.data(), block_);
-            recorder_rt_->write(recorder_rt_->slotOf(s->id), take_.data() + record_from, record_to - record_from);
+            recorder_rt_->write(slot, take_.data() + record_from, record_to - record_from);
         }
         if (playing && !hear_input) playClips(*s, counting);
     }
 }
 
-// A track's audio clips, from sample `from` of this block, into its playback: each from its file's chunks that the disk
-// thread has read in (looked up afresh each block). Rendering offline, a chunk not in yet is read in there and then;
-// playing, it is a gap, and counted.
+// A track's audio clips, from sample `from` of this block, into its playback (a direct clip into what is played after
+// it, as late as an amp's pedals make the rest): each from its file's chunks that the disk thread has read in (looked
+// up afresh each block). Rendering offline, a chunk not in yet is read in there and then; playing, it is a gap, and
+// counted.
 void AudioEngine::playClips(Source& source, int from) {
     if (!source.track_rt || source.track_rt->clips.empty()) return;
     const bool realtime = realtime_.load(std::memory_order_acquire);
-    float* out = source.playback.data();
     float* out_r = source.playback_r.empty() ? nullptr : source.playback_r.data();  // (a stereo track's second channel)
     for (const auto& clip : source.track_rt->clips) {
+        const bool direct = clip.direct && !source.direct.empty();
+        float* out = direct ? source.direct.data() : source.playback.data();
+        const double late = direct ? double(source.pedal_delay_rt) / sr_ : 0.0;
         StreamedFile& file = *clip.file;
         const double rate = file.rate();
         const int64_t frames = file.frames();
@@ -3539,7 +3560,7 @@ void AudioEngine::playClips(Source& source, int from) {
             return true;
         };
         for (int i = from; i < block_; ++i) {
-            const double t = block_seconds_[size_t(i)] - clip.start;
+            const double t = block_seconds_[size_t(i)] - late - clip.start;
             if (t < 0.0 || t >= clip.length) continue;
             const double at = (t + clip.offset) * rate;
             const int64_t k = int64_t(at);
@@ -4189,6 +4210,16 @@ void AudioEngine::playSource(size_t index, float binaural_from, float glide, flo
             for (float* part : s->part_blocks) std::fill(part, part + block_, 0.0f);
             s->instrument->renderParts(mono, s->part_blocks.data(), block_);
         }
+        // An armed amp records what it plays, before its inserts: from as late as its pedals make it, so that the file
+        // lines up with its DI and with where it was played.
+        if (isAmp(s->kind) && punching_ && s->armed && recorder_rt_ && record_to_ > record_from_) {
+            const int slot = recorder_rt_->slotOf(s->id);
+            const int skip = std::min(s->print_skip, record_to_ - record_from_);
+            s->print_skip -= skip;
+            if (slot >= 0 && record_to_ > record_from_ + skip) recorder_rt_->write(slot, mono + record_from_ + skip, record_to_ - record_from_ - skip);
+        }
+        if (!s->direct.empty())  // (its direct clips: what an amp played, played as it was)
+            for (int i = 0; i < block_; ++i) mono[i] += s->direct[size_t(i)];
     }
     // Its inserts, before its fader (and, an instrument's, before the room too: but not an instrument with parts, which
     // the room hears as it is, as a real kit would be heard, its inserts in its track alone).

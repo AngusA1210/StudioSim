@@ -1,9 +1,10 @@
 extends CanvasLayer
 ## The title screen. A room is already alive behind it (the default room, until one is made or opened): a camera
 ## circles under the ceiling, and since the camera is also the listener, the music turns around you while you wait.
-## New room and Open room lead to the rooms page; Avatar customization, to your name, height and look (set here,
-## outside the room); Play together, to hosting the room or joining another player's; once a room is open, Back to it
-## goes in, handing the camera and the listening over to the player.
+## New room and Open room lead to the rooms page; Tutorial, to a room made a step at a time with a card saying what
+## to do (tutorial.gd); Avatar customization, to your name, height and look (set here, outside the room); Play
+## together, to hosting the room or joining another player's; once a room is open, Back to it goes in, handing the
+## camera and the listening over to the player.
 
 const ACCENT := Color(0.49, 0.89, 0.82)
 const DIM := Color(0.62, 0.65, 0.74)
@@ -16,7 +17,7 @@ const TAGLINE := "A room of instruments, heard from where you stand."
 var app
 var audio: StudioSimAudio
 var camera: Camera3D
-var buttons := {}  # "back" (into the open room), "new", "open", "together", "avatar", "audio", "settings", "controls", "quit" → Button
+var buttons := {}  # "back" (into the open room), "new", "open", "tutorial", "together", "avatar", "audio", "settings", "controls", "quit" → Button
 
 var _open := false
 var _leaving := false
@@ -166,6 +167,7 @@ func _build() -> void:
 	_button(column, "back", "Back to the room", enter)
 	_button(column, "new", "New room…", func() -> void: _away(app.rooms_page.open_new))
 	_button(column, "open", "Open room…", func() -> void: _away(app.rooms_page.open_existing))
+	_button(column, "tutorial", "Tutorial", func() -> void: _away(app.tutorial.start))
 	_button(column, "together", "Play together…", func() -> void: app.together_page.open())
 	_button(column, "avatar", "Avatar customization", func() -> void: app.avatar_page.open())
 	_button(column, "audio", "Audio setup", _on_menu_pressed.bind("ENGINE_TAB"))

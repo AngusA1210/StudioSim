@@ -348,14 +348,15 @@ func _draw_clip(inst, index: int, top: float, font: Font) -> void:
 	draw_rect(rect, inst.color.darkened(0.55 if not picked else 0.25))
 	var ink: Color = inst.color.lightened(0.4)
 	var inner := Rect2(rect.position + Vector2(0, 15), Vector2(rect.size.x, rect.size.y - 17))
-	_draw_contents(clip, span, inner, ink)
+	_draw_contents(clip, span, inner, ink, inst)
 	if clip.kind == "audio":
 		_draw_fades(clip, x0, x1, inner, rect, ink)
 	draw_rect(rect, Color.WHITE if picked else Color(0, 0, 0, 0.6), false, 1.0)
 	var takes: int = clip.get("takes", []).size()
 	var takes_text := "%d takes" % takes if takes > 0 else ""
 	var takes_width := font.get_string_size(takes_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 10).x + 8 if takes > 0 else 0.0
-	draw_string(font, rect.position + Vector2(5, 12), str(clip.get("name", "")), HORIZONTAL_ALIGNMENT_LEFT, maxf(rect.size.x - 8 - takes_width, 1.0), 11, ink)
+	var label := str(clip.get("name", "")) + ("  (DI)" if timeline.reamping(inst, clip) else "")  # (reamped: its DI, through the amp)
+	draw_string(font, rect.position + Vector2(5, 12), label, HORIZONTAL_ALIGNMENT_LEFT, maxf(rect.size.x - 8 - takes_width, 1.0), 11, ink)
 	if takes > 0 and rect.size.x > takes_width + 30:  # it has takes to choose from (a right-click)
 		draw_string(font, Vector2(rect.end.x - takes_width + 2, rect.position.y + 12), takes_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(ink, 0.75))
 	if clip.kind == "audio" and x0 >= HEADER and x1 - x0 >= 44.0:  # its clip gain: a little fader, and the gain if it has one
@@ -397,7 +398,7 @@ func _draw_take_lane(inst, n: int, top: float, font: Font, first_bar: int, last_
 				lit.size.x = minf(x_of(used.y), rect.end.x) - lit.position.x
 				if lit.size.x > 0.0:
 					draw_rect(lit, inst.color.darkened(0.35))
-		_draw_contents(take, span, Rect2(rect.position + Vector2(0, 12), Vector2(rect.size.x, rect.size.y - 13)), Color(ink, 0.85))
+		_draw_contents(take, span, Rect2(rect.position + Vector2(0, 12), Vector2(rect.size.x, rect.size.y - 13)), Color(ink, 0.85), inst)
 		draw_rect(rect, Color(0, 0, 0, 0.6), false, 1.0)
 		draw_string(font, rect.position + Vector2(5, 10), "Take %d" % int(take.get("take", n + 1)), HORIZONTAL_ALIGNMENT_LEFT,
 			maxf(rect.size.x - 8, 1.0), 10, ink)
@@ -411,9 +412,9 @@ func _draw_take_lane(inst, n: int, top: float, font: Font, first_bar: int, last_
 
 
 ## What a clip holds, drawn in a rectangle: an audio clip's waveform (as its clip gain makes it), a MIDI clip's notes.
-func _draw_contents(clip: Dictionary, span: Vector2, inner: Rect2, ink: Color) -> void:
-	if clip.kind == "audio":  # its waveform, as its clip gain makes it
-		var peaks: PackedFloat32Array = timeline.peaks(clip)
+func _draw_contents(clip: Dictionary, span: Vector2, inner: Rect2, ink: Color, inst = null) -> void:
+	if clip.kind == "audio":  # its waveform (what it plays: reamped, its DI), as its clip gain makes it
+		var peaks: PackedFloat32Array = timeline.peaks(clip, inst)
 		var gain: float = timeline.gain_of(clip)
 		var seconds_per_px: float = timeline.step_seconds() / zoom
 		var mid := inner.position.y + inner.size.y / 2

@@ -1,5 +1,25 @@
 # Playing, sequencing and the menu
 
+## The tutorial
+
+**Tutorial**, on the title screen, takes a newcomer through StudioSim a step at a time, in a room of their own. A card
+says what to do next, naming the keys as they are bound, and moves on by itself once it is done:
+
+1. making the room (the New room page, filled in: "Tutorial room", a Record room from the empty template);
+2. looking and walking;
+3. adding an instrument and putting it down;
+4. playing it, then its pattern;
+5. carrying it elsewhere;
+6. the mix window, moving a fader or a pan, and closing it;
+7. the edit window, arming a track, recording and playing it back (passed over in a Jam room);
+8. saving.
+
+In the room the card sits at the left of the screen. Over a window or the menu it gets smaller and moves to the top,
+and on the New room page it sits under the templates. **Back**, **Skip** and **End** are on the card: with the mouse
+caught in the room, Esc frees it (with the menu). The room it made stays like any other.
+
+## Playing and patterns
+
 Every MIDI instrument in the room can be played by hand. Walk up to one and press E: the
 computer keyboard becomes a small piano for it, and any MIDI controller plays it too (see [Inputs](instruments.md#inputs)). The drums
 work like a drum machine: each key is a drum, laid out like a General MIDI kit and repeated in every octave, each

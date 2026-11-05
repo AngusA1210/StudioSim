@@ -33,7 +33,7 @@ func _initialize() -> void:
 	main = load("res://main.tscn").instantiate()
 	view.add_child(main)
 	view.notification(Node.NOTIFICATION_VP_MOUSE_ENTER)  # as a real window does when the mouse is over it
-	create_timer(200.0).timeout.connect(_on_timeout)  # a script error would otherwise leave this running for ever
+	create_timer(300.0).timeout.connect(_on_timeout)  # a script error would otherwise leave this running for ever (a run takes 2½ minutes on a Mac)
 	_run()
 
 
@@ -2706,6 +2706,52 @@ func _run() -> void:
 	check(mic_entry.size() == 1 and is_equal_approx(float(mic_entry[0].height), 0.6) and is_equal_approx(float(mic_entry[0].tilt), mic.mic_tilt) and
 		is_equal_approx(float(mic_entry[0].settings.mic_gain_db), 6.0), "it is kept with the room: where it stands, how high, how it points, and its gain")
 	timeline.undo()
+
+	print("Recording an amp: what it plays, and its DI")
+	var rec_amp = main.add_instrument("guitar_combo", Vector3(3.0, 0.0, -2.0))
+	await frames(2)
+	var amp_menu := PopupMenu.new()
+	TrackMenu.add_items(amp_menu, main, rec_amp, PopupMenu.new())
+	var di_item: int = amp_menu.get_item_index(TrackMenu.KEEP_DI)
+	var reamp_item: int = amp_menu.get_item_index(TrackMenu.REAMP)
+	check(di_item >= 0 and not amp_menu.is_item_checked(di_item) and reamp_item >= 0 and amp_menu.is_item_disabled(reamp_item),
+		"an amp's track menu offers Record the DI too (off to begin with), and Reamp, not yet: none of its clips has a DI")
+	amp_menu.free()
+	timeline.set_armed(rec_amp, true)
+	timeline.locate(0.0)
+	var plain_record: String = timeline.start_recording()
+	await seconds(0.5)
+	timeline.stop()
+	for wait in 20:
+		await frames(3)
+		if not timeline._taking:
+			break
+	var plain_clip: Dictionary = rec_amp.clips.back() if not rec_amp.clips.is_empty() else {}
+	check(plain_record == "" and plain_clip.get("amped", false) and not plain_clip.has("di") and FileAccess.file_exists(timeline.file_path(plain_clip)) and
+		timeline.engine_clips(rec_amp).all(func(c): return c.direct), "armed, an amp records what it plays, played back as it was; no DI unless asked for", plain_record)
+	TrackMenu.chosen(main, rec_amp, TrackMenu.KEEP_DI)
+	timeline.locate(16.0)
+	var di_record: String = timeline.start_recording()
+	await seconds(0.5)
+	timeline.stop()
+	for wait in 20:
+		await frames(3)
+		if not timeline._taking:
+			break
+	var di_clip: Dictionary = rec_amp.clips.back() if rec_amp.clips.size() == 2 else {}
+	var di_file: String = timeline.di_path(di_clip)
+	check(rec_amp.keep_di and di_record == "" and di_clip.get("amped", false) and di_file.ends_with(str(di_clip.get("file", "-")).get_file().get_basename() + "_DI.wav") and
+		FileAccess.file_exists(di_file), "with Record the DI too, its DI is kept beside it, named after it", di_file)
+	TrackMenu.chosen(main, rec_amp, TrackMenu.REAMP)
+	var reamped_clips: Array = timeline.engine_clips(rec_amp)
+	var amp_entry: Array = main.library.room_data().instruments.filter(func(e): return bool(e.get("reamp", false)))
+	check(rec_amp.reamp and reamped_clips.size() == 2 and reamped_clips[0].direct and reamped_clips[0].path == timeline.file_path(plain_clip) and
+		not reamped_clips[1].direct and reamped_clips[1].path == di_file and amp_entry.size() == 1 and bool(amp_entry[0].get("keep_di", false)),
+		"Reamp plays the DI through the amp where a clip has one (the other as it was), and the room keeps both choices")
+	timeline.set_armed(rec_amp, false)
+	timeline.undo()  # (its two recordings: the edits after this one undo what they did before)
+	timeline.undo()
+	main.remove_instrument(rec_amp)
 	# In the room: locked, an instrument can't be picked up; carried and put down, Cmd-Z puts it back.
 	var bells_moved = main.find_instrument("bells")
 	main._sit_at("bells")
@@ -3965,6 +4011,62 @@ func _run() -> void:
 	check(session.room_name == "Empty recording room" and timeline.is_record() and not timeline.playing and not timeline.loop_on and
 		is_equal_approx(main.tempo, 90.0) and main.instruments.is_empty(), "the empty room in Record mode starts stopped, nothing looping, at 90 BPM",
 		"%.0f BPM" % main.tempo)
+
+	print("The tutorial")
+	var tutorial = main.tutorial
+	var step_named := func(title: String) -> int: return tutorial._steps.map(func(s): return s.title).find(title)
+	main.show_title()
+	await frames(3)
+	await click(title.buttons.tutorial.get_global_rect().get_center())
+	await frames(3)
+	check(tutorial.is_running() and tutorial.step_title() == "Make a room" and rooms.is_open() and rooms._name.text.begins_with("Tutorial room") and
+		rooms._record.button_pressed and rooms._chosen_template().get("path", "") == main.library.EMPTY_TEMPLATE and tutorial._card.visible,
+		"Tutorial on the title screen starts it: the New room page filled in, a Record room from the empty template", rooms._name.text)
+	var card_clear: bool = not tutorial._card.get_global_rect().intersects(rooms._name.get_global_rect()) and \
+		not tutorial._card.get_global_rect().intersects(rooms._create.get_global_rect())
+	await click(rooms._create.get_global_rect().get_center())
+	if session.is_asking():
+		session._confirm.custom_action.emit(&"discard")
+	await seconds(2.0)  # (into the room, the step shown done a moment)
+	check(card_clear and session.room_name.begins_with("Tutorial room") and tutorial.step_title() == "Look and walk",
+		"its card clear of the name and Create room; made, the room is the tutorial's, and it goes on to looking and walking", tutorial.step_title())
+	player.place(player.global_position + Vector3(2.0, 0.0, 0.0), player.yaw)
+	await seconds(1.2)
+	check(tutorial.step_title() == "Add an instrument" and tutorial._text.text.contains(main.bindings.label("add")),
+		"walked a little way, it goes on to adding an instrument, naming the key as it is bound", tutorial._text.text)
+	main.instrument_menu.create("drums")
+	await seconds(1.2)
+	var asked_put_down: bool = tutorial.step_title() == "Put it down"
+	player._grab_or_drop()
+	await seconds(1.2)
+	check(asked_put_down and tutorial.step_title() == "Play it" and main.instruments.size() == 1, "picked, then put down, it goes on to playing it",
+		tutorial.step_title())
+	tutorial._skip.pressed.emit()
+	await frames(2)
+	var skipped: String = tutorial.step_title()
+	tutorial._back.pressed.emit()
+	await frames(2)
+	check(skipped == "Give it a pattern" and tutorial.step_title() == "Play it", "Skip goes on a step, Back goes back one")
+	main.mixer.open()
+	tutorial._go(step_named.call("Mix"))
+	await frames(3)
+	var mix_card: Rect2 = tutorial._card.get_global_rect()
+	main.set_instrument_level(main.instruments[0], -6.0)
+	await seconds(1.2)
+	check(mix_card.position.y < 10.0 and tutorial._small_title.visible and tutorial.step_title() == "Back to the room",
+		"over the mix window its card is smaller, at the top; a fader moved, it goes on", tutorial.step_title())
+	main.mixer.close()
+	timeline.set_mode("jam")
+	tutorial._go(step_named.call("The edit window"))
+	var jam_skips: String = tutorial.step_title()
+	timeline.set_mode("record")
+	tutorial._go(step_named.call("Save it"))
+	session.save()
+	await seconds(1.2)
+	check(jam_skips == "Save it" and tutorial.step_title() == "That's the tour", "in a Jam room the recording steps are passed over; saved, it goes on to the end",
+		jam_skips)
+	tutorial._end.pressed.emit()
+	check(not tutorial.is_running() and not tutorial._card.visible, "End puts the tutorial away")
 
 	print("ALL PASSED" if failures == 0 else "%d FAILED" % failures)
 	quit(failures)

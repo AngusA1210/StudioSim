@@ -847,7 +847,7 @@ bool StudioSimAudio::set_track(int id, const Array& notes, const Array& clips, c
     for (int64_t i = 0; i < clips.size(); ++i) {
         const Dictionary d = clips[i];
         c.push_back({str(String(d.get("path", ""))), double(d.get("start", 0.0)), double(d.get("offset", 0.0)), double(d.get("length", 0.0)),
-                     double(d.get("fade_in", 0.0)), double(d.get("fade_out", 0.0)), float(d.get("gain", 1.0))});
+                     double(d.get("fade_in", 0.0)), double(d.get("fade_out", 0.0)), float(d.get("gain", 1.0)), bool(d.get("direct", false))});
     }
     sr::TrackAutomation lanes;  // {volume, mute, sustain}: each [[step, value], ...]
     const std::pair<const char*, std::vector<sr::AutoPoint>*> named[3] = {{"volume", &lanes.volume}, {"mute", &lanes.mute}, {"sustain", &lanes.sustain}};
@@ -894,9 +894,9 @@ bool StudioSimAudio::start_recording(const Array& files, double from_step, doubl
                                      double punch_out_step, double in_seconds) {
     if (!engine_) return false;
     std::vector<std::pair<int, std::string>> f;
-    for (int64_t i = 0; i < files.size(); ++i) {
+    for (int64_t i = 0; i < files.size(); ++i) {  // [id, path], or [id, path, true] for an amp's DI
         const Array pair = files[i];
-        if (pair.size() >= 2) f.emplace_back(int(pair[0]), str(String(pair[1])));
+        if (pair.size() >= 2) f.emplace_back(int(pair[0]) + (pair.size() >= 3 && bool(pair[2]) ? sr::kDiTake : 0), str(String(pair[1])));
     }
     std::string err;
     if (engine_->startRecording(f, from_step, &err, count_in_steps, loop, preroll_steps, punch_out_step, in_seconds)) return true;
@@ -918,7 +918,8 @@ Dictionary StudioSimAudio::take_recording() {
     Array audio;
     for (const auto& a : r.audio) {
         Dictionary e;
-        e["source"] = a.source;
+        e["source"] = a.source >= sr::kDiTake ? a.source - sr::kDiTake : a.source;
+        if (a.source >= sr::kDiTake) e["di"] = true;  // (an amp's DI, beside what it played)
         e["path"] = str(a.path);
         e["seconds"] = a.seconds;
         e["dropped"] = int64_t(a.dropped);

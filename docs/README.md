@@ -13,7 +13,7 @@ In-depth notes on each part of StudioSim. The project's [README](../README.md) g
 - [Tracks, folders and the mix](mixing.md): routing folders, aux tracks, the room and the mix, the mix window,
   delay compensation
 - [The room: size, walls and materials](room-acoustics.md): walls, materials, reverb, reflections and diffusers
-- [Playing, sequencing and the menu](playing-and-menu.md): patterns, the metronome, the menu's pages
+- [Playing, sequencing and the menu](playing-and-menu.md): the tutorial, patterns, the metronome, the menu's pages
 - [Playing together](playing-together.md): the room browser, hosting and joining, the host's rules, what is shared,
   the session's clock, the room list
 - [Running a session server](session-server.md): the program players meet through, where routers won't open ports

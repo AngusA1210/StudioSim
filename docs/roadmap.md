@@ -21,8 +21,9 @@ bleed, where across a head or cymbal a mic is placed, the kick's port and a mic 
 mic panel's distances drum by drum, and a kit miked up in one go); and you in the room: a body as tall as you set,
 hearing from between its ears and seeing from its eyes, seated on a kit's stool to play it, and a free camera that
 flies about the room, heard from it or from you; and Windows played on a real machine, every check passing, with ASIO
-for an interface's own driver; the room's surfaces drawn as their materials; and StudioSim made into an app of its
-own, opened with a double-click, without Godot.
+for an interface's own driver; the room's surfaces drawn as their materials; StudioSim made into an app of its
+own, opened with a double-click, without Godot; amps recording what they play, with their DI kept beside it to reamp;
+and a tutorial from the title screen.
 
 Playing together is working: a player hosts their room and others join it, the room and everything in it kept the
 same for everyone, each player's body seen by the others, notes played heard by all, the patterns in step on the

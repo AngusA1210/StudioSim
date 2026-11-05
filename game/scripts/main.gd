@@ -47,6 +47,7 @@ const Library := preload("res://scripts/library.gd")
 const Session := preload("res://scripts/session.gd")
 const RoomsPage := preload("res://scripts/rooms_page.gd")
 const AvatarPage := preload("res://scripts/avatar_page.gd")
+const Tutorial := preload("res://scripts/tutorial.gd")
 const Avatar := preload("res://scripts/avatar.gd")
 const Net := preload("res://scripts/net.gd")
 const TogetherPage := preload("res://scripts/together_page.gd")
@@ -91,6 +92,7 @@ var library  # rooms' and templates' contents, presets, and settings copied to b
 var session  # the room that is open: its file, saving, backups
 var rooms_page  # making a new room, or opening one
 var avatar_page  # your name, height and look, from the title screen
+var tutorial  # the title screen's Tutorial: a card taking a newcomer through it a step at a time
 var net  # playing together
 var together_page  # hosting or joining, from the title screen
 var timeline  # the room's mode, and a Record room's transport, recording and clips
@@ -266,6 +268,9 @@ func _ready() -> void:
 	edit_window.setup(self)
 	name_prompt = NamePrompt.new()
 	add_child(name_prompt)
+	tutorial = Tutorial.new()
+	add_child(tutorial)
+	tutorial.setup(self)
 	get_tree().auto_accept_quit = false  # quitting asks first whether to save the room
 	# Should the game lose the keyboard (to a plug-in's window, say), let go of every note held: the keys' letting go
 	# would never arrive, and the notes would hang.
@@ -1649,6 +1654,8 @@ func duplicate_instrument(inst, at = null):
 	set_instrument_level(copy, inst.level_db)
 	set_muted(copy, inst.muted)
 	copy.clips = inst.clips.duplicate(true)
+	copy.keep_di = inst.keep_di
+	copy.reamp = inst.reamp
 	timeline.sync(copy)
 	if inst.playable:
 		audio.set_pattern_steps(copy.source_id, audio.get_pattern_steps(inst.source_id))
@@ -1984,6 +1991,20 @@ func mic_kit(kit, setup: String) -> Array:
 ## A microphone's polarity inverted at its preamp (Ø), or put back: before it records, as a console's button.
 func set_mic_polarity(mic, inverted: bool) -> void:
 	mic.set_mic_polarity(inverted)
+
+
+## An amp's track: whether its recordings keep its DI as well as what it plays (from its next recording on).
+func set_keep_di(amp, on: bool) -> void:
+	amp.keep_di = on
+	timeline.changed.emit()
+
+
+## An amp's track: whether its clips play their DI through the amp as it is now (reamped), where they have one, rather
+## than what the amp played as they were recorded.
+func set_reamp(amp, on: bool) -> void:
+	amp.reamp = on
+	timeline.sync(amp)
+	timeline.changed.emit()
 
 
 ## Points a microphone (a stereo mic, between its two) at an instrument: at where its sound comes from (an amp's nearest

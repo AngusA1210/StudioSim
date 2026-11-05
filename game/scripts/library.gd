@@ -447,6 +447,10 @@ func room_data() -> Dictionary:
 			entry.loop_on = inst.loop_on
 			entry.steps = audio.get_pattern_steps(inst.source_id)
 			entry.pattern = audio.get_pattern(inst.source_id)
+		if inst.keep_di:  # (an amp's: its DI kept as it records, and played through the amp again)
+			entry.keep_di = true
+		if inst.reamp:
+			entry.reamp = true
 		instruments.append(entry)
 	var walls := []
 	for wall in app.room.walls:
@@ -647,6 +651,9 @@ func apply_room_data(data: Dictionary, carry := {}, size = null, mode := "") -> 
 		if problem != "":
 			problems.append(problem)
 		inst.clips = app.timeline.with_all_takes(entry.get("clips", []).duplicate(true)) if keep.call("patterns") else []
+		if inst.is_amp:
+			inst.keep_di = bool(entry.get("keep_di", false))
+			inst.reamp = bool(entry.get("reamp", false))
 		if keep.call("mix"):  # its automation, as the mix's
 			inst.automation = entry.get("automation", {}).duplicate(true)
 			inst.auto_mode = str(entry.get("auto_mode", "read"))

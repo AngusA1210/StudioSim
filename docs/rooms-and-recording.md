@@ -137,13 +137,26 @@ In a Record room:
     from a stop starts at its start (after any pre-roll) and stops at its end, the music playing on; with a
     **post-roll** of a bar or two it plays that much more, then stops of itself. An armed track is heard through its
     input only while it records, its clips in the pre-roll and post-roll (Pro Tools' Auto Input);
-  - Loop Record. An armed Speaker or amp records its hardware input as it comes in, before its pedals,
-  amp and inserts, to a WAV file (32-bit float) in the room's **Audio Files** folder, named after the track
-  (`Speaker_01.wav`, `Speaker_02.wav`...). Played back, a take goes through the pedals, amp and inserts again, as a
-  DAW plays a track back through its inserts (so an amp can be re-dialled after the playing). An armed instrument
-  records the notes played on it (MIDI controllers, the computer keyboard, the on-screen keyboard). Takes are moved
-  back by the latency of the sound coming out and going in, so they land where they were played. Stopping makes
-  each take a clip, covering whatever its track had there.
+  - Loop Record.
+
+  An armed Speaker records its hardware input as it comes in, before its inserts, to a WAV file (32-bit float) in the
+  room's **Audio Files** folder, named after the track (`Speaker_01.wav`, `Speaker_02.wav`...); played back, a take
+  goes through its inserts again, as a DAW plays a track back through its inserts. An armed instrument records the
+  notes played on it (MIDI controllers, the computer keyboard, the on-screen keyboard). Takes are moved back by the
+  latency of the sound coming out and going in, so they land where they were played. Stopping makes each take a clip,
+  covering whatever its track had there.
+- **Recording an amp.** An armed amp records what it plays: through its pedals and the amp, before its inserts,
+  lined up with where it was played even when a plug-in pedal makes the amp late. Played back, it comes from the
+  cabinet as it was recorded, through the inserts, whatever the amp has been set to since. In the amp's track menu
+  (right-click its name, in either window):
+  - **Record the DI too** (off to begin with) keeps what came in as well, before the pedals and the amp, in a file
+    beside it (`Guitar_Combo_01_DI.wav` beside `Guitar_Combo_01.wav`). It lines up with it to the sample, so every
+    edit, take and comp has its DI too.
+  - **Reamp: play the DI through the amp** plays each clip's DI through the pedals and the amp as they are now,
+    rather than what the amp played, so the sound can be dialled in again after the playing. Its clips are marked DI
+    and draw the DI's waveform; clips without a DI play as recorded. Switch it off to hear the recording again.
+
+  An amp's recordings made before it kept its own sound were its DI alone, and still play through the amp.
 - **Clips** are light: an audio clip is a part of its file (where it starts on the timeline, and where in the file and
   for how long), as Pro Tools' clips refer to their parent file, so moving, copying or covering one never touches
   the audio. Audio is placed in seconds (it stays where it was played if the tempo changes); MIDI in bars and beats
