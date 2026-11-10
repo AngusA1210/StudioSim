@@ -22,3 +22,7 @@ audio_core/thirdparty/asiosdk/
 /Rooms/
 /Templates/
 /Instrument Presets/
+
+# The website as built (website/build.py), and screenshots as taken (website/tools/screenshots.gd)
+website/_site/
+website/_shots/

@@ -271,9 +271,9 @@ note dips just after its attack and blooms (most in the small Crunch head, with 
 the big Clean one). Each head has its wattage (Clean 85 W, Crunch 30, High Gain 100, Bass Round 300, Bass Punch 500), and
 the speakers theirs: a head that can give more than its speakers take drives them, turned up, into compression (their
 voice coils heating) and breakup, as a small combo cranked does. Press P facing an amp to
-open its panel: drag a knob up or down (Shift for fine moves), turn the scroll wheel over it, or double-click it for
-5. The panel also has the amp's input switch and which hardware input it plays. Plug a guitar or bass straight into
-the interface's instrument input; the amp is the only processing it needs. Wear headphones.
+open its panel: drag a knob up or down (Shift for fine moves), turn the scroll wheel over it, or double-click it
+for 5. The panel also has the amp's input switch and which hardware input it plays. Plug a guitar or bass straight
+into the interface's instrument input; the amp is the only processing it needs. Wear headphones.
 
 An amp has an **effects loop**: on the board, pedals after PREAMP are sent out after the preamp and its tone stack and
 returned before the power amp, so a delay or reverb there repeats the amp's own distorted sound. It is a parallel loop:

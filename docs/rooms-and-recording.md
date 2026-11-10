@@ -128,6 +128,7 @@ In a Record room:
     it. The parts of each take in the track are lit in its lane, and where two parts meet they crossfade for 10 ms.
     Every part keeps all the takes, so you can go on comping, and choosing a take from a part's menu changes that part
     alone. Comping undoes as any edit does.
+
   The edit window's **Options** menu (beside Follow; all remembered) has the rest, as Pro Tools' transport does:
   - a **count-in**, one bar or two: recording from a stop, the click counts the bars first, the music waiting at the
     playhead (Pro Tools' Count Off); the screen counts down the beats;
