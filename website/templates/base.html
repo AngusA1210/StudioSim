@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{title}}</title>
+<meta name="description" content="{{description}}">
+<meta name="theme-color" content="#090a0f">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="StudioSim">
+<meta property="og:title" content="{{title}}">
+<meta property="og:description" content="{{description}}">
+{{share}}
+<link rel="icon" href="{{root}}img/favicon.png" type="image/png">
+<link rel="apple-touch-icon" href="{{root}}img/icon-180.png">
+<link rel="stylesheet" href="{{root}}css/site.css">
+<script src="{{root}}js/site.js" defer></script>
+</head>
+<body class="{{class}}">
+<a class="skip" href="#main">Skip to the content</a>
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="{{root}}index.html"><img src="{{root}}img/icon-180.png" alt="" width="30" height="30"><span>StudioSim</span></a>
+    <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav">Menu</button>
+    <nav id="site-nav" class="site-nav" aria-label="Main">
+      <a href="{{root}}features.html"{{active:features}}>Features</a>
+      <a href="{{root}}guide/index.html"{{active:guide}}>Guide</a>
+      <a href="{{root}}about.html"{{active:about}}>About</a>
+      <a class="nav-download" href="{{root}}download.html"{{active:download}}>Download</a>
+    </nav>
+  </div>
+</header>
+<main id="main">
+{{content}}
+</main>
+<footer class="site-footer">
+  <div class="wrap footer-grid">
+    <div>
+      <a class="brand" href="{{root}}index.html"><img src="{{root}}img/icon-180.png" alt="" width="26" height="26"><span>StudioSim</span></a>
+      <p>A room of instruments, heard from where you stand.</p>
+    </div>
+    <nav aria-label="Pages">
+      <a href="{{root}}features.html">Features</a>
+      <a href="{{root}}download.html">Download</a>
+      <a href="{{root}}guide/index.html">Guide</a>
+      <a href="{{root}}about.html">About</a>
+    </nav>
+    <div>
+      <p>Made by Andrew Angus · <a href="https://github.com/AngusA1210" rel="noopener">GitHub</a></p>
+      <p class="small">Free and open source. The source is published with the first release.</p>
+    </div>
+  </div>
+  <div class="wrap">
+    <p class="legal">© 2026 Andrew Angus. Pro Tools is a registered trademark of Avid Technology, Inc.; Logic is a trademark of
+    Apple Inc.; VST is a registered trademark of Steinberg Media Technologies GmbH. They are named to say what StudioSim
+    works like and works with. StudioSim is not affiliated with or endorsed by any of them.</p>
+  </div>
+</footer>
+</body>
+</html>

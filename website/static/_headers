@@ -1,0 +1,12 @@
+# Cloudflare Pages sends these with the site's pages.
+# The site is its own files alone, so nothing from elsewhere is allowed to load. Videos embedded from another site
+# later will need that site added (frame-src).
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  X-Frame-Options: DENY
+  Permissions-Policy: camera=(), microphone=(), geolocation=()
+  Content-Security-Policy: default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'
+
+/img/*
+  Cache-Control: public, max-age=604800

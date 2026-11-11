@@ -61,6 +61,10 @@ elif [ -x "$JSC" ]; then
   "$JSC" -m "$ROOT/services/room-list/tests.mjs"
 fi
 
+# The website (website/): built, and every link in it followed, so that a heading renamed in the docs can't leave one of
+# the guide's links leading nowhere.
+[ -n "$PYTHON" ] && "$PYTHON" -I "$ROOT/website/build.py" --check
+
 if command -v godot >/dev/null; then
   godot --headless --path "$ROOT/game" --import >/dev/null 2>&1 || true
   # Drive the game itself with pretend keys and clicks (silent, and it leaves saved settings alone). Godot exits

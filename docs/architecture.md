@@ -78,6 +78,8 @@ game/tests/ui_check.gd     the game driven by pretend keys and clicks: title, pl
                            presets, and rooms (making, saving, backups, opening), and playing together
 game/tests/together_guest.gd  a second copy of the game that joins the room ui_check.gd hosts, and does what it asks
 services/room-list/        the room list: a Cloudflare Worker (worker.js) and its D1 table, its checks, and a stand-in
+website/                   the website: its pages, its look, and the script that builds it, the guide from docs/
+                           (website.md)
 prototypes/studiosim/      the original browser prototype, for reference
 tools/                     build, export (the app) and dependency scripts, and the icon's drawing (make_icon.py)
 ```

@@ -1,0 +1,59 @@
+title: About · StudioSim
+description: About StudioSim: what it is, how it is built (Godot for the room, a C++ audio engine for the sound), who makes it, and the open-source libraries it stands on.
+nav: about
+class: page
+---
+<section class="page-head">
+  <div class="wrap">
+    <p class="eyebrow">About</p>
+    <h1>About StudioSim</h1>
+    <p class="lede">StudioSim is a shared 3D space for playing music, and a workstation for recording and mixing what
+    is played in it. It is made by Andrew Angus, and will be free and open source.</p>
+  </div>
+</section>
+
+<section class="wrap prose narrow">
+  <h2>What it is</h2>
+  <p>Most music software shows you a mixer and a timeline. StudioSim starts with a room. Instruments stand in it,
+  you walk around it in first person, and what you hear is worked out from where you stand: how far each instrument
+  is, which way you face, what is between you and it, and how the room rings.</p>
+  <p>The room is also a studio. Microphones hear it from where they are put, amps play what you plug in, and a
+  Record room has a timeline, an edit window and a mix window that work the way a DAW's do, with Pro Tools as the
+  model. Other players can join the room over a network and hear it from where they stand.</p>
+
+  <h2>How it's built</h2>
+  <p>StudioSim is two programs working together.</p>
+  <ul>
+    <li><strong>The room</strong> is a <a href="https://godotengine.org" rel="noopener">Godot</a> project, written in
+    GDScript: the world you see, the player, the instruments, the menus, the mix and edit windows.</li>
+    <li><strong>The sound</strong> is an audio engine written in C++, running on its own real-time thread in blocks of
+    128 samples. Godot tells it where everything is; it works out how sound travels through the room. Commands reach
+    the audio thread through a lock-free queue, so a dropped frame of graphics never glitches the sound.</li>
+  </ul>
+  <p>The engine does its own synthesis, amp and pedal modelling, microphone models, recording to disk, disk
+  streaming, delay compensation and plug-in hosting. <a href="https://github.com/ValveSoftware/steam-audio" rel="noopener">Steam
+  Audio</a> provides the binaural rendering and room simulation, <a href="https://github.com/mackron/miniaudio" rel="noopener">miniaudio</a>
+  the audio devices, and <a href="https://opus-codec.org" rel="noopener">Opus</a> the sound between players.</p>
+  <p>It is checked as it is built: offline tests render audio through the engine and measure it, and the game is
+  driven by pretend key presses and clicks to check its controls and menus. Every change to the engine is also built
+  and tested on Windows.</p>
+  <p>There is more in the guide: <a href="{{root}}guide/architecture.html">How it's put together</a>.</p>
+
+  <h2>Who makes it</h2>
+  <p>StudioSim is designed and built by Andrew Angus. More of Andrew's work is on
+  <a href="https://github.com/AngusA1210" rel="noopener">GitHub</a>.</p>
+
+  <h2>Where it's going</h2>
+  <p>Playing together works, on one network and over the internet. Next come demonstration videos, then the first
+  public release for macOS and Windows with the source published, and after that more for playing and recording
+  music, virtual reality among the first. The <a href="{{root}}guide/roadmap.html">roadmap</a> has the details.</p>
+
+  <h2>Built with</h2>
+  <ul>
+    <li><a href="https://godotengine.org" rel="noopener">Godot Engine</a> and <a href="https://github.com/godotengine/godot-cpp" rel="noopener">godot-cpp</a> (MIT)</li>
+    <li><a href="https://github.com/ValveSoftware/steam-audio" rel="noopener">Steam Audio</a> (Apache 2.0)</li>
+    <li><a href="https://github.com/mackron/miniaudio" rel="noopener">miniaudio</a> (public domain / MIT-0)</li>
+    <li><a href="https://github.com/steinbergmedia/vst3sdk" rel="noopener">VST 3 SDK</a> (MIT)</li>
+    <li><a href="https://opus-codec.org" rel="noopener">Opus</a> (BSD 3-clause)</li>
+  </ul>
+</section>

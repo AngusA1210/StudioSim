@@ -18,4 +18,5 @@ In-depth notes on each part of StudioSim. The project's [README](../README.md) g
   the session's clock, the room list
 - [Running a session server](session-server.md): the program players meet through, where routers won't open ports
 - [How it's put together](architecture.md): the source tree and the audio engine
+- [The website](website.md): how the site is built from `website/` and the docs, its screenshots, publishing it
 - [Roadmap](roadmap.md): what's done and what comes next
