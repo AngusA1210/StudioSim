@@ -925,12 +925,6 @@ a.card:hover {
 .guide-card strong {
   display: block;
   color: var(--ink);
-  margin-bottom: 2px;
-}
-
-.guide-card span {
-  color: var(--dim);
-  font-size: 0.93rem;
 }
 
 /* ── The footer ─────────────────────────────────────────────────────────────────────────────── */
@@ -945,14 +939,9 @@ a.card:hover {
 
 .footer-grid {
   display: grid;
-  grid-template-columns: 1.3fr 0.7fr 1.2fr;
+  grid-template-columns: 1fr 1.6fr;
   gap: 32px;
   margin-bottom: 28px;
-}
-
-.site-footer .brand {
-  font-size: 1.02rem;
-  margin-bottom: 10px;
 }
 
 .site-footer nav {
@@ -1066,10 +1055,6 @@ a.card:hover {
 
   .guide-menu nav {
     padding: 16px 4px 0;
-  }
-
-  .footer-grid {
-    grid-template-columns: 1fr 1fr;
   }
 }
 

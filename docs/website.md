@@ -26,7 +26,7 @@ wrangler.jsonc       (at the top of the repository) which folder Cloudflare serv
 - **The pages** are plain HTML. `{{root}}` in one is the way back to the site's top (so links work from any folder).
 - **The guide is the docs.** Each page under `/guide/` is one of `docs/*.md`, turned into HTML by the small Markdown
   reader in `build.py`. Change a doc and the guide changes with it; nothing is written twice. `GUIDE` at the top of
-  `build.py` lists which docs are in it, in what order, and what the guide's front page says each covers. The reader
+  `build.py` lists which docs are in it, in what order, and each page's description for search engines. The reader
   knows the Markdown the docs use (headings, paragraphs, lists in lists, tables, code blocks, links, bold) and stops
   with a message at anything else, rather than guess.
 - **The look** is `static/css/site.css`: dark, as the app is, with its accent and the instruments' colours. There are

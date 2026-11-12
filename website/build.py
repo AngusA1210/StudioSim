@@ -26,7 +26,8 @@ OUT = HERE / "_site"
 # link, its picture when it is shared, the sitemap). Left empty, those are left out. Set it where the site is built.
 SITE_URL = os.environ.get("SITE_URL", "").rstrip("/")
 
-# The guide: the docs it is made of, in order, in two groups. [file's name without .md, its name in the list, what it covers]
+# The guide: the docs it is made of, in order, in two groups. [file's name without .md, its name in the list, what it
+# covers (the page's description, for search engines and where it is shared)]
 GUIDE = [
     ("Using StudioSim", [
         ("controls", "Controls", "Every key and shortcut, your body in the room, and the free camera."),
@@ -320,12 +321,12 @@ def build_guide(base):
         about = {"title": "%s · StudioSim guide" % html.unescape(title), "description": GUIDE_PAGES[n][2], "nav": "guide", "fill": "no", "class": "page guide-page"}
         write("guide/%s.html" % name, page_html(base, "guide/%s.html" % name, about, content))
 
-    # The guide's front page: its pages in their groups, with what each covers.
+    # The guide's front page: its pages in their groups.
     cards = []
     for group, pages in GUIDE:
         cards.append('<h2>%s</h2>\n<div class="guide-list">' % group)
-        for name, label, covers in pages:
-            cards.append('<a class="guide-card" href="%s.html"><strong>%s</strong><span>%s</span></a>' % (name, html.escape(label), html.escape(covers)))
+        for name, label, _ in pages:
+            cards.append('<a class="guide-card" href="%s.html"><strong>%s</strong></a>' % (name, html.escape(label)))
         cards.append("</div>")
     about, content = read_page(HERE / "pages" / "guide.html")
     about["fill"] = "no"
