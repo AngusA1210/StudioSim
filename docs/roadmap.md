@@ -38,7 +38,7 @@ To do, in this order:
 
 1. **A website** for StudioSim, where it can be downloaded: what it is, pictures of it, its features, a guide (the
    docs), the downloads for macOS and Windows (from the repository's releases), and a link to the source. It is
-   built (`website/`, see [The website](website.md)): a static site, to be published free on Cloudflare Pages beside
+   built (`website/`, see [The website](website.md)): a static site, to be published free on Cloudflare beside
    the room list, its downloads marked as coming until the release, with a domain of its own if wanted.
 2. **Demonstration videos**: short ones of its features (walking a room and hearing it change, an amp miked up, a
    recording made and edited, playing together), for the website and to show it. Recorded from the app itself, with

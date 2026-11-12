@@ -1,4 +1,4 @@
-# Cloudflare Pages sends these with the site's pages.
+# Cloudflare sends these with the site's pages.
 # The site is its own files alone, so nothing from elsewhere is allowed to load. Videos embedded from another site
 # later will need that site added (frame-src).
 /*
