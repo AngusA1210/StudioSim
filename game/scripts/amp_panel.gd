@@ -79,6 +79,8 @@ var _loop_box: PanelContainer  # the effects loop, between the preamp and the po
 var _loop_add: Button          # its own "+"
 var _loop_mix: Control         # its Mix knob (a parallel loop)
 var _adding_to_loop := false   # which the add menu is open for
+var _adding_at := -1           # and where: before this pedal (a gap between two, clicked), or -1 for the end of the line
+var _gaps: Array = []          # the gaps before each pedal, to click for a pedal there: Buttons, in the pedals' order
 var _add_menu: PopupMenu
 var _board_signature := "-"  # what the board was built for ("-": nothing yet)
 var _drop_mark: ColorRect  # while a pedal is dragged: the gap it would go in
@@ -285,6 +287,8 @@ func _refresh_board() -> void:
 	_add_button.visible = inst.pedals.size() < audio.get_max_pedals()
 	_add_arrow.visible = _add_button.visible
 	_loop_add.visible = _add_button.visible
+	for gap in _gaps:  # (a full board: nowhere for another)
+		gap.disabled = not _add_button.visible
 	_add_menu.set_item_disabled(Catalog.PEDAL_ORDER.find("looper"), has_looper())
 
 
@@ -293,10 +297,11 @@ func _build_board() -> void:
 		_board.remove_child(child)
 		child.queue_free()
 	_tiles.clear()
+	_gaps.clear()
 	var front := front_count()
 	_board.add_child(_end_label("INPUT"))
 	for i in front:
-		_board.add_child(_arrow())
+		_board.add_child(_gap(i, false))
 		_board.add_child(_pedal_tile(i))
 	_board.add_child(_arrow())
 	_add_button = Button.new()
@@ -332,7 +337,7 @@ func _build_board() -> void:
 	send.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	loop_row.add_child(send)
 	for i in range(front, inst.pedals.size()):
-		loop_row.add_child(_arrow())
+		loop_row.add_child(_gap(i, true))
 		loop_row.add_child(_pedal_tile(i))
 	loop_row.add_child(_arrow())
 	_loop_add = Button.new()
@@ -426,6 +431,32 @@ func _arrow() -> Label:
 	arrow.add_theme_font_size_override("font_size", 20)
 	arrow.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	return arrow
+
+
+## The gap before pedal `index` (between it and the one before, or the start of the line): the way the signal runs, as
+## the arrows show, and clicked, a pedal added there, in front of the amp or in its effects loop.
+func _gap(index: int, into_loop: bool) -> Button:
+	var gap := Button.new()
+	gap.text = "›"
+	gap.flat = true
+	gap.focus_mode = Control.FOCUS_NONE
+	gap.custom_minimum_size = Vector2(18, 78)
+	gap.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	gap.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	gap.add_theme_font_size_override("font_size", 20)
+	gap.add_theme_color_override("font_color", DIM)
+	gap.add_theme_color_override("font_hover_color", Color.WHITE)
+	gap.add_theme_color_override("font_disabled_color", DIM)
+	var lit := StyleBoxFlat.new()
+	lit.bg_color = Color(1, 1, 1, 0.12)
+	lit.set_corner_radius_all(5)
+	gap.add_theme_stylebox_override("hover", lit)
+	gap.add_theme_stylebox_override("pressed", lit)
+	Hints.give(gap, "Click to add a pedal here%s" % (", in the effects loop" if into_loop else ""))
+	gap.pressed.connect(func() -> void: _on_add_pressed(into_loop, index, gap))
+	gap.set_drag_forwarding(Callable(), _pedal_can_drop, _pedal_drop)  # (a pedal dropped on it goes in the gap, as anywhere on the board)
+	_gaps.append(gap)
+	return gap
 
 
 func _end_label(text: String) -> Label:
@@ -1120,15 +1151,19 @@ func _on_tile_input(event: InputEvent, index: int) -> void:
 		_refresh()
 
 
-func _on_add_pressed(into_loop: bool) -> void:
+## The add menu, for a pedal at the end of the line (in front of the amp, or in its loop), or before pedal `at` (a gap
+## clicked, `gap`).
+func _on_add_pressed(into_loop: bool, at := -1, gap: Button = null) -> void:
 	_adding_to_loop = into_loop
-	var near: Button = _loop_add if into_loop else _add_button
+	_adding_at = at
+	var near: Button = gap if gap != null else (_loop_add if into_loop else _add_button)
 	_add_menu.position = Vector2i(near.get_screen_position() + Vector2(0, near.size.y))
 	_add_menu.popup()
 
 
 func _on_add_chosen(id: int) -> void:
-	var at: int = app.add_pedal(inst, Catalog.PEDAL_ORDER[id], -1 if _adding_to_loop else front_count(), _adding_to_loop)
+	var where: int = _adding_at if _adding_at >= 0 else (-1 if _adding_to_loop else front_count())
+	var at: int = app.add_pedal(inst, Catalog.PEDAL_ORDER[id], where, _adding_to_loop)
 	if at >= 0:
 		selected = at
 		_refresh()

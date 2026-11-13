@@ -573,12 +573,73 @@ func save_template(template_name: String) -> String:
 const CARRY := ["walls", "instruments", "patterns", "mix", "instrument_settings", "plugins", "tempo"]
 
 
+## A room being put in place, a step at a time (begin_room makes one): the room itself, then each instrument with its
+## plug-ins, then the folders, aux tracks, sends and masters. Stepped through all at once it is apply_room_data; a step
+## a frame, the screen can show how far it has got (session.gd), since a room with many plug-ins takes a while.
+class RoomLoad:
+	var data := {}
+	var carry := {}
+	var size = null
+	var mode := ""
+	var made := []      # each instrument entry's instrument (null where it couldn't be made), for the folders
+	var problems := []
+	var steps := []     # [what it sets up (for the screen to say), what does it]
+	var at := 0
+
+	func done() -> bool:
+		return at >= steps.size()
+
+	## What the next step sets up ("" once done), and how far along it is, 0 to 1.
+	func label() -> String:
+		return str(steps[at][0]) if not done() else ""
+
+	func progress() -> float:
+		return float(at) / maxf(steps.size(), 1.0)
+
+	func step() -> void:
+		if not done():
+			var work: Callable = steps[at][1]
+			steps[at][1] = Callable()  # (done with: each holds this load itself, which would otherwise never be let go)
+			work.call()
+			at += 1
+
+	func problem() -> String:
+		return "; ".join(problems)
+
+
 ## Replaces the room with what a room's file or a template holds. `carry` leaves out what it sets false (see CARRY):
 ## the walls; the instruments altogether; their patterns; their faders, mute and solo; their own settings (an amp's
 ## head, cabinet, knobs and pedals, a Speaker's volume); the plug-ins on their inserts and pedals; the tempo and swing.
 ## `size`, if given, is the room's size instead of the one in `data`. Returns what couldn't be done, or "".
 func apply_room_data(data: Dictionary, carry := {}, size = null, mode := "") -> String:
-	var keep := func(what: String) -> bool: return bool(carry.get(what, true))
+	var load := begin_room(data, carry, size, mode)
+	while not load.done():
+		load.step()
+	return load.problem()
+
+
+## The same, begun: its steps to take (see RoomLoad).
+func begin_room(data: Dictionary, carry := {}, size = null, mode := "") -> RoomLoad:
+	var load := RoomLoad.new()
+	load.data = data
+	load.carry = carry
+	load.size = size
+	load.mode = mode
+	load.steps.append(["the room", _load_room.bind(load)])
+	if bool(carry.get("instruments", true)):
+		for entry in data.get("instruments", []):
+			var kind := str(entry.get("kind", ""))
+			var known: String = app.Catalog.KINDS[kind].name if app.Catalog.KINDS.has(kind) else kind
+			load.steps.append([str(entry.get("name", known)), _load_instrument.bind(load, entry)])
+	load.steps.append(["the mix", _load_mix.bind(load)])
+	return load
+
+
+## The room's own: emptied, then its size, surfaces and walls, the tempo and the masters' faders.
+func _load_room(load: RoomLoad) -> void:
+	var data: Dictionary = load.data
+	var keep := func(what: String) -> bool: return bool(load.carry.get(what, true))
+	var size = load.size
 	app.clear_room()
 	var room = app.room
 	var room_part: Dictionary = data.get("room", {})
@@ -603,63 +664,78 @@ func apply_room_data(data: Dictionary, carry := {}, size = null, mode := "") -> 
 	# The room's master (a room from before there was one: the master it had, which was all there was to hear).
 	app.set_room_volume_db(float(data.get("room_master_db", data.get("master_db", 0.0))) if keep.call("mix") else 0.0)
 	app.set_reverb_db(float(data.get("reverb_db", 0.0)) if keep.call("mix") else 0.0)
-	var problems := []
+
+
+## One of its instruments, where it stands, with its settings, plug-ins, clips and automation.
+func _load_instrument(load: RoomLoad, entry: Dictionary) -> void:
+	var data: Dictionary = load.data
+	var keep := func(what: String) -> bool: return bool(load.carry.get(what, true))
+	var problems: Array = load.problems
+	var made: Array = load.made
 	var include := {"instrument_settings": keep.call("instrument_settings"), "plugins": keep.call("plugins")}
-	var made := []  # each instrument entry's instrument (null where it couldn't be made), for the folders
-	for entry in data.get("instruments", []) if keep.call("instruments") else []:
-		var kind := str(entry.get("kind", ""))
-		if kind == "mic_pair" and entry.has("pair"):  # (a stereo pair as two mono mics, as rooms kept them for a while: two mics)
-			kind = "mic"
-		var at: Array = entry.get("position", [0.0, 0.0])
-		var inst = app.add_instrument(kind, Vector3(float(at[0]), 0.0, float(at[1]))) if app.Catalog.KINDS.has(kind) else null
-		made.append(inst)
-		if inst == null:
-			problems.append("a %s (%s)" % [kind, "the room is full" if app.Catalog.KINDS.has(kind) else "not a kind StudioSim knows"])
-			continue
-		inst.rotation.y = float(entry.get("yaw", 0.0))
-		inst.set_locked(bool(entry.get("locked", false)))
-		inst.set_color(_color_from(entry.get("color"), inst.color))
-		if entry.has("name"):
-			app.rename_track(inst, str(entry.name))
-		if inst.is_live():
-			inst.set_input_channel(int(entry.get("input_channel", -1)))
-		if inst.is_mic:
-			app.set_mic_height(inst, float(entry.get("height", inst.source_height)))
-			app.set_mic_tilt(inst, float(entry.get("tilt", 0.0)))
-			var stereo = entry.get("stereo")
-			if inst.is_stereo_mic:
-				var setup: Dictionary = stereo if stereo is Dictionary else {}
-				inst.set_pair(str(setup.get("technique", "xy")), float(setup.get("spacing", 0.0)), str(setup.get("side_model", "condenser")),
-					float(setup.get("width", 1.0)))
-		if keep.call("mix"):  # its fader, and its level in the room (a room from before: the fader's, as it was all one)
-			app.set_instrument_level(inst, float(entry.get("level_db", 0.0)))
-			app.set_room_level(inst, float(entry.get("room_db", entry.get("level_db", 0.0))))
-			inst.set_room_muted(bool(entry.get("room_muted", false)))
-			inst.set_pan(float(entry.get("pan", 0.0)))
-			if inst.is_stereo_mic:
-				_set_pans(inst, entry)
-			inst.muted = bool(entry.get("muted", false))
-			inst.soloed = bool(entry.get("soloed", false))
-		if inst.playable and keep.call("patterns"):
-			if entry.get("default_pattern", false):
-				audio.load_default_pattern(inst.source_id)
-			else:
-				audio.set_pattern_steps(inst.source_id, int(entry.get("steps", 16)))
-				audio.set_pattern(inst.source_id, entry.get("pattern", []))
-			inst.set_loop(bool(entry.get("loop_on", true)))
-		var problem := apply_instrument_settings(inst, entry.get("settings", {}), include)
-		if problem != "":
-			problems.append(problem)
-		inst.clips = app.timeline.with_all_takes(entry.get("clips", []).duplicate(true)) if keep.call("patterns") else []
-		if inst.is_amp:
-			inst.keep_di = bool(entry.get("keep_di", false))
-			inst.reamp = bool(entry.get("reamp", false))
-		if keep.call("mix"):  # its automation, as the mix's
-			inst.automation = entry.get("automation", {}).duplicate(true)
-			inst.auto_mode = str(entry.get("auto_mode", "read"))
-			inst.lanes = entry.get("lanes", ["volume"]).duplicate()
-			if inst.is_stereo_mic:
-				_pans_from_balance(inst)
+	var kind := str(entry.get("kind", ""))
+	if kind == "mic_pair" and entry.has("pair"):  # (a stereo pair as two mono mics, as rooms kept them for a while: two mics)
+		kind = "mic"
+	var at: Array = entry.get("position", [0.0, 0.0])
+	var inst = app.add_instrument(kind, Vector3(float(at[0]), 0.0, float(at[1]))) if app.Catalog.KINDS.has(kind) else null
+	made.append(inst)
+	if inst == null:
+		problems.append("a %s (%s)" % [kind, "the room is full" if app.Catalog.KINDS.has(kind) else "not a kind StudioSim knows"])
+		return
+	inst.rotation.y = float(entry.get("yaw", 0.0))
+	inst.set_locked(bool(entry.get("locked", false)))
+	inst.set_color(_color_from(entry.get("color"), inst.color))
+	if entry.has("name"):
+		app.rename_track(inst, str(entry.name))
+	if inst.is_live():
+		inst.set_input_channel(int(entry.get("input_channel", -1)))
+	if inst.is_mic:
+		app.set_mic_height(inst, float(entry.get("height", inst.source_height)))
+		app.set_mic_tilt(inst, float(entry.get("tilt", 0.0)))
+		var stereo = entry.get("stereo")
+		if inst.is_stereo_mic:
+			var setup: Dictionary = stereo if stereo is Dictionary else {}
+			inst.set_pair(str(setup.get("technique", "xy")), float(setup.get("spacing", 0.0)), str(setup.get("side_model", "condenser")),
+				float(setup.get("width", 1.0)))
+	if keep.call("mix"):  # its fader, and its level in the room (a room from before: the fader's, as it was all one)
+		app.set_instrument_level(inst, float(entry.get("level_db", 0.0)))
+		app.set_room_level(inst, float(entry.get("room_db", entry.get("level_db", 0.0))))
+		inst.set_room_muted(bool(entry.get("room_muted", false)))
+		inst.set_pan(float(entry.get("pan", 0.0)))
+		if inst.is_stereo_mic:
+			_set_pans(inst, entry)
+		inst.muted = bool(entry.get("muted", false))
+		inst.soloed = bool(entry.get("soloed", false))
+	if inst.playable and keep.call("patterns"):
+		if entry.get("default_pattern", false):
+			audio.load_default_pattern(inst.source_id)
+		else:
+			audio.set_pattern_steps(inst.source_id, int(entry.get("steps", 16)))
+			audio.set_pattern(inst.source_id, entry.get("pattern", []))
+		inst.set_loop(bool(entry.get("loop_on", true)))
+	var problem := apply_instrument_settings(inst, entry.get("settings", {}), include)
+	if problem != "":
+		problems.append(problem)
+	inst.clips = app.timeline.with_all_takes(entry.get("clips", []).duplicate(true)) if keep.call("patterns") else []
+	if inst.is_amp:
+		inst.keep_di = bool(entry.get("keep_di", false))
+		inst.reamp = bool(entry.get("reamp", false))
+	if keep.call("mix"):  # its automation, as the mix's
+		inst.automation = entry.get("automation", {}).duplicate(true)
+		inst.auto_mode = str(entry.get("auto_mode", "read"))
+		inst.lanes = entry.get("lanes", ["volume"]).duplicate()
+		if inst.is_stereo_mic:
+			_pans_from_balance(inst)
+
+
+## The rest: the folders and aux tracks with their tracks in them, the sends, the masters, where you stand, and the
+## music going.
+func _load_mix(load: RoomLoad) -> void:
+	var data: Dictionary = load.data
+	var keep := func(what: String) -> bool: return bool(load.carry.get(what, true))
+	var mode: String = load.mode
+	var problems: Array = load.problems
+	var made: Array = load.made
 	var made_folders := []  # the routing folders (their tracks put in them once the aux tracks are made too)
 	for entry in data.get("folders", []) if keep.call("instruments") else []:
 		var folder = app.add_folder([], str(entry.get("name", "")))
@@ -753,7 +829,6 @@ func apply_room_data(data: Dictionary, carry := {}, size = null, mode := "") -> 
 		app.player.place(Vector3(float(stood[0]), 0.0, float(stood[1])), float(player.get("yaw", 0.0)))
 	app.settle_new_room()  # where you stand too, should the room be smaller than the one you stood in
 	app.timeline.load_from(data, mode)  # a Jam room's patterns, or a Record room's timeline, going
-	return "; ".join(problems)
 
 
 ## Removes a saved template or instrument preset (to the Trash).

@@ -18,7 +18,8 @@ one; someone given the app who has never run it from Godot starts with `~/Music/
   and the plug-ins with their settings), and its tempo and swing. Everything starts ticked. Create room saves the
   room and takes you in.
 - **Open room…** lists the rooms in the rooms folder and those opened lately, the latest first. **Browse…** finds a
-  room's file anywhere, a backup among them.
+  room's file anywhere, a backup among them. A room is put in place an instrument at a time, its plug-ins loading
+  as it goes; a bar shows how far it has got, and which instrument is being set up.
 - **Saving**: ⌘S, or **Save** in the menu's header, which also names the room and says when it was saved. The
   header's **Room** button has Save as…, **Save as template…** and Show in Finder. Making or opening another room,
   or quitting, asks first whether to save any changes.

@@ -48,6 +48,45 @@ func check(ok: bool, what: String, detail := "") -> void:
 		failures += 1
 
 
+## (These two are functions of their own, not part of _run: that one is as long as a GDScript function can safely be,
+## and a few more variables in it crashed Godot far further down. New checks with variables of their own go in
+## functions like these.)
+## The gap between two pedals, clicked: a pedal added there, in front of the amp or in its loop.
+func _check_pedal_gaps(panel, amp, order: Array) -> void:
+	var kinds_before: Array = amp.pedals.map(func(p): return p.kind)
+	await click(panel._gaps[1].get_global_rect().get_center())
+	var gap_menu: bool = panel._add_menu.visible
+	panel._add_menu.id_pressed.emit(order.find("compressor"))
+	panel._add_menu.hide()
+	await frames(3)
+	var between: bool = amp.pedals.size() == 5 and amp.pedals[1].kind == "compressor" and not amp.pedals[1].get("in_loop", false) and \
+		panel.selected == 1 and main.audio.get_pedal_loop(amp.source_id) == 1
+	await click(panel._gaps[4].get_global_rect().get_center())  # (before the delay, the loop's only pedal)
+	panel._add_menu.id_pressed.emit(order.find("reverb"))
+	panel._add_menu.hide()
+	await frames(3)
+	check(gap_menu and between and amp.pedals.size() == 6 and amp.pedals[4].kind == "reverb" and amp.pedals[4].get("in_loop", false) and
+		amp.pedals[5].kind == "delay" and main.audio.get_pedal_loop(amp.source_id) == 2 and panel.front_count() == 4,
+		"a click in the gap between two pedals adds one there: in front of the amp, and at the start of its loop",
+		", ".join(amp.pedals.map(func(p): return p.kind)))
+	main.remove_pedal(amp, 4)
+	main.remove_pedal(amp, 1)
+	panel.selected = 3
+	panel._refresh()
+	await frames(2)
+	check(amp.pedals.map(func(p): return p.kind) == kinds_before and main.audio.get_pedal_loop(amp.source_id) == 1, "(and the board is as it was)")
+
+
+## Open pressed on the rooms page: the room put in place a step at a time, the screen saying how far it has got.
+func _open_and_watch(rooms, room_name: String) -> void:
+	await click(rooms._open.get_global_rect().get_center())
+	var loading_shown: bool = main.loading.is_open() and main.session.loading and main.loading._title.text == "Opening %s" % room_name
+	var loading_step: String = main.loading._step.text
+	await seconds(1.0)
+	check(loading_shown and loading_step.begins_with("Setting up ") and not main.loading.is_open() and not main.session.loading,
+		"a room being opened is put in place a step at a time, the screen saying how far it has got", loading_step)
+
+
 ## A check this machine can't make (the plug-ins it needs are a Mac's).
 func skip(what: String, why: String) -> void:
 	print("  [skip] %s  (%s)" % [what, why])
@@ -866,6 +905,7 @@ func _run() -> void:
 	await frames(3)
 	check(looped_in and out_again and amp.pedals.size() == 4 and amp.pedals[3].kind == "delay" and amp.pedals[3].get("in_loop", false),
 		"a pedal dragged past the PREAMP goes in the amp's effects loop, and dragged back comes out in front; the loop's + adds one in it")
+	await _check_pedal_gaps(panel, amp, order)
 	var mix_at_first: float = amp.loop_mix
 	panel._loop_mix.value_changed.emit(8.0)
 	await frames(2)
@@ -1944,8 +1984,7 @@ func _run() -> void:
 		rooms._room_list.get_root().get_first_child().get_text(0).begins_with("Second room"), "Open room lists the rooms, the latest first", str(listed))
 	var first_room: TreeItem = rooms._room_list.get_root().get_child(listed.find("Test room"))
 	first_room.select(0)
-	await click(rooms._open.get_global_rect().get_center())
-	await seconds(1.0)
+	await _open_and_watch(rooms, "Test room")
 	check(session.room_name == "Test room" and is_equal_approx(main.tempo, 127.0) and main.room.size.is_equal_approx(Vector3(18.0, 5.0, 12.0)) and
 		not session.has_unsaved_changes() and not title.is_open(), "opening one brings it back as it was saved, and goes in")
 	check(main.settings.monitor == "mix" and main.hud._monitor_chip.text == "HEADPHONE MIX", "listening to the mix, as it was left", main.settings.monitor)
@@ -3667,14 +3706,16 @@ func _run() -> void:
 	check(guest_body != null and Vector2(guest_body.global_position.x, guest_body.global_position.z).distance_to(
 		Vector2(float(joined.at[0]), float(joined.at[1]))) < 0.1 and guest_body.get_child(0).height > 1.6 and guest_body.get_child(0).height < 1.64,
 		"and their body stands where they do, as tall as they are, for this player to see", str(guest_body.global_position) if guest_body else "none")
-	var their_look: Dictionary = guest_body.get_child(0).look if guest_body else {}
+	var their_look: Dictionary = guest_body.get_child(0).look.duplicate() if guest_body else {}
+	# (looked at now: once they change, this body is let go and another made, and it is no longer there to ask)
+	their_look.bun_made = guest_body != null and guest_body.find_child("hair_bun", true, false) != null
 	main.net.report({"ask": "dress", "shirt": "hoodie"})
 	await wait_for.call("dress", 10.0)
 	var dressed_until := Time.get_ticks_msec() + 5000
 	while Time.get_ticks_msec() < dressed_until and (main.net.body_of(guest_id) == null or main.net.body_of(guest_id).get_child(0).look.shirt != "hoodie"):
 		await process_frame
 	var redressed = main.net.body_of(guest_id)
-	check(their_look.get("body", "") == "female" and their_look.get("hair", "") == "bun" and guest_body.find_child("hair_bun", true, false) != null and
+	check(their_look.get("body", "") == "female" and their_look.get("hair", "") == "bun" and their_look.bun_made and
 		redressed != null and redressed.get_child(0).look.shirt == "hoodie" and redressed.find_child("hood", true, false) != null,
 		"looking as they chose (a woman's build, her hair in a bun), and as they change it, a hoodie on, while they're in the room",
 		str(their_look))

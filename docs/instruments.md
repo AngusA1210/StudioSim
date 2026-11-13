@@ -284,7 +284,8 @@ in it fully wet. Drag a pedal across to move it in or out; the loop's own **+** 
 ### Effect pedals
 
 An amp starts with an empty board. The amp panel's **Pedalboard** runs the way the signal does: from the input through
-up to eight pedals, in order, then the amp. **+ Pedal** adds one at the end of the line; click a pedal to set it up
+up to eight pedals, in order, then the amp. **+ Pedal** adds one at the end of the line, and a click on the arrow
+between two pedals (or before the first) adds one there; click a pedal to set it up
 underneath, where its knobs read in real units (decibels, milliseconds, hertz), and its footswitch, or its number key
 (1 to 8, in the panel or facing the amp in the room), switches it on or off. Drag a pedal along the board to move it
 (a blue mark shows the gap it will go in); hold Option as you drop it to put a second one there instead, knobs and

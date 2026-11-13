@@ -220,7 +220,9 @@ func create() -> void:
 		var mode := "record" if _record.button_pressed else "jam"
 		app.settings.room_mode = mode
 		app.settings.save_to_disk()
-		var problem: String = app.session.create(the_name, _folder, template.path, carry, size, mode)
+		# (shown as it is put in place, its plug-ins loading; all at once while playing together, the room being shared)
+		var problem: String = await app.session.create_shown(the_name, _folder, template.path, carry, size, mode) if app.net.role == "" \
+			else app.session.create(the_name, _folder, template.path, carry, size, mode)
 		if not app.session.has_room() or app.session.room_name != the_name:
 			_new_status.text = "It couldn't be made: %s." % problem
 			return
@@ -281,7 +283,7 @@ func open_room(file: String) -> void:
 		_into_room()
 		return
 	app.session.then_if_saved(func() -> void:
-		var problem: String = app.session.open(file)
+		var problem: String = await app.session.open_shown(file) if app.net.role == "" else app.session.open(file)
 		if app.session.path != file:
 			_open_status.text = "It couldn't be opened: %s." % problem
 			_open_status.add_theme_color_override("font_color", WARN)

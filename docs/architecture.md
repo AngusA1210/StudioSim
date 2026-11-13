@@ -20,6 +20,7 @@ game/                      Godot project: the room, player, instruments, HUD, me
   scripts/plugin_browser.gd  the plug-ins installed, by type or by maker, for an insert or a Plug-in pedal
   scripts/session.gd       the open room: its file, saving, auto-save and backups
   scripts/rooms_page.gd    making a new room (from a template) and opening one
+  scripts/loading.gd       a room being opened or made: a bar for how far it has got, an instrument at a time
   scripts/avatar_page.gd   Avatar customization: your name, height and look, from the title screen, your body turning
                            beside them
   scripts/tutorial.gd      the title screen's Tutorial: a card taking a newcomer through a room of their own, a step

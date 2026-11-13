@@ -20,6 +20,7 @@ var path := ""       # the room's file; "" while none is open
 var room_name := ""
 var copy := false    # a copy of another player's room (joined, or left), kept in Together in the rooms folder
 var saved_at := 0    # when it was last saved (Unix time), 0 if never
+var loading := false  # a room is being put in place over several frames (open_shown, create_shown): half there
 var _saved := ""     # the room as it was when last saved or opened, to tell whether it has changed since
 var _backed_up := ""  # likewise for the last backup
 var _since_save := 0.0
@@ -123,6 +124,40 @@ func create(the_name: String, folder: String, template_path: String, carry := {}
 	return unsaved if unsaved != "" else problem
 
 
+## The same, put in place a step a frame with the screen showing how far it has got (loading.gd): as the New room
+## page makes one. To be awaited.
+func create_shown(the_name: String, folder: String, template_path: String, carry := {}, size = null, mode := "jam") -> String:
+	var data: Dictionary = app.library.template_data(template_path)
+	if data.is_empty():
+		return "the template couldn't be read"
+	if exists(folder, the_name):
+		return "there is a room called that in that folder already"
+	path = file_for(folder, the_name)
+	copy = false
+	room_name = the_name
+	var problem: String = await _load_shown(app.library.begin_room(data, carry, size, mode), "Making %s" % the_name)
+	app.set_monitor("room")
+	var unsaved := save()
+	return unsaved if unsaved != "" else problem
+
+
+## A room put in place a step a frame (its instruments one by one, each with its plug-ins), the screen saying which
+## and how far along. The room isn't saved or backed up meanwhile: it is only half there.
+func _load_shown(load, title: String) -> String:
+	loading = true
+	app.loading.begin(title)
+	var count: int = load.steps.size()
+	while not load.done():
+		app.loading.show_step("Setting up %s  (%d of %d)" % [load.label(), load.at + 1, count], load.progress())
+		await app.get_tree().process_frame  # (drawn, before the step is taken: it may be a while)
+		if load.at == 0:
+			await app.get_tree().process_frame
+		load.step()
+	app.loading.end()
+	loading = false
+	return load.problem()
+
+
 ## Opens a room's file, in place of the room there is. Returns what went wrong, or "".
 func open(file: String) -> String:
 	var data: Dictionary = app.library.read_room_file(file)
@@ -130,7 +165,22 @@ func open(file: String) -> String:
 		return "it isn't a room StudioSim can read"
 	path = file  # first, so that its recordings are found in its folder
 	copy = false
-	var problem: String = app.library.apply_room_data(data)
+	return _opened(file, data, app.library.apply_room_data(data))
+
+
+## The same, put in place a step a frame with the screen showing how far it has got (loading.gd): as the Open room
+## page opens one. To be awaited.
+func open_shown(file: String) -> String:
+	var data: Dictionary = app.library.read_room_file(file)
+	if data.is_empty():
+		return "it isn't a room StudioSim can read"
+	path = file
+	copy = false
+	var named := str(data.get("name", file.get_file().get_basename()))
+	return _opened(file, data, await _load_shown(app.library.begin_room(data), "Opening %s" % named))
+
+
+func _opened(file: String, data: Dictionary, problem: String) -> String:
 	app.set_monitor(str(data.get("monitor", "room")))  # (the room, or the mix if that is what it was left on)
 	room_name = str(data.get("name", file.get_file().get_basename()))
 	saved_at = FileAccess.get_modified_time(file)
@@ -242,7 +292,7 @@ func _carry_on() -> void:
 # ── Auto-save and backups ────────────────────────────────────────────────────────────────────────────────────
 
 func _process(delta: float) -> void:
-	if path == "":
+	if path == "" or loading:
 		return
 	var settings = app.settings
 	_since_save += delta

@@ -48,6 +48,7 @@ const Session := preload("res://scripts/session.gd")
 const RoomsPage := preload("res://scripts/rooms_page.gd")
 const AvatarPage := preload("res://scripts/avatar_page.gd")
 const Tutorial := preload("res://scripts/tutorial.gd")
+const Loading := preload("res://scripts/loading.gd")
 const Avatar := preload("res://scripts/avatar.gd")
 const Net := preload("res://scripts/net.gd")
 const TogetherPage := preload("res://scripts/together_page.gd")
@@ -93,6 +94,7 @@ var session  # the room that is open: its file, saving, backups
 var rooms_page  # making a new room, or opening one
 var avatar_page  # your name, height and look, from the title screen
 var tutorial  # the title screen's Tutorial: a card taking a newcomer through it a step at a time
+var loading  # a room being opened or made: how far it has got
 var net  # playing together
 var together_page  # hosting or joining, from the title screen
 var timeline  # the room's mode, and a Record room's transport, recording and clips
@@ -271,6 +273,9 @@ func _ready() -> void:
 	tutorial = Tutorial.new()
 	add_child(tutorial)
 	tutorial.setup(self)
+	loading = Loading.new()  # (last: while it is up, it is given the keys first, and keeps them)
+	add_child(loading)
+	loading.setup(self)
 	get_tree().auto_accept_quit = false  # quitting asks first whether to save the room
 	# Should the game lose the keyboard (to a plug-in's window, say), let go of every note held: the keys' letting go
 	# would never arrive, and the notes would hang.
@@ -765,8 +770,8 @@ func stomp(inst, index: int) -> void:
 func add_pedal(inst, kind: String, at := -1, into_loop := false) -> int:
 	var count: int = inst.pedals.size()
 	var loop := audio.get_pedal_loop(inst.source_id)
-	var index := audio.add_pedal(inst.source_id, kind, -1 if into_loop else at)
-	if into_loop and index >= 0 and audio.get_pedal_loop(inst.source_id) == loop:  # (the first in an empty loop)
+	var index := audio.add_pedal(inst.source_id, kind, at)
+	if into_loop and index >= 0 and audio.get_pedal_loop(inst.source_id) == loop:  # (the first in the loop: the loop a pedal longer)
 		audio.set_pedal_loop(inst.source_id, loop + 1)
 	inst.pedals = audio.get_pedals(inst.source_id)
 	inst.looper = audio.get_looper(inst.source_id)
