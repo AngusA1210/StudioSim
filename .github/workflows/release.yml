@@ -1,0 +1,182 @@
+# A release: StudioSim made into its installers on GitHub's own computers (a Mac disk image on an Apple silicon Mac, a
+# Windows installer on Windows), checked, and published as a GitHub release, the website's download buttons always
+# leading to the latest (docs/website.md). Started by pushing a tag of the version in game/project.godot:
+#
+#   git tag v0.1.0 && git push origin v0.1.0
+#
+# Run by hand (Actions › Release › Run workflow), it makes the installers without publishing them, to try.
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  GODOT_VERSION: "4.7.2"
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.read.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: read
+        name: The version, and the tag agreeing with it
+        shell: bash
+        run: |
+          version="$(sed -n 's/^config\/version="\(.*\)"$/\1/p' game/project.godot)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [ "$GITHUB_REF_TYPE" = "tag" ] && [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "The tag $GITHUB_REF_NAME isn't v$version, the version in game/project.godot"
+            exit 1
+          fi
+
+  mac:
+    needs: version
+    runs-on: macos-15  # (Apple silicon)
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Third-party libraries (kept between runs)
+        uses: actions/cache@v6
+        with:
+          path: |
+            audio_core/thirdparty/steamaudio
+            audio_core/thirdparty/miniaudio
+            audio_core/thirdparty/vst3sdk
+            audio_core/thirdparty/opus
+          key: deps-mac-${{ hashFiles('tools/fetch_deps.sh') }}
+
+      - name: Godot and its export templates (checked against Godot's own checksums)
+        shell: bash
+        run: |
+          base="https://github.com/godotengine/godot/releases/download/$GODOT_VERSION-stable"
+          app="Godot_v$GODOT_VERSION-stable_macos.universal.zip"
+          templates="Godot_v$GODOT_VERSION-stable_export_templates.tpz"
+          cd "$RUNNER_TEMP"
+          curl -fsSL -O "$base/$app" -O "$base/$templates" -O "$base/SHA512-SUMS.txt"
+          grep -E "  ($app|$templates)$" SHA512-SUMS.txt | shasum -a 512 -c -
+          unzip -q "$app" -d godot
+          mkdir -p "$HOME/Library/Application Support/Godot/export_templates/$GODOT_VERSION.stable"
+          unzip -q "$templates" -d templates
+          mv templates/templates/* "$HOME/Library/Application Support/Godot/export_templates/$GODOT_VERSION.stable/"
+          mkdir -p bin && ln -s "$RUNNER_TEMP/godot/Godot.app/Contents/MacOS/Godot" bin/godot
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      - name: The app
+        shell: bash
+        run: tools/export.sh
+
+      - name: The disk image
+        shell: bash
+        run: |
+          tools/package.sh
+          hdiutil verify dist/StudioSim-macOS.dmg
+          mounted="$(hdiutil attach -nobrowse -readonly dist/StudioSim-macOS.dmg | tail -1 | cut -f3)"
+          codesign --verify --deep --strict "$mounted/StudioSim.app"
+          [ "$(lipo -archs "$mounted/StudioSim.app/Contents/MacOS/StudioSim")" = "arm64" ]
+          ls "$mounted"
+          hdiutil detach "$mounted"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: StudioSim-macOS
+          path: dist/StudioSim-macOS.dmg
+          if-no-files-found: error
+
+  windows:
+    needs: version
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Third-party libraries (kept between runs)
+        uses: actions/cache@v6
+        with:
+          path: |
+            audio_core/thirdparty/steamaudio
+            audio_core/thirdparty/miniaudio
+            audio_core/thirdparty/vst3sdk
+            audio_core/thirdparty/opus
+          key: deps-${{ hashFiles('tools/fetch_deps.sh') }}
+
+      - name: Godot and its export templates (checked against Godot's own checksums)
+        shell: bash
+        run: |
+          base="https://github.com/godotengine/godot/releases/download/$GODOT_VERSION-stable"
+          app="Godot_v$GODOT_VERSION-stable_win64.exe.zip"
+          templates="Godot_v$GODOT_VERSION-stable_export_templates.tpz"
+          cd "$RUNNER_TEMP"
+          curl -fsSL -O "$base/$app" -O "$base/$templates" -O "$base/SHA512-SUMS.txt"
+          grep -E "  ($app|$templates)$" SHA512-SUMS.txt | sha512sum -c -
+          unzip -q "$app" -d godot
+          dest="$APPDATA/Godot/export_templates/$GODOT_VERSION.stable"
+          mkdir -p "$dest"
+          unzip -q "$templates" -d templates
+          mv templates/templates/* "$dest/"
+          mkdir -p bin
+          cp godot/Godot_v$GODOT_VERSION-stable_win64_console.exe bin/godot.exe
+          cp godot/Godot_v$GODOT_VERSION-stable_win64.exe bin/
+          echo "$(cygpath -w "$RUNNER_TEMP/bin")" >> "$GITHUB_PATH"
+
+      - name: The app
+        shell: bash
+        run: tools/export.sh
+
+      - name: Nothing it needs that a Windows PC mightn't have (no Visual C++ runtime DLLs)
+        shell: pwsh
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          $dumpbin = Get-ChildItem "$vs\VC\Tools\MSVC" -Recurse -Filter dumpbin.exe | Where-Object FullName -match 'Hostx64\\x64' | Select-Object -First 1
+          $found = @()
+          foreach ($file in Get-ChildItem dist\Windows -Include *.dll, *.exe -Recurse) {
+            $deps = & $dumpbin.FullName /nologo /dependents $file.FullName
+            $deps | Write-Output
+            $found += $deps | Select-String -Pattern 'VCRUNTIME|MSVCP|api-ms-win-crt|ucrtbase'
+          }
+          if ($found.Count -gt 0) { Write-Error "It needs Microsoft's C++ runtime: $found"; exit 1 }
+
+      - name: The installer
+        shell: bash
+        run: |
+          if [ ! -f "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" ]; then choco install innosetup -y --no-progress; fi
+          tools/package.sh
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: StudioSim-Windows
+          path: dist/StudioSim-Windows-Setup.exe
+          if-no-files-found: error
+
+  publish:
+    if: github.ref_type == 'tag'
+    needs: [version, mac, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          path: out
+          merge-multiple: true
+      - name: The release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          sed -e "s/{{version}}/$VERSION/g" tools/release_notes.md > notes.md
+          (cd out && sha256sum StudioSim-macOS.dmg StudioSim-Windows-Setup.exe > SHA256SUMS.txt && cat SHA256SUMS.txt)
+          gh release create "$GITHUB_REF_NAME" out/StudioSim-macOS.dmg out/StudioSim-Windows-Setup.exe out/SHA256SUMS.txt \
+            --title "StudioSim $VERSION" --notes-file notes.md --latest

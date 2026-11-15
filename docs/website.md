@@ -75,11 +75,15 @@ build's **watch paths** (the same settings page) to `website/*`, `docs/*` and `w
 **A domain of its own** (optional, about $10 a year for a `.com`): buy it from any registrar, then in the Worker's
 **Settings › Domains & Routes** add it as a custom domain and follow the steps. Change `SITE_URL` to match.
 
+## The downloads
+
+The download page's buttons lead to the latest GitHub release's files
+(`https://github.com/AngusA1210/StudioSim/releases/latest/download/StudioSim-macOS.dmg`, and
+`StudioSim-Windows-Setup.exe`), so they follow each new release without the site changing; the version it names is
+the one in `game/project.godot`. Releases are made by `.github/workflows/release.yml` (see
+[Making a release](building.md#making-a-release)).
+
 ## Later
 
-- **The downloads.** `pages/download.html` and the buttons on the other pages say "Coming soon". At the first
-  release, the two cards get links to the release's files (`https://github.com/<owner>/<repository>/releases/latest`
-  always leads to the newest), and the "coming soon" labels come out.
 - **The videos.** The front page has a place for them. A video kept on another site (YouTube, say) needs that site
   allowed in `static/_headers` (`frame-src`), or it won't show.
-- **The source link.** Once the repository is public, the footer and the about page should link to it.

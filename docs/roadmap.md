@@ -34,24 +34,17 @@ through a session server by a code; a room browser for the rooms on one network 
 (on a free Cloudflare Worker); the host's rules; getting back in after a lost connection (see
 [Playing together](playing-together.md)). It is still to be tried by ear between computers on different networks.
 
+StudioSim 0.1.0 is out: free software under the GPL, its source public, its website live with downloads for macOS
+(Apple silicon) and Windows, made by GitHub Actions for each release.
+
 To do, in this order:
 
-1. **A website** for StudioSim, where it can be downloaded: what it is, pictures of it, its features, a guide (the
-   docs), the downloads for macOS and Windows (from the repository's releases), and a link to the source. It is
-   built (`website/`, see [The website](website.md)): a static site, to be published free on Cloudflare beside
-   the room list, its downloads marked as coming until the release, with a domain of its own if wanted.
-2. **Demonstration videos**: short ones of its features (walking a room and hearing it change, an amp miked up, a
+1. **Demonstration videos**: short ones of its features (walking a room and hearing it change, an amp miked up, a
    recording made and edited, playing together), for the website and to show it. Recorded from the app itself, with
    its sound.
-3. **A public release**, free and open source, in the usual steps:
-   - a **licence** chosen and added (MIT is the simplest and suits every library StudioSim uses; the GPL would make
-     anything built from it open too), and a third-party notices page in the app, as those libraries' licences ask;
-   - the **repository made public**, with a README for newcomers, how to build it, and how to contribute;
-   - **apps people can open without warnings**: on a Mac signed with an Apple Developer ID and notarized by Apple,
-     universal (Intel Macs too); on Windows signed with a code-signing certificate. Without ASIO in the Windows app,
-     unless Steinberg's ASIO licence agreement is signed (WASAPI needs none);
-   - **numbered versions** (0.1.0 to begin with) with release notes, the apps built and attached to each release
-     (GitHub Actions can build them), and the website's download links following the latest;
-   - a **place to report problems** (GitHub Issues), and a first round of people trying it before it is announced.
+2. **ASIO in the Windows app**, once Steinberg's (free) proprietary ASIO licence is signed: the build already has it
+   when the SDK is there.
+3. **Apps that open without warnings**: on a Mac, signed with an Apple Developer ID and notarized by Apple (and
+   universal, for Intel Macs too); on Windows, signed with a code-signing certificate.
 4. **More for playing and recording music**, from then on: VR through OpenXR among the first, MIDI on Linux, and
    whatever playing and recording together ask for.

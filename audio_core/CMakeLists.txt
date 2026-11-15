@@ -10,6 +10,10 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 if(APPLE)
     set(CMAKE_OSX_DEPLOYMENT_TARGET 12.0)
 endif()
+# On Windows, Microsoft's C++ runtime built in (/MT), for everything here (godot-cpp, Opus, the VST 3 hosting too): the
+# app then needs no Visual C++ Redistributable installed, and so its installer needs no administrator's rights. (Steam
+# Audio's DLL carries its own already.) Set before any target is made, as each takes it as it is made.
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>" CACHE STRING "Microsoft's C++ runtime, built in")
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()

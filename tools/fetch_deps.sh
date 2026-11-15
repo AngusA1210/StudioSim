@@ -32,9 +32,15 @@ if [ ! -d "$TP/steamaudio/include" ]; then
   mkdir -p "$TP/steamaudio"
   cp -R "$src/include" "$TP/steamaudio/"
   cp -R "$src/lib" "$TP/steamaudio/"
-  [ -f "$src/LICENSE.md" ] && cp "$src/LICENSE.md" "$TP/steamaudio/" || true
   rm -rf "$tmp"
 fi
+# Steam Audio's licence, and the notices of what is built into it, which go with the app (tools/notices.sh): from its
+# repository, at the same version (its download doesn't carry them).
+for notice in LICENSE.md core/THIRDPARTY.md; do
+  if [ ! -f "$TP/steamaudio/$(basename "$notice")" ]; then
+    curl -fsSL "https://raw.githubusercontent.com/ValveSoftware/steam-audio/v$STEAMAUDIO_VERSION/$notice" -o "$TP/steamaudio/$(basename "$notice")"
+  fi
+done
 
 if [ ! -f "$TP/vst3sdk/pluginterfaces/base/funknown.h" ]; then
   echo "Fetching the VST 3 SDK $VST3SDK_TAG (what a host needs of it)"

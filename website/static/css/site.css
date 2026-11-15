@@ -625,6 +625,32 @@ a.card:hover {
   color: var(--dim);
 }
 
+.download-card .steps {
+  padding-left: 1.3em;
+  margin: 0 0 1.1em;
+  font-size: 0.95rem;
+}
+
+.download-card .steps li {
+  margin-bottom: 0.5em;
+}
+
+.download-card .steps li::marker {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.download-card .steps strong {
+  color: var(--ink);
+}
+
+.small-print {
+  color: var(--dim);
+  font-size: 0.86rem;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+
 /* ── Long text: the about page, and the guide ───────────────────────────────────────────────── */
 
 .narrow {

@@ -25,6 +25,11 @@ OUT = HERE / "_site"
 # Where the site is published ("https://studiosim.example"), for the addresses a page gives of itself (its canonical
 # link, its picture when it is shared, the sitemap). Left empty, those are left out. Set it where the site is built.
 SITE_URL = os.environ.get("SITE_URL", "").rstrip("/")
+# The source, and the downloads: always the latest release's (made by .github/workflows/release.yml, under these names),
+# its version the one in the game's project file.
+SOURCE_URL = "https://github.com/AngusA1210/StudioSim"
+LATEST = SOURCE_URL + "/releases/latest/download/"
+VERSION = re.search(r'^config/version="([^"]*)"', (HERE.parent / "game" / "project.godot").read_text(encoding="utf-8"), re.M).group(1)
 
 # The guide: the docs it is made of, in order, in two groups. [file's name without .md, its name in the list, what it
 # covers (the page's description, for search engines and where it is shared)]
@@ -273,7 +278,9 @@ def page_html(base, relative, about, content):
         share = ('<link rel="canonical" href="%s/%s">\n<meta property="og:url" content="%s/%s">\n<meta property="og:image" content="%s/img/%s">\n'
                  '<meta name="twitter:card" content="summary_large_image">') % (
             SITE_URL, address, SITE_URL, address, SITE_URL, about.get("image", "room-overview.jpg"))
-    values = {"title": html.escape(about["title"], quote=False), "description": html.escape(about["description"], quote=True), "nav": about.get("nav", ""), "root": root,
+    values = {"title": html.escape(about["title"], quote=False), "description": html.escape(about["description"].replace("{{version}}", VERSION), quote=True), "nav": about.get("nav", ""), "root": root,
+              "version": VERSION, "source": SOURCE_URL, "mac_dmg": LATEST + "StudioSim-macOS.dmg",
+              "windows_setup": LATEST + "StudioSim-Windows-Setup.exe", "releases": SOURCE_URL + "/releases",
               "share": share, "content": content, "class": about.get("class", "page")}
     values["content"] = fill(content, values) if about.get("fill", "yes") == "yes" else content
     return fill(base, values)

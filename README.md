@@ -22,6 +22,12 @@ It is also a workstation: rooms can be recorded, edited and mixed the way a DAW 
   do. Each player hears the room from where they stand, with the patterns in step on a shared clock, live inputs
   streamed between players, voices, and Record rooms recorded together.
 
+## Download
+
+The latest version, for macOS (Apple silicon) and Windows, is on the
+[releases page](https://github.com/AngusA1210/StudioSim/releases/latest): a disk image for the Mac, an installer for
+Windows. Neither is signed yet, so each system warns once, the first time (the release notes say what to click).
+
 ## Build and run
 
 macOS needs the Xcode command-line tools, CMake, git and Godot 4.7 or newer. Windows needs Visual Studio 2022 or newer,
@@ -44,15 +50,19 @@ recording, mixing, room acoustics, playing together, making the app, and how the
 
 ## Roadmap
 
-Playing together works, on one network and over the internet. Next, in this order:
+StudioSim 0.1.0 is out. Next, in this order:
 
-1. **A website** for StudioSim, where it can be downloaded for macOS and Windows.
-2. **Demonstration videos** of what it does, for the website and to show it.
-3. **A public release**, free and open source: a licence, the repository made public, apps signed for macOS and
-   Windows, numbered versions with release notes, and a place to report problems.
+1. **Demonstration videos** of what it does, for the website and to show it.
+2. **ASIO in the Windows app**, once Steinberg's ASIO licence is signed.
+3. **Apps that open without warnings**: signed for macOS and Windows.
 4. **More for playing and recording music**, from then on: VR among the first.
 
 The full list is in [docs/roadmap.md](docs/roadmap.md).
+
+## Licence
+
+StudioSim is free software: you can redistribute it and change it under the terms of the
+[GNU General Public License, version 3](LICENSE) (GPL-3.0-only). Copyright © 2026 Andrew Angus.
 
 ## Third-party
 
@@ -60,4 +70,8 @@ The full list is in [docs/roadmap.md](docs/roadmap.md).
 - [Steam Audio](https://github.com/ValveSoftware/steam-audio) (Apache 2.0)
 - [miniaudio](https://github.com/mackron/miniaudio) (public domain / MIT-0)
 - [VST 3 SDK](https://github.com/steinbergmedia/vst3sdk) (MIT; VST is a registered trademark of Steinberg Media Technologies GmbH)
+- [ASIO SDK](https://www.steinberg.net/developers/asiosdk-open/) (GPLv3, in the Windows app; ASIO is a trademark of
+  Steinberg Media Technologies GmbH)
 - [Opus](https://opus-codec.org) (BSD 3-clause), for the sound between players
+
+Their notices go with the app, in `THIRD-PARTY-NOTICES.txt` (made by `tools/notices.sh`).
