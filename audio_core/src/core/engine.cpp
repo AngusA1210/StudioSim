@@ -340,6 +340,7 @@ struct AudioEngine::Source {
             bool reflection = false;  // off a surface other than the floor: read already split, without filters (see hearCapsule)
             float radius = 0.0f;      // the cone's or the head's it comes from (how curved its wave is, for the proximity effect)
             float middle = 1.0f, middle_target = 1.0f, rim = 1.0f, rim_target = 1.0f;  // a head's: how much of each layer
+            float rim_extra = 0.0f, rim_extra_target = 0.0f;  // and how much further off its rim is than its middle (metres; or nearer)
             float air_at = -1.0f, air[3] = {};  // (a reflection's: what the air leaves of each band, over the distance last worked out)
             float distance = -1.0f, distance_target = 0.0f, nearness = 1.0f, nearness_target = 1.0f;
             float gain = 0.0f, gain_target = 0.0f, cut = 20000.0f, cut_target = 20000.0f;
@@ -369,7 +370,7 @@ struct AudioEngine::Source {
         float low = 0.0f, lower = 0.0f;  // (the split's two stages)
         std::array<float, kShapeTaps> low_tail{}, high_tail{};
     };
-    static constexpr int kConeStates = 64;  // (a capsule's: every cone it hears, and each again off the floor)
+    static constexpr int kConeStates = 96;  // (a capsule's: every cone it hears, and each again off the floor)
     // A microphone's model, as the audio thread plays it: its pattern band by band, what of the reverb it hears band by
     // band, its response on axis, its sensitivity, its noise (its own and its preamp's, as a white noise's amplitude).
     struct MicSound {
@@ -2046,6 +2047,9 @@ void AudioEngine::updateMicPath(const Source& mic, const Source& source) {
             cone.v[6] = p.from.x;
             cone.v[7] = p.from.y;
             cone.v[8] = p.from.z;
+            // (a head's rim: how much further off than its middle, to the tenth of a millimetre, as a count below nothing)
+            if (layers.rim_distance != layers.middle_distance)
+                cone.count = -1 - int64_t(std::lround((double(layers.rim_distance - layers.middle_distance) + 10.0) * 1e4));
             if (p.shape.on) {  // a cone heard as it radiates: where the mic is against it, its cap, and where its bands part
                 cone.count = std::max<int64_t>(int64_t(std::lround(p.shape.split_hz)), 1);
                 cone.at[0] = p.shape.radius;
@@ -2881,6 +2885,7 @@ void AudioEngine::drainCommands() {
                 w.shaped = c.count > 0;  // (a cone heard as it radiates: at and v[5] say where the mic is against it)
                 w.middle_target = w.shaped ? 1.0f : c.at[1];
                 w.rim_target = w.shaped ? 1.0f : c.at[2];
+                w.rim_extra_target = c.count < 0 ? float(double(-c.count - 1) / 1e4 - 10.0) : 0.0f;
                 w.distance_target = c.v[0];
                 w.nearness_target = c.v[1];
                 w.gain_target = c.v[2];
@@ -2901,6 +2906,7 @@ void AudioEngine::drainCommands() {
                 if (w.distance < 0.0f) {  // new: from where it is
                     w.along = w.along_target;
                     w.across = w.across_target;
+                    w.rim_extra = w.rim_extra_target;
                     w.middle = w.middle_target;
                     w.rim = w.rim_target;
                     w.distance = w.distance_target;
@@ -4069,7 +4075,7 @@ void AudioEngine::hearCapsule(Source& mic, int capsule_index, float* out, float 
                           float off_to, float wave, float gain_from, float gain_to, float* state, EqFilter* const* filters, int filter_count,
                           const float* spread_from = nullptr, const float* spread_to = nullptr, float* spread_out = nullptr,
                           const float* rim = nullptr, const float* middle = nullptr, const float* rims = nullptr,
-                          Source::Pickup::Way* cone = nullptr) {
+                          Source::Pickup::Way* cone = nullptr, float rim_from_m = 0.0f, float rim_to_m = 0.0f) {
         const float near_corner = kSpeedOfSound / std::max(wave, kProximityNearest);  // radians a second
         const float wide = near_corner / most, n0 = k2 + wide;
         const float pb0 = (k2 + near_corner) / n0, pb1 = (near_corner - k2) / n0, pa1 = (wide - k2) / n0;
@@ -4081,8 +4087,9 @@ void AudioEngine::hearCapsule(Source& mic, int capsule_index, float* out, float 
         const double late_from = std::clamp(double(from_m) / kSpeedOfSound * rate, 0.0, furthest);
         const double late_to = std::clamp(double(to_m) / kSpeedOfSound * rate, 0.0, furthest);
         readHistory(heard, late_from, late_to, read_.data());
-        if (rim) {
-            readHistory(rim, late_from, late_to, read_rim_.data());
+        if (rim) {  // (its rim, as late as its own nearest part is far)
+            readHistory(rim, std::clamp(late_from + double(rim_from_m) / kSpeedOfSound * rate, 0.0, furthest),
+                        std::clamp(late_to + double(rim_to_m) / kSpeedOfSound * rate, 0.0, furthest), read_rim_.data());
             for (int i = 0; i < block_; ++i) {
                 const float a = float(i + 1) / float(block_);
                 read_[size_t(i)] = read_[size_t(i)] * (middle[0] + (middle[1] - middle[0]) * a) + read_rim_[size_t(i)] * (rims[0] + (rims[1] - rims[0]) * a);
@@ -4248,12 +4255,14 @@ void AudioEngine::hearCapsule(Source& mic, int capsule_index, float* out, float 
             const float* rim = part && !part->rim_history.empty() ? part->rim_history.data() : nullptr;
             const float middle[2] = {way.middle, way.middle + (way.middle_target - way.middle) * glide};
             const float rims[2] = {way.rim, way.rim + (way.rim_target - way.rim) * glide};
+            const float rim_extra_from = way.rim_extra;
+            way.rim_extra += (way.rim_extra_target - way.rim_extra) * glide;
             way.middle = middle[1];
             way.rim = rims[1];
             hear(heard, d_from, way.distance, air_from, air_to, dot(arrive_from, aim_from), dot(way.from, capsule.aim), wave,
                  g_from, way.gain * std::pow(way.nearness, falloff_), state, filters, filter_count,
                  spreads ? spread_from : nullptr, spreads ? spread_to : nullptr, spreads ? capsule.scatter[size_t(way.surface)].data() : nullptr,
-                 rim, middle, rims, way.shaped ? &way : nullptr);
+                 rim, middle, rims, way.shaped ? &way : nullptr, rim_extra_from, way.rim_extra);
             way.low = state[0];
             way.below_high = state[1];
             way.near_in = state[2];

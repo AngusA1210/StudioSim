@@ -133,10 +133,11 @@ float powerCutHz(const Radiator& r);
 
 // A part of an instrument that sounds on its own, from its own place, with a sound of its own (an acoustic kit's,
 // instruments.h: KitPart). A drum's head is a disc with a near field close up (its level levelling off within about its
-// radius, the lows fuller); it is no rigid cone, though: its many modes, and the stick, radiate widely, so off its axis
-// it loses only some of its highs (6 dB edge on), and behind it, where the drum's shell is in the way, more (12 dB
-// straight behind; its lows bend round). A cymbal is a plate: heard from both its faces, its sound mostly high, so all
-// round alike but quieter edge on, with a near field of its own size.
+// radius, and falling away by degrees past its edge; the lows fuller); it is no rigid cone, though: its many modes, and
+// the stick, radiate widely, so off its axis it loses only some of its highs (6 dB edge on), and behind it, where the
+// drum's shell is in the way, more (12 dB straight behind; its lows bend round). A cymbal is a plate: heard from both
+// its faces, its sound mostly high, so all round alike but quieter edge on, with a near field of its own size.
+// Either is a surface, as a cone is: its sound reaches a mic from its nearest part first, not from its middle.
 struct SoundingPart {
     Vec3 centre{};
     Vec3 facing{0.0f, 1.0f, 0.0f};  // the way the head faces, out of the drum (a cymbal's: up, as it is mounted)
@@ -152,11 +153,16 @@ struct SoundingPart {
 // What a drum's shell (and its heads, and the port it has) lets through to a mic inside it, of each band, as amplitudes.
 constexpr std::array<float, 3> kShellThrough{0.3f, 0.06f, 0.02f};
 // How much a mic at `at` hears of a head's middle (its fundamental and the stick) and of its rim (its overtones and
-// ring): as it is placed across the head (how far from its axis, against its radius), the closer it is the more so;
-// far off it hears the two as they are. A cymbal's likewise, from either face: its middle the stick's ping on its bell
-// and bow, its rim the wash and sizzle out at its edge.
+// ring): as it is placed across the head (how far from its axis, against its radius), the closer to its surface it is
+// the more so; far off, or out past its edge, it hears the two as they are. And how far off each is: the middle is
+// heard from within half the head's radius, the rim from the ring round its outer part (from kRimInner of its radius
+// out), each from its own nearest part, so that over the middle of a head the rim comes a little after the middle, and
+// out at its edge before it. A cymbal's likewise, from either face: its middle the stick's ping on its bell and bow,
+// its rim the wash and sizzle out at its edge.
+constexpr float kRimInner = 0.55f;
 struct HeadLayers {
     float middle = 1.0f, rim = 1.0f;
+    float middle_distance = 0.0f, rim_distance = 0.0f;  // metres
 };
 HeadLayers headLayers(const SoundingPart& part, Vec3 at);
 RadiatedPath radiatePart(const SoundingPart& part, Vec3 at, float ref_distance);

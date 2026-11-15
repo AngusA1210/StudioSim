@@ -267,24 +267,44 @@ float headHighDb(float angle) {
 
 }  // namespace
 
+namespace {
+
+// How far off the nearest part of a ring of a head is, from `inner` out to `a`.
+float ringNearest(float along, float across, float a, float inner) {
+    const float out = across < inner ? inner - across : std::max(across - a, 0.0f);
+    return std::sqrt(along * along + out * out);
+}
+
+// Where `at` is against a part: along its axis from its face (either face, a cymbal's; either side, a head's) and out.
+void against(const SoundingPart& part, Vec3 at, float* along, float* across) {
+    const Vec3 to = minus(at, part.centre);
+    const float d = dotOf(to, part.facing);
+    *along = std::fabs(d);
+    *across = std::sqrt(std::max(dotOf(to, to) - d * d, 0.0f));
+}
+
+}  // namespace
+
 RadiatedPath radiatePart(const SoundingPart& part, Vec3 at, float ref_distance) {
     const Radiator plain;  // (no horn; a head has no dust cap, and doesn't break up as a cone does)
-    if (!part.plate) {
-        RadiatedPath p = piston(plain, part.centre, part.facing, part.radius, 2.0f * kFullRangeHz, at, ref_distance);
-        const Vec3 to = minus(at, part.centre);
-        const float r = lengthOf(to);
-        p.gain = 1.0f;  // (the lows bend round a drum: behind it, only its highs are lost)
-        p.cut_hz = 20000.0f;
-        p.high_db = headHighDb(r > 1e-6f ? std::acos(std::clamp(dotOf(to, part.facing) / r, -1.0f, 1.0f)) : 0.0f);
-        return p;
-    }
-    // A cymbal: from whichever face is towards `at`, its highs all round.
     const Vec3 to = minus(at, part.centre);
     const float r = lengthOf(to), cosine = r > 1e-6f ? dotOf(to, part.facing) / r : 1.0f;
-    const Vec3 face = cosine >= 0.0f ? part.facing : Vec3{-part.facing.x, -part.facing.y, -part.facing.z};
+    // A cymbal: from whichever face is towards `at`, its highs all round.
+    const Vec3 face = !part.plate || cosine >= 0.0f ? part.facing : Vec3{-part.facing.x, -part.facing.y, -part.facing.z};
     RadiatedPath p = piston(plain, part.centre, face, part.radius, 2.0f * kFullRangeHz, at, ref_distance);
-    p.gain = plateGain(cosine);
+    // Its level: all of it together, as loud as a surface its size is there (levelling off close up, falling away by
+    // degrees past its edge); when: as its middle is heard (headLayers; its rim, in its own time).
+    float along = 0.0f, across = 0.0f;
+    against(part, at, &along, &across);
+    p.nearness = ref_distance * pistonLevel(along, across, part.radius);
+    p.distance = headLayers(part, at).middle_distance;
     p.cut_hz = 20000.0f;
+    if (!part.plate) {
+        p.gain = 1.0f;  // (the lows bend round a drum: behind it, only its highs are lost)
+        p.high_db = headHighDb(std::acos(std::clamp(cosine, -1.0f, 1.0f)));
+        return p;
+    }
+    p.gain = plateGain(cosine);
     p.low_db = 0.0f;
     p.high_db = 0.0f;
     return p;
@@ -300,28 +320,28 @@ bool SoundingPart::contains(Vec3 at) const {
 }
 
 // The middle: as the drum's fundamental is (all the head moving together, most at its middle, nothing at its edge),
-// and the stick or beater striking there. The rim: as its overtones are (still at the middle, strongest out towards
-// the edge, so they and the ring come forward the further out a mic is placed). Close up only: further off, the head
-// is heard as a whole.
+// and the stick or beater striking there. The rim: as its overtones are (still at the middle, where the two halves of
+// each cancel, and strongest out towards the edge, so they and the ring come forward the further out a mic is
+// placed). Close up only (the nearer the head's surface the mic is, the more so): further off, or out past its edge,
+// the head is heard as a whole. Each is heard from its own nearest part: the middle from within half the head's
+// radius, the rim from the ring round its outer part.
 HeadLayers headLayers(const SoundingPart& part, Vec3 at) {
     HeadLayers out;
-    const Vec3 to = minus(at, part.centre);
+    float along = 0.0f, across_m = 0.0f;
+    against(part, at, &along, &across_m);
+    const float a = part.radius, across = std::min(across_m / a, 1.0f);
+    const float off = nearestOf(along, across_m, a);  // (how far from its surface)
+    const float near = a * a / (a * a + off * off);
+    out.middle_distance = nearestOf(along, across_m, 0.5f * a);
+    out.rim_distance = ringNearest(along, across_m, a, kRimInner * a);
     if (part.plate) {  // a cymbal, from either face: its bell and bow (the stick's ping), and out to its edge (its wash)
-        const float along = std::fabs(dotOf(to, part.facing));
-        const Vec3 off{to.x - part.facing.x * dotOf(to, part.facing), to.y - part.facing.y * dotOf(to, part.facing),
-                       to.z - part.facing.z * dotOf(to, part.facing)};
-        const float a = part.radius, across = std::min(lengthOf(off) / a, 1.0f);
-        const float near = a * a / (a * a + along * along);
         const float bell = across / 0.5f;
         out.middle = 1.0f + near * (std::clamp(1.0f - bell * bell, 0.25f, 1.0f) - 1.0f);
         out.rim = 1.0f + near * (0.45f + 0.9f * across - 1.0f);
         return out;
     }
-    const float along = dotOf(to, part.facing);
-    if (along <= 0.0f) return out;  // (behind it: as a whole)
-    const Vec3 off{to.x - part.facing.x * along, to.y - part.facing.y * along, to.z - part.facing.z * along};
-    const float a = part.radius, across = std::min(lengthOf(off) / a, 1.0f);
-    const float near = a * a / (a * a + along * along);
+    const Vec3 to = minus(at, part.centre);
+    if (dotOf(to, part.facing) <= 0.0f) return out;  // (behind it: as a whole)
     const float middle = std::clamp(1.0f - across * across, 0.2f, 1.0f), rim = 0.35f + 1.6f * across * (1.2f - across);
     out.middle = 1.0f + near * (middle - 1.0f);
     out.rim = 1.0f + near * (rim - 1.0f);

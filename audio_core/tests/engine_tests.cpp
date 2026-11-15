@@ -3953,6 +3953,22 @@ int main(int argc, char** argv) {
         const double middle_ring = ring_on_body(tom.l), edge_ring = ring_on_body(tom.r);
         check(edge_ring - middle_ring > 4.0, "a close mic over a head's middle hears its note; out towards its edge, its overtones and ring",
               fmt("overtones on the note: %.1f dB over the middle, ", middle_ring) + fmt("%.1f dB near the edge", edge_ring));
+        {  // A head is a surface, as a cone is: a mic over its edge hears its rim from right under it and its middle from
+           // a little way in, both sooner than from the head's centre; and past its edge it falls away by degrees.
+            const HeadLayers at_edge = headLayers(floor_top, over_edge);
+            const float from_centre = std::sqrt(0.04f * 0.04f + 0.64f * floor_top.radius * floor_top.radius);
+            const Vec3 past{over_middle.x + 1.5f * floor_top.radius, over_middle.y, over_middle.z};
+            const RadiatedPath on_it = radiatePart(floor_top, over_middle, 1.5f), on_edge = radiatePart(floor_top, over_edge, 1.5f);
+            const RadiatedPath past_it = radiatePart(floor_top, past, 1.5f);
+            const double to_edge = db(on_it.nearness / on_edge.nearness), beyond = db(on_edge.nearness / past_it.nearness);
+            check(at_edge.rim_distance < 0.05f && at_edge.middle_distance > at_edge.rim_distance && at_edge.middle_distance < from_centre - 0.03f &&
+                      std::fabs(on_edge.distance - at_edge.middle_distance) < 1e-4f && to_edge > 0.0 && to_edge < 4.0 && beyond > 1.0 && beyond < 9.0,
+                  "a head is heard from its nearest part, not its centre: over its edge, the rim from right under the mic and the middle "
+                  "from a little way in; and its level falls away by degrees past its edge",
+                  fmt("the rim %.0f cm off, ", 100.0 * at_edge.rim_distance) + fmt("the middle %.0f, ", 100.0 * at_edge.middle_distance) +
+                      fmt("the centre %.0f; ", 100.0 * from_centre) + fmt("%.1f dB quieter at the edge, ", to_edge) +
+                      fmt("%.1f more half a radius past it", beyond));
+        }
 
         // A mic put into the kick through its port, 10 cm from its batter head, against one 10 cm out from its front head:
         // inside, the shell keeps the rest of the kit out (the snare far further below the kick), and the beater is close

@@ -40,15 +40,18 @@ from where they stand on the kit, so the microphones hear a kit as a studio's do
   (invert the bottom mic's polarity, **Ø** in its panel or its track's menu, as in a studio), and far more of its
   wires, which are stretched across its bottom head. Out in front, the kick is mostly boom; its beater's click is on
   its batter side.
-- Each head has a near field, as a speaker's cone does: close up its level levels off and its lows are fuller. Off
-  its axis it loses some of its highs, and behind it, where the shell is in the way, more. A cymbal sounds from both
-  its faces, quieter edge on.
+- Each head has a near field, as a speaker's cone does: close up its level levels off and its lows are fuller, and
+  past its edge it falls away by degrees. Off its axis it loses some of its highs, and behind it, where the shell is
+  in the way, more. A cymbal sounds from both its faces, quieter edge on. A head or a cymbal is a surface, and a mic
+  hears it from its nearest part, not its middle: a mic at a drum's edge hears the drum as soon as one over its
+  middle does, so two mics on one drum line up as real ones do.
 - **Where across a head** a close mic is placed matters, as where across a speaker's cone does: over its middle it hears
   the drum's note and the stick (the whole head moving together, and struck there); out towards the edge, its
   overtones and ring, which are still at the middle and strongest further out. Further off, the head is heard whole.
   A **cymbal** likewise, from either face: over the ride's bell a mic hears the stick's ping; out at its edge, its
   wash, ringing on long after. Over the hi-hat's middle, the stick's tick; at its edge, its sizzle, and the chick of
-  the two closing (the air pushed out between them).
+  the two closing (the air pushed out between them). Each of the two is heard from where it is: a mic at a cymbal's
+  edge hears its sizzle from right beside it, and the stick's ping from the bell a moment later.
 - **The kick has a port**, a hole in its front head off its middle, and an inside. Just outside the port a mic hears
   more of the beater's click and the air rushing out with the boom than on the head. Lower a mic to the kick's height
   and put it in through the port, and it is **inside the kick**: the beater close and loud, the drum from within, and
