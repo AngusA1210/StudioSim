@@ -14,6 +14,7 @@ endif()
 # app then needs no Visual C++ Redistributable installed, and so its installer needs no administrator's rights. (Steam
 # Audio's DLL carries its own already.) Set before any target is made, as each takes it as it is made.
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>" CACHE STRING "Microsoft's C++ runtime, built in")
+set(CMAKE_POLICY_DEFAULT_CMP0091 NEW)  # (and for the libraries whose own CMake files predate it, Opus among them)
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()

@@ -35,6 +35,13 @@ HERE="$(cygpath -m "$ROOT" 2>/dev/null || echo "$ROOT")/audio_core"
 if [ -f "$CACHE" ] && ! grep -qx "CMAKE_HOME_DIRECTORY:INTERNAL=$HERE" "$CACHE"; then
   rm -rf "$CACHE" "$BUILD/CMakeFiles"
 fi
+# Godot opens the project before it exports it, with the editor's own audio core (audio_core/build's, which
+# tools/build.sh makes): made here too if it isn't there, as on a computer that has only just fetched StudioSim.
+case "$PRESET" in macOS) EDITOR_LIB="$ROOT/game/bin/libstudiosim_audio.dylib" ;; *) EDITOR_LIB="$ROOT/game/bin/studiosim_audio.dll" ;; esac
+if [ ! -f "$EDITOR_LIB" ]; then
+  cmake -S "$ROOT/audio_core" -B "$ROOT/audio_core/build" -DCMAKE_BUILD_TYPE=Release
+  cmake --build "$ROOT/audio_core/build" --config Release --target studiosim_audio -j "$(sysctl -n hw.ncpu 2>/dev/null || nproc)"
+fi
 cmake -S "$ROOT/audio_core" -B "$BUILD" -DCMAKE_BUILD_TYPE=Release -DGODOTCPP_TARGET=template_release
 cmake --build "$BUILD" --config Release --target studiosim_audio -j "$(sysctl -n hw.ncpu 2>/dev/null || nproc)"
 

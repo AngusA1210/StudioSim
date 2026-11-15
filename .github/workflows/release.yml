@@ -126,9 +126,10 @@ jobs:
           mkdir -p "$dest"
           unzip -q "$templates" -d templates
           mv templates/templates/* "$dest/"
+          # (Godot's console launcher finds Godot by its own name, so both keep theirs; `godot` runs the launcher)
           mkdir -p bin
-          cp godot/Godot_v$GODOT_VERSION-stable_win64_console.exe bin/godot.exe
-          cp godot/Godot_v$GODOT_VERSION-stable_win64.exe bin/
+          printf '#!/usr/bin/env bash\nexec "%s" "$@"\n' "$(cygpath -u "$RUNNER_TEMP")/godot/Godot_v$GODOT_VERSION-stable_win64_console.exe" > bin/godot
+          chmod +x bin/godot
           echo "$(cygpath -w "$RUNNER_TEMP/bin")" >> "$GITHUB_PATH"
 
       - name: The app
