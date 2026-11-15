@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <complex>
 #include <filesystem>
 #include <cstdio>
 #include <cstdlib>
@@ -3509,24 +3510,75 @@ int main(int argc, char** argv) {
         const RadiatedPath far = radiate(combo, 0, at(0.0f, 0.0f, 2.0f), ref);
         const RadiatedPath off45 = radiate(combo, 0, at(2.0f * 0.7071f, 0.0f, 2.0f * 0.7071f), ref);
         const RadiatedPath off90 = radiate(combo, 0, at(2.0f, 0.0f, 0.0f), ref);
-        check(std::fabs(far.nearness - ref / 2.0f) < 0.03f * ref / 2.0f && far.cut_hz >= kFullRangeHz && off45.cut_hz > 1000.0f &&
-                  off45.cut_hz < 2200.0f && off90.cut_hz < 1200.0f && std::fabs(off45.nearness - far.nearness) < 0.05f * far.nearness,
+        // (how loud a shaped way is at a frequency against its lows, dB: its body and its cap, each through its impulse
+        // response, parted at the cone's breakup as the engine parts them)
+        auto shaped = [&](const RadiatedPath& p, double hz) {
+            ShapeTaps taps;
+            shapeTaps(p.shape, 48000.0f, 1.0f, &taps);
+            const double w = 6.283185307 * hz / 48000.0;
+            std::complex<double> body, cap;
+            for (int n = 0; n < taps.body_taps; ++n) body += double(taps.body[size_t(n)]) * std::exp(std::complex<double>(0.0, -w * n));
+            for (int n = taps.cap_from; n < taps.cap_taps; ++n) cap += double(taps.cap[size_t(n)]) * std::exp(std::complex<double>(0.0, -w * n));
+            const double k = 1.0 - std::exp(-6.283185307 * double(p.shape.split_hz) / 48000.0);
+            const std::complex<double> once = k / (1.0 - (1.0 - k) * std::exp(std::complex<double>(0.0, -w))), low = once * once;
+            return 20.0 * std::log10(std::max(std::abs(low * body + (1.0 - low) * cap), 1e-9));
+        };
+        const bool flat_ahead = std::fabs(shaped(far, 300.0)) < 0.5 && std::fabs(shaped(far, 1000.0)) < 0.5 &&
+                                std::fabs(shaped(far, 3000.0)) < 0.5 && std::fabs(shaped(far, 8000.0)) < 1.0;
+        check(std::fabs(far.nearness - ref / 2.0f) < 0.03f * ref / 2.0f && far.shape.on && flat_ahead && shaped(off45, 300.0) > -1.0 &&
+                  shaped(off45, 3000.0) < -3.0 && shaped(off45, 4500.0) < -8.0 && shaped(off90, 4500.0) < shaped(off45, 4500.0) &&
+                  shaped(off90, 8000.0) > -40.0 &&
+                  std::fabs(off45.nearness - far.nearness) < 0.05f * far.nearness,
               "a cone beams: 2 m off, on its axis it is full-range and as loud as a point there; 45 degrees off, its highs fall "
-              "away above 1 to 2 kHz; 90 degrees off, above about 1 kHz",
-              fmt("%.0f Hz at 45 degrees, ", off45.cut_hz) + fmt("%.0f at 90", off90.cut_hz));
+              "away from 2 to 3 kHz, its lows not at all; 90 degrees off, further (and without a rigid disc's deep nulls)",
+              fmt("at 4.5 kHz: %+.1f dB on its axis, ", shaped(far, 4500.0)) + fmt("%+.1f at 45 degrees, ", shaped(off45, 4500.0)) +
+                  fmt("%+.1f at 90", shaped(off90, 4500.0)));
         const RadiatedPath close4 = radiate(combo, 0, at(0.0f, 0.0f, 0.04f), ref), at30 = radiate(combo, 0, at(0.0f, 0.0f, 0.3f), ref);
         const double near_rise = db(close4.nearness / at30.nearness);
         check(near_rise > 6.0 && near_rise < 14.0 && close4.wave_radius > a,
               "close up it is in its near field: 4 cm from the cone is louder than 30 cm by far less than the 17.5 dB a point "
               "would be, and its wave is flatter (less proximity effect for a directional mic)",
               fmt("%.1f dB louder", near_rise));
-        const RadiatedPath cap = radiate(combo, 0, at(0.0f, 0.0f, 0.03f), ref), halfway = radiate(combo, 0, at(0.5f * a, 0.0f, 0.03f), ref);
-        const RadiatedPath edge = radiate(combo, 0, at(a, 0.0f, 0.03f), ref);
-        check(cap.cut_hz >= 15000.0f && halfway.cut_hz > 1500.0f && halfway.cut_hz < 3500.0f && edge.cut_hz < 1300.0f &&
-                  std::fabs(db(cap.nearness / edge.nearness)) < 1.0 && cap.high_db > 3.0f && edge.high_db < 0.5f && cap.low_db > 4.0f,
-              "3 cm from the grille, across the cone: at the dust cap it is bright and biting, halfway out its highs go from "
-              "about 2 kHz, at the cone's edge from about 1 kHz, all as loud in the lows (and fuller than far off)",
-              fmt("%.0f Hz, ", cap.cut_hz) + fmt("%.0f Hz, ", halfway.cut_hz) + fmt("%.0f Hz", edge.cut_hz));
+        const RadiatedPath cap = radiate(combo, 0, at(0.0f, 0.0f, 0.07f), ref), halfway = radiate(combo, 0, at(0.5f * a, 0.0f, 0.07f), ref);
+        const RadiatedPath edge = radiate(combo, 0, at(a, 0.0f, 0.07f), ref);
+        const RadiatedPath past = radiate(combo, 0, at(1.5f * a, 0.0f, 0.07f), ref);
+        const double cap_bite = shaped(cap, 4500.0), half_bite = shaped(halfway, 4500.0), edge_bite = shaped(edge, 4500.0);
+        check(cap_bite > -1.5 && half_bite < cap_bite - 2.0 && edge_bite < cap_bite - 8.0 && edge_bite < half_bite &&
+                  std::fabs(db(cap.nearness / edge.nearness)) < 3.0 && cap.low_db > 3.0f &&
+                  db(edge.nearness / past.nearness) > 1.0 && db(edge.nearness / past.nearness) < 9.0,
+              "3 cm from the grille (7 from the dust cap), across the cone: at the cap it is brightest, as bright as far off on its axis; halfway out darker, at the "
+              "cone's edge darker still, all about as loud in the lows (and fuller than far off); and past its edge it falls "
+              "away by degrees, not at once",
+              fmt("at 4.5 kHz %+.1f dB, ", cap_bite) + fmt("%+.1f, ", half_bite) + fmt("%+.1f; ", edge_bite) +
+                  fmt("the lows %+.1f dB at the edge, ", db(edge.nearness / cap.nearness)) +
+                  fmt("%+.1f half a radius past it", db(past.nearness / cap.nearness)));
+        // Two mics on one cone, as far from the grille as each other, one at the cap and one at the edge: heard together
+        // they add, through the lows and mids, as two real ones do (each hears the cone's body from its nearest part).
+        {
+            ShapeTaps at_cap, at_edge;
+            shapeTaps(cap.shape, 48000.0f, 1.0f, &at_cap);
+            shapeTaps(edge.shape, 48000.0f, 1.0f, &at_edge);
+            double worst = 99.0;
+            for (double hz = 100.0; hz <= 1500.0; hz *= 1.12) {
+                const double w = 6.283185307 * hz / 48000.0;
+                const double k = 1.0 - std::exp(-6.283185307 * double(cap.shape.split_hz) / 48000.0);
+                const std::complex<double> once = k / (1.0 - (1.0 - k) * std::exp(std::complex<double>(0.0, -w))), low = once * once;
+                std::complex<double> heard[2];
+                const ShapeTaps* taps[2] = {&at_cap, &at_edge};
+                const RadiatedPath* ways[2] = {&cap, &edge};
+                for (int m = 0; m < 2; ++m) {
+                    std::complex<double> body, top;
+                    for (int n = 0; n < taps[m]->body_taps; ++n) body += double(taps[m]->body[size_t(n)]) * std::exp(std::complex<double>(0.0, -w * n));
+                    for (int n = taps[m]->cap_from; n < taps[m]->cap_taps; ++n) top += double(taps[m]->cap[size_t(n)]) * std::exp(std::complex<double>(0.0, -w * n));
+                    const double late = double(ways[m]->distance) / 343.0;  // (each as late as its own way is)
+                    heard[m] = double(ways[m]->nearness) * (low * body + (1.0 - low) * top) * std::exp(std::complex<double>(0.0, -6.283185307 * hz * late));
+                }
+                const double louder = std::max(std::abs(heard[0]), std::abs(heard[1]));
+                worst = std::min(worst, 20.0 * std::log10(std::abs(heard[0] + heard[1]) / louder));
+            }
+            check(worst > 2.0, "a mic at the dust cap and one at the cone's edge, heard together, add through the lows and mids: no notch between them",
+                  fmt("together never less than %+.1f dB against the louder of the two, 100 Hz to 1.5 kHz", worst));
+        }
         Radiator closed = combo;
         closed.open_back = false;
         const Vec3 behind = at(0.0f, 0.0f, -1.25f);  // 1 m behind the cabinet
@@ -3559,7 +3611,7 @@ int main(int argc, char** argv) {
         room.engine.setSourceInput(amp, true);
         room.engine.setAmpControl(amp, AmpControl::Gain, 1.0f);  // (nearly clean, so it passes the noise as it is)
         room.engine.setSourceRadiator(amp, combo);
-        const int mic = room.engine.addSource(InstrumentKind::Mic, at(0.0f, 0.0f, 0.03f), 1.0f, 0.0f);
+        const int mic = room.engine.addSource(InstrumentKind::Mic, at(0.0f, 0.0f, 0.07f), 1.0f, 0.0f);
         room.engine.setSourceInput(mic, true);
         Rng rng;
         auto noise = [&](int64_t) { return 0.05f * rng.next(); };
@@ -3571,24 +3623,59 @@ int main(int argc, char** argv) {
             mids = bandDb(r.l, 48000.0f, 500.0f, 1500.0f);
             return std::make_pair(bandDb(r.l, 48000.0f, 60.0f, 300.0f), bandDb(r.l, 48000.0f, 2000.0f, 5000.0f));
         };
-        const auto at_cap = heard(at(0.0f, 0.0f, 0.03f));
+        const auto at_cap = heard(at(0.0f, 0.0f, 0.07f));
         const double cap_mids = mids;
-        const auto at_edge = heard(at(a, 0.0f, 0.03f));
-        check(at_cap.second - at_edge.second > 8.0 && std::fabs(at_cap.first - at_edge.first) < 3.0,
-              "a mic 3 cm from the grille: moved from the dust cap to the cone's edge, its 2 to 5 kHz fall away, its lows stay",
+        const auto at_edge = heard(at(a, 0.0f, 0.07f));
+        const double edge_mids = mids;
+        {  // a second mic left at the edge, the first back at the cap: the two together, in the mids
+            const int second = room.engine.addSource(InstrumentKind::Mic, at(a, 0.0f, 0.07f), 1.0f, 0.0f);
+            room.engine.setSourceInput(second, true);
+            heard(at(0.0f, 0.0f, 0.07f));
+            const double together = mids;
+            room.engine.removeSource(second);
+            renderSeconds(room.engine, 0.3, noise);
+            check(together > std::max(cap_mids, edge_mids) + 2.0,
+                  "two mics on the cone, one at its dust cap and one at its edge, add in the mids when heard together, as two real ones do",
+                  fmt("%+.1f dB against the louder alone", together - std::max(cap_mids, edge_mids)));
+        }
+        check(at_cap.second - at_edge.second > 8.0 && std::fabs(at_cap.first - at_edge.first) < 4.5,
+              "a mic 3 cm from the grille: moved from the dust cap to the cone's edge, its 2 to 5 kHz fall away, its lows nearly stay",
               fmt("%.1f dB less 2-5 kHz, ", at_cap.second - at_edge.second) + fmt("%+.1f dB in the lows", at_edge.first - at_cap.first));
         const auto on_axis = heard(at(0.0f, 0.0f, 1.0f));
         const double metre_mids = mids;
         const auto off_axis = heard(at(0.866f, 0.0f, 0.5f));
-        check(on_axis.second - off_axis.second > 8.0 && std::fabs(on_axis.first - off_axis.first) < 4.0,
+        check(on_axis.second - off_axis.second > 6.0 && std::fabs(on_axis.first - off_axis.first) < 4.0,
               "1 m off: on the cone's axis it is bright; 60 degrees off it, the same distance, its highs are gone and its lows aren't",
               fmt("%.1f dB less 2-5 kHz", on_axis.second - off_axis.second));
         const double closer = cap_mids - metre_mids, lows_closer = at_cap.first - on_axis.first;
-        const double piston_says = db(radiate(combo, 0, at(0.0f, 0.0f, 0.03f), ref).nearness / radiate(combo, 0, at(0.0f, 0.0f, 1.0f), ref).nearness);
+        const double piston_says = db(radiate(combo, 0, at(0.0f, 0.0f, 0.07f), ref).nearness / radiate(combo, 0, at(0.0f, 0.0f, 1.0f), ref).nearness);
         check(std::fabs(closer - piston_says) < 3.0 && lows_closer > closer,
               "from 1 m to the grille it gets louder as a cone's near field has it (levelling off, where a point would keep "
               "rising: 23.4 dB from 7 cm), and fuller: close up, no lows lost to the room behind it, nor to its open back",
               fmt("%.1f dB in the mids (", closer) + fmt("the near field: %.1f), ", piston_says) + fmt("%.1f in the lows", lows_closer));
+        {  // Many mics on a big cabinet (eight on an 8x10, each hearing each cone and its bounce off the floor): its cost.
+            Room big;
+            big.quietRoom(-1);
+            big.engine.setFloorReflection(1.0f);
+            const int bass_stack = big.engine.addSource(InstrumentKind::BassStack, {0.0f, 0.6f, 0.0f}, 1.0f, 0.0f);
+            big.engine.setSourceInput(bass_stack, true);
+            Radiator eight;
+            eight.cones = 8;
+            for (int c = 0; c < 8; ++c) eight.cone[size_t(c)] = {c % 2 == 0 ? -0.14f : 0.14f, 0.2f + 0.27f * float(c / 2), -0.04f};
+            eight.inches = 10.0f;
+            eight.width = 0.66f;
+            big.engine.setSourceRadiator(bass_stack, eight);
+            for (int m = 0; m < 8; ++m) {
+                const int close = big.engine.addSource(InstrumentKind::Mic, {m % 2 == 0 ? -0.14f : 0.1f, 0.2f + 0.27f * float(m / 2), 0.05f}, 1.0f, 0.0f);
+                big.engine.setSourceInput(close, true);
+            }
+            renderSeconds(big.engine, 0.3, noise);
+            const auto began = std::chrono::steady_clock::now();
+            const Render r = renderSeconds(big.engine, 4.0, noise);
+            const double took = std::chrono::duration<double>(std::chrono::steady_clock::now() - began).count();
+            check(r.finite && took < 4.0 / 1.5, "eight mics on an 8x10's cones, each cone heard as it radiates (and off the floor): faster than real time",
+                  fmt("%.1fx real time", 4.0 / took));
+        }
         // The listener, in front of and then behind a closed 4x12, 2 m off: behind, its highs are shadowed by the box.
         Room stage;
         stage.quietRoom(-1);
@@ -3623,8 +3710,8 @@ int main(int argc, char** argv) {
             return std::make_pair(bandDb(r.l, 48000.0f, 60.0f, 300.0f), bandDb(r.l, 48000.0f, 2000.0f, 5000.0f));
         };
         const auto on_cone = heard4({-0.165f, 0.72f, 0.03f}), between = heard4({0.0f, 0.55f, 0.03f});
-        check(on_cone.second - between.second > 6.0,
-              "close to a 4x12, in front of one cone it is bright; between the four, off every cone's axis, it is dull",
+        check(on_cone.second - between.second > 1.5,
+              "close to a 4x12, in front of one cone it is bright; between the four, off every cone's axis, it is duller",
               fmt("%.1f dB less 2-5 kHz between them", on_cone.second - between.second));
         // The floor: a mic 1.5 m in front of the combo, 1.2 m up, hears the floor's bounce 0.37 m behind the cone's own
         // sound: a notch where it is half a wave late (461 Hz), and more where it is a whole wave late (922 Hz). Close
@@ -3658,10 +3745,10 @@ int main(int argc, char** argv) {
         };
         Radiator bare_cone = pa;
         bare_cone.coverage = 0.0f;
-        const float cone30 = radiate(bare_cone, 0, {3.0f * 0.5f, 1.5f, 3.0f * 0.866f}, ref).cut_hz;
-        check(pa_at(30.0f) >= kFullRangeHz && pa_at(70.0f) <= pa.crossover_hz && cone30 < 3000.0f,
+        const double cone30 = shaped(radiate(bare_cone, 0, {3.0f * 0.5f, 1.5f, 3.0f * 0.866f}, ref), 5000.0);  // (dB at 5 kHz)
+        check(pa_at(30.0f) >= kFullRangeHz && pa_at(70.0f) <= pa.crossover_hz && cone30 < -6.0,
               "a PA speaker's horn covers 45 degrees either side evenly (where a bare cone would already be dull), and little "
-              "beyond", fmt("at 30 degrees: horn full-range, cone from %.0f Hz; ", cone30) + fmt("at 70: horn from %.0f Hz", pa_at(70.0f)));
+              "beyond", fmt("at 30 degrees: horn full-range, a cone %+.1f dB at 5 kHz; ", cone30) + fmt("at 70: horn from %.0f Hz", pa_at(70.0f)));
     }
 
     {

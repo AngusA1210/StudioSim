@@ -350,6 +350,9 @@ func _signature() -> String:
 	data.erase("monitor")
 	data.timeline.erase("playhead")  # neither where you stand nor where the music is counts as a change
 	data.timeline.erase("playing")
+	for entry in data.instruments:  # (nor an input switched on or a track made record-ready: kept when the room is next saved)
+		entry.erase("input_on")
+		entry.erase("armed")
 	return JSON.stringify(data)
 
 

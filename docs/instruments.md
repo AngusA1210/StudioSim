@@ -210,15 +210,23 @@ audio input opens when the first Speaker's input goes on and closes when the las
 Sitting down at an instrument (E) switches its input on until you get up, so the MIDI keyboard plays whatever you are
 at. Switch an input on yourself (I, or the I button in the mix window) and it stays on when you walk away. The
 computer keyboard plays the instrument you are sitting at, along with any others whose input is on. Every input
-starts switched off, so an open microphone never meets a pair of speakers by surprise.
+starts switched off in a new room, so an open microphone never meets a pair of speakers by surprise. Which inputs
+are on, and which tracks are record-ready, is saved with the room: a room opened again has them as they were (so
+check what is plugged in before opening one left with a live input on). A room joined to play together starts with
+them off, as they are each player's own.
 
 ## Amps' speakers
 
 A cabinet sounds as real ones do from where you are: each speaker is a cone in the baffle (seen through the grille),
-heard on its own way. A cone beams: on its axis it is full-range; off it the highs fall away, the further and higher the
-more. Close up it is in its near field: the level levels off rather than rising as 1/distance, the lows are fuller,
-and where across the cone a mic sits matters: bright and biting at the dust cap, darker halfway out, darker still at the
-edge. A 4x12's cones comb-filter between them; an open back is heard behind (reverse polarity, duller) and costs some
+heard on its own way. A cone is a surface, not a point: its whole body carries the lows and mids, and its middle,
+round the dust cap, the highs, and a mic hears every part of each as late as that part is far from it. So a cone
+beams: on its axis it is full-range; off it the highs fall away, the further and higher the more, by degrees. Close
+up it is in its near field: the level levels off rather than rising as 1/distance, the lows are fuller, and where
+across the cone a mic sits matters, smoothly: brightest at the dust cap, darker halfway out, darker still at the
+edge, the lows much the same all the way across, and falling away gently past the cone's edge rather than at once.
+Two mics on one cone, one at the cap and one at the edge, add in the lows and mids as two real ones do, since each
+hears the cone from its nearest part; above about 1.5 kHz they differ, as the cap's highs reach the edge mic later.
+A 4x12's cones comb-filter between them; an open back is heard behind (reverse polarity, duller) and costs some
 lows in front; behind a closed back only the lows wrap round. The listener hears the beaming too (a combo on the floor
 beams at your knees). **Point it at** aims a mic at an amp's nearest dust cap. A mic a little way off also hears the
 **floor's bounce**: each cone again from its image under the floor, a little late, so the sound has notches where the

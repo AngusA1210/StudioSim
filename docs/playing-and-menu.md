@@ -58,7 +58,8 @@ from there. Its pages:
   adds while it is switched on: about a quarter of a buffer, measured as the engine starts; while the mix is heard,
   its delay compensation instead) and CPU use.
 - **I/O**: which of the device's outputs carry the mix, the input device, and which hardware input each Speaker plays.
-  Live input always starts switched off, so an open microphone never meets a pair of speakers by surprise. And the
+  Live input starts switched off in a new room, so an open microphone never meets a pair of speakers by surprise (a
+  room opened again has its inputs as they were saved). And the
   **audio bridge** (see [Desktop audio](instruments.md#desktop-audio)).
 - **MIDI**: every MIDI device the system sees, with a tick box each and a light that flashes when it sends notes.
 - **Settings**: binaural, distance falloff, the limiter's ceiling, delay compensation, text size, field of view, mouse sensitivity, room lighting, reflections (shiny surfaces mirroring the room; off for a slower graphics card), full screen (which

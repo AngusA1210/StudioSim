@@ -743,6 +743,10 @@ private:
     static constexpr int kMicLead = Sinc16::kAfter;
     void readHistory(const float* history, double late_from, double late_to, float* out) const;
     std::vector<float> read_, read_rim_;  // (a block of one way to a microphone, read; and a head's rim's)
+    // A cone heard as it radiates (radiation.h's ConeShape): its two bands this block, each after what came before of
+    // it, and the impulse responses it is gliding to.
+    std::vector<float> shape_low_, shape_high_;
+    ShapeTaps shape_next_;
     float split_lows_ = 0.0f, split_highs_ = 0.0f;  // the history's band split, at the engine's rate
     void updatePaths();
     void updateMicPaths(Source& source);  // how its sound reaches each microphone (or, a microphone, how each reaches it)

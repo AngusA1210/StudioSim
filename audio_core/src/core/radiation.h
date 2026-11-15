@@ -9,21 +9,34 @@
 //  - A cone beams as a piston in a baffle does: on its axis it is heard full-range; off it, the highs fall away, the
 //    further off and the higher the more (the -3 dB point is where k a sin(angle) = 1.6, k = 2 pi f / c, a the cone's
 //    radius). Behind the baffle only the lows wrap round the box, the highs shadowed.
-//  - Close to a cone (within about its radius) it is in its near field: its level no longer rises as 1 / distance but
-//    levels off (on a baffled piston's axis, pressure goes as sqrt(d^2 + a^2) - d), and what it hears depends on where
-//    across the cone it is. A cone moves as one in the lows, but above its breakup frequency less and less of it moves
-//    (the highs come from nearer and nearer the dust cap), so at the cap it is bright and biting, halfway out darker,
-//    at the edge of the cone darker and fuller still. Close up there is no baffle step either (the lows aren't lost to
-//    the room behind it as they are far off), so close mics hear more lows too.
+//  - A cone is a surface, not a point, and every part of it is heard as late as it is far. It is heard as two pistons
+//    in the baffle, one within the other (ConeShape): its body, the whole cone, which moves as one below its breakup
+//    frequency and carries the lows and mids; and its cap, its middle round the dust cap, which is all of it that
+//    still moves above that, and carries the highs. What a mic hears of each is the piston's own impulse response
+//    there (Stepanishen's: at each moment, as much as the arc of the piston that far away): it starts when the sound
+//    of its nearest part arrives, and goes on until its furthest's has. So:
+//      - close to it (within about its radius) it is in its near field: its level no longer rises as 1 / distance but
+//        levels off (on its axis, as sqrt(d^2 + a^2) - d), and falls away smoothly past the cone's edge, where the
+//        cone is still near, rather than at once;
+//      - across the cone the sound changes as it does on a real one: bright and biting at the dust cap, where the cap
+//        is close and faces the mic; darker halfway out and darker still at the edge, where the cap is further off and
+//        seen from the side, its highs spread out in time and so cancelled, while the body under the mic is as near as
+//        ever;
+//      - two mics on one cone are in phase as two real ones are: each hears the body from its nearest part, so one at
+//        the edge and one at the cap, as far from the grille as each other, hear its lows and mids together. Nothing
+//        is filtered for one mic that isn't for the other; their difference is in the geometry alone.
+//    Close up there is no baffle step either (the lows aren't lost to the room behind it as they are far off), so
+//    close mics hear more lows too.
 //  - The wave is flatter close to a big cone than close to a small source, so a directional mic's proximity effect
 //    there is less than its distance alone would make it.
 //  - An open back lets the backs of the cones be heard as well, in reverse polarity and duller: behind an open-back
 //    combo it is loud; in front, far off, the two cancel in the lows (an open back's lighter low end). A closed back
 //    lets out only what wraps round the box.
 //
-// These are made into a level, a delay, an arrival direction and three filters (a low-pass for the beaming and the place
-// on the cone, a low shelf for the near field's lows, a high shelf for the dust cap's bite) for each cone, worked out on
-// the game thread whenever a mic or the cabinet moves; the audio thread glides to them.
+// These are made into a level, a delay, an arrival direction, where the mic is against the cone (for its two impulse
+// responses, which the audio thread works out: shapeTaps) and two filters (a low shelf for the near field's lows; a
+// low-pass behind the box, and for a horn or an open back) for each cone, worked out on the game thread whenever a mic
+// or the cabinet moves; the audio thread glides to them.
 
 #include <array>
 
@@ -54,6 +67,35 @@ struct Radiator {
 float coneRadius(float inches);  // the part of a cone that radiates, as a piston (metres): a little under half its size
 float breakupHz(float inches);   // where a cone starts to break up: lower for bigger cones
 
+// A cone as a mic hears it radiate: where the mic is against it (metres along its axis from its dust cap's plane, and out
+// from its axis), its radius and its cap's, and the frequency below which its body carries the sound and above which
+// its cap (they part gently: the body's share falls away at 12 dB an octave, and the cap has the rest). A cone is a
+// cone: its edge stands nearer the grille than its cap does (by kConeRise of its radius), so close up the body under a
+// mic out towards the edge is that much nearer it (bodyAlong).
+constexpr float kConeRise = 0.4f;
+struct ConeShape {
+    bool on = false;
+    float along = 0.0f, across = 0.0f;
+    float radius = 0.1f, cap = 0.05f;
+    float split_hz = 1000.0f;
+};
+// What a mic there hears of the body and of the cap, sample by sample from when the body's nearest part is heard (the
+// way's own delay): each band's impulse response, the body's adding up to 1 (the way's level is its own) and the cap's to
+// how much louder or quieter the cap is there than the body, at the room's distance law. `body_taps` and `cap_taps`:
+// how many of each there are (the rest nothing); `cap_from`: the cap's first.
+constexpr int kShapeTaps = 96;
+struct ShapeTaps {
+    std::array<float, kShapeTaps> body{}, cap{};
+    int body_taps = 1, cap_from = 0, cap_taps = 1;
+};
+void shapeTaps(const ConeShape& shape, float sample_rate, float falloff, ShapeTaps* out);
+float bodyAlong(const ConeShape& shape);  // how far the cone's body is from the mic, along its axis
+// How loud a piston of radius `a` is `along` its axis and `across` from it, at low frequencies, against a point source
+// a metre away: 1 / distance far off, levelling off close up.
+float pistonLevel(float along, float across, float a);
+// The same for a cone's cap, which moves most at its middle and less towards its edge (radiation.cpp).
+float capLevel(float along, float across, float a);
+
 // One of a cabinet's ways to a point (paths 0 to cones - 1 are the cones, then the open back, if it has one).
 struct RadiatedPath {
     float distance = 0.0f;       // metres: when it arrives
@@ -67,6 +109,7 @@ struct RadiatedPath {
     float high_db = 0.0f;        // the high shelf (above kCapHighHz): the dust cap's bite
     float wave_radius = 1.0f;    // how curved the wave is there (metres), for a mic's proximity effect
     Vec3 from{0.0f, 0.0f, 1.0f}; // the way it arrives from, at that point (a unit vector)
+    ConeShape shape;             // a cone's, heard as it radiates (off: as a point with those filters)
 };
 constexpr float kNearLowHz = 200.0f;
 constexpr float kCapHighHz = 3000.0f;

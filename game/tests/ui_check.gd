@@ -77,6 +77,39 @@ func _check_pedal_gaps(panel, amp, order: Array) -> void:
 	check(amp.pedals.map(func(p): return p.kind) == kinds_before and main.audio.get_pedal_loop(amp.source_id) == 1, "(and the board is as it was)")
 
 
+## Which inputs are on and which tracks are record-ready are saved with a room, and put back when it is opened again;
+## and the title screen says which build this is.
+func _check_inputs_kept() -> void:
+	print("Inputs and record-ready tracks kept with the room")
+	var session = main.session
+	var keys = main.add_instrument("keys", Vector3(1.0, 0.0, 0.0))
+	var bass = main.add_instrument("bass", Vector3(-1.0, 0.0, 0.0))
+	await frames(2)
+	session.save()
+	main.set_input(keys, true)
+	main.timeline.set_armed(bass, true)
+	var counted: bool = session.has_unsaved_changes()
+	session.save()
+	var kept: Array = main.library.read_room_file(session.path).instruments
+	check(not counted and kept.size() == 2 and kept[0].get("input_on", false) and not kept[0].get("armed", false) and
+		kept[1].get("armed", false) and not kept[1].get("input_on", false),
+		"an input switched on and a track made record-ready are saved with the room (though not changes to it by themselves)")
+	var problem: String = session.open(session.path)
+	await frames(3)
+	var back_keys = main.find_instrument("keys")
+	var back_bass = main.find_instrument("bass")
+	check(problem == "" and back_keys != null and back_keys.input_on and not back_keys.armed and back_bass != null and back_bass.armed and
+		not back_bass.input_on and not session.has_unsaved_changes(), "and opened again, the room has them as they were", problem)
+	main.set_input(back_keys, false)
+	main.timeline.set_armed(back_bass, false)
+	main.remove_instrument(back_keys)
+	main.remove_instrument(back_bass)
+	session.save()
+	var version: String = main.title._version.text
+	check(version.begins_with("Version %s" % str(ProjectSettings.get_setting("application/config/version"))) and version.contains("build "),
+		"the title screen says which version this is, and which build", version)
+
+
 ## Open pressed on the rooms page: the room put in place a step at a time, the screen saying how far it has got.
 func _open_and_watch(rooms, room_name: String) -> void:
 	await click(rooms._open.get_global_rect().get_center())
@@ -4053,6 +4086,7 @@ func _run() -> void:
 		is_equal_approx(main.tempo, 90.0) and main.instruments.is_empty(), "the empty room in Record mode starts stopped, nothing looping, at 90 BPM",
 		"%.0f BPM" % main.tempo)
 
+	await _check_inputs_kept()
 	print("The tutorial")
 	var tutorial = main.tutorial
 	var step_named := func(title: String) -> int: return tutorial._steps.map(func(s): return s.title).find(title)

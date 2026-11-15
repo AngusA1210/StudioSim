@@ -38,6 +38,13 @@ fi
 cmake -S "$ROOT/audio_core" -B "$BUILD" -DCMAKE_BUILD_TYPE=Release -DGODOTCPP_TARGET=template_release
 cmake --build "$BUILD" --config Release --target studiosim_audio -j "$(sysctl -n hw.ncpu 2>/dev/null || nproc)"
 
+# Which build this is, for the title screen to say (the commit and its date; run from Godot, the game asks git itself).
+STAMP="$(git -C "$ROOT" log -1 --format='%h, %cs' 2>/dev/null || true)"
+[ -n "$STAMP" ] && [ -n "$(git -C "$ROOT" status --porcelain 2>/dev/null)" ] && STAMP="$STAMP, with changes since"
+printf '## Made by tools/export.sh for the app it is making, and taken away again: which build it is (title.gd).\nconst STAMP := "%s"\n' "$STAMP" \
+  > "$ROOT/game/build_info.gd"
+trap 'rm -f "$ROOT/game/build_info.gd" "$ROOT/game/build_info.gd.uid"' EXIT
+
 godot --headless --path "$ROOT/game" --import >/dev/null 2>&1 || true
 rm -rf "$OUT"
 mkdir -p "$(dirname "$OUT")"

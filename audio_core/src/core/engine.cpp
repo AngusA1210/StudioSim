@@ -350,10 +350,26 @@ struct AudioEngine::Source {
             Vec3 from{0.0f, 0.0f, 1.0f}, from_target{0.0f, 0.0f, 1.0f};
             float low = 0.0f, below_high = 0.0f, near_in = 0.0f, near_out = 0.0f;
             std::array<EqFilter, 3> filters{};
+            // A cone heard as it radiates (radiation.h's ConeShape): where the mic is against it (glided), its cap's
+            // radius and the frequency its body and cap part at; and which of the capsule's ConeStates is its own (-1:
+            // none yet).
+            bool shaped = false;
+            float along = 0.0f, along_target = 0.0f, across = 0.0f, across_target = 0.0f, cap = 0.05f, split = 1000.0f;
+            int cone = -1;
         };
         int ways = 0;
         std::array<Way, kMaxWays> way;
     };
+    // What a shaped way keeps from block to block: the two impulse responses it is heard through, where the mic was
+    // against the cone when they were worked out (and the room's distance law), the band split's state, and the end
+    // of each band's last block (what the start of the next is heard after).
+    struct ConeState {
+        ShapeTaps taps;
+        float along = -1.0f, across = 0.0f, radius = 0.0f, cap = 0.0f, falloff = 0.0f;  // (-1: not worked out yet)
+        float low = 0.0f, lower = 0.0f;  // (the split's two stages)
+        std::array<float, kShapeTaps> low_tail{}, high_tail{};
+    };
+    static constexpr int kConeStates = 64;  // (a capsule's: every cone it hears, and each again off the floor)
     // A microphone's model, as the audio thread plays it: its pattern band by band, what of the reverb it hears band by
     // band, its response on axis, its sensitivity, its noise (its own and its preamp's, as a white noise's amplitude).
     struct MicSound {
@@ -383,6 +399,25 @@ struct AudioEngine::Source {
         // Inside a drum's shell (the kick's, through its port): what of each band gets in from outside it (the room's
         // reverb too), glided.
         float shell[3] = {1.0f, 1.0f, 1.0f}, shell_target[3] = {1.0f, 1.0f, 1.0f};
+        // Its shaped ways' states (the audio thread's): each way takes one when it is first heard. A way forgotten
+        // leaves its own behind; when none is left to take, those no way has any more are found again.
+        std::unique_ptr<std::array<ConeState, kConeStates>> cones;
+        std::array<bool, kConeStates> cone_taken{};
+        int takeCone() {
+            for (int pass = 0; pass < 2; ++pass) {
+                for (int i = 0; i < kConeStates; ++i)
+                    if (!cone_taken[size_t(i)]) {
+                        cone_taken[size_t(i)] = true;
+                        (*cones)[size_t(i)] = {};
+                        return i;
+                    }
+                cone_taken.fill(false);  // (none free: those still some way's)
+                for (const Pickup& k : *pickups)
+                    for (const Pickup::Way& w : k.way)
+                        if (w.cone >= 0) cone_taken[size_t(w.cone)] = true;
+            }
+            return -1;
+        }
     };
     std::array<Capsule, 2> capsules;
     int capsule_count = 0;  // a microphone's one, a stereo mic's two (left and right, or mid and side)
@@ -463,6 +498,7 @@ void AudioEngine::allocateBuffers() {
     for (auto* buf : {&mix_l_, &mix_r_, &send_, &rev_l_, &rev_r_, &rev2_l_, &rev2_r_, &click_, &room_l_, &room_r_, &out_l_, &out_r_,
                       &mix_tap_l_, &mix_tap_r_, &room_tap_l_, &room_tap_r_, &comp_l_, &comp_r_, &echo_, &read_, &read_rim_})
         buf->assign(size_t(block_), 0.0f);
+    for (auto* buf : {&shape_low_, &shape_high_}) buf->assign(size_t(kShapeTaps + block_), 0.0f);
     for (auto& bus : echo_scatter_) bus.assign(size_t(block_), 0.0f);
     for (auto& smear : echo_smear_) smear.init(float(sr_));
     split_lows_ = 1.0f - std::exp(-2.0f * float(kPi) * SourceSpatializer::kBandEdges[0] / float(sr_));
@@ -1671,6 +1707,7 @@ int AudioEngine::addSource(InstrumentKind kind, Vec3 position, float gain, float
         for (int k = 0; k < src->capsule_count; ++k) {
             Source::Capsule& capsule = src->capsules[size_t(k)];
             capsule.pickups = std::make_unique<std::array<Source::Pickup, kSourceSlots>>();
+            capsule.cones = std::make_unique<std::array<Source::ConeState, Source::kConeStates>>();
             for (auto& bus : capsule.scatter) bus.assign(size_t(block_), 0.0f);
             for (auto& smear : capsule.smear) smear.init(float(sr_));
             capsule.position = position;
@@ -2009,6 +2046,13 @@ void AudioEngine::updateMicPath(const Source& mic, const Source& source) {
             cone.v[6] = p.from.x;
             cone.v[7] = p.from.y;
             cone.v[8] = p.from.z;
+            if (p.shape.on) {  // a cone heard as it radiates: where the mic is against it, its cap, and where its bands part
+                cone.count = std::max<int64_t>(int64_t(std::lround(p.shape.split_hz)), 1);
+                cone.at[0] = p.shape.radius;
+                cone.at[1] = p.shape.along;
+                cone.at[2] = p.shape.across;
+                cone.v[5] = p.shape.cap;
+            }
             push(cone);
         };
         const auto point = [&](Vec3 from, float extra) {  // a point source: louder as it comes closer, down to 10 cm
@@ -2834,19 +2878,29 @@ void AudioEngine::drainCommands() {
                 w.filtered = c.v[3] > 0.0f;
                 w.reflection = (c.epoch >> 26) & 0x1;
                 w.radius = c.at[0];
-                w.middle_target = c.at[1];
-                w.rim_target = c.at[2];
+                w.shaped = c.count > 0;  // (a cone heard as it radiates: at and v[5] say where the mic is against it)
+                w.middle_target = w.shaped ? 1.0f : c.at[1];
+                w.rim_target = w.shaped ? 1.0f : c.at[2];
                 w.distance_target = c.v[0];
                 w.nearness_target = c.v[1];
                 w.gain_target = c.v[2];
                 w.cut_target = std::max(c.v[3], 20.0f);
                 w.low_target = c.v[4];
-                w.high_target = c.v[5];
+                w.high_target = w.shaped ? 0.0f : c.v[5];
+                if (!w.shaped) w.cone = -1;  // (its state, if it had one, is found again when one is wanted)
+                if (w.shaped) {
+                    w.along_target = c.at[1];
+                    w.across_target = c.at[2];
+                    w.cap = c.v[5];
+                    w.split = float(c.count);
+                }
                 w.from_target = {c.v[6], c.v[7], c.v[8]};
                 std::copy(c.bands, c.bands + 3, w.bands_target);
                 std::copy(c.scatter, c.scatter + 3, w.scatter_target);
                 w.surface = surface < kScatterBuses ? surface : -1;
                 if (w.distance < 0.0f) {  // new: from where it is
+                    w.along = w.along_target;
+                    w.across = w.across_target;
                     w.middle = w.middle_target;
                     w.rim = w.rim_target;
                     w.distance = w.distance_target;
@@ -3957,10 +4011,65 @@ void AudioEngine::hearCapsule(Source& mic, int capsule_index, float* out, float 
     // as the capsule hears a diffuse sound) goes into `spread_out`, to be spread out in time. A drum's head is read in
     // its two layers, `heard` its middle and `rim` its rim, as much of each as the mic is placed to hear (`middle` and
     // `rims`, each from the start of the block to its end).
+    // A cone heard as it radiates (radiation.h's ConeShape): the block just read (the sound as late as the cone's nearest
+    // part is far) split at the cone's breakup into what its body carries and what its cap does, each heard through its
+    // own impulse response where the mic is: every part of the body, and of the cap, as late as it is further than the
+    // nearest. As the mic or the cabinet moves, the responses are worked out afresh and crossed over the block.
+    const auto radiateCone = [&](Source::Pickup::Way& way) {
+        if (way.cone < 0) way.cone = capsule.takeCone();
+        if (way.cone < 0) return;  // (more cones than a capsule keeps the state of: heard as a point)
+        Source::ConeState& cone = (*capsule.cones)[size_t(way.cone)];
+        const bool fresh = cone.along < 0.0f;
+        const bool moved = std::fabs(way.along_target - way.along) > 1e-4f || std::fabs(way.across_target - way.across) > 1e-4f;
+        way.along = moved ? way.along + (way.along_target - way.along) * glide : way.along_target;
+        way.across = moved ? way.across + (way.across_target - way.across) * glide : way.across_target;
+        const ShapeTaps* next = nullptr;
+        if (fresh || cone.along != way.along || cone.across != way.across || cone.radius != way.radius || cone.cap != way.cap ||
+            cone.falloff != falloff_) {
+            ShapeTaps& made = fresh ? cone.taps : shape_next_;
+            shapeTaps({true, way.along, way.across, way.radius, way.cap, way.split}, float(sr_), falloff_, &made);
+            if (!fresh) next = &made;
+            cone.along = way.along;
+            cone.across = way.across;
+            cone.radius = way.radius;
+            cone.cap = way.cap;
+            cone.falloff = falloff_;
+        }
+        constexpr int kBefore = kShapeTaps - 1;  // (what of the last block the start of this one is heard after)
+        float* low = shape_low_.data();
+        float* high = shape_high_.data();
+        std::copy(cone.low_tail.begin(), cone.low_tail.begin() + kBefore, low);
+        std::copy(cone.high_tail.begin(), cone.high_tail.begin() + kBefore, high);
+        const float part = 1.0f - std::exp(-2.0f * float(kPi) * way.split / float(sr_));
+        for (int i = 0; i < block_; ++i) {
+            const float x = read_[size_t(i)];
+            cone.low += (x - cone.low) * part;  // (the body's share: twice through, 12 dB an octave; the cap's, the rest)
+            cone.lower += (cone.low - cone.lower) * part;
+            low[kBefore + i] = cone.lower;
+            high[kBefore + i] = x - cone.lower;
+        }
+        const auto through = [&](const ShapeTaps& taps, int i) {
+            const float* l = low + kBefore + i;
+            const float* h = high + kBefore + i;
+            float y = 0.0f;
+            for (int n = 0; n < taps.body_taps; ++n) y += taps.body[size_t(n)] * l[-n];
+            for (int n = taps.cap_from; n < taps.cap_taps; ++n) y += taps.cap[size_t(n)] * h[-n];
+            return y;
+        };
+        for (int i = 0; i < block_; ++i) {
+            float y = through(cone.taps, i);
+            if (next) y += (through(*next, i) - y) * float(i + 1) / float(block_);
+            read_[size_t(i)] = y;
+        }
+        std::copy(low + block_, low + block_ + kBefore, cone.low_tail.begin());
+        std::copy(high + block_, high + block_ + kBefore, cone.high_tail.begin());
+        if (next) cone.taps = *next;
+    };
     const auto hear = [&](const float* heard, float from_m, float to_m, const float* air_from, const float* air_to, float off_from,
                           float off_to, float wave, float gain_from, float gain_to, float* state, EqFilter* const* filters, int filter_count,
                           const float* spread_from = nullptr, const float* spread_to = nullptr, float* spread_out = nullptr,
-                          const float* rim = nullptr, const float* middle = nullptr, const float* rims = nullptr) {
+                          const float* rim = nullptr, const float* middle = nullptr, const float* rims = nullptr,
+                          Source::Pickup::Way* cone = nullptr) {
         const float near_corner = kSpeedOfSound / std::max(wave, kProximityNearest);  // radians a second
         const float wide = near_corner / most, n0 = k2 + wide;
         const float pb0 = (k2 + near_corner) / n0, pb1 = (near_corner - k2) / n0, pa1 = (wide - k2) / n0;
@@ -3979,6 +4088,7 @@ void AudioEngine::hearCapsule(Source& mic, int capsule_index, float* out, float 
                 read_[size_t(i)] = read_[size_t(i)] * (middle[0] + (middle[1] - middle[0]) * a) + read_rim_[size_t(i)] * (rims[0] + (rims[1] - rims[0]) * a);
             }
         }
+        if (cone) radiateCone(*cone);
         for (int i = 0; i < block_; ++i) {
             const float a = float(i + 1) / float(block_);
             float x = read_[size_t(i)];
@@ -4143,7 +4253,7 @@ void AudioEngine::hearCapsule(Source& mic, int capsule_index, float* out, float 
             hear(heard, d_from, way.distance, air_from, air_to, dot(arrive_from, aim_from), dot(way.from, capsule.aim), wave,
                  g_from, way.gain * std::pow(way.nearness, falloff_), state, filters, filter_count,
                  spreads ? spread_from : nullptr, spreads ? spread_to : nullptr, spreads ? capsule.scatter[size_t(way.surface)].data() : nullptr,
-                 rim, middle, rims);
+                 rim, middle, rims, way.shaped ? &way : nullptr);
             way.low = state[0];
             way.below_high = state[1];
             way.near_in = state[2];

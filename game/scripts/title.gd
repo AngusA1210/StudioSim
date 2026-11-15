@@ -29,6 +29,7 @@ var _ui: Control
 var _title: Label
 var _tagline: Label
 var _status: Label
+var _version: Label
 var _fade: ColorRect
 
 
@@ -185,6 +186,18 @@ func _build() -> void:
 	_status.add_theme_font_size_override("font_size", 13)
 	column.add_child(_status)
 
+	_version = Label.new()  # which StudioSim this is, at the foot of the screen on the right
+	_version.text = version_text()
+	_version.add_theme_font_size_override("font_size", 13)
+	_version.add_theme_color_override("font_color", DIM)
+	_version.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_version.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT)
+	_version.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	_version.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	_version.offset_right = -40
+	_version.offset_bottom = -26
+	_ui.add_child(_version)
+
 	_fade = ColorRect.new()  # for the cut between the title's camera and the player's
 	_fade.color = Color(0, 0, 0, 0)
 	_fade.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -215,6 +228,25 @@ func _button(parent: Control, key: String, text: String, on_pressed: Callable) -
 	button.pressed.connect(on_pressed)
 	parent.add_child(button)
 	buttons[key] = button
+
+
+## Which StudioSim this is: its version (the project's), and the commit it was built from with its date, so that one
+## build can be told from the next. The app is told by tools/export.sh as it is made (build_info.gd, which only the
+## app has); run from Godot, git is asked, and says too if the files have been changed since that commit.
+static func version_text() -> String:
+	var text := "Version %s" % str(ProjectSettings.get_setting("application/config/version", ""))
+	var stamp := ""
+	if ResourceLoader.exists("res://build_info.gd"):
+		stamp = str(load("res://build_info.gd").get_script_constant_map().get("STAMP", ""))
+	elif OS.has_feature("editor"):
+		var folder := ProjectSettings.globalize_path("res://")
+		var said := []
+		if OS.execute("git", ["-C", folder, "log", "-1", "--format=%h, %cs"], said) == 0 and not said.is_empty():
+			stamp = str(said[0]).strip_edges()
+			var changed := []
+			if stamp != "" and OS.execute("git", ["-C", folder, "status", "--porcelain"], changed) == 0 and str(changed[0]).strip_edges() != "":
+				stamp += ", with changes since"
+	return text if stamp == "" else "%s  ·  build %s" % [text, stamp]
 
 
 ## Sizes the words for the window: smaller when it is short, or when the text size setting is large.

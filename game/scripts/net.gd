@@ -720,7 +720,7 @@ func _on_welcome(data: Dictionary) -> void:
 	app.player.stop_playing()
 	app.player.put_down()
 	sync.applying = true
-	var problem: String = app.library.apply_room_data(data.room)
+	var problem: String = app.library.apply_room_data(data.room, {"inputs": false})  # (which inputs are on is each player's own)
 	var feeds: Array = data.get("feeds", [])
 	for i in mini(feeds.size(), app.instruments.size()):  # (whose input plays through what)
 		app.instruments[i].set_meta("fed_by", int(feeds[i][0]))

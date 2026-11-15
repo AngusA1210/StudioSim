@@ -10,7 +10,8 @@ constexpr float kSpeed = 343.0f;  // metres a second
 constexpr float kPiF = 3.14159265f;
 constexpr float kBackLevel = 0.7f;    // an open back lets out a little less than the front (the panel it has, the chassis)
 constexpr float kBackCutHz = 2500.0f; // and duller: the back of a cone is behind its basket and magnet
-constexpr float kNearLowDb = 5.0f;    // the lows close up that far off are lost to the room behind (the baffle step)
+constexpr float kNearLowDb = 5.0f;
+constexpr float kSplitOverBreakup = 2.0f;  // a cone's body carries the sound to an octave above where it starts to break up    // the lows close up that far off are lost to the room behind (the baffle step)
 
 Vec3 minus(Vec3 a, Vec3 b) { return {a.x - b.x, a.y - b.y, a.z - b.z}; }
 float dotOf(Vec3 a, Vec3 b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
@@ -39,8 +40,71 @@ float farCut(const Radiator& r, float a, float angle) {
     return std::min(horn, std::max(beamCut(a, angle), r.crossover_hz));
 }
 
-// A piston of radius `a` heard at `at`, from its middle `centre`, facing `facing`.
-RadiatedPath piston(const Radiator& cab, Vec3 centre, Vec3 facing, float a, float breakup, Vec3 at, float ref_distance) {
+// How much of a baffled piston of radius `a` is as far as `far` from a point `along` its axis and `across` from it: the
+// part of the circle that far away (in the piston's plane, a circle of radius sigma round the point's foot) that lies
+// on the piston, 0 to 1. This is the piston's impulse response there, moment by moment (Stepanishen 1971).
+float arcOnPiston(float far, float along, float across, float a) {
+    const double s2 = double(far) * double(far) - double(along) * double(along);  // (far off, nearly nothing left of much)
+    if (s2 <= 0.0) return across <= a ? 1.0f : 0.0f;
+    const float sigma = float(std::sqrt(s2));
+    if (sigma <= a - across) return 1.0f;                       // all of the circle is on it
+    if (sigma >= a + across || sigma <= across - a) return 0.0f;  // none of it is
+    const float c = (sigma * sigma + across * across - a * a) / (2.0f * across * sigma);
+    return std::acos(std::clamp(c, -1.0f, 1.0f)) / kPiF;
+}
+
+float nearestOf(float along, float across, float a) {  // the piston's nearest part, and its furthest
+    const float out = std::max(across - a, 0.0f);
+    return std::sqrt(along * along + out * out);
+}
+float furthestOf(float along, float across, float a) { return std::sqrt(along * along + (across + a) * (across + a)); }
+
+// The impulse response in bins `step` metres of path long, bin 0 centred on `origin` metres: `bins` of them into
+// `out` (each how much of the piston is heard in it, in metres of path). Returns how many are of any use.
+int pistonBins(float along, float across, float a, float origin, float step, float* out, int bins) {
+    constexpr int kWithin = 6;  // (places in each bin it is looked at)
+    const float first = nearestOf(along, across, a), last = furthestOf(along, across, a);
+    int used = 0;
+    for (int n = 0; n < bins; ++n) {
+        const float from = std::max(origin + (float(n) - 0.5f) * step, first), to = std::min(origin + (float(n) + 0.5f) * step, last);
+        out[n] = 0.0f;
+        if (to <= from) continue;
+        float sum = 0.0f;
+        for (int k = 0; k < kWithin; ++k) sum += arcOnPiston(from + (float(k) + 0.5f) * (to - from) / float(kWithin), along, across, a);
+        out[n] = sum * (to - from) / float(kWithin);
+        if (out[n] > 0.0f) used = n + 1;
+    }
+    return used;
+}
+
+// A cone's cap doesn't move as a rigid disc does, as much at its edge as at its middle: it moves most at its middle
+// (the dust cap itself, and the voice coil under it) and less and less out towards the cone. So it is heard as four
+// pistons, one within the next, each with its share of the cap's sound (far off, on its axis): a point at its very
+// middle, then wider and wider ones out to the cap's radius. This is also what keeps it from having a rigid disc's
+// sharp nulls off its axis, where the far half of a disc cancels the near half at one frequency exactly: off its axis
+// a cone's highs fall away by degrees and bottom out, as a real one's do.
+constexpr int kCapParts = 4;
+constexpr float kCapRadius[kCapParts] = {0.12f, 0.5f, 0.8f, 1.0f};  // (of the cap's)
+constexpr float kCapShare[kCapParts] = {0.15f, 0.25f, 0.3f, 0.3f};
+
+// The cap's impulse response in bins (as pistonBins), out to `a`; returns how many are of any use.
+int capBins(float along, float across, float a, float origin, float step, float* out, int bins) {
+    float each[kShapeTaps];
+    bins = std::min(bins, kShapeTaps);
+    std::fill(out, out + bins, 0.0f);
+    int used = 0;
+    for (int k = 0; k < kCapParts; ++k) {
+        const float r = kCapRadius[k] * a;
+        const int n = pistonBins(along, across, r, origin, step, each, bins);
+        for (int i = 0; i < n; ++i) out[i] += kCapShare[k] * each[i] / (r * r);
+        used = std::max(used, n);
+    }
+    return used;
+}
+
+// A piston of radius `a` heard at `at`, from its middle `centre`, facing `facing`; `shaped`, as its body and its cap
+// (a cabinet's cone: see ConeShape), rather than as a point with a low-pass for where it is heard from.
+RadiatedPath piston(const Radiator& cab, Vec3 centre, Vec3 facing, float a, float breakup, Vec3 at, float ref_distance, bool shaped = false) {
     RadiatedPath p;
     const Vec3 to = minus(at, centre);
     const float r = lengthOf(to);
@@ -52,25 +116,95 @@ RadiatedPath piston(const Radiator& cab, Vec3 centre, Vec3 facing, float a, floa
     const float rho = std::sqrt(std::max(d * d + x * x - std::min(x, a) * std::min(x, a), 0.0f));
     const float behind = d >= 0.0f ? 1.0f : std::clamp(1.0f + d / (0.5f * a), 0.0f, 1.0f);  // (no near field behind the box)
     const float near = a * a / (a * a + rho * rho) * behind;
+    p.gain = shadow(angle);
+    p.low_db = kNearLowDb * near;
+    p.wave_radius = std::sqrt(r * r + a * a);
+    p.from = r > 1e-6f ? Vec3{-to.x / r, -to.y / r, -to.z / r} : Vec3{facing.x, facing.y, facing.z};
+    if (shaped) {
+        // As it radiates: heard from when its nearest part is, at the level of all of it together. Behind the baffle it is
+        // heard as from the baffle's plane, round the box: quieter (its shadow), and duller the further round.
+        const float along = std::max(d, 0.0f);
+        p.shape.on = true;
+        p.shape.along = along;
+        p.shape.across = x;
+        p.shape.radius = a;
+        // (its cap: the dust cap and the cone round it, out to some three fifths of its radius; smaller, and so brighter up close
+        // and wider in its highs, for a speaker with more bite there)
+        p.shape.cap = a * std::clamp(0.62f * std::pow(10.0f, -(cab.cap_db - 4.0f) / 12.0f), 0.4f, 0.8f);
+        p.shape.split_hz = kSplitOverBreakup * breakup;
+        const float body = bodyAlong(p.shape);
+        p.nearness = ref_distance * pistonLevel(body, x, a);
+        p.distance = d >= 0.0f ? nearestOf(body, x, a) : r;
+        if (d < 0.0f) {
+            const float round = std::clamp((angle - 0.5f * kPiF) / (0.5f * kPiF), 0.0f, 1.0f);  // 0 in the baffle's plane, 1 straight behind
+            const float most = 0.25f * 1.6f * kSpeed / (2.0f * kPiF * 0.7f * a);
+            p.cut_hz = std::clamp(std::exp(std::log(8000.0f) + (std::log(most) - std::log(8000.0f)) * round), 120.0f, 20000.0f);
+        }
+        return p;
+    }
     // The level: on a baffled piston's axis, 2 (sqrt(d^2 + a^2) - d) / a^2, which is 1 / d far off and levels off close up.
     const float level = 2.0f * (std::sqrt(rho * rho + a * a) - rho) / (a * a);
     p.nearness = ref_distance * level;
-    p.gain = shadow(angle);
     // Far off, the beaming; close up, where across the cone (above its breakup only its middle moves).
     const float far_cut = farCut(cab, a, angle);
     const float near_cut = std::max(breakup * a / std::max(x, 2e-3f), 0.8f * breakup);
     const float cut = std::exp(near * std::log(std::min(near_cut, 2.0f * kFullRangeHz)) +
                                (1.0f - near) * std::log(std::min(far_cut, 2.0f * kFullRangeHz)));
     p.cut_hz = std::clamp(cut, 120.0f, 20000.0f);
-    p.low_db = kNearLowDb * near;
     p.high_db = cab.cap_db * near * std::max(0.0f, 1.0f - x / (0.35f * a));
     p.distance = r;
-    p.wave_radius = std::sqrt(r * r + a * a);
-    p.from = r > 1e-6f ? Vec3{-to.x / r, -to.y / r, -to.z / r} : Vec3{facing.x, facing.y, facing.z};
     return p;
 }
 
 }  // namespace
+
+float pistonLevel(float along, float across, float a) {
+    constexpr int kSteps = 96;
+    const float first = nearestOf(along, across, a), last = furthestOf(along, across, a);
+    float sum = 0.0f;
+    for (int k = 0; k < kSteps; ++k) sum += arcOnPiston(first + (float(k) + 0.5f) * (last - first) / float(kSteps), along, across, a);
+    return 2.0f * sum * (last - first) / float(kSteps) / (a * a);
+}
+
+float bodyAlong(const ConeShape& shape) {
+    // (close up, the part of the cone under the mic; from further off, the cone as a whole, as far as its cap is)
+    const float close = shape.radius * shape.radius / (shape.radius * shape.radius + shape.along * shape.along);
+    return std::max(shape.along - kConeRise * close * std::min(shape.across, shape.radius), 0.005f);
+}
+
+float capLevel(float along, float across, float a) {
+    float sum = 0.0f;
+    for (int k = 0; k < kCapParts; ++k) sum += kCapShare[k] * pistonLevel(along, across, kCapRadius[k] * a);
+    return sum;
+}
+
+void shapeTaps(const ConeShape& shape, float sample_rate, float falloff, ShapeTaps* out) {
+    const float step = kSpeed / std::max(sample_rate, 1.0f);
+    const float body_along = bodyAlong(shape);
+    const float origin = nearestOf(body_along, shape.across, shape.radius);  // (when the way itself is heard)
+    out->body_taps = std::max(pistonBins(body_along, shape.across, shape.radius, origin, step, out->body.data(), kShapeTaps), 1);
+    float body = 0.0f, cap = 0.0f;
+    for (int n = 0; n < out->body_taps; ++n) body += out->body[size_t(n)];
+    if (body <= 0.0f) {
+        out->body[0] = 1.0f;
+        body = 1.0f;
+    } else {
+        for (int n = 0; n < out->body_taps; ++n) out->body[size_t(n)] /= body;
+    }
+    out->cap_taps = std::max(capBins(shape.along, shape.across, shape.cap, origin, step, out->cap.data(), kShapeTaps), 1);
+    out->cap_from = 0;
+    while (out->cap_from < out->cap_taps - 1 && out->cap[size_t(out->cap_from)] == 0.0f) ++out->cap_from;
+    for (int n = 0; n < out->cap_taps; ++n) cap += out->cap[size_t(n)];
+    // The cap against the body, there: each as loud as a piston its size is (the way's level is the body's).
+    const float body_level = pistonLevel(body_along, shape.across, shape.radius);
+    const float cap_level = capLevel(shape.along, shape.across, shape.cap);
+    const float ratio = body_level > 0.0f ? std::pow(cap_level / body_level, falloff) : 1.0f;
+    if (cap <= 0.0f) {
+        out->cap[size_t(out->cap_from)] = ratio;
+    } else {
+        for (int n = 0; n < out->cap_taps; ++n) out->cap[size_t(n)] *= ratio / cap;
+    }
+}
 
 float coneRadius(float inches) { return 0.0254f * inches * 0.41f; }
 float breakupHz(float inches) { return 12000.0f / std::max(inches, 1.0f); }
@@ -84,7 +218,8 @@ RadiatedPath radiate(const Radiator& r, int path, Vec3 at, float ref_distance) {
     const int cones = std::clamp(r.cones, 0, kMaxCones);
     const float a = coneRadius(r.inches), breakup = r.breakup_hz > 0.0f ? r.breakup_hz : breakupHz(r.inches);
     if (path < cones) {  // a cone: its share of the cabinet's sound
-        RadiatedPath p = piston(r, r.cone[size_t(path)], r.facing, a, breakup, at, ref_distance);
+        // (a horn over the cone: as before, its coverage being the horn's own)
+        RadiatedPath p = piston(r, r.cone[size_t(path)], r.facing, a, breakup, at, ref_distance, r.coverage <= 0.0f);
         p.gain /= float(cones);
         return p;
     }

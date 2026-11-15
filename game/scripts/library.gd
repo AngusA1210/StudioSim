@@ -447,6 +447,12 @@ func room_data() -> Dictionary:
 			entry.loop_on = inst.loop_on
 			entry.steps = audio.get_pattern_steps(inst.source_id)
 			entry.pattern = audio.get_pattern(inst.source_id)
+		# Its input, if it was left on (but not for having sat down at it: that goes off again on getting up), and
+		# whether it is record-ready: put back when the room is opened again.
+		if inst.input_on and not (app.player.playing == inst and app.player._sat_input):
+			entry.input_on = true
+		if inst.armed:
+			entry.armed = true
 		if inst.keep_di:  # (an amp's: its DI kept as it records, and played through the amp again)
 			entry.keep_di = true
 		if inst.reamp:
@@ -565,6 +571,8 @@ func save_template(template_name: String) -> String:
 	data.erase("timeline")
 	for entry in data.instruments:
 		entry.erase("clips")  # recordings belong to their room (and its folder)
+		entry.erase("input_on")  # (and which inputs are on, and what is record-ready, to the room as it was left)
+		entry.erase("armed")
 	data.name = template_name
 	return write_file(templates_dir().path_join(_safe(template_name) + "." + TEMPLATE_EXT), data)
 
@@ -726,6 +734,8 @@ func _load_instrument(load: RoomLoad, entry: Dictionary) -> void:
 		inst.lanes = entry.get("lanes", ["volume"]).duplicate()
 		if inst.is_stereo_mic:
 			_pans_from_balance(inst)
+	if keep.call("inputs") and bool(entry.get("input_on", false)):  # its input, as the room was saved (a room's own: not a template's)
+		app.set_input(inst, true)
 
 
 ## The rest: the folders and aux tracks with their tracks in them, the sends, the masters, where you stand, and the
@@ -829,6 +839,11 @@ func _load_mix(load: RoomLoad) -> void:
 		app.player.place(Vector3(float(stood[0]), 0.0, float(stood[1])), float(player.get("yaw", 0.0)))
 	app.settle_new_room()  # where you stand too, should the room be smaller than the one you stood in
 	app.timeline.load_from(data, mode)  # a Jam room's patterns, or a Record room's timeline, going
+	if keep.call("inputs"):  # and its record-ready tracks, as the room was saved (once the timeline is: it starts with none)
+		var entries: Array = data.get("instruments", []) if keep.call("instruments") else []
+		for i in mini(entries.size(), made.size()):
+			if made[i] != null and bool(entries[i].get("armed", false)):
+				app.timeline.set_armed(made[i], true)
 
 
 ## Removes a saved template or instrument preset (to the Trash).
