@@ -61,7 +61,8 @@ case "$(uname -s)" in
       [ -n "$candidate" ] && [ -f "$candidate" ] && { ISCC="$candidate"; break; }
     done
     [ -n "$ISCC" ] || { echo "Inno Setup 6 isn't installed (https://jrsoftware.org/isinfo.php)"; exit 1; }
-    "$ISCC" /Qp "/DAppVersion=$VERSION" "/DSourceDir=$(cygpath -w "$APP")" "/DOutputDir=$(cygpath -w "$ROOT/dist")" \
+    # (MSYS2_ARG_CONV_EXCL: Git Bash leaves ISCC's /-options as they are, rather than taking them for paths)
+    MSYS2_ARG_CONV_EXCL='*' "$ISCC" /Qp "/DAppVersion=$VERSION" "/DSourceDir=$(cygpath -w "$APP")" "/DOutputDir=$(cygpath -w "$ROOT/dist")" \
       "/DIconFile=$(cygpath -w "$ROOT/game/icon.ico")" "$(cygpath -w "$ROOT/tools/installer/StudioSim.iss")"
     OUT="$ROOT/dist/StudioSim-Windows-Setup.exe"
     ;;
