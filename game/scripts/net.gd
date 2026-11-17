@@ -76,6 +76,7 @@ var _since_ping := 0.0
 var _since_pose := 0.0
 var _since_step := 0.0
 var _started_us := 0  # when the patterns were last started here (on this computer's clock)
+var _heard_ahead := []  # how far ahead of the session's clock they have been heard here (s), each frame since the last half second's nudge
 var _waiting_clock := {}  # (a joining player) the music as the session has it, waiting for the session's time to be known
 var public_address := ""  # (the host's) where others join from the internet, the router having opened the ports
 var router := ""  # (the host's) how asking the router went: "", "asking", "open", or what went wrong
@@ -955,9 +956,34 @@ func _heard_step() -> float:
 	return -1.0 if step < 0.0 else step - _output_latency() * app.tempo / 15.0
 
 
+## Whether the patterns can be held to the session's clock just now: they are going, at its tempo, and have been for a
+## moment (not just started, nor still coming in from the top), and aren't recording, when the take is to stay as it
+## is played.
+func _keepable() -> bool:
+	if not bool(clock.running) or (role == "guest" and _pings.is_empty()) or not is_equal_approx(app.tempo, float(clock.bpm)):
+		return false
+	if Time.get_ticks_usec() - _started_us < 300000 or bool(clock.get("record", false)):
+		return false
+	return app.timeline.is_record() or expected_step() >= 2.0
+
+
+## Each frame: how far ahead of the session's clock the patterns are heard here, for the next half second's nudge (only
+## while they can be kept in step: what was heard before they were started again, or at another tempo, no longer says).
+func _note_where_heard() -> void:
+	if not _keepable():
+		_heard_ahead.clear()
+	elif audio.get_sequencer_step_now() >= 0.0:
+		_heard_ahead.append(ahead_of_session())
+
+
 ## Every half second: the patterns nudged towards where the session says the music is (a few milliseconds at a time,
 ## ten while they are further out than that), or started again in step if they are far off. The host's tempo changing moves where the music is reckoned from.
+## How far out they are is the middle of what was heard over that half second, frame by frame: a reading on its own can
+## be a block or more out (the audio thread late, or its blocks made in bursts), and the patterns moved by it would be
+## put out of step by as much.
 func _keep_in_step() -> void:
+	var readings := _heard_ahead
+	_heard_ahead = []
 	if not bool(clock.running) or (role == "guest" and _pings.is_empty()):
 		return
 	if role == "host" and not is_equal_approx(app.tempo, float(clock.bpm)):
@@ -967,18 +993,20 @@ func _keep_in_step() -> void:
 		moved.bpm = app.tempo
 		clock = moved
 		_send("clock", clock)
-	if not is_equal_approx(app.tempo, float(clock.bpm)) or Time.get_ticks_usec() - _started_us < 300000 or bool(clock.get("record", false)):
-		return  # (the tempo on its way here; or just started; or recording, when the take is to stay as it is played)
+	if not _keepable():
+		return  # (the tempo on its way here; or just started; or recording)
 	var heard := _heard_step()
-	if expected_step() < 2.0 and not app.timeline.is_record():
-		return
 	var off := ahead_of_session()
 	if heard < 0.0 or absf(off) > 0.25:
 		if app.timeline.is_record():
 			_play_in_step()
 		else:
 			_start_in_step()
-	elif absf(off) > 0.001:
+		return
+	if not readings.is_empty():
+		readings.sort()
+		off = readings[readings.size() / 2]
+	if absf(off) > 0.001:
 		var most := NUDGE_FAR if absf(off) > NUDGE_FAR else NUDGE_MOST
 		audio.nudge_sequencer(clampf(off, -most, most))
 
@@ -1438,6 +1466,7 @@ func _process(delta: float) -> void:
 		if _since_ping >= PING_EVERY:
 			_since_ping = 0.0
 			_send("ping", {"sent": Time.get_ticks_usec()}, 1, POSES, MultiplayerPeer.TRANSFER_MODE_UNRELIABLE)
+	_note_where_heard()
 	_since_step += delta
 	if _since_step >= KEEP_IN_STEP_EVERY:
 		_since_step = 0.0

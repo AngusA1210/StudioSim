@@ -1,10 +1,12 @@
 // How Cloudflare publishes the website (docs/website.md): the files website/build.py makes, served as they are.
-// Cloudflare's builds run `python3 website/build.py`, then `npx wrangler deploy`, which reads this.
+// Cloudflare's builds run `python3 website/build.py`, then `npx wrangler deploy`, which reads this (for a branch other
+// than main, `npx wrangler preview`, which won't run without a `previews` block: empty, it serves the same as main).
 {
   "name": "studiosim",
   "compatibility_date": "2026-11-01",
   "assets": {
     "directory": "./website/_site",
     "not_found_handling": "404-page"
-  }
+  },
+  "previews": {}
 }

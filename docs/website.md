@@ -52,8 +52,10 @@ JPEGs (`sips` on a Mac does both). Take them again when the app's look changes.
 
 The site is published by Cloudflare, from this repository, as a Worker that only serves files: every push to `main`
 builds it and puts it live a minute or so later. `wrangler.jsonc`, at the top of the repository, tells Cloudflare
-which folder to serve (`website/_site`) and to show the site's own page for an address that isn't there. Setting it
-up is done once, in the Cloudflare dashboard, by whoever owns the repository:
+which folder to serve (`website/_site`) and to show the site's own page for an address that isn't there. A push to
+any other branch (a pull request's, say) builds a preview of the site instead, with `npx wrangler preview`, which
+needs the empty `previews` block in `wrangler.jsonc` and leaves the live site alone. Setting it up is done once, in
+the Cloudflare dashboard, by whoever owns the repository:
 
 1. In the Cloudflare dashboard, open **Workers & Pages**, then **Create application**, and import this repository
    from GitHub (sign in if asked, and give Cloudflare access to **this repository only**; private repositories work).
