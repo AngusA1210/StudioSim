@@ -39,12 +39,17 @@ if [ -f "$CACHE" ] && ! grep -qx "CMAKE_HOME_DIRECTORY:INTERNAL=$HERE" "$CACHE";
   rm -rf "$CACHE" "$ROOT/audio_core/build/CMakeFiles"
 fi
 cmake -S "$ROOT/audio_core" -B "$ROOT/audio_core/build" -DCMAKE_BUILD_TYPE="$CONFIG"
-cmake --build "$ROOT/audio_core/build" --config "$CONFIG" --target engine_tests session_server_tests studiosim_session_server studiosim_audio \
-  -j "$(sysctl -n hw.ncpu 2>/dev/null || nproc)"
+TARGETS="engine_tests session_server_tests studiosim_session_server studiosim_audio"
+[ "$(uname -s)" = Darwin ] && TARGETS="$TARGETS plugin_panel_tests"  # (a plug-in's window and the keyboard, on a Mac)
+cmake --build "$ROOT/audio_core/build" --config "$CONFIG" --target $TARGETS -j "$(sysctl -n hw.ncpu 2>/dev/null || nproc)"
 case "$(uname -s)" in
   MINGW*|MSYS*|CYGWIN*)  # (Visual Studio builds each kind in a folder of its own)
     "$ROOT/audio_core/build/$CONFIG/engine_tests.exe"
     "$ROOT/audio_core/build/$CONFIG/session_server_tests.exe" ;;
+  Darwin)
+    "$ROOT/audio_core/build/engine_tests"
+    "$ROOT/audio_core/build/session_server_tests"
+    "$ROOT/audio_core/build/plugin_panel_tests" ;;
   *)
     "$ROOT/audio_core/build/engine_tests"
     "$ROOT/audio_core/build/session_server_tests" ;;

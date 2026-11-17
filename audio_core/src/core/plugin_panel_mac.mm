@@ -14,10 +14,17 @@ bool typingInto(id responder) {
     return false;
 }
 
+// Whether a view clicked is a text box of the system's own that can be typed into.
+bool textBox(NSView* view) {
+    if ([view isKindOfClass:[NSTextView class]]) return ((NSTextView*)view).isEditable;
+    if ([view isKindOfClass:[NSTextField class]]) return ((NSTextField*)view).isEditable;
+    return false;
+}
+
 }  // namespace
 
 @implementation SRPluginPanel {
-    BOOL _mayType;  // while a click goes on in it, or while it is typed into: it may have the keyboard
+    BOOL _mayType;  // while something in it is typed into (or a text box of the system's own is clicked): it may have the keyboard
     NSTimer* _watch;
 }
 
@@ -53,8 +60,14 @@ bool typingInto(id responder) {
 
 - (void)sendEvent:(NSEvent*)event {
     const NSEventType type = event.type;
-    if (type == NSEventTypeLeftMouseDown || type == NSEventTypeRightMouseDown)
-        _mayType = YES;  // (whatever it does with the click, it may take the keyboard meanwhile: a box of its own to type in)
+    // A click takes the keyboard from the game only for a text box of the system's own, or while something in it is
+    // typed into already. Anything else clicked (a knob dragged, a switch) leaves it with the game, though the view
+    // asks for it (JUCE's do, every click), so that the notes played from the keyboard go on playing meanwhile. A box
+    // a plug-in draws itself takes it once it is found to be typed into, as the click ends (settleKeyboard).
+    if (type == NSEventTypeLeftMouseDown || type == NSEventTypeRightMouseDown) {
+        NSView* hit = [self.contentView hitTest:[self.contentView.superview convertPoint:event.locationInWindow fromView:nil]];
+        _mayType = typingInto(self.firstResponder) || textBox(hit);
+    }
     [super sendEvent:event];
     if (type == NSEventTypeLeftMouseUp || type == NSEventTypeRightMouseUp || type == NSEventTypeKeyUp)
         dispatch_async(dispatch_get_main_queue(), ^{

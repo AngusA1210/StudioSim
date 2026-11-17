@@ -1,6 +1,11 @@
 // A plug-in's window on Windows: a tool window owned by the game's (so it stays in front of it, and goes with it when it
 // is minimised), which hides rather than closes when its close button is pressed. The plug-in's editor is a child of
 // it. Its messages go through the game's own message loop, as every window on the game's thread does.
+//
+// It leaves the keyboard with the game, so that the computer keyboard keeps playing while a knob in it is turned: a
+// click doesn't make it the active window. A plug-in can still take the keyboard (a box of its own clicked to type
+// into gives itself the focus), and keeps it while something in it is typed into, which shows a text caret; once the
+// click is over and nothing is, it goes back to the game.
 
 #include "plugin_window.h"
 
@@ -25,10 +30,41 @@ std::wstring wide(const std::string& utf8) {
     return out;
 }
 
+const UINT_PTR kKeyboardTimer = 1;  // a few times a second: where the keyboard should be
+
+// Whether something in a plug-in's window is being typed into: a text caret in it, as a text box shows (the system's
+// own, and JUCE's, which makes one for the system's text input while one of its boxes has the keyboard).
+bool typingIn(HWND window) {
+    GUITHREADINFO info{};
+    info.cbSize = sizeof(info);
+    if (!GetGUIThreadInfo(GetCurrentThreadId(), &info) || !info.hwndCaret) return false;
+    return info.hwndCaret == window || IsChild(window, info.hwndCaret) != FALSE;
+}
+
+// The keyboard back with the game, if the plug-in's window has it, once a click in it is over and nothing in it is
+// being typed into (a knob of a plug-in that takes the keyboard on every click, say).
+void settleKeyboard(HWND window) {
+    if (GetActiveWindow() != window) return;
+    if ((GetAsyncKeyState(VK_LBUTTON) | GetAsyncKeyState(VK_RBUTTON)) & 0x8000) return;  // (still held: a knob being turned)
+    if (typingIn(window)) return;
+    if (HWND game = GetWindow(window, GW_OWNER)) SetActiveWindow(game);
+}
+
 LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
-    if (message == WM_CLOSE) {  // its close button hides it: the plug-in, and its editor, stay
-        ShowWindow(hwnd, SW_HIDE);
-        return 0;
+    switch (message) {
+        case WM_CLOSE:  // its close button hides it: the plug-in, and its editor, stay
+            ShowWindow(hwnd, SW_HIDE);
+            return 0;
+        case WM_MOUSEACTIVATE:  // a click in it (its editor's too, asked first) leaves the game the active window
+            return MA_NOACTIVATE;
+        case WM_TIMER:
+            if (wparam == kKeyboardTimer) {
+                settleKeyboard(hwnd);
+                return 0;
+            }
+            break;
+        default:
+            break;
     }
     return DefWindowProcW(hwnd, message, wparam, lparam);
 }
@@ -77,6 +113,7 @@ public:
         AdjustWindowRectEx(&r, kStyle, FALSE, kExStyle);
         hwnd_ = CreateWindowExW(kExStyle, kClassName, L"Plug-in", kStyle, CW_USEDEFAULT, CW_USEDEFAULT, r.right - r.left,
                                 r.bottom - r.top, gameWindow(), nullptr, GetModuleHandleW(nullptr), nullptr);
+        if (hwnd_) SetTimer(hwnd_, kKeyboardTimer, 250, nullptr);
     }
 
     ~WinPluginWindow() override {

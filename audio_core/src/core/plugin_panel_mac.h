@@ -1,8 +1,9 @@
 // A plug-in's window on macOS (an Audio Unit's, plugin_host_mac.mm, or a VST3's, plugin_window_mac.mm): a floating
 // panel over the game that leaves the keyboard with the game, so that the computer keyboard keeps playing while a knob
-// in it is dragged, unless something in it is being typed into: a box of the system's own, or one a plug-in draws
-// itself and types into through the system's text input (as JUCE's do), clicked or opened from a menu. Then it takes
-// the keyboard for as long as the typing goes on, and gives it back once it is done.
+// in it is dragged (a click doesn't take the keyboard, though a plug-in's view asks for it), unless something in it is
+// being typed into: a box of the system's own, or one a plug-in draws itself and types into through the system's text
+// input (as JUCE's do), clicked or opened from a menu. Then it takes the keyboard for as long as the typing goes on,
+// and gives it back once it is done.
 
 #pragma once
 

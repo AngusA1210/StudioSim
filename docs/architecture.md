@@ -75,6 +75,8 @@ audio_core/
   src/server/              the session server, a program of its own that players meet through (session-server.md)
   tests/engine_tests.cpp   offline checks: levels, binaural direction, walls, latency, MIDI, live input, sequencer, amps, pedals, plug-ins, loop pedal
   tests/session_server_tests.cpp  the session server's checks: codes, finding a session, a relay
+  tests/plugin_panel_tests.mm     a plug-in's window on a Mac and the keyboard: a knob turned as notes play, typing in it
+                                  (two windows, brought up for a second or two)
 game/tests/ui_check.gd     the game driven by pretend keys and clicks: title, playing, patterns, instruments, amps, room, menus,
                            presets, and rooms (making, saving, backups, opening), and playing together
 game/tests/together_guest.gd  a second copy of the game that joins the room ui_check.gd hosts, and does what it asks

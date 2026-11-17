@@ -200,6 +200,13 @@ foreach(cfg DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)  # (in the build folder its
 endforeach()
 add_executable(session_server_tests tests/session_server_tests.cpp)
 target_link_libraries(session_server_tests PRIVATE sr_session_server)
+# A plug-in's window on a Mac and the keyboard (tests/plugin_panel_tests.mm): two windows of its own, brought up briefly.
+if(APPLE)
+    add_executable(plugin_panel_tests tests/plugin_panel_tests.mm src/core/plugin_panel_mac.mm)
+    target_include_directories(plugin_panel_tests PRIVATE src/core)
+    target_compile_options(plugin_panel_tests PRIVATE -fobjc-arc)
+    target_link_libraries(plugin_panel_tests PRIVATE "-framework AppKit")
+endif()
 
 # ── Godot extension ─────────────────────────────────────────────────────────────────────────────────────────
 add_subdirectory(thirdparty/godot-cpp EXCLUDE_FROM_ALL)
