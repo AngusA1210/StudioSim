@@ -33,9 +33,10 @@ public:
     AsioStream(const AsioStream&) = delete;
     AsioStream& operator=(const AsioStream&) = delete;
 
-    // Loads the driver named in the device lists and settles its buffer size (the nearest it allows to the one asked
-    // for) at the rate it is running at. Nothing runs until start().
-    bool open(const std::string& name, int buffer_size, bool with_input, std::string* error);
+    // Loads the driver named in the device lists, sets it to the rate StudioSim runs at (`wanted_rate`, or else its
+    // own if StudioSim can run at it: sample_rates.h), and settles its buffer size (the nearest it allows to the one
+    // asked for). Nothing runs until start().
+    bool open(const std::string& name, int buffer_size, bool with_input, int wanted_rate, std::string* error);
     bool start(Callback callback, void* user, std::string* error);
 
     int sampleRate() const { return rate_; }

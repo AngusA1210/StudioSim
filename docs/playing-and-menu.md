@@ -54,7 +54,10 @@ from there. Its pages:
 - **Room**: the room's size, what its surfaces are made of, and the walls standing in it (see
   [The room](room-acoustics.md)).
 - **Playback Engine**: which output device the audio engine runs on, and the hardware buffer size (32–1024 samples).
-  The sample rate follows the device. Shows the resulting latency (the buffer, the device, and what binaural rendering
+  The sample rate: 44.1 or 48 kHz, the rates Steam Audio's binaural rendering is made for, or the interface's own
+  (48 kHz if it is at neither, 44.1 kHz for 88.2 or 176.4). StudioSim sets the interface to it as it opens, as a DAW sets
+  an interface to its session's rate; one that won't change has StudioSim's sound converted to its rate, and the page
+  says so. Recordings made at the other rate play at their own speed. Shows the resulting latency (the buffer, the device, and what binaural rendering
   adds while it is switched on: about a quarter of a buffer, measured as the engine starts; while the mix is heard,
   its delay compensation instead) and CPU use.
 - **I/O**: which of the device's outputs carry the mix, the input device, and which hardware input each Speaker plays.

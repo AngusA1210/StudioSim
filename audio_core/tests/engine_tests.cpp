@@ -2350,6 +2350,16 @@ int main(int argc, char** argv) {
         check(echo == 2 && std::fabs(double(repeat - direct) / 44100.0 - set_time) < 0.01, "after a change of sample rate, the delay echoes after the same time",
               fmt("%.0f ms at 44.1 kHz", 1000.0 * double(repeat - direct) / 44100.0));
         room.engine.configure(48000, 128, &err);
+        // 44.1 and 48 kHz only (Steam Audio's HRTF is made for no other): an interface at 192 kHz is run at 48, at 88.2
+        // kHz at 44.1, and a rate StudioSim can't run at is turned down with the engine still running as it was.
+        std::string refused;
+        const bool turned_down = !room.engine.configure(192000, 128, &refused);
+        const Render after_refusal = renderSeconds(room.engine, 0.5);
+        check(chooseEngineRate(0, 192000) == 48000 && chooseEngineRate(0, 88200) == 44100 && chooseEngineRate(0, 44100) == 44100 &&
+                  chooseEngineRate(44100, 192000) == 44100 && chooseEngineRate(48000, 44100) == 48000 && turned_down &&
+                  room.engine.sampleRate() == 48000 && after_refusal.finite && after_refusal.rms_l > 0.0,
+              "StudioSim runs at 44.1 or 48 kHz: an interface at 192 kHz at 48, at 88.2 kHz at 44.1; 192 kHz itself is turned down, the engine playing on",
+              refused);
 
         // Plug-ins: Apple's own AUDelay, which every Mac has.
         const std::vector<PluginDescription> plugins = AudioEngine::effectPlugins();

@@ -95,6 +95,7 @@ var _engine_option: OptionButton
 var _engine_names: Array = []
 var _engine_signature := ""
 var _buffer_option: OptionButton
+var _rate_option: OptionButton
 var _rate_label: Label
 var _latency_label: Label
 var _cpu_label: Label
@@ -515,8 +516,15 @@ func _build_engine_page(page: VBoxContainer) -> void:
 	_buffer_option.item_selected.connect(_on_buffer_selected)
 	_field(page, "H/W Buffer Size").add_child(_buffer_option)
 
+	_rate_option = OptionButton.new()
+	for rate in app.settings.SAMPLE_RATES:
+		_rate_option.add_item("The interface's own" if rate == 0 else "%.1f kHz" % (rate / 1000.0))
+	_rate_option.item_selected.connect(_on_rate_selected)
+	var rate_row := _field(page, "Sample Rate")
+	rate_row.add_child(_rate_option)
 	_rate_label = Label.new()
-	_field(page, "Sample Rate").add_child(_rate_label)
+	_rate_label.add_theme_color_override("font_color", DIM)
+	rate_row.add_child(_rate_label)
 	page.add_child(HSeparator.new())
 	_latency_label = Label.new()
 	_field(page, "Output latency").add_child(_latency_label)
@@ -525,7 +533,7 @@ func _build_engine_page(page: VBoxContainer) -> void:
 	_disk_label = Label.new()
 	_field(page, "Disk").add_child(_disk_label)
 	_engine_note = _note(page, "")
-	_note(page, "A smaller buffer responds faster but needs more CPU. If you hear crackles, pick a larger one. The sample rate follows the device.")
+	_note(page, "A smaller buffer responds faster but needs more CPU. If you hear crackles, pick a larger one. StudioSim runs at 44.1 or 48 kHz (the rates its binaural rendering is made for) and sets the interface to it; recordings made at the other rate still play at their own speed.")
 	_note(page, "Recorded audio is read from disk a few seconds ahead of the music and let go once it has played, so long rooms need little memory. Disk says how much is read ahead, and how many buffers the disk was too slow for, if any (heard as a gap).")
 
 
@@ -759,7 +767,8 @@ func _refresh_live() -> void:
 
 	# Playback Engine
 	_buffer_option.select(settings.BUFFER_SIZES.find(settings.buffer_size))
-	_rate_label.text = "%.1f kHz" % (float(s.get("sample_rate", 0)) / 1000.0) if running else "-"
+	_rate_option.select(settings.SAMPLE_RATES.find(settings.sample_rate))
+	_rate_label.text = "running at %.1f kHz" % (float(s.get("sample_rate", 0)) / 1000.0) if running else "-"
 	if running:
 		var parts := "%.1f ms buffer + %.1f ms device" % [s.buffer_ms, s.device_ms]
 		if settings.monitor == "mix":  # the mix, held back by its delay compensation
@@ -782,6 +791,9 @@ func _refresh_live() -> void:
 		note = "Audio is not running."
 	elif settings.output_device != "" and s.output_device != settings.output_device:
 		note = "%s is not connected, so the system default is playing until it is." % settings.output_device
+	elif int(s.get("device_rate", 0)) > 0 and int(s.get("device_rate", 0)) != int(s.get("sample_rate", 0)):
+		note = "The interface stayed at %.1f kHz, so StudioSim's %.1f kHz is converted to it. Set it to %.1f kHz in Audio MIDI Setup (or its own control panel) to play it straight." % [
+			float(s.device_rate) / 1000.0, float(s.sample_rate) / 1000.0, float(s.sample_rate) / 1000.0]
 	elif s.get("backend", "") == "ASIO" and int(s.get("device_period", 0)) != settings.buffer_size:
 		note = "The driver runs with a buffer of %d samples: the sizes it allows are set in its own control panel." % int(s.device_period)
 	elif float(s.device_ms) > 40.0:
@@ -1028,6 +1040,11 @@ func _on_engine_selected(index: int) -> void:
 
 func _on_buffer_selected(index: int) -> void:
 	app.set_buffer_size(app.settings.BUFFER_SIZES[index])
+	_refresh_live()
+
+
+func _on_rate_selected(index: int) -> void:
+	app.set_sample_rate(app.settings.SAMPLE_RATES[index])
 	_refresh_live()
 
 

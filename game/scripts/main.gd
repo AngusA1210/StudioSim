@@ -588,6 +588,7 @@ func open_audio() -> bool:
 		"silent": options.has("silent"),
 		"output_device": settings.output_device,
 		"buffer_size": settings.buffer_size,
+		"sample_rate": settings.sample_rate,
 		"output_left": settings.output_left,
 		"output_right": settings.output_right,
 		"input_enabled": live_input,
@@ -619,6 +620,14 @@ func set_output_device(device_name: String) -> void:
 
 func set_buffer_size(samples: int) -> void:
 	settings.buffer_size = samples
+	open_audio()
+	settings.save_to_disk()
+
+
+## The rate StudioSim runs at (44100 or 48000; 0 for the interface's own), the interface set to it as it opens.
+## Recordings made at the other rate still play at their own speed.
+func set_sample_rate(rate: int) -> void:
+	settings.sample_rate = rate
 	open_audio()
 	settings.save_to_disk()
 

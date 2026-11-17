@@ -89,6 +89,7 @@ bool StudioSimAudio::open_device(const Dictionary& config) {
     c.buffer_size = int(config.get("buffer_size", 128));
     c.output_left = int(config.get("output_left", 0));
     c.output_right = int(config.get("output_right", 1));
+    c.sample_rate = int(config.get("sample_rate", 0));
     std::string err;
     if (engine_->openDevice(c, &err)) {
         error_ = String();
@@ -109,6 +110,7 @@ Dictionary StudioSimAudio::get_device_config() const {
     d["buffer_size"] = c.buffer_size;
     d["output_left"] = c.output_left;
     d["output_right"] = c.output_right;
+    d["sample_rate"] = c.sample_rate;
     return d;
 }
 
@@ -716,6 +718,7 @@ Dictionary StudioSimAudio::get_stats() const {
     d["output_device"] = str(s.output_device);
     d["output_channels"] = s.output_channels;
     d["sample_rate"] = s.sample_rate;
+    d["device_rate"] = s.device_rate;
     d["block_size"] = s.block_size;
     d["device_period"] = s.device_period;
     d["buffer_ms"] = s.buffer_ms;

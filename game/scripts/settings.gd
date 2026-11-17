@@ -2,10 +2,13 @@ extends RefCounted
 ## Everything the player can change in the menu. Saved to user://settings.cfg and loaded at start.
 
 const BUFFER_SIZES := [32, 64, 128, 256, 512, 1024]
+## The rates StudioSim runs at (those its binaural rendering is made for); 0 = the interface's own, if one of them.
+const SAMPLE_RATES := [0, 44100, 48000]
 
 # Playback engine and I/O
 var output_device := ""   # "" = follow the system default
 var buffer_size := 128    # samples
+var sample_rate := 0      # 44100 or 48000: the interface is set to it; 0 = the interface's own (48 kHz if neither)
 var output_left := 0      # which hardware outputs carry the mix (0-based)
 var output_right := 1
 var input_device := ""    # remembered, but live input itself always starts switched off (see main.gd)
@@ -79,6 +82,9 @@ func load_from_disk() -> void:
 	buffer_size = file.get_value("engine", "buffer_size", buffer_size)
 	if not BUFFER_SIZES.has(buffer_size):
 		buffer_size = 128
+	sample_rate = file.get_value("engine", "sample_rate", sample_rate)
+	if not SAMPLE_RATES.has(sample_rate):
+		sample_rate = 0
 	output_left = file.get_value("io", "output_left", output_left)
 	output_right = file.get_value("io", "output_right", output_right)
 	input_device = file.get_value("io", "input_device", input_device)
@@ -138,6 +144,7 @@ func save_to_disk() -> void:
 	var file := ConfigFile.new()
 	file.set_value("engine", "output_device", output_device)
 	file.set_value("engine", "buffer_size", buffer_size)
+	file.set_value("engine", "sample_rate", sample_rate)
 	file.set_value("io", "output_left", output_left)
 	file.set_value("io", "output_right", output_right)
 	file.set_value("io", "input_device", input_device)

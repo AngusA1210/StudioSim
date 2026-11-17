@@ -1,4 +1,5 @@
 #include "asio_device.h"
+#include "sample_rates.h"
 
 #include <windows.h>
 #include <objbase.h>
@@ -227,7 +228,7 @@ AsioStream::~AsioStream() { close(); }
 
 bool AsioStream::resetWanted() const { return reset_wanted.load(std::memory_order_relaxed); }
 
-bool AsioStream::open(const std::string& name, int buffer_size, bool with_input, std::string* error) {
+bool AsioStream::open(const std::string& name, int buffer_size, bool with_input, int wanted_rate, std::string* error) {
     close();
     const auto fail = [&](const std::string& why) {
         if (error) *error = why;
@@ -262,14 +263,16 @@ bool AsioStream::open(const std::string& name, int buffer_size, bool with_input,
         known_channels[name] = {int(ins), int(outs)};
     }
 
-    // Run at whatever rate it is set to (its control panel's, or another program's), as the engine follows the device.
+    // Run at the rate asked for, or at whatever it is set to (its control panel's, or another program's) if StudioSim
+    // can run at that; otherwise it is set to the one StudioSim runs at, as a DAW sets an interface to its session's.
     ASIOSampleRate rate = 0;
-    if (driver->getSampleRate(&rate) != ASE_OK || rate <= 0) {
-        if (driver->canSampleRate(48000.0) != ASE_OK || driver->setSampleRate(48000.0) != ASE_OK)
-            return fail(driver_name + " did not say what sample rate it runs at");
-        rate = 48000.0;
+    if (driver->getSampleRate(&rate) != ASE_OK) rate = 0;
+    const int target = chooseEngineRate(wanted_rate, int(std::lround(rate)));
+    if (int(std::lround(rate)) != target) {
+        if (driver->canSampleRate(ASIOSampleRate(target)) != ASE_OK || driver->setSampleRate(ASIOSampleRate(target)) != ASE_OK)
+            return fail(driver_name + " won't run at " + (target == 44100 ? "44.1" : "48") + " kHz (StudioSim runs at 44.1 or 48 kHz)");
     }
-    rate_ = int(std::lround(rate));
+    rate_ = target;
 
     long smallest = 0, largest = 0, preferred = 0, granularity = 0;
     if (driver->getBufferSize(&smallest, &largest, &preferred, &granularity) != ASE_OK || preferred <= 0)

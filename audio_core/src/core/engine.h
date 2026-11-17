@@ -35,6 +35,7 @@
 #include "sequencer.h"
 #include "spatializer.h"
 #include "spsc_queue.h"
+#include "sample_rates.h"
 
 namespace sr {
 
@@ -61,6 +62,7 @@ struct DeviceConfig {
     bool input_enabled = false;
     std::string input_device;   // empty = the system default; with an ASIO driver as the output, its own inputs
     int buffer_size = 128;      // frames: the hardware buffer and the engine's block size
+    int sample_rate = 0;        // 44100 or 48000; 0 = the interface's own, if 44.1 or 48 kHz (sample_rates.h)
     int output_left = 0, output_right = 1;  // which of the device's outputs carry the stereo mix
 };
 
@@ -70,6 +72,7 @@ struct EngineStats {
     bool device_reset = false;     // the device wants reopening (an ASIO driver whose buffer size or rate was changed)
     std::string backend, output_device, input_device;
     int sample_rate = 0, block_size = 0, device_period = 0;
+    int device_rate = 0;           // the interface's own rate: StudioSim's, unless it wouldn't change to it (then converted)
     int output_channels = 0, input_channels = 0;
     double buffer_ms = 0;          // the hardware buffer we fill ahead of playback
     double device_ms = 0;          // what the OS reports for the output device itself (driver, safety offset, hardware)

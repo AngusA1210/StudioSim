@@ -575,6 +575,10 @@ bool AudioEngine::configure(int sample_rate, int block_size, std::string* error)
         return false;
     }
     if (sample_rate == sr_ && block_size == block_) return true;
+    if (!engineRateSupported(sample_rate)) {  // (checked first: nothing is changed, and the engine still runs as it was)
+        if (error) *error = "StudioSim runs at 44.1 or 48 kHz, not " + std::to_string(sample_rate) + " Hz";
+        return false;
+    }
     // The audio thread is stopped: apply whatever it hasn't yet, so that nothing waiting in the queue refers to memory
     // freed below.
     drainCommands();
@@ -684,13 +688,14 @@ bool AudioEngine::openDevice(const DeviceConfig& config, std::string* error) {
         }
     }
 
-    // Run at the output device's own sample rate so nothing has to be resampled on the way out.
+    // Run at the rate asked for, or the output device's own (sample_rates.h): the device is asked to change to it, so
+    // that nothing has to be converted on the way out, and if it won't, miniaudio converts it.
     const int device_rate = null_mode ? 48000 : currentOutputRate(dev->context, default_output ? nullptr : &output_id);
     if (device_rate <= 0) {
         if (error) *error = "could not open the audio output device";
         return false;
     }
-    if (!configure(std::clamp(device_rate, 22050, 192000), std::clamp(config.buffer_size, 16, 4096), error)) return false;
+    if (!configure(chooseEngineRate(config.sample_rate, device_rate), std::clamp(config.buffer_size, 16, 4096), error)) return false;
 
     ma_device_config dc = ma_device_config_init(config.input_enabled ? ma_device_type_duplex : ma_device_type_playback);
     dc.playback.format = ma_format_f32;
@@ -700,6 +705,8 @@ bool AudioEngine::openDevice(const DeviceConfig& config, std::string* error) {
     dc.capture.channels = 0;   // every input the device has
     dc.capture.pDeviceID = default_input ? nullptr : &input_id;
     dc.sampleRate = ma_uint32(sr_);
+    dc.coreaudio.allowNominalSampleRateChange = MA_TRUE;  // (the interface set to StudioSim's rate, as a DAW sets it)
+    dc.resampling.linear.lpfOrder = MA_MAX_FILTER_ORDER;  // (should it not change: converted as cleanly as miniaudio can)
     dc.periodSizeInFrames = ma_uint32(block_);
     dc.performanceProfile = ma_performance_profile_low_latency;
     dc.noClip = MA_TRUE;
@@ -719,10 +726,11 @@ bool AudioEngine::openDevice(const DeviceConfig& config, std::string* error) {
     s.backend = ma_get_backend_name(dev->context.backend);
     s.output_device = dev->device.playback.name;
     s.output_channels = int(dev->device.playback.channels);
-    s.sample_rate = int(dev->device.playback.internalSampleRate);
+    s.sample_rate = sr_;
+    s.device_rate = int(dev->device.playback.internalSampleRate);
     s.block_size = block_;
     s.device_period = int(dev->device.playback.internalPeriodSizeInFrames);
-    s.buffer_ms = 1000.0 * s.device_period / s.sample_rate;
+    s.buffer_ms = 1000.0 * s.device_period / s.device_rate;
     s.live_input = config.input_enabled;
     if (config.input_enabled) {
         s.input_device = dev->device.capture.name;
@@ -732,7 +740,7 @@ bool AudioEngine::openDevice(const DeviceConfig& config, std::string* error) {
 #ifdef __APPLE__
     if (dev->context.backend == ma_backend_coreaudio) {
         s.device_ms = 1000.0 * coreAudioDeviceLatencyFrames(AudioObjectID(dev->device.coreaudio.deviceObjectIDPlayback),
-                                                             kAudioObjectPropertyScopeOutput) / s.sample_rate;
+                                                             kAudioObjectPropertyScopeOutput) / s.device_rate;
         if (config.input_enabled)
             s.input_latency_ms += 1000.0 * coreAudioDeviceLatencyFrames(AudioObjectID(dev->device.coreaudio.deviceObjectIDCapture),
                                                                         kAudioObjectPropertyScopeInput) /
@@ -766,13 +774,10 @@ bool AudioEngine::openAsio(const DeviceConfig& config, std::string* error) {
     auto dev = std::make_unique<Device>();
     dev->asio = std::make_unique<AsioStream>();
     AsioStream& asio = *dev->asio;
-    if (!asio.open(config.output_device, std::clamp(config.buffer_size, 16, 4096), config.input_enabled, error)) return false;
+    if (!asio.open(config.output_device, std::clamp(config.buffer_size, 16, 4096), config.input_enabled, config.sample_rate, error))
+        return false;
     if (config.input_enabled && asio.inputs() == 0) {
         if (error) *error = config.output_device + " has no inputs";
-        return false;
-    }
-    if (asio.sampleRate() < 22050 || asio.sampleRate() > 192000) {
-        if (error) *error = config.output_device + " is running at " + std::to_string(asio.sampleRate()) + " Hz; set it between 44.1 and 192 kHz";
         return false;
     }
     if (!configure(asio.sampleRate(), std::clamp(asio.bufferSize(), 16, 4096), error)) return false;
@@ -781,7 +786,7 @@ bool AudioEngine::openAsio(const DeviceConfig& config, std::string* error) {
     s.backend = "ASIO";
     s.output_device = config.output_device;
     s.output_channels = asio.outputs();
-    s.sample_rate = asio.sampleRate();
+    s.sample_rate = s.device_rate = asio.sampleRate();
     s.block_size = block_;
     s.device_period = asio.bufferSize();
     s.buffer_ms = 1000.0 * s.device_period / s.sample_rate;
