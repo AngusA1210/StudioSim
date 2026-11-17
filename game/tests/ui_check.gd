@@ -110,6 +110,28 @@ func _check_inputs_kept() -> void:
 		"the title screen says which version this is, and which build", version)
 
 
+## Alt-click on a peak readout: every one of them cleared, the masters' too. The room is quietened first, so that a
+## readout cleared reads nothing at all: with the groove going, the frames after the click can catch a drum hit as loud
+## as anything held at 0 dB (and a channel's meter, read before its fader, holds no more than its loudest hit).
+func _check_peaks_cleared(mix, drums, pad) -> void:
+	var held_master: float = main.master_peak_hold
+	var held_drums: float = drums.peak_hold
+	main.set_sequence_running(false)
+	await seconds(2.0)  # (the last notes die away: the pad's release, the longest, takes a second or so)
+	var press_alt := InputEventMouseButton.new()
+	press_alt.button_index = MOUSE_BUTTON_LEFT
+	press_alt.pressed = true
+	press_alt.alt_pressed = true
+	mix._on_peak_input(press_alt, pad)
+	await frames(3)
+	var holds := [main.master_peak_hold, main.room_peak_hold, main.mix_peak_hold, main.reverb_peak_hold]
+	for inst in main.instruments + main.folders + main.auxes:
+		holds.append(inst.peak_hold)
+	main.set_sequence_running(true)
+	check(held_master > 0.5 and held_drums > 0.1 and holds.max() < 0.01, "Alt-clicking a peak readout clears them all, the master's too",
+		"master held %.2f, the drums %.2f; the loudest now %.3f" % [held_master, held_drums, holds.max()])
+
+
 ## Open pressed on the rooms page: the room put in place a step at a time, the screen saying how far it has got.
 func _open_and_watch(rooms, room_name: String) -> void:
 	await click(rooms._open.get_global_rect().get_center())
@@ -1241,15 +1263,7 @@ func _run() -> void:
 	await seconds(2.5)
 	check(main.settings.limiter and not main.meter_clipped and main.meter_reduction_db < 0.1 and mix._status.text.ends_with("Limiter idle"),
 		"back at 0 dB with the limiter on, nothing is being held back", mix._status.text)
-	var held_loud: float = main.master_peak_hold
-	var press_alt := InputEventMouseButton.new()
-	press_alt.button_index = MOUSE_BUTTON_LEFT
-	press_alt.pressed = true
-	press_alt.alt_pressed = true
-	mix._on_peak_input(press_alt, pad)
-	await frames(3)
-	check(held_loud > 0.5 and main.master_peak_hold < 0.5 and drums.peak_hold < 0.5 and pad.peak_hold < held_loud,
-		"Alt-clicking a peak readout clears them all, the master's too", "master held %.2f, now %.2f" % [held_loud, main.master_peak_hold])
+	await _check_peaks_cleared(mix, drums, pad)
 	main.set_monitor("room")
 
 	# The room and the mix apart: each instrument's level in the room at the foot of its strip, its pan in the mix,
