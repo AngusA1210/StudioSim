@@ -121,8 +121,7 @@ static func build(kind: String, color: Color, cabinet := "", mic := {}) -> Dicti
 			var look: Dictionary = CABINETS.get(cabinet, CABINETS[defaults[kind]])
 			var size: Vector3 = look.size
 			var combo := kind.ends_with("_combo")
-			_amp_box(node, accent, size, look.casters, combo)
-			_speaker_cones(node, look, combo)
+			_amp_box(node, accent, look, combo)
 			var lift := 0.05 if look.casters else 0.015
 			built.top = lift + size.y
 			if not combo:  # a head standing on its cabinet
@@ -447,49 +446,228 @@ static func _mic_body(node: Node3D, accent: Material, model: String, capsule: Ve
 	return tail
 
 
-## A guitar or bass amp's box: tolex all round, grille cloth on the front, metal corners, and for a combo the control
-## panel along the top.
-static func _amp_box(node: Node3D, accent: Material, size: Vector3, casters: bool, combo: bool) -> void:
+## A guitar or bass amp's cabinet, built as one is: a box of tolex-covered boards (its back open part way, an open-back
+## cabinet's), corners and, for a combo, the control panel along the top front; behind its grille, a baffle board with a
+## hole for each speaker, and the speakers in them (_driver), where the audio core hears their cones; in front, the
+## grille: cloth on a guitar cabinet, woven loosely enough to see the speakers through, as on a real one in the light,
+## and perforated metal on a bass cabinet.
+static func _amp_box(node: Node3D, accent: Material, look: Dictionary, combo: bool) -> void:
+	var size: Vector3 = look.size
 	var black := _finish("black")
-	var grille := _finish("grille")
 	var chrome := _finish("chrome")
-	var lift := 0.05 if casters else 0.015
-	_box(node, size, black, Vector3(0, lift + size.y / 2, 0))
-	var face_height := size.y - (0.11 if combo else 0.06)
-	_box(node, Vector3(size.x - 0.06, face_height - 0.04, 0.01), grille,
-		Vector3(0, lift + 0.03 + (face_height - 0.04) / 2, size.z / 2 + 0.002))
-	_box(node, Vector3(size.x - 0.04, 0.012, 0.012), accent, Vector3(0, lift + 0.03 + face_height - 0.03, size.z / 2 + 0.006))  # piping
+	var lift := 0.05 if look.casters else 0.015
+	var wall := 0.018  # the boards
+	var mid_y := lift + size.y / 2
+	var front := size.z / 2
+	for x in [-1.0, 1.0]:  # the sides, the top and the bottom
+		_box(node, Vector3(wall, size.y, size.z), black, Vector3(x * (size.x - wall) / 2, mid_y, 0))
+	_box(node, Vector3(size.x, wall, size.z), black, Vector3(0, lift + size.y - wall / 2, 0))
+	_box(node, Vector3(size.x, wall, size.z), black, Vector3(0, lift + wall / 2, 0))
+	if look.open_back:  # a board across the top of the back and a strip along its foot; the speakers' backs between
+		var upper := size.y * 0.36
+		_box(node, Vector3(size.x, upper, wall), black, Vector3(0, lift + size.y - upper / 2, -front + wall / 2))
+		_box(node, Vector3(size.x, 0.07, wall), black, Vector3(0, lift + 0.035, -front + wall / 2))
+	else:
+		_box(node, Vector3(size.x, size.y, wall), black, Vector3(0, mid_y, -front + wall / 2))
+	# The grille's opening, framed in tolex: as before, inset 3 cm at the sides, under a combo's panel.
+	var centre := _grille_centre(size, look.casters, combo)
+	var face := Vector2(size.x - 0.06, size.y - (0.11 if combo else 0.06) - 0.04)
+	var bottom := centre.y - face.y / 2
+	var top := centre.y + face.y / 2
+	const FRAME := 0.014  # how deep the frame round the grille is (the baffle's front is behind it)
+	_box(node, Vector3(size.x, lift + size.y - top, FRAME), black, Vector3(0, (top + lift + size.y) / 2, front - FRAME / 2))
+	_box(node, Vector3(size.x, bottom - lift, FRAME), black, Vector3(0, (bottom + lift) / 2, front - FRAME / 2))
+	for x in [-1.0, 1.0]:
+		_box(node, Vector3((size.x - face.x) / 2, face.y, FRAME), black, Vector3(x * (size.x + face.x) / 4, centre.y, front - FRAME / 2))
+	var inches := float(look.inches)
+	var baffle := MeshInstance3D.new()
+	baffle.mesh = _baffle_mesh(face, look.cones, _speaker_hole(inches))
+	baffle.material_override = _finish("baffle")
+	baffle.position = Vector3(0, centre.y, front - FRAME)
+	node.add_child(baffle)
+	for spot: Vector2 in look.cones:
+		_driver(node, inches, Vector3(spot.x, centre.y + spot.y, front), look.open_back)
+	var grille := MeshInstance3D.new()
+	var quad := QuadMesh.new()
+	quad.size = face
+	grille.mesh = quad
+	grille.material_override = _grille_material(face, inches != 12.0)
+	grille.position = Vector3(0, centre.y, front - 0.003)
+	node.add_child(grille)
+	_box(node, Vector3(size.x - 0.04, 0.012, 0.012), accent, Vector3(0, top + 0.01, front + 0.004))  # piping
 	if combo:  # the panel across the top front, with its knobs
-		_box(node, Vector3(size.x - 0.04, 0.07, 0.012), _finish("panel"), Vector3(0, lift + size.y - 0.045, size.z / 2 + 0.002))
+		_box(node, Vector3(size.x - 0.04, 0.07, 0.012), _finish("panel"), Vector3(0, lift + size.y - 0.045, front + 0.002))
 		for k in 6:
-			_cylinder(node, 0.014, 0.02, _finish("knob_white"), Vector3(-0.2 + k * 0.07, lift + size.y - 0.045, size.z / 2 + 0.014), Vector3(PI / 2, 0, 0))
-		_sphere(node, 0.01, accent, Vector3(size.x / 2 - 0.05, lift + size.y - 0.045, size.z / 2 + 0.01))  # the pilot light
+			_cylinder(node, 0.014, 0.02, _finish("knob_white"), Vector3(-0.2 + k * 0.07, lift + size.y - 0.045, front + 0.014), Vector3(PI / 2, 0, 0))
+		_sphere(node, 0.01, accent, Vector3(size.x / 2 - 0.05, lift + size.y - 0.045, front + 0.01))  # the pilot light
 		_box(node, Vector3(0.18, 0.03, 0.04), black, Vector3(0, lift + size.y + 0.015, 0))  # the handle
 	for x in [-1.0, 1.0]:  # corners
 		for y in [lift + 0.015, lift + size.y - 0.015]:
 			for z in [-1.0, 1.0]:
-				_box(node, Vector3(0.04, 0.04, 0.04), chrome, Vector3(x * (size.x / 2 - 0.01), y, z * (size.z / 2 - 0.01)))
-	if casters:
+				_box(node, Vector3(0.04, 0.04, 0.04), chrome, Vector3(x * (size.x / 2 - 0.01), y, z * (front - 0.01)))
+	if look.casters:
 		for x in [-1.0, 1.0]:
 			for z in [-1.0, 1.0]:
-				_sphere(node, 0.022, black, Vector3(x * (size.x / 2 - 0.06), 0.022, z * (size.z / 2 - 0.06)))
+				_sphere(node, 0.022, black, Vector3(x * (size.x / 2 - 0.06), 0.022, z * (front - 0.06)))
 
 
-## The speakers seen through the grille cloth, as on a real cabinet in the light: each cone a darker disc, its dust cap
-## a paler dot in its middle (where a close mic is brightest), so that a mic can be placed on one by eye.
-static func _speaker_cones(node: Node3D, look: Dictionary, combo: bool) -> void:
-	var centre := _grille_centre(look.size, look.casters, combo)
-	var frame := 0.0254 * float(look.inches) / 2.0
-	var shade := StandardMaterial3D.new()
-	shade.albedo_color = Color(0.13, 0.13, 0.13)
-	shade.roughness = 0.95
-	var cap := StandardMaterial3D.new()
-	cap.albedo_color = Color(0.36, 0.36, 0.35)
-	cap.roughness = 0.9
-	for spot: Vector2 in look.cones:
-		var at := centre + Vector3(spot.x, spot.y, 0.0078)  # (on the grille cloth's face)
-		_cylinder(node, frame * 0.92, 0.001, shade, at, Vector3(PI / 2, 0, 0))
-		_cylinder(node, 0.022 * float(look.inches) / 12.0, 0.0012, cap, at + Vector3(0, 0, 0.0004), Vector3(PI / 2, 0, 0))
+# A speaker as it is built, by its size (inches): its cone's radius, as the audio core has it (radiation.cpp:
+# coneRadius), the roll of its surround round it, the frame's flange the surround is glued to, and the hole in the baffle.
+static func _cone_radius(inches: float) -> float:
+	return 0.0254 * inches * 0.41
+
+
+static func _speaker_hole(inches: float) -> float:
+	return _cone_radius(inches) * 1.1 + 0.006
+
+
+## A speaker in its hole in the baffle, its middle `at` on the grille's plane (facing +z): the frame's flange on the
+## baffle's front; the surround's roll; the paper cone, deepening to the domed dust cap, whose top is CONE_DEPTH behind
+## the grille, where the audio core hears the cone from; and, seen through an open back, the frame's basket and magnet.
+static func _driver(node: Node3D, inches: float, at: Vector3, open_back: bool) -> void:
+	var part := MeshInstance3D.new()
+	part.mesh = _speaker_mesh(inches)
+	part.position = at
+	node.add_child(part)
+	if not open_back:
+		return
+	var a := _cone_radius(inches)
+	var black := _finish("black")
+	var magnet_from := at - Vector3(0, 0, 0.075)
+	_cylinder(node, a * 0.5, 0.045, _finish("magnet"), magnet_from - Vector3(0, 0, 0.0225), Vector3(PI / 2, 0, 0))
+	for k in 4:  # the basket's arms, from the flange back to the magnet
+		var turn := TAU * (k + 0.5) / 4.0
+		var out := Vector3(cos(turn), sin(turn), 0.0)
+		_rod(node, at + out * a * 1.12 - Vector3(0, 0, 0.016), magnet_from + out * a * 0.42, 0.006, black)
+
+
+## A speaker's parts, turned on a lathe from their profiles (radius, depth behind the grille), each with its finish;
+## one mesh for each size of speaker, shared.
+static func _speaker_mesh(inches: float) -> ArrayMesh:
+	var key := "speaker %.0f" % inches
+	if _shared.has(key):
+		return _shared[key]
+	var a := _cone_radius(inches)
+	var roll := a * 0.1                       # the surround's roll, across
+	var flange_in := a + roll
+	var flange_out := _speaker_hole(inches) + 0.014
+	var face := 0.0135                        # the flange, on the baffle's front (the frame round the grille is 14 mm deep)
+	var cap := a * 0.3                        # the dust cap's radius, and its dome's height
+	var dome := cap * 0.35
+	var cap_base := CONE_DEPTH + dome
+	var mesh := ArrayMesh.new()
+	var flange := PackedVector2Array([Vector2(flange_out, face), Vector2(flange_in, face)])
+	var surround := PackedVector2Array()
+	for k in 9:  # a half roll, bulging forward
+		var t := PI * k / 8.0
+		surround.append(Vector2(flange_in - roll * (1.0 - cos(t)) / 2.0, face + 0.001 - roll * 0.5 * sin(t)))
+	var cone := PackedVector2Array()
+	for k in 11:  # deepening towards its middle, a little curved, as a paper cone is
+		var t := k / 10.0
+		cone.append(Vector2(lerpf(a, cap, t), lerpf(face + 0.001, cap_base, pow(t, 0.8))))
+	var dust := PackedVector2Array()
+	for k in 7:
+		var t := k / 6.0
+		dust.append(Vector2(cap * (1.0 - t), cap_base - dome * sin(t * PI / 2.0)))
+	# (and behind the baffle, as seen through an open back: the frame round the hole, the baffle's own edge hidden)
+	var behind := PackedVector2Array([Vector2(flange_in, face + 0.0012), Vector2(flange_out, face + 0.0012)])
+	for piece in [[flange, "black"], [behind, "black"], [surround, "surround"], [cone, "paper"], [dust, "dust_cap"]]:
+		_lathe(mesh, piece[0], 40)
+		mesh.surface_set_material(mesh.get_surface_count() - 1, _finish(piece[1]))
+	_shared[key] = mesh
+	return mesh
+
+
+## A surface turned from a profile, its points from the outside in (radius, depth behind z = 0), facing +z.
+static func _lathe(mesh: ArrayMesh, profile: PackedVector2Array, segments: int) -> void:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var at := func(i: int, j: int) -> Vector3:
+		var turn := TAU * j / segments
+		return Vector3(profile[i].x * cos(turn), profile[i].x * sin(turn), -profile[i].y)
+	for i in profile.size() - 1:
+		for j in segments:
+			var a: Vector3 = at.call(i, j)
+			var b: Vector3 = at.call(i + 1, j)
+			var c: Vector3 = at.call(i + 1, j + 1)
+			var d: Vector3 = at.call(i, j + 1)
+			for v in [a, b, c, a, c, d]:  # (clockwise from in front, as Godot faces them)
+				st.add_vertex(v)
+	st.generate_normals()
+	st.commit(mesh)
+
+
+## The baffle board behind a grille `face` big, with a hole for each speaker (`cones`: their middles, from the grille's),
+## `hole` in radius: a sheet of small squares, those in a hole left out (the speakers' flanges cover the steps).
+static func _baffle_mesh(face: Vector2, cones: Array, hole: float) -> ArrayMesh:
+	var key := "baffle %s %s %.3f" % [face, cones, hole]
+	if _shared.has(key):
+		return _shared[key]
+	const CELL := 0.008
+	var across := ceili(face.x / CELL)
+	var up := ceili(face.y / CELL)
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	st.set_normal(Vector3.BACK)
+	for i in across:
+		for j in up:
+			var x0 := -face.x / 2 + face.x * i / across
+			var x1 := -face.x / 2 + face.x * (i + 1) / across
+			var y0 := -face.y / 2 + face.y * j / up
+			var y1 := -face.y / 2 + face.y * (j + 1) / up
+			var middle := Vector2((x0 + x1) / 2, (y0 + y1) / 2)
+			if cones.any(func(spot: Vector2) -> bool: return middle.distance_to(spot) < hole):
+				continue
+			for v in [Vector2(x0, y0), Vector2(x0, y1), Vector2(x1, y1), Vector2(x0, y0), Vector2(x1, y1), Vector2(x1, y0)]:
+				st.add_vertex(Vector3(v.x, v.y, 0.0))
+	var mesh := st.commit()
+	_shared[key] = mesh
+	return mesh
+
+
+## A grille `face` big: cloth, woven of threads about 2.4 mm apart, open enough to see the speakers behind it (a guitar
+## cabinet's); or perforated steel, holes staggered (a bass cabinet's). Further off, where the weave or the holes are
+## finer than the screen shows, it evens out to the cover they give.
+static func _grille_material(face: Vector2, metal: bool) -> ShaderMaterial:
+	if not _shared.has("grille shader"):
+		var shader := Shader.new()
+		shader.code = """
+shader_type spatial;
+render_mode cull_disabled, depth_prepass_alpha;
+uniform vec3 colour : source_color = vec3(0.3);
+uniform vec2 size = vec2(0.6, 0.4);
+uniform float pitch = 0.0024;
+uniform bool metal = false;
+void fragment() {
+	vec2 p = UV * size / pitch;
+	vec2 w = fwidth(p);
+	float fine = clamp(max(w.x, w.y) * 1.5 - 0.4, 0.0, 1.0);
+	float cover;
+	if (metal) {
+		vec2 q = p;
+		q.x += step(1.0, mod(floor(q.y), 2.0)) * 0.5;
+		cover = mix(smoothstep(0.3, 0.36, length(fract(q) - 0.5)), 0.68, fine);
+		ALBEDO = colour;
+		METALLIC = 0.7;
+		ROUGHNESS = 0.4;
+	} else {
+		vec2 f = abs(fract(p) - 0.5);
+		float thread = max(1.0 - smoothstep(0.16, 0.28, f.x), 1.0 - smoothstep(0.16, 0.28, f.y));
+		cover = mix(thread * 0.85, 0.48, fine);
+		ALBEDO = colour * (0.75 + 0.25 * thread);
+		ROUGHNESS = 0.95;
+	}
+	ALPHA = cover;
+}
+"""
+		_shared["grille shader"] = shader
+	var material := ShaderMaterial.new()
+	material.shader = _shared["grille shader"]
+	material.set_shader_parameter("size", face)
+	material.set_shader_parameter("metal", metal)
+	material.set_shader_parameter("pitch", 0.0045 if metal else 0.0024)
+	material.set_shader_parameter("colour", Color(0.2, 0.2, 0.21) if metal else Color(0.36, 0.34, 0.3))
+	return material
 
 
 ## A head sitting on top of a cabinet `on_top` metres high: a box with its faceplate in the accent colour and a row of
@@ -645,6 +823,8 @@ static func _finish(which: String) -> StandardMaterial3D:
 		"panel": [Color(0.2, 0.21, 0.24), 0.4, 0.4], "knob": [Color(0.09, 0.09, 0.1), 0.0, 0.4],
 		"ivory": [Color(0.93, 0.92, 0.88), 0.0, 0.35], "ebony": [Color(0.04, 0.04, 0.05), 0.0, 0.3],
 		"cone": [Color(0.11, 0.11, 0.12), 0.0, 0.85], "grille": [Color(0.24, 0.24, 0.23), 0.0, 0.95],
+		"surround": [Color(0.06, 0.06, 0.065), 0.0, 0.7], "dust_cap": [Color(0.46, 0.45, 0.42), 0.0, 0.55],
+		"paper": [Color(0.24, 0.235, 0.22), 0.0, 0.9], "baffle": [Color(0.015, 0.015, 0.018), 0.0, 0.95], "magnet": [Color(0.35, 0.36, 0.38), 0.6, 0.35],
 		"knob_white": [Color(0.86, 0.85, 0.8), 0.0, 0.4],
 	}
 	var spec: Array = specs[which]
@@ -652,6 +832,8 @@ static func _finish(which: String) -> StandardMaterial3D:
 	material.albedo_color = spec[0]
 	material.metallic = spec[1]
 	material.roughness = spec[2]
+	if which in ["baffle", "paper", "surround", "dust_cap"]:  # (thin: seen from behind too, through an open back)
+		material.cull_mode = BaseMaterial3D.CULL_DISABLED
 	_shared[which] = material
 	return material
 

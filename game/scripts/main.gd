@@ -301,6 +301,21 @@ func _ready() -> void:
 		instrument_menu.open()
 	if options.has("mixer"):
 		mixer.open()
+	if options.has("view"):  # --view=kind,metres,degrees round from its front,height: the free camera on it (screenshots)
+		var v: PackedStringArray = options.view.split(",")
+		var seen = find_instrument(v[0])
+		if seen == null:
+			seen = add_instrument(v[0], Vector3(0.0, 0.0, -2.0))
+		if seen != null:
+			var aim: Vector3 = seen.global_position + Vector3(0.0, float(v[3]) if v.size() > 3 else 0.5, 0.0)
+			var out: Vector3 = seen.global_transform.basis.z.rotated(Vector3.UP, deg_to_rad(float(v[2]) if v.size() > 2 else 0.0))
+			var from: Vector3 = aim + out.normalized() * (float(v[1]) if v.size() > 1 else 1.5)
+			player.start_flying()
+			var look := (aim - from).normalized()
+			player.fly_yaw = atan2(-look.x, -look.z)
+			player.fly_pitch = asin(clampf(look.y, -1.0, 1.0))
+			player.fly_camera.global_position = from
+			player._apply_look()
 	if options.has("amp"):  # --amp=guitar_stack: an amp's panel open (for screenshots)
 		var amp = find_instrument(options.amp)
 		if amp == null:

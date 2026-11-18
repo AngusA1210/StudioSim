@@ -52,6 +52,29 @@ func check(ok: bool, what: String, detail := "") -> void:
 ## and a few more variables in it crashed Godot far further down. New checks with variables of their own go in
 ## functions like these.)
 ## The gap between two pedals, clicked: a pedal added there, in front of the amp or in its loop.
+## Each cabinet's speakers drawn where the audio core hears them: a speaker for each cone, its middle on the grille's
+## plane over the cone's, its dust cap's top CONE_DEPTH behind it (Models.speakers); the grille and baffle there too.
+func _check_cabinet_speakers() -> void:
+	var wrong := []
+	for cabinet in Models.CABINETS:
+		var built: Dictionary = Models.build("guitar_combo", Color.WHITE, cabinet)
+		var heard: Array = Models.speakers(cabinet, true).cones
+		var drawn := []
+		var cap_top := INF
+		for child in built.node.get_children():
+			if child is MeshInstance3D and child.mesh is ArrayMesh and child.mesh.get_surface_count() == 5:
+				drawn.append(child.position - Vector3(0, 0, Models.CONE_DEPTH))
+				var points: PackedVector3Array = child.mesh.surface_get_arrays(4)[Mesh.ARRAY_VERTEX]
+				cap_top = -Array(points).map(func(v: Vector3) -> float: return v.z).max()
+		var matched := drawn.size() == heard.size() and heard.all(func(c: Vector3) -> bool:
+			return drawn.any(func(d: Vector3) -> bool: return d.distance_to(c) < 0.001))
+		if not matched or absf(cap_top - Models.CONE_DEPTH) > 0.0005:
+			wrong.append("%s (%d drawn, %d heard, cap %.3f m back)" % [cabinet, drawn.size(), heard.size(), cap_top])
+		built.node.free()
+	check(wrong.is_empty(), "every cabinet's speakers are drawn where they are heard, behind the grille, their dust caps 4 cm back",
+		", ".join(wrong))
+
+
 ## An amp's input level (Instrument to begin with, +16 dB; Line, 0 dB; a trim), kept with its settings; and its input
 ## switch saying so when it is off but armed, and so still heard.
 func _check_amp_input(panel, amp) -> void:
@@ -988,6 +1011,7 @@ func _run() -> void:
 		"a pedal dragged past the PREAMP goes in the amp's effects loop, and dragged back comes out in front; the loop's + adds one in it")
 	await _check_pedal_gaps(panel, amp, order)
 	await _check_amp_input(panel, amp)
+	_check_cabinet_speakers()
 	var mix_at_first: float = amp.loop_mix
 	panel._loop_mix.value_changed.emit(8.0)
 	await frames(2)

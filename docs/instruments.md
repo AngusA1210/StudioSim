@@ -220,8 +220,10 @@ them off, as they are each player's own.
 
 ## Amps' speakers
 
-A cabinet sounds as real ones do from where you are: each speaker is a cone in the baffle (seen through the grille),
-heard on its own way. A cone is a surface, not a point: its whole body carries the lows and mids, and its middle,
+A cabinet is built as a real one is, its speakers seen through its grille (cloth on a guitar cabinet, perforated
+metal on a bass one): each in its hole in the baffle, its frame, its surround, its paper cone and its domed dust cap,
+the cap 4 cm behind the grille, where the sound is heard from; an open-back cabinet shows their magnets behind.
+A cabinet sounds as real ones do from where you are: each speaker is a cone in the baffle, heard on its own way. A cone is a surface, not a point: its whole body carries the lows and mids, and its middle,
 round the dust cap, the highs, and a mic hears every part of each as late as that part is far from it. So a cone
 beams: on its axis it is full-range; off it the highs fall away, the further and higher the more, by degrees. Close
 up it is in its near field: the level levels off rather than rising as 1/distance, the lows are fuller, and where
