@@ -52,6 +52,43 @@ func check(ok: bool, what: String, detail := "") -> void:
 ## and a few more variables in it crashed Godot far further down. New checks with variables of their own go in
 ## functions like these.)
 ## The gap between two pedals, clicked: a pedal added there, in front of the amp or in its loop.
+## A mic's panel sees it from just behind it, along its aim (its model in sight, its name over it not), and never from
+## outside the room; V, or the button over the view, switches to its capsule and back, and is remembered.
+func _check_mic_views(mp, mic) -> void:
+	var aim: Vector3 = mic.mic_aim()
+	var eye: Transform3D = mp._eye.global_transform
+	var back: Vector3 = mic.global_position - eye.origin
+	var model_seen: bool = mic._model.find_children("*", "MeshInstance3D", true, false).all(func(m): return m.layers & mp._eye.cull_mask != 0)
+	var name_hidden: bool = mic._label.layers & mp._eye.cull_mask == 0
+	var points: Dictionary = mp.axis_on_screen()
+	var on_view: Rect2 = Rect2(Vector2.ZERO, mp._view.size)
+	check(main.settings.mic_view == "behind" and not mp.from_capsule() and back.dot(aim) > 0.5 and back.length() < 1.0 and
+		(-eye.basis.z).dot(aim) > 0.9 and eye.origin.y > mic.global_position.y and model_seen and name_hidden and
+		points.capsule != null and points.cross != null and on_view.has_point(points.capsule) and on_view.has_point(points.cross) and
+		mp._behind_button.button_pressed and not mp._capsule_button.button_pressed,
+		"a mic's panel sees it from just behind and above, along its aim: the mic in sight (its name over it not), its axis drawn from its capsule to the cross",
+		"%.2f m back, %.2f m up" % [back.dot(aim), eye.origin.y - mic.global_position.y])
+	var spot: Vector3 = mic.global_position
+	var half: Vector3 = main.room.size / 2.0
+	var bearing: float = main.mic_bearing(mic)
+	main.set_mic_spot(mic, spot.x, -half.z + 0.2)  # its back to the north wall, pointing away from it
+	main.set_mic_bearing(mic, 180.0)
+	await frames(2)
+	var by_wall: Vector3 = mp._eye.global_position
+	check(by_wall.z > -half.z and by_wall.z < mic.global_position.z,
+		"backed up to a wall, the view from behind it stays in the room, nearer it", "%.2f m from the wall" % (by_wall.z + half.z))
+	main.set_mic_bearing(mic, bearing)
+	main.set_mic_spot(mic, spot.x, spot.z)
+	await tap(KEY_V)
+	var model_hidden: bool = mic._model.find_children("*", "MeshInstance3D", true, false).all(func(m): return m.layers & mp._eye.cull_mask == 0)
+	var from_capsule: bool = (main.settings.mic_view == "capsule" and mp._eye.global_position.is_equal_approx(mic.global_position) and model_hidden and
+		mp._capsule_button.button_pressed and mp.axis_on_screen().cross == mp._view.size / 2.0 and mp.guide_text().contains("V from behind it"))
+	mp._behind_button.pressed.emit()
+	await frames(2)
+	check(from_capsule and main.settings.mic_view == "behind" and not mp._eye.global_position.is_equal_approx(mic.global_position),
+		"V switches it to the view from its capsule (its model out of the way, the cross at the middle), and its button back")
+
+
 ## Each cabinet's speakers drawn where the audio core hears them: a speaker for each cone, its middle on the grille's
 ## plane over the cone's, its dust cap's top CONE_DEPTH behind it (Models.speakers); the grille and baffle there too.
 func _check_cabinet_speakers() -> void:
@@ -2781,8 +2818,9 @@ func _run() -> void:
 		mp.distances_text().get_slice("\n", 0))
 	mp._gain.value = 6.0
 	check(is_equal_approx(mic.mic_gain_db, 6.0), "and its gain, before it records")
-	check(mp.guide_text() == "W A S D move, R F height, drag aim, wheel closer or further, Shift fine, P close" and mp._guide.is_visible_in_tree(),
+	check(mp.guide_text() == "W A S D move, R F height, drag aim, wheel closer or further, Shift fine, V from its capsule, P close" and mp._guide.is_visible_in_tree(),
 		"the view shows its keys in the corner, as they lie on the keyboard: W A S D to move it, R and F for its height", mp.guide_text())
+	await _check_mic_views(mp, mic)
 	await seconds(0.8)  # (a pause: what comes next is a move of its own)
 	var mic_spot: Vector3 = mic.global_position
 	var raise := InputEventKey.new()

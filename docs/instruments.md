@@ -164,11 +164,15 @@ to another in its panel:
   105 dB SPL), so it is far below the music, but there in a quiet passage with a lot of gain, as with a real mic.
 - **Placing it**: pick one from the menu, carry it (G) and put it down: it points at the instrument nearest it. Then
   **P** at it (or its name in the mix window) opens its panel, docked down the right of the screen, and the view
-  goes to the mic's capsule, looking the way it points (its own model out of the way), with a cross at the middle and,
-  under it, what it is pointing at, how far off and how far off its axis, as you would check it with your head beside
-  the stand. In that view W A S D (or the arrows) move it along the floor, R and F raise and lower it, dragging aims
-  it, and the scroll wheel moves it along its aim, closer or further (Shift for fine moves, in each): its keys are
-  drawn in the corner of the view as they lie on the keyboard, each lit while held. ⌘Z undoes a move. The panel has
+  goes to just behind the mic and a little above it, looking along its aim: the mic in sight (its name over it left
+  out), and its axis drawn out from its capsule to a cross where it meets what it points at, with, under the cross,
+  what that is, how far off and how far off its axis, as you would check it with your head behind the stand. Against a
+  wall the view comes in nearer, so it never looks through one; a stereo pair's is further back, to show both. **V**
+  (or the buttons at the top left of the view) switches to the view from its capsule, looking the way it points (its
+  own model out of the way), the cross at the middle, and back; the choice is remembered. In either view W A S D (or
+  the arrows) move it along the floor, R and F raise and lower it, dragging aims it, and the scroll wheel moves it
+  along its aim, closer or further (Shift for fine moves, in each): its keys are drawn in the corner of the view as
+  they lie on the keyboard, each lit while held. ⌘Z undoes a move. The panel has
   its model and pattern (with its frequency response and its pattern drawn, the lows and highs fainter), where it
   stands, to the centimetre (across and along the room, from its middle), its capsule's height (where it hears
   from), which way it points (its bearing, clockwise from north, and how far down) or **Point it at** an instrument,

@@ -13,9 +13,9 @@ game/                      Godot project: the room, player, instruments, HUD, me
   scripts/mixer.gd         the mix window: channel strips, faders (fader.gd), pan pots (pan_control.gd), levels in the
                            room (mini_fader.gd) and meters (level_meter.gd)
   scripts/amp_panel.gd     an amp's knobs (knob.gd) and its pedalboard
-  scripts/mic_panel.gd     a microphone's model, place, aim and gain, and the view from its capsule (mic_graph.gd draws
-                           its response and pattern), a stereo pair's setup, and how far each instrument is from it
-                           (a kit's drum by drum)
+  scripts/mic_panel.gd     a microphone's model, place, aim and gain (mic_graph.gd draws its response and pattern),
+                           the view of it from behind or from its capsule, a stereo pair's setup, and how far each
+                           instrument is from it (a kit's drum by drum)
   scripts/kit_mics.gd      an acoustic kit miked up in one go: each setup's mics, where they go and how they are set
   scripts/plugin_browser.gd  the plug-ins installed, by type or by maker, for an insert or a Plug-in pedal
   scripts/session.gd       the open room: its file, saving, auto-save and backups

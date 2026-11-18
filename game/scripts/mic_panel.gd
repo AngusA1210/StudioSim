@@ -1,9 +1,11 @@
 extends CanvasLayer
 ## A microphone's panel (P at it, or its name in the mix window), docked down the right of the screen so the room stays
-## in view, and the view from its capsule: looking the way it points (its own model out of the way), a cross at the
-## middle, and what is on its axis under it, for placing it by eye as you would with your head beside the stand. In the
-## view, W A S D (or the arrows) move it, R and F raise and lower it, dragging aims it, and the scroll wheel moves it
-## along its aim, closer or further; Shift for fine moves. Its keys are drawn in the corner of the view, lit while held.
+## in view, and the view of it: from just behind and above it, looking along its aim (the mic in sight, its axis drawn
+## out to a cross where it meets what it points at), or, switched (V, or the buttons over the view), from its capsule,
+## looking the way it points (its own model out of the way), the cross at the middle; and under the cross what is on its
+## axis, for placing it by eye as you would with your head beside the stand. In the view, W A S D (or the arrows) move
+## it, R and F raise and lower it, dragging aims it, and the scroll wheel moves it along its aim, closer or further;
+## Shift for fine moves. Its keys are drawn in the corner of the view, lit while held.
 ## The panel has which model it is and which of its pickup patterns, with its frequency response and its pattern
 ## drawn; where it stands, to the centimetre (across the room and along it, from its middle, and its capsule's height),
 ## which way it points (its bearing, clockwise from north, the way you first face, and how far down), or straight at an
@@ -27,9 +29,14 @@ const MOVE_SPEED := 0.5        # metres a second, a key held (Shift: a fifth of 
 const TURN := 0.2              # degrees a pixel, dragging to aim it
 const WHEEL_STEP := 0.02       # metres along its aim, a turn of the scroll wheel
 const ON_AXIS := 25.0          # how far off its axis something can be and still be what it points at (degrees)
-const VIEW_HINT := "From its capsule, the way it points: W A S D or the arrows move it, R and F raise and lower it, drag to aim it, the scroll wheel moves it closer or further along its aim (Shift: fine)"
+const VIEW_HINT := "%s: W A S D or the arrows move it, R and F raise and lower it, drag to aim it, the scroll wheel moves it closer or further along its aim (Shift: fine), V sees it from %s"
 const RAISE := KEY_R  # its height, up and down
 const LOWER := KEY_F
+const SWITCH_VIEW := KEY_V  # behind it, or from its capsule
+const BEHIND := 0.6    # metres behind its capsule the view is, from behind (more for a pair spread wide)
+const ABOVE := 0.2     # and above it (square to its aim)
+const AHEAD := 1.0     # looking at its axis this far out, so it sits low in the view and what it points at high
+const FAR := 30.0      # its axis drawn out this far when nothing is on it (towards where it vanishes)
 const KEYCAP := 30.0  # a key drawn in the guide, square
 
 var app
@@ -67,6 +74,8 @@ var _eye: Camera3D  # the view from its capsule
 var _view: Control  # the room's part of the screen: dragged on, it aims the mic
 var _cross: Control  # the cross at the middle, and what is on its axis
 var _guide: Control  # its keys, in the corner of the view
+var _behind_button: Button  # the view from behind it
+var _capsule_button: Button  # or from its capsule
 var _aiming := false
 
 
@@ -130,6 +139,10 @@ func _input(event: InputEvent) -> void:
 	if get_viewport().gui_get_focus_owner() is LineEdit and event.physical_keycode != KEY_ESCAPE:
 		return  # (typing a number)
 	var action: String = "edit" if event.physical_keycode == KEY_ESCAPE else app.bindings.action_for(event.physical_keycode)
+	if event.physical_keycode == SWITCH_VIEW and not (event.meta_pressed or event.ctrl_pressed):
+		app.set_mic_view("behind" if from_capsule() else "capsule")
+		get_viewport().set_input_as_handled()
+		return
 	if action in ["edit", "mixer"]:
 		var to_mixer: bool = action == "mixer"
 		close()
@@ -150,22 +163,84 @@ func _process(delta: float) -> void:
 	_hint.text = Hints.under_mouse(_root)
 
 
-## The view from its capsule (a stereo mic's, from between its two), the way it points; its own model out of sight.
-## Its axis is at the middle of the room's part of the screen, under the cross, not the middle of the whole screen (the
-## frustum shifted sideways, as a shift lens does), so the panel beside it covers none of what it points at.
+func from_capsule() -> bool:
+	return app.settings.mic_view == "capsule"
+
+
+## The view of it. From its capsule (a stereo mic's, from between its two), the way it points, its own model out of
+## sight. Or from behind it, just above (further back for a pair spread wide, so both are in sight), looking along its
+## aim at a point a metre out, and not through a wall: nearer, if the room ends behind it. Either way the middle of the
+## view is the middle of the room's part of the screen, not of the whole screen (the frustum shifted sideways, as a
+## shift lens does), so the panel beside it covers none of what it points at.
 func _look_out() -> void:
 	var aim: Vector3 = inst.mic_aim()
 	var facing: Vector3 = inst.global_transform.basis.z
 	var up := Vector3.UP if absf(aim.y) < 0.98 else (facing * -signf(aim.y)).normalized()  # (straight down: ahead is up)
-	_eye.global_transform = Transform3D(Basis.looking_at(aim, up), inst.global_position)
+	if from_capsule():
+		_eye.global_transform = Transform3D(Basis.looking_at(aim, up), inst.global_position)
+		inst.set_hidden_layer(HIDDEN_LAYER)  # (again each frame: its model is made afresh as it is raised or changed)
+	else:
+		_eye.global_transform = behind_view(inst, app.room.size)
+		inst.set_hidden_layer(HIDDEN_LAYER, true)  # (its name over it, so near, would fill the view)
+	_behind_button.set_pressed_no_signal(not from_capsule())
+	_capsule_button.set_pressed_no_signal(from_capsule())
 	var screen := get_viewport().get_visible_rect().size
 	var tall := 2.0 * _eye.near * tan(deg_to_rad(_eye.fov) / 2.0)  # the near plane's height, as the fov has it
 	var wide := tall * screen.x / maxf(screen.y, 1.0)
 	_eye.size = tall
 	_eye.frustum_offset = Vector2((screen.x / 2.0 - _view.size.x / 2.0) / maxf(screen.x, 1.0) * wide, 0.0)
-	inst.set_hidden_layer(HIDDEN_LAYER)  # (again each frame: its model is made afresh as it is raised or changed)
 	_cross.queue_redraw()
 	_guide.queue_redraw()
+
+
+## Where the view from behind a mic is: back along its aim and up from it, inside the room (`room` its size, its middle
+## at the origin), looking at its axis AHEAD out.
+static func behind_view(mic, room: Vector3) -> Transform3D:
+	var aim: Vector3 = mic.mic_aim()
+	var level := Vector3(aim.x, 0.0, aim.z)
+	var over: Vector3  # square to its aim, upward (pointing straight down or up: the way it faces, ahead, as from its capsule)
+	if level.length() > 0.01:
+		over = level.cross(Vector3.UP).cross(aim).normalized()
+		if over.y < 0.0:
+			over = -over
+	else:
+		over = (mic.global_transform.basis.z * -signf(aim.y)).normalized()
+	var spread := 0.0
+	if mic.is_stereo_mic:
+		for capsule in mic.mic_capsules():
+			spread = maxf(spread, capsule.at.length())
+	var capsule_at: Vector3 = mic.global_position
+	var offset: Vector3 = -aim * (BEHIND + spread * 1.2) + over * ABOVE
+	var inside := 1.0  # how much of the way back it goes, inside the walls, floor and ceiling
+	var half := room / 2.0
+	for k in 3:
+		var low: float = 0.05 if k == 1 else -half[k] + 0.05
+		var high: float = room.y - 0.05 if k == 1 else half[k] - 0.05
+		var to: float = capsule_at[k] + offset[k]
+		if to > high and offset[k] > 0.0:
+			inside = minf(inside, maxf(high - capsule_at[k], 0.0) / offset[k])
+		elif to < low and offset[k] < 0.0:
+			inside = minf(inside, maxf(low - capsule_at[k], 0.0) / offset[k])
+	var eye: Vector3 = capsule_at + offset * maxf(inside, 0.15)
+	var look: Vector3 = (capsule_at + aim * AHEAD - eye).normalized()
+	return Transform3D(Basis.looking_at(look, over if absf(look.dot(Vector3.UP)) > 0.98 else Vector3.UP), eye)
+
+
+## Where the cross is drawn, in the view: where its axis meets what it points at (nothing on it: where the axis
+## vanishes, far off), at the middle of the view from its capsule. And from behind, where its capsule is, for the line
+## along its axis to the cross. Both null when behind the view.
+func axis_on_screen() -> Dictionary:
+	var middle := _view.size / 2.0
+	if from_capsule():
+		return {"cross": middle, "capsule": null}
+	var aim: Vector3 = inst.mic_aim()
+	var target := on_axis(inst, app.instruments)
+	var along: float = target.metres * cos(deg_to_rad(target.off)) if not target.is_empty() else FAR
+	var points := {}
+	for key in ["cross", "capsule"]:
+		var at: Vector3 = inst.global_position + (aim * along if key == "cross" else Vector3.ZERO)
+		points[key] = null if _eye.is_position_behind(at) else _eye.unproject_position(at)
+	return points
 
 
 ## The keys held, in the view: it moves along the floor the way it faces and across it, and up and down.
@@ -250,9 +325,11 @@ func _draw_guide() -> void:
 	_caption(font, lift + Vector2(-16, 2 * gap + 14), KEYCAP + 32, "Height")
 	var mouse := Vector2(lift.x + gap + 58, move.y + 4)
 	var shift := Input.is_key_pressed(KEY_SHIFT)
-	for i in 4:
-		var row: Array = [["Drag", "Aim"], ["Wheel", "Closer / further"], ["Shift", "Fine"], [keys.label("edit"), "Close"]][i]
-		var at := mouse + Vector2(0, i * 21.0)
+	var rows: Array = [["Drag", "Aim"], ["Wheel", "Closer / further"], ["Shift", "Fine"],
+		[app.bindings.name_of(SWITCH_VIEW), "From its capsule" if not from_capsule() else "From behind it"], [keys.label("edit"), "Close"]]
+	for i in rows.size():
+		var row: Array = rows[i]
+		var at := mouse + Vector2(0, i * 20.0 - 4.0)
 		var lit: bool = (i == 0 and _aiming) or (i == 2 and shift)
 		_guide.draw_string(font, at + Vector2(0, 12), row[0], HORIZONTAL_ALIGNMENT_LEFT, 44, 12, Color(1.0, 0.85, 0.4) if lit else Color(1, 1, 1, 0.9))
 		_guide.draw_string(font, at + Vector2(46, 12), row[1], HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(1, 1, 1, 0.6))
@@ -282,15 +359,23 @@ func guide_text() -> String:
 	var keys = app.bindings
 	if inst != null and inst.locked:
 		return "Locked in place, %s unlocks it" % keys.label("lock")
-	return "%s %s %s %s move, %s %s height, drag aim, wheel closer or further, Shift fine, %s close" % [keys.name_of(keys.key("forward")),
+	return "%s %s %s %s move, %s %s height, drag aim, wheel closer or further, Shift fine, %s %s, %s close" % [keys.name_of(keys.key("forward")),
 		keys.name_of(keys.key("left")), keys.name_of(keys.key("back")), keys.name_of(keys.key("right")), keys.name_of(RAISE),
-		keys.name_of(LOWER), keys.label("edit")]
+		keys.name_of(LOWER), keys.name_of(SWITCH_VIEW), "from its capsule" if not from_capsule() else "from behind it", keys.label("edit")]
 
 
 ## The cross at the middle of the view, and under it what the mic points at: how far, and how far off its axis.
 func _draw_cross() -> void:
 	var middle := _cross.size / 2.0
 	var ink := Color(1, 1, 1, 0.85)
+	if inst != null and app.instruments.has(inst):
+		var points := axis_on_screen()
+		if points.cross != null:
+			middle = points.cross
+		if points.capsule != null and points.cross != null:  # its axis, out from its capsule to the cross
+			var trace: Color = inst.color.lightened(0.35)
+			_cross.draw_line(points.capsule, middle, Color(0, 0, 0, 0.45), 4.0, true)
+			_cross.draw_line(points.capsule, middle, Color(trace, 0.9), 2.0, true)
 	for arm in [Vector2(1, 0), Vector2(-1, 0), Vector2(0, 1), Vector2(0, -1)]:
 		_cross.draw_line(middle + arm * 6.0, middle + arm * 18.0, Color(0, 0, 0, 0.5), 3.0)
 		_cross.draw_line(middle + arm * 6.0, middle + arm * 18.0, ink, 1.0)
@@ -301,7 +386,7 @@ func _draw_cross() -> void:
 	var target := on_axis(inst, app.instruments)
 	var named: String = "%s, %s" % [target.of, target.name.to_lower()] if target.has("of") else str(target.get("name", ""))
 	var text := "%s  ·  %.2f m  ·  %.0f° off axis" % [named, target.metres, target.off] if not target.is_empty() else "Nothing on its axis"
-	var at := middle + Vector2(-200, 40)
+	var at := Vector2(clampf(middle.x, 200.0, maxf(_cross.size.x - 200.0, 200.0)) - 200.0, clampf(middle.y + 40.0, 40.0, maxf(_cross.size.y - 160.0, 40.0)))
 	_cross.draw_string_outline(font, at, text, HORIZONTAL_ALIGNMENT_CENTER, 400, 14, 4, Color(0, 0, 0, 0.6))
 	_cross.draw_string(font, at, text, HORIZONTAL_ALIGNMENT_CENTER, 400, 14, ink)
 	var place := "%.2f m high  ·  points %.0f°, %.0f° down" % [inst.source_height, app.mic_bearing(inst), inst.mic_tilt]
@@ -490,7 +575,9 @@ func _build() -> void:
 	_view.offset_right = -WIDTH - 12
 	_view.focus_mode = Control.FOCUS_CLICK
 	_view.gui_input.connect(_on_view_input)
-	Hints.give(_view, VIEW_HINT)
+	Hints.give(_view, func() -> String:
+		return VIEW_HINT % (["From its capsule, the way it points", "behind it"] if from_capsule() else
+			["From behind it, along its aim (the line, to the cross where it meets what it points at)", "its capsule"]))
 	_root.add_child(_view)
 	_cross = Control.new()
 	_cross.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -506,6 +593,41 @@ func _build() -> void:
 	_guide.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_guide.draw.connect(_draw_guide)
 	_view.add_child(_guide)
+	var switch := HBoxContainer.new()  # which view: from behind it, or from its capsule
+	switch.position = Vector2(16, 16)
+	switch.add_theme_constant_override("separation", 0)
+	_view.add_child(switch)
+	var views := ButtonGroup.new()
+	for which in ["behind", "capsule"]:
+		var button := Button.new()
+		button.text = "Behind the mic" if which == "behind" else "From its capsule"
+		button.toggle_mode = true
+		button.button_group = views
+		button.focus_mode = Control.FOCUS_NONE
+		for state in ["normal", "hover", "pressed", "hover_pressed"]:  # the one showing, lit
+			var face := StyleBoxFlat.new()
+			var lit: bool = state.contains("pressed")
+			face.bg_color = Color(0.49, 0.89, 0.82, 0.22) if lit else Color(0.05, 0.06, 0.08, 0.72 if state == "normal" else 0.85)
+			face.border_color = Color(0.49, 0.89, 0.82, 0.8) if lit else Color(1, 1, 1, 0.12)
+			face.set_border_width_all(1)
+			face.set_content_margin_all(8)
+			face.content_margin_left = 12
+			face.content_margin_right = 12
+			face.corner_radius_top_left = 8 if which == "behind" else 0
+			face.corner_radius_bottom_left = face.corner_radius_top_left
+			face.corner_radius_top_right = 8 if which == "capsule" else 0
+			face.corner_radius_bottom_right = face.corner_radius_top_right
+			button.add_theme_stylebox_override(state, face)
+		button.add_theme_color_override("font_pressed_color", Color(0.49, 0.89, 0.82))
+		button.add_theme_color_override("font_hover_pressed_color", Color(0.49, 0.89, 0.82))
+		button.pressed.connect(func() -> void: app.set_mic_view(which))
+		Hints.give(button, "See it from just behind and above, along its aim: the mic in sight, its axis drawn out to a cross where it meets what it points at (V switches)"
+			if which == "behind" else "See from its capsule, the way it points, its own model out of the way: the cross at the middle is its axis (V switches)")
+		switch.add_child(button)
+		if which == "behind":
+			_behind_button = button
+		else:
+			_capsule_button = button
 	_panel = PanelContainer.new()
 	var style := StyleBoxFlat.new()
 	style.bg_color = Color(0.07, 0.08, 0.11, 0.96)

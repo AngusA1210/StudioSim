@@ -323,6 +323,18 @@ func _ready() -> void:
 		if amp != null:
 			_sit_at(amp.kind)
 			amp_panel.open(amp)
+	if options.has("mic"):  # --mic=kind[,capsule]: a microphone's panel open, pointed at the first instrument (screenshots)
+		var m: PackedStringArray = options.mic.split(",")
+		var aimed_at = instruments.filter(func(i): return not i.is_mic).front() if not instruments.is_empty() else null
+		var mic = add_instrument(m[0], (aimed_at.global_position if aimed_at != null else Vector3.ZERO) + Vector3(0.6, 0.0, 0.9))
+		if mic != null:
+			if m.size() > 1:
+				settings.mic_view = m[1]
+			if mic.is_stereo_mic:
+				set_pair_technique(mic, "xy")
+			if aimed_at != null:
+				aim_mic(mic, aimed_at)
+			mic_panel.open(mic)
 
 
 ## Closing the window, or Cmd-Q: as Quit, which offers to save the room first.
@@ -514,6 +526,12 @@ func set_pre_fader_meters(on: bool) -> void:
 ## An amp's panel with its pedalboard showing, or folded away (for every amp, and remembered).
 func set_pedalboard_open(on: bool) -> void:
 	settings.pedalboard_open = on
+	settings.save_to_disk()
+
+
+## A microphone's panel seeing it from just "behind" it, or from its "capsule" (for every mic, and remembered).
+func set_mic_view(which: String) -> void:
+	settings.mic_view = "capsule" if which == "capsule" else "behind"
 	settings.save_to_disk()
 
 

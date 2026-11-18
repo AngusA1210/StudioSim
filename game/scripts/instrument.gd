@@ -235,10 +235,12 @@ func _build_model() -> void:
 
 
 ## Hides it from a camera that leaves out the 3D layer `bit` (1 to 20), or with 0 shows it to every camera again: a
-## microphone's model and name, while you look out from its capsule.
-func set_hidden_layer(bit: int) -> void:
+## microphone's model and name, while you look out from its capsule. With `labels_only`, its name and badges over it
+## alone are hidden, its model seen: as you look at it from just behind.
+func set_hidden_layer(bit: int, labels_only := false) -> void:
 	for node in find_children("*", "GeometryInstance3D", true, false):
-		node.layers = (1 << (bit - 1)) if bit > 0 else 1
+		var hide: bool = bit > 0 and (not labels_only or node in [_label, _input_badge, _lock_badge, _loop_label])
+		node.layers = (1 << (bit - 1)) if hide else 1
 
 
 func _place_parts() -> void:
