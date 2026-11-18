@@ -360,6 +360,8 @@ func _apply_settings(inst, wanted: Dictionary) -> void:
 				app.set_amp_control(inst, control, float(controls[control]))
 		if not is_equal_approx(float(amp.get("loop_mix", 0.5)), inst.loop_mix):
 			app.set_amp_loop_mix(inst, float(amp.get("loop_mix", 0.5)))
+		if amp.has("input") and (str(amp.input) != inst.amp_input or not is_equal_approx(float(amp.get("trim_db", 0.0)), inst.amp_trim_db)):
+			app.set_amp_input(inst, str(amp.input), float(amp.get("trim_db", 0.0)))
 		_apply_pedals(inst, amp.get("pedals", []), was.get("pedals", []))
 	if wanted.has("volume_db") and not is_equal_approx(float(wanted.volume_db), inst.volume_db):
 		app.set_speaker_volume(inst, float(wanted.volume_db))

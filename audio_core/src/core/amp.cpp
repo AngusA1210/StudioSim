@@ -360,6 +360,14 @@ void Amp::render(float* out, int n) {
     if (enabled_) readInput(in_.data(), n);
     if (playback_)  // a recording of the guitar, played back through the pedals and the amp again
         for (int i = 0; i < n; ++i) in_[size_t(i)] += playback_[i];
+    float peak = 0.0f, energy = 0.0f;  // its input level, and what it comes to, for its meter
+    for (int i = 0; i < n; ++i) {
+        const float x = in_[size_t(i)] *= input_gain_;
+        peak = std::max(peak, std::fabs(x));
+        energy += x * x;
+    }
+    if (peak > in_peak_.load(std::memory_order_relaxed)) in_peak_.store(peak, std::memory_order_relaxed);
+    in_rms_.store(n > 0 ? std::sqrt(energy / float(n)) : 0.0f, std::memory_order_relaxed);
     // Through the pedals in front of it, in order, then the preamp; through those in its effects loop, blended with the
     // preamp's own signal as its Mix has it, then the power amp and the cabinet.
     PedalTiming timing;

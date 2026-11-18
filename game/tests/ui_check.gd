@@ -52,6 +52,32 @@ func check(ok: bool, what: String, detail := "") -> void:
 ## and a few more variables in it crashed Godot far further down. New checks with variables of their own go in
 ## functions like these.)
 ## The gap between two pedals, clicked: a pedal added there, in front of the amp or in its loop.
+## An amp's input level (Instrument to begin with, +16 dB; Line, 0 dB; a trim), kept with its settings; and its input
+## switch saying so when it is off but armed, and so still heard.
+func _check_amp_input(panel, amp) -> void:
+	var at_first: String = amp.amp_input
+	var shown_first: int = panel._input_level.selected
+	panel._input_level.item_selected.emit(1)
+	panel._trim.value_changed.emit(3.0)
+	await frames(2)
+	var kept: Dictionary = main.library.instrument_settings(amp).amp
+	check(at_first == "instrument" and shown_first == 0 and amp.amp_input == "line" and is_equal_approx(amp.amp_input_db(), 3.0) and
+		str(kept.get("input", "")) == "line" and is_equal_approx(float(kept.get("trim_db", 0.0)), 3.0),
+		"an amp's input level: Instrument (Hi-Z) to begin with, Line chosen, a trim on it, kept with its settings",
+		"%s, %+.1f dB" % [amp.amp_input, amp.amp_input_db()])
+	main.set_amp_input(amp, "instrument", 0.0)
+	var was_on: bool = amp.input_on
+	main.set_input(amp, false)
+	main.timeline.set_armed(amp, true)
+	await frames(2)
+	var armed_text: String = panel._input_switch.text
+	main.timeline.set_armed(amp, false)
+	await frames(2)
+	check(armed_text == "Input off (armed: still heard)" and panel._input_switch.text == "Input off",
+		"an armed amp's input switch, off, says it is still heard; disarmed, it is off", armed_text)
+	main.set_input(amp, was_on)
+
+
 func _check_pedal_gaps(panel, amp, order: Array) -> void:
 	var kinds_before: Array = amp.pedals.map(func(p): return p.kind)
 	await click(panel._gaps[1].get_global_rect().get_center())
@@ -961,6 +987,7 @@ func _run() -> void:
 	check(looped_in and out_again and amp.pedals.size() == 4 and amp.pedals[3].kind == "delay" and amp.pedals[3].get("in_loop", false),
 		"a pedal dragged past the PREAMP goes in the amp's effects loop, and dragged back comes out in front; the loop's + adds one in it")
 	await _check_pedal_gaps(panel, amp, order)
+	await _check_amp_input(panel, amp)
 	var mix_at_first: float = amp.loop_mix
 	panel._loop_mix.value_changed.emit(8.0)
 	await frames(2)

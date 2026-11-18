@@ -119,6 +119,8 @@ public:
     // Its effects loop's Mix (a parallel loop): how much of what the pedals in it return is blended with the preamp's
     // own signal, 0 to 1 (0.5 to begin with; 1 is a series loop).
     void set_amp_loop_mix(int id, float mix);
+    void set_amp_input_gain(int id, float db);
+    PackedFloat32Array get_amp_input_level(int id);
     // The loop pedal on an amp's board (a "looper" pedal; its controls are its level, Sync, and Overdub after
     // recording). action: "press" (the footswitch: record, play, overdub), "stop", "play", "undo", "redo" or "clear".
     // False if the amp has no loop pedal.

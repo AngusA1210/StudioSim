@@ -358,6 +358,12 @@ public:
     // with the preamp's own signal (0 to 1; 0.5 to begin with; 1 is a series loop).
     void setAmpLoopMix(int id, float mix);
     float ampLoopMix(int id) const;
+    // An amp's input level, in dB (0 to begin with): what comes in, and a DI played back through it, brought up to the
+    // level its pedals and head are made for (a plucked string at -20 dBFS RMS, peaking at -6). The game's Instrument
+    // setting is +16 dB, for a guitar into an interface's instrument input at its lowest gain (open chords strummed into
+    // a Volt 476 so peak at -22 dBFS, ringing at -39 dBFS RMS); Line is 0. Its DI is recorded before it. And what reaches its pedals after it: the highest peak since last asked, and the RMS just now.
+    void setAmpInputGain(int id, float db);
+    void ampInputLevel(int id, float& peak, float& rms);
     // The loop pedal on an amp's board (a PedalKind::Looper; see addPedal), whose controls are its level (5 = as
     // recorded), Sync (recordings start and end on bar lines while the patterns run) and whether finishing the first
     // recording goes straight into overdubbing. The first Press gives it its memory (two buffers of kLoopSeconds),
@@ -667,7 +673,7 @@ private:
             AmpKnob, AmpHeadSet, AmpCabinetSet, AmpSpeakerSet, LooperMemory, LooperAct, PedalBoardSet, PedalOn, PedalControl, SynthPlugin,
             TimelinePlay, TimelineLoop, TrackSet, RecordArm, RecordStart, RecordStop, SourceOutput, AutomationRead, SendSet,
             MasterAutomation, MasterRead, SourceSoloMuted, MicPath, MicCone, SourceFacing, MicModelSet, MicAim, SourcePan, MicMidSide,
-            SourceRoomGain, SourceRoomMuted, RoomVolume, MonitorSet, MasterInserts, AmpLoopMix, LimiterCeiling, BusMono,
+            SourceRoomGain, SourceRoomMuted, RoomVolume, MonitorSet, MasterInserts, AmpLoopMix, AmpInputGain, LimiterCeiling, BusMono,
             Compensation, CompensationTotal, AmpLoopDelay, Echo, ScatterWall, PartPath, MicShell, BusPans,
             SequencerStartIn, SequencerNudge, Sustain, NetSend, NetFeed,
         } type = AddSource;

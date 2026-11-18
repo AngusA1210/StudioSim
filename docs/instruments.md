@@ -286,6 +286,14 @@ open its panel: drag a knob up or down (Shift for fine moves), turn the scroll w
 for 5. The panel also has the amp's input switch and which hardware input it plays. Plug a guitar or bass straight
 into the interface's instrument input; the amp is the only processing it needs. Wear headphones.
 
+Its **input level** is set for that: **Instrument (Hi-Z)**, to begin with, is for a guitar or bass in an interface's
+instrument input with the INST (or Hi-Z) switch on and its gain turned all the way down. The amp brings it up 16 dB, to
+the level its pedals and head are made for, so there's no gain to set on the interface. **Line** (0 dB) is for a signal
+already there: a modeller's or a pedalboard's line out, or an interface's gain turned well up. A **trim** beside it
+(-12 to +12 dB) suits pickups hotter or quieter than most, and its meter shows what reaches the pedals: strummed hard,
+peaks near -6 dB, into the amber. The level is kept with the amp's settings; its DI is recorded before it, as it comes
+in, and played back through it when reamped.
+
 An amp has an **effects loop**: on the board, pedals after PREAMP are sent out after the preamp and its tone stack and
 returned before the power amp, so a delay or reverb there repeats the amp's own distorted sound. It is a parallel loop:
 its **MIX** knob blends what comes back with the preamp's own signal, which carries on to the power amp beside it (half

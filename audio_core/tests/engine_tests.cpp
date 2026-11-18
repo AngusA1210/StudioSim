@@ -1803,6 +1803,42 @@ int main(int argc, char** argv) {
               "Bass and Treble turn the lows and highs up and down", fmt("lows %.0f dB apart, highs %.0f dB apart, ends of the knobs",
                                                                          10 * std::log10(low_band / low_cut), 10 * std::log10(high_band / high_cut)));
 
+        // An amp's input level: a string 16 dB quieter (as a guitar comes into an interface's instrument input at its lowest
+        // gain) with the Instrument level's +16 dB comes out as the string at the amp's own level does at 0 dB (Line).
+        // Played through it as a DI is, from a recording; the meter reads what reaches the pedals.
+        {
+            auto amped = [](const std::vector<float>& dry, float db, float* peak = nullptr) {
+                Amp amp(48000.0f, InstrumentKind::GuitarStack, nullptr, 128);
+                amp.setControl(AmpControl::Gain, 6.0f);
+                amp.setInputGain(std::pow(10.0f, db / 20.0f));
+                std::vector<float> out(dry.size(), 0.0f);
+                float highest = 0.0f;
+                for (size_t i = 0; i + 128 <= dry.size(); i += 128) {
+                    amp.setPlayback(dry.data() + i);
+                    amp.render(out.data() + i, 128);
+                    highest = std::max(highest, amp.takeInputPeak());
+                }
+                if (peak) *peak = highest;
+                return out;
+            };
+            const std::vector<float> at_level = pluckedString(110.0, 2.0, 0.1f);
+            std::vector<float> quiet = at_level;
+            for (float& v : quiet) v *= std::pow(10.0f, -16.0f / 20.0f);
+            float met = 0.0f;
+            const std::vector<float> line = amped(at_level, 0.0f), instrument = amped(quiet, 16.0f, &met);
+            double worst = 0.0, energy = 0.0;
+            for (size_t i = 4800; i < line.size(); ++i) {
+                worst = std::max(worst, std::fabs(double(line[i]) - instrument[i]));
+                energy += double(line[i]) * line[i];
+            }
+            const double rms = std::sqrt(energy / double(line.size() - 4800));
+            float in_peak = 0.0f;
+            for (float v : at_level) in_peak = std::max(in_peak, std::fabs(v));
+            check(rms > 0.01 && worst < 1e-3 * std::max(rms, 1e-9) * 100.0 && std::fabs(db(met) - db(in_peak)) < 0.5,
+                  "an amp's Instrument input level (+16 dB) brings a guitar at an instrument input's lowest gain to the amp's own level, the same sound as a Line one already there; its meter reads what reaches the pedals",
+                  fmt("largest difference %.1f dB under the sound, ", db(worst) - db(rms)) + fmt("meter %.1f dBFS peak", db(met)));
+        }
+
         // Through each amp, a plucked string at the level an instrument gives an interface: how loud, how bright, how deep.
         std::string levels;
         double loudest = -100, quietest = 0;

@@ -350,7 +350,7 @@ func _refresh() -> void:
 		_show(_width, inst.ms_width * 100.0)
 	_input_switch.set_pressed_no_signal(inst.input_on)
 	_polarity.set_pressed_no_signal(inst.mic_inverted)
-	_input_switch.text = "Input on" if inst.input_on else "Input off"
+	_input_switch.text = app.input_text(inst)
 	var level: float = app.audio.get_source_level(inst.source_id, true)
 	_meter.feed([level * sqrt(2.0)], [level])
 	_show_distances(distances(inst, app.instruments))
@@ -648,7 +648,7 @@ func _build() -> void:
 	left.add_child(input_row)
 	_input_switch = CheckButton.new()
 	_input_switch.toggled.connect(func(on: bool) -> void: app.set_input(inst, on))
-	Hints.give(_input_switch, "Its input: on, you hear what it hears (through its track, where its pan puts it), rather than what it recorded")
+	Hints.give(_input_switch, "Its input: on, you hear what it hears (through its track, where its pan puts it), rather than what it recorded. Armed to record, it is heard while stopped or recording too, whatever this says")
 	input_row.add_child(_input_switch)
 	_polarity = Button.new()
 	_polarity.text = "Ø"

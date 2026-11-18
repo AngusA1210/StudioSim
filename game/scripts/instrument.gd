@@ -87,6 +87,12 @@ var amp_speaker := ""   # the speakers in its cabinet (catalog.gd: AMP_SPEAKERS)
 var head_on := true
 var cabinet_on := true
 var loop_mix := 0.5    # its effects loop's Mix (a parallel loop): how much of what comes back is blended in, 0 to 1
+## An amp's input level: "instrument", a guitar or bass into an interface's instrument (Hi-Z) input at its lowest gain,
+## brought up to the level the amp is made for; or "line", a signal already up to it (a modeller, a pedalboard's line
+## out, a guitar recorded hot). And a trim on top, in dB, for hotter or quieter pickups.
+const AMP_INPUT_DB := {"instrument": 16.0, "line": 0.0}
+var amp_input := "instrument"
+var amp_trim_db := 0.0
 var looper := {}       # what its loop pedal is doing, from the audio core: state "none" if it has none (amps only)
 var pedals := []       # its effect pedals, in signal order, from the audio core: [{kind, on, controls, plugin_name...}]
 var tuner := {}        # what its tuner hears while one is on: {pitched, note, cents, frequency}; empty otherwise
@@ -144,6 +150,8 @@ func setup(spec: Dictionary, audio: StudioSimAudio) -> void:
 	source_id = audio.add_source(("stereo_mic" if is_stereo_mic else "mic") if is_mic else kind, position, spec.gain, spec.send)
 	if source_id < 0:
 		return  # the room is full; whoever asked for this instrument gives up on it
+	if is_amp:
+		_audio.set_amp_input_gain(source_id, amp_input_db())
 	if is_mic:
 		mic_model = spec.get("model", "flat")
 		mic_pattern = ""
@@ -629,6 +637,17 @@ func set_input(on: bool) -> void:
 func set_input_channel(channel: int) -> void:
 	input_channel = channel
 	_audio.set_source_input_channel(source_id, channel)
+
+
+## An amp's input level, in dB: its Instrument or Line setting and its trim.
+func amp_input_db() -> float:
+	return float(AMP_INPUT_DB.get(amp_input, 0.0)) + amp_trim_db
+
+
+func set_amp_input(level: String, trim_db: float) -> void:
+	amp_input = level if AMP_INPUT_DB.has(level) else "instrument"
+	amp_trim_db = clampf(trim_db, -12.0, 12.0)
+	_audio.set_amp_input_gain(source_id, amp_input_db())
 
 
 ## Stops or restarts the sequencer playing this instrument's pattern. It can still be played by hand.

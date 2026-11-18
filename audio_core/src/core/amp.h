@@ -36,6 +36,7 @@
 // and half to begin with; all of it returned is a series loop).
 
 #include <array>
+#include <atomic>
 #include <vector>
 
 #include "compensation.h"
@@ -133,6 +134,12 @@ public:
     void setCabinet(AmpCabinet cabinet, bool on) { model_.setCabinet(cabinet, on); }
     void setSpeaker(AmpSpeaker speaker) { model_.setSpeaker(speaker); }
     void setLoopMix(float mix) { loop_mix_ = std::clamp(mix, 0.0f, 1.0f); }  // how much of its effects loop returns
+    // Its input level: what comes in (and a DI played back through it) brought up to the level its pedals and its head
+    // are made for, as an amp's own input is made for a guitar's (a gain, linear). The DI is recorded before it.
+    void setInputGain(float gain) { input_gain_ = std::max(gain, 0.0f); }
+    // What reaches its pedals, after its input level: the highest peak since it was last asked, and the last block's RMS.
+    float takeInputPeak() { return in_peak_.exchange(0.0f, std::memory_order_relaxed); }
+    float inputRms() const { return in_rms_.load(std::memory_order_relaxed); }
     // How late the plug-ins in its effects loop make what comes back: the preamp's own signal beside it is held back as
     // much, so that the two meet in step rather than combing.
     void setLoopDelay(int samples) { loop_delay_ = std::clamp(samples, 0, CompensationDelay::kMaxDelay); }
@@ -153,6 +160,8 @@ private:
     int channel_ = -1;
     bool enabled_ = false;
     float loop_mix_ = 0.5f;
+    float input_gain_ = 1.0f;
+    std::atomic<float> in_peak_{0.0f}, in_rms_{0.0f};
     int loop_delay_ = 0;
     std::vector<float> in_, dry_;  // (dry_: the preamp's own signal, beside its effects loop)
     CompensationDelay dry_hold_;   // which is held back to meet what the loop returns

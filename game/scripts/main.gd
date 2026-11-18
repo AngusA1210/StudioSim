@@ -301,6 +301,13 @@ func _ready() -> void:
 		instrument_menu.open()
 	if options.has("mixer"):
 		mixer.open()
+	if options.has("amp"):  # --amp=guitar_stack: an amp's panel open (for screenshots)
+		var amp = find_instrument(options.amp)
+		if amp == null:
+			amp = add_instrument(options.amp, Vector3(0.0, 0.0, -2.0))
+		if amp != null:
+			_sit_at(amp.kind)
+			amp_panel.open(amp)
 
 
 ## Closing the window, or Cmd-Q: as Quit, which offers to save the room first.
@@ -705,10 +712,25 @@ func set_input(inst, on: bool) -> void:
 	if inst.is_live() and not net.input_switched(inst, on):  # (playing together: someone else's input is playing through it)
 		return
 	inst.set_input(on)
+	if not on and heard_armed(inst):
+		session.notice.emit("%s is armed, so its input is still heard while stopped or recording: disarm it to silence it" % inst.display_name)
 	if player != null:
 		player.notice_input(inst)
 	if inst.is_live():
 		follow_live_inputs()
+
+
+## Whether a track's input is heard though its input switch is off: an amp's, a Speaker's or a microphone's, armed to
+## record, is heard while stopped and while recording, as Pro Tools' Auto Input has it.
+func heard_armed(inst) -> bool:
+	return not inst.input_on and inst.armed and (inst.is_live() or inst.is_mic)
+
+
+## What an input switch says: on, off, or off but heard all the same (armed).
+func input_text(inst) -> String:
+	if inst.input_on:
+		return "Input on"
+	return "Input off (armed: still heard)" if heard_armed(inst) else "Input off"
 
 
 ## The MIDI instruments whose input is on, or that are armed to record: what the keyboards play.
@@ -745,6 +767,11 @@ func set_amp_control(inst, control: String, value: float) -> void:
 
 ## An amp's effects loop's Mix: it is a parallel loop, and this is how much of what comes back from its pedals is
 ## blended with the preamp's own signal on its way to the power amp (0 to 1: half to begin with; all of it, a series loop).
+## An amp's input level ("instrument" or "line") and its trim in dB (-12 to +12): see instrument.gd.
+func set_amp_input(inst, level: String, trim_db: float) -> void:
+	inst.set_amp_input(level, trim_db)
+
+
 func set_amp_loop_mix(inst, mix: float) -> void:
 	inst.loop_mix = clampf(mix, 0.0, 1.0)
 	audio.set_amp_loop_mix(inst.source_id, inst.loop_mix)
@@ -1699,6 +1726,7 @@ func duplicate_instrument(inst, at = null):
 				problems.append("pedal %d: %s" % [i + 1, audio.get_error()])
 		audio.set_pedal_loop(copy.source_id, audio.get_pedal_loop(inst.source_id))  # (its effects loop the same)
 		set_amp_loop_mix(copy, inst.loop_mix)
+		set_amp_input(copy, inst.amp_input, inst.amp_trim_db)
 		copy.pedals = audio.get_pedals(copy.source_id)
 	var inserts: Array = audio.get_inserts(inst.source_id)
 	for slot in inserts.size():

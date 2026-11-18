@@ -99,7 +99,7 @@ func _refresh() -> void:
 	_volume.readout = "off" if inst.volume_db <= -79.0 else "%+.1f dB" % inst.volume_db
 	_volume.queue_redraw()
 	_input_switch.set_pressed_no_signal(inst.input_on)
-	_input_switch.text = "Input on" if inst.input_on else "Input off"
+	_input_switch.text = app.input_text(inst)
 	app.show_input_choice(_source, inst.input_channel)
 	var names := []
 	for insert in inst.inserts:
@@ -177,7 +177,7 @@ func _build() -> void:
 	column.add_child(input_row)
 	_input_switch = CheckButton.new()
 	_input_switch.toggled.connect(func(on: bool) -> void: app.set_input(inst, on))
-	Hints.give(_input_switch, "Input on: it plays what comes into your interface. Wear headphones")
+	Hints.give(_input_switch, "Input on: it plays what comes into your interface. Wear headphones. Armed to record, it plays it while stopped or recording too, whatever this says")
 	input_row.add_child(_input_switch)
 	_source = OptionButton.new()
 	_source.item_selected.connect(func(index: int) -> void: app.set_input_channel(inst, app.input_at(_source, index)))

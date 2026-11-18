@@ -155,7 +155,8 @@ func instrument_settings(inst, with_states := true) -> Dictionary:
 					pedal.state = Marshalls.raw_to_base64(audio.get_plugin_state(inst.source_id, "pedal", i))
 			pedals.append(pedal)
 		out.amp = {"head": inst.amp_head, "head_on": inst.head_on, "cabinet": inst.amp_cabinet, "cabinet_on": inst.cabinet_on, "speaker": inst.amp_speaker,
-			"controls": inst.amp_controls.duplicate(), "pedals": pedals, "loop_mix": inst.loop_mix}
+			"controls": inst.amp_controls.duplicate(), "pedals": pedals, "loop_mix": inst.loop_mix, "input": inst.amp_input,
+			"trim_db": inst.amp_trim_db}
 	return out
 
 
@@ -187,6 +188,8 @@ func apply_instrument_settings(inst, settings: Dictionary, include := {}) -> Str
 			if inst.amp_controls.has(control):
 				app.set_amp_control(inst, control, float(controls[control]))
 		app.set_amp_loop_mix(inst, float(amp.get("loop_mix", 0.5)))
+		if amp.has("input"):  # (a room or preset saved before amps had one keeps the amp's own)
+			app.set_amp_input(inst, str(amp.input), float(amp.get("trim_db", 0.0)))
 		app.hide_plugin_editors(inst)
 		for i in range(audio.get_pedals(inst.source_id).size() - 1, -1, -1):
 			app.remove_pedal(inst, i)

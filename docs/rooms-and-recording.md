@@ -61,7 +61,8 @@ In a Record room:
 - **Monitoring**, as Pro Tools has it. A Speaker's or an amp's **I** (input monitoring) means its input is heard,
   playing or not, rather than what it recorded. A record-ready Speaker or amp is heard through its input while
   stopped or recording, and plays back what it recorded while playing (Pro Tools' Auto Input), its I left off; the
-  audio input opens for it either way. A record-ready instrument takes the notes played on it, as with its input on,
+  audio input opens for it either way. Its panel's input switch says so ("Input off (armed: still heard)"), and
+  switching its input off while it is armed says how to silence it: disarm it. A record-ready instrument takes the notes played on it, as with its input on,
   and plays its clips back too.
 - **Editing clips**, with the mouse as with Pro Tools' Smart Tool:
   - Click a clip to choose it (stopped, the playhead goes where you clicked too), and drag it along its track or to

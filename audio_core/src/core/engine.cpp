@@ -206,6 +206,7 @@ struct AudioEngine::Source {
     AmpCabinet amp_cabinet = AmpCabinet::OpenBack1x12;
     AmpSpeaker amp_speaker = AmpSpeaker::AmericanVintage;
     float loop_mix = 0.5f;  // its effects loop's Mix
+    float amp_input_db = 0.0f;  // its input level (setAmpInputGain)
     int loop_delay = 0;     // how late its loop's plug-ins make what comes back (its preamp's own signal is held back as much)
     int pedal_delay = 0;    // how late all its pedals' plug-ins make it (the game thread's)
     int pedal_delay_rt = 0;  // (the audio thread's)
@@ -555,6 +556,7 @@ void AudioEngine::connect(Source& s) {
     amp->setCabinet(s.amp_cabinet, s.cabinet_on);
     amp->setSpeaker(s.amp_speaker);
     amp->setLoopMix(s.loop_mix);
+    amp->setInputGain(std::pow(10.0f, s.amp_input_db / 20.0f));
     amp->setLoopDelay(s.loop_delay);
     for (int c = 0; c < kAmpControls; ++c) amp->setControl(AmpControl(c), s.amp_controls[size_t(c)]);
 }
@@ -920,6 +922,22 @@ void AudioEngine::setAmpLoopMix(int id, float mix) {
 float AudioEngine::ampLoopMix(int id) const {
     const Source* s = owned(id);
     return s ? s->loop_mix : 0.5f;
+}
+
+void AudioEngine::setAmpInputGain(int id, float db) {
+    Source* s = owned(id);
+    if (!s || !isAmp(s->kind)) return;
+    s->amp_input_db = std::clamp(db, -24.0f, 36.0f);
+    Command c; c.type = Command::AmpInputGain; c.id = id; c.v[0] = std::pow(10.0f, s->amp_input_db / 20.0f); push(c);
+}
+
+void AudioEngine::ampInputLevel(int id, float& peak, float& rms) {
+    peak = rms = 0.0f;
+    Source* s = owned(id);
+    if (!s || !isAmp(s->kind) || !s->instrument) return;
+    auto* amp = static_cast<Amp*>(s->instrument.get());
+    peak = amp->takeInputPeak();
+    rms = amp->inputRms();
 }
 
 bool AudioEngine::looperAction(int id, Looper::Action action) {
@@ -3305,6 +3323,9 @@ void AudioEngine::drainCommands() {
                 break;
             case Command::AmpLoopMix:
                 if (s && isAmp(s->kind)) static_cast<Amp*>(s->instrument.get())->setLoopMix(c.v[0]);
+                break;
+            case Command::AmpInputGain:
+                if (s && isAmp(s->kind)) static_cast<Amp*>(s->instrument.get())->setInputGain(c.v[0]);
                 break;
             case Command::AmpKnob:
                 if (s && isAmp(s->kind)) static_cast<Amp*>(s->instrument.get())->setControl(AmpControl(int(c.v[0])), c.v[1]);

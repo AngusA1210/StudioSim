@@ -331,6 +331,20 @@ void StudioSimAudio::set_amp_loop_mix(int id, float mix) {
     if (engine_) engine_->setAmpLoopMix(id, mix);
 }
 
+void StudioSimAudio::set_amp_input_gain(int id, float db) {
+    if (engine_) engine_->setAmpInputGain(id, db);
+}
+
+// What reaches an amp's pedals, after its input level: [peak since last asked, RMS], linear.
+PackedFloat32Array StudioSimAudio::get_amp_input_level(int id) {
+    float peak = 0.0f, rms = 0.0f;
+    if (engine_) engine_->ampInputLevel(id, peak, rms);
+    PackedFloat32Array out;
+    out.push_back(peak);
+    out.push_back(rms);
+    return out;
+}
+
 void StudioSimAudio::set_amp_cabinet(int id, const String& cabinet, bool on) {
     static const char* const kNames[sr::kAmpCabinets] = {"1x12", "2x12", "4x12", "1x15", "4x10", "8x10"};
     for (int c = 0; c < sr::kAmpCabinets; ++c)
@@ -1065,6 +1079,8 @@ void StudioSimAudio::_bind_methods() {
     ClassDB::bind_method(D_METHOD("set_floor_reflection", "amount"), &StudioSimAudio::set_floor_reflection);
     ClassDB::bind_method(D_METHOD("set_amp_speaker", "id", "speaker"), &StudioSimAudio::set_amp_speaker);
     ClassDB::bind_method(D_METHOD("set_amp_loop_mix", "id", "mix"), &StudioSimAudio::set_amp_loop_mix);
+    ClassDB::bind_method(D_METHOD("set_amp_input_gain", "id", "db"), &StudioSimAudio::set_amp_input_gain);
+    ClassDB::bind_method(D_METHOD("get_amp_input_level", "id"), &StudioSimAudio::get_amp_input_level);
     ClassDB::bind_method(D_METHOD("set_source_output", "id", "bus"), &StudioSimAudio::set_source_output);
     ClassDB::bind_method(D_METHOD("set_source_input_channel", "id", "channel"), &StudioSimAudio::set_source_input_channel);
     ClassDB::bind_method(D_METHOD("set_source_input", "id", "on"), &StudioSimAudio::set_source_input);

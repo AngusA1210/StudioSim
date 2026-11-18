@@ -21,6 +21,8 @@ const Knob := preload("res://scripts/knob.gd")
 const Catalog := preload("res://scripts/catalog.gd")
 const Hints := preload("res://scripts/hints.gd")
 const PresetMenu := preload("res://scripts/preset_menu.gd")
+const LevelMeter := preload("res://scripts/level_meter.gd")
+const INPUT_LEVELS := ["instrument", "line"]  # (instrument.gd: AMP_INPUT_DB)
 const DIM := Color(0.62, 0.65, 0.74)
 const WARN := Color(1.0, 0.61, 0.48)
 const LED_ON := Color(1.0, 0.27, 0.22)
@@ -60,6 +62,9 @@ var _speaker_choice: OptionButton  # the speakers in the cabinet, of its size
 var _speakers_shown := ""          # which cabinet's size they were listed for
 var _input_switch: CheckButton
 var _source: OptionButton
+var _input_level: OptionButton  # Instrument (Hi-Z) or Line
+var _trim: SpinBox
+var _input_meter                # what reaches its pedals, after its input level
 var _hint: Label  # the line at the foot: what the mouse is over, or for a few seconds what just happened
 var _notice := ""
 var _notice_is_problem := false
@@ -178,6 +183,8 @@ func _input(event: InputEvent) -> void:
 		return
 	if app.plugin_browser.visible or app.name_prompt.is_open():  # the keys are for typing
 		return
+	if get_viewport().gui_get_focus_owner() is LineEdit and event.physical_keycode != KEY_ESCAPE:
+		return  # (typing a number: its trim)
 	var handled := true
 	var key: int = event.physical_keycode
 	var action: String = "edit" if key == KEY_ESCAPE else app.bindings.action_for(key)
@@ -240,8 +247,13 @@ func _refresh() -> void:
 	_cabinet_on.set_pressed_no_signal(inst.cabinet_on)
 	_cabinet_on.text = "In use" if inst.cabinet_on else "Bypassed"
 	_input_switch.set_pressed_no_signal(inst.input_on)
-	_input_switch.text = "Input on" if inst.input_on else "Input off"
+	_input_switch.text = app.input_text(inst)
 	app.show_input_choice(_source, inst.input_channel)
+	_input_level.select(maxi(INPUT_LEVELS.find(inst.amp_input), 0))
+	if not _trim.get_line_edit().has_focus():
+		_trim.set_value_no_signal(inst.amp_trim_db)
+	var level: PackedFloat32Array = app.audio.get_amp_input_level(inst.source_id)
+	_input_meter.feed([level[0]], [level[1]])
 	selected = mini(selected, inst.pedals.size() - 1)
 	var unfolded: bool = app.settings.pedalboard_open
 	_board_toggle.text = ("▾  " if unfolded else "▸  ") + "Pedalboard"
@@ -830,12 +842,40 @@ func _build() -> void:
 	box.add_child(input_row)
 	_input_switch = CheckButton.new()
 	_input_switch.toggled.connect(_on_input_toggled)
-	Hints.give(_input_switch, "Input on: the amp plays what is plugged into your interface. Wear headphones")
+	Hints.give(_input_switch, "Input on: the amp plays what is plugged into your interface. Wear headphones. Armed to record, it plays it while stopped or recording too, whatever this says")
 	input_row.add_child(_input_switch)
 	_source = OptionButton.new()
 	_source.item_selected.connect(_on_source_selected)
 	Hints.give(_source, "Which of your interface's inputs the guitar or bass is plugged into (or desktop audio, while the I/O page's audio bridge is on)")
 	input_row.add_child(_source)
+
+	# Its input level, as an amp's input is made for a guitar: Instrument brings one plugged into an interface's
+	# instrument (Hi-Z) input, its gain at the lowest, up to where the amp is made for; Line is for a signal already there.
+	var level_row := HBoxContainer.new()
+	level_row.add_theme_constant_override("separation", 12)
+	box.add_child(level_row)
+	level_row.add_child(_caption("INPUT LEVEL"))
+	_input_level = OptionButton.new()
+	_input_level.add_item("Instrument (Hi-Z)")
+	_input_level.add_item("Line")
+	_input_level.item_selected.connect(func(index: int) -> void: app.set_amp_input(inst, INPUT_LEVELS[index], inst.amp_trim_db))
+	Hints.give(_input_level, "Instrument: a guitar or bass plugged into your interface's instrument (Hi-Z) input, its gain turned all the way down; the amp brings it up to its own level. Line: a signal already at that level (a modeller, a pedalboard's line out, an interface's gain turned well up)")
+	level_row.add_child(_input_level)
+	_trim = SpinBox.new()
+	_trim.min_value = -12.0
+	_trim.max_value = 12.0
+	_trim.step = 0.5
+	_trim.suffix = "dB"
+	_trim.select_all_on_focus = true
+	_trim.value_changed.connect(func(v: float) -> void: app.set_amp_input(inst, inst.amp_input, v))
+	Hints.give(_trim, "A trim on the input level, for pickups hotter or quieter than most (-12 to +12 dB)")
+	level_row.add_child(_caption("TRIM"))
+	level_row.add_child(_trim)
+	_input_meter = LevelMeter.new()
+	_input_meter.custom_minimum_size = Vector2(160, 12)
+	_input_meter.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	Hints.give(_input_meter, "What reaches the pedals and the amp: strummed hard, its peaks reach about -6 dB, into the amber, where the amp is made for (the DI is recorded as it comes in, before this)")
+	level_row.add_child(_input_meter)
 
 	# The pedalboard, in the order the signal passes along it, under a heading that folds it away.
 	var board_heading := HBoxContainer.new()
@@ -1092,12 +1132,17 @@ func _build_loop_page() -> HBoxContainer:
 	return pedal_row
 
 
-func _voice_row(parent: Control, title: String, choices: Array) -> OptionButton:
+## A small caption, as the head's and the cabinet's have.
+func _caption(title: String) -> Label:
 	var label := Label.new()
 	label.text = title
 	label.add_theme_color_override("font_color", DIM)
 	label.add_theme_font_size_override("font_size", 12)
-	parent.add_child(label)
+	return label
+
+
+func _voice_row(parent: Control, title: String, choices: Array) -> OptionButton:
+	parent.add_child(_caption(title))
 	var choice := OptionButton.new()
 	for entry in choices:
 		choice.add_item(entry[1])
