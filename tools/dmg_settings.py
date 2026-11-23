@@ -14,7 +14,7 @@ compression_level = 9
 filesystem = "HFS+"
 files = [app]
 symlinks = {"Applications": "/Applications"}
-hide_extensions = [name]  # "StudioSim", not "StudioSim.app"
+# (not hide_extensions: it sets the app's Finder info, which a strict check of its signature refuses)
 icon = os.path.join(app, "Contents", "Resources", "icon.icns")
 
 show_status_bar = False
