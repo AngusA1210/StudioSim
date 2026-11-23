@@ -74,13 +74,16 @@ What to know about the app:
 ## Making a release
 
 `tools/package.sh`, after `tools/export.sh`, packs the app as it is downloaded, with StudioSim's licence and
-`THIRD-PARTY-NOTICES.txt` (the licences of what it is built with, made by `tools/notices.sh`) beside it:
+`THIRD-PARTY-NOTICES.txt` (the licences of what it is built with, made by `tools/notices.sh`):
 
-- on a Mac, `dist/StudioSim-macOS.dmg`, a disk image to drag StudioSim from into Applications;
+- on a Mac, `dist/StudioSim-macOS.dmg`, a disk image that opens on StudioSim and the Applications folder alone, to
+  drag the one onto the other. Its window is laid out by `tools/dmg_settings.py`, with
+  [dmgbuild](https://github.com/dmgbuild/dmgbuild), which the script puts in `dist/.dmgbuild` the first time (it needs
+  the internet then). The licence and the notices are inside the app, in `StudioSim.app/Contents/Resources`;
 - on Windows, `dist/StudioSim-Windows-Setup.exe`, an installer made with [Inno Setup](https://jrsoftware.org/isinfo.php)
   (`tools/installer/StudioSim.iss`). It installs for the user alone, with no administrator's password, in their own
   programs folder, with a Start menu entry, a desktop shortcut, and an uninstaller in Settings › Apps (which leaves
-  their rooms).
+  their rooms). The licence and the notices are installed beside it.
 
 Releases are made on GitHub's computers, by `.github/workflows/release.yml`. Change `config/version` in
 `game/project.godot`, commit, then push a tag of it:

@@ -85,6 +85,9 @@ jobs:
           codesign --verify --deep --strict "$mounted/StudioSim.app"
           [ "$(lipo -archs "$mounted/StudioSim.app/Contents/MacOS/StudioSim")" = "arm64" ]
           ls "$mounted"
+          [ "$(ls "$mounted" | tr '\n' ' ')" = "Applications StudioSim.app " ]  # (the window shows the two alone)
+          [ -f "$mounted/.DS_Store" ] && [ -f "$mounted/StudioSim.app/Contents/Resources/LICENSE.txt" ]
+          [ -f "$mounted/StudioSim.app/Contents/Resources/THIRD-PARTY-NOTICES.txt" ]
           hdiutil detach "$mounted"
 
       - uses: actions/upload-artifact@v7

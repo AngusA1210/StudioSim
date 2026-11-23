@@ -4,8 +4,10 @@
 #
 #   tools/package.sh
 #
-#   macOS    dist/StudioSim-macOS.dmg: a disk image with StudioSim.app and the Applications folder side by side, to
-#            drag the one to the other. For Apple silicon alone, as the audio core is: Godot exports for both kinds of
+#   macOS    dist/StudioSim-macOS.dmg: a disk image that opens on StudioSim.app and the Applications folder side by
+#            side and nothing else, to drag the one to the other (its window laid out by tools/dmg_settings.py, with
+#            dmgbuild, put in dist/.dmgbuild the first time). The licence and the notices are in the app, in
+#            Contents/Resources, so the window has only the two. For Apple silicon alone, as the audio core is: Godot exports for both kinds of
 #            Mac (its templates are made so), so its Intel half is taken off here and the app signed again as Godot
 #            signed it (for this computer alone, its entitlements as they were). An Intel Mac then says plainly that
 #            StudioSim isn't for it, and the download is half the size.
@@ -30,25 +32,28 @@ case "$(uname -s)" in
     mkdir -p "$STAGE"
     cp -R "$APP" "$STAGE/"
     BIN="$STAGE/StudioSim.app/Contents/MacOS/StudioSim"
-    if [ "$(lipo -archs "$BIN")" != "arm64" ]; then
-      ENTITLEMENTS="$(mktemp)"
-      codesign -d --entitlements :- "$STAGE/StudioSim.app" > "$ENTITLEMENTS" 2>/dev/null
-      for lib in "$BIN" "$STAGE/StudioSim.app/Contents/Frameworks/"*.dylib; do
-        if lipo -archs "$lib" | grep -qw arm64 && [ "$(lipo -archs "$lib")" != "arm64" ]; then
-          lipo -thin arm64 "$lib" -output "$lib.thin" && mv "$lib.thin" "$lib"
-        fi
-      done
-      for lib in "$STAGE/StudioSim.app/Contents/Frameworks/"*.dylib; do codesign --force --sign - "$lib"; done
-      codesign --force --sign - --entitlements "$ENTITLEMENTS" "$STAGE/StudioSim.app"
-      rm -f "$ENTITLEMENTS"
-    fi
+    ENTITLEMENTS="$(mktemp)"
+    codesign -d --entitlements :- "$STAGE/StudioSim.app" > "$ENTITLEMENTS" 2>/dev/null
+    for lib in "$BIN" "$STAGE/StudioSim.app/Contents/Frameworks/"*.dylib; do
+      if lipo -archs "$lib" | grep -qw arm64 && [ "$(lipo -archs "$lib")" != "arm64" ]; then
+        lipo -thin arm64 "$lib" -output "$lib.thin" && mv "$lib.thin" "$lib"
+      fi
+    done
+    cp "$ROOT/LICENSE" "$STAGE/StudioSim.app/Contents/Resources/LICENSE.txt"
+    "$ROOT/tools/notices.sh" "$STAGE/StudioSim.app/Contents/Resources/THIRD-PARTY-NOTICES.txt"
+    # (signed again, as Godot signed it, for this computer alone: the thinning and the two files changed what it sealed)
+    for lib in "$STAGE/StudioSim.app/Contents/Frameworks/"*.dylib; do codesign --force --sign - "$lib"; done
+    codesign --force --sign - --entitlements "$ENTITLEMENTS" "$STAGE/StudioSim.app"
+    rm -f "$ENTITLEMENTS"
     codesign --verify --deep --strict "$STAGE/StudioSim.app"
-    ln -s /Applications "$STAGE/Applications"
-    cp "$ROOT/LICENSE" "$STAGE/LICENSE.txt"
-    "$ROOT/tools/notices.sh" "$STAGE/THIRD-PARTY-NOTICES.txt"
+    DMGBUILD="$ROOT/dist/.dmgbuild"
+    if ! "$DMGBUILD/bin/python3" -c "import dmgbuild" 2>/dev/null; then
+      python3 -m venv "$DMGBUILD"
+      "$DMGBUILD/bin/python3" -m pip install --quiet --disable-pip-version-check "dmgbuild==1.6.5"
+    fi
     OUT="$ROOT/dist/StudioSim-macOS.dmg"
     rm -f "$OUT"
-    hdiutil create -volname "StudioSim $VERSION" -srcfolder "$STAGE" -fs HFS+ -format UDZO -imagekey zlib-level=9 -ov "$OUT" >/dev/null
+    "$DMGBUILD/bin/python3" -m dmgbuild -s "$ROOT/tools/dmg_settings.py" -D app="$STAGE/StudioSim.app" "StudioSim $VERSION" "$OUT" >/dev/null
     rm -rf "$STAGE"
     ;;
   MINGW*|MSYS*|CYGWIN*)
