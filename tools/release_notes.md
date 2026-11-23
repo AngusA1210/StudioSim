@@ -1,5 +1,9 @@
 StudioSim {{version}}: a room of instruments, heard from where you stand.
 
+{{channel}}
+
+{{changes}}
+
 ## Download
 
 - **macOS** (Apple silicon, macOS 12 or later): `StudioSim-macOS.dmg`. Open it and drag StudioSim to Applications.
@@ -22,4 +26,6 @@ On Windows this release uses Windows' own audio (WASAPI), which works with every
 release.
 
 `SHA256SUMS.txt` has each file's checksum. StudioSim is free software under the GNU GPL, version 3; the licences of
-what it is built with are in `THIRD-PARTY-NOTICES.txt` beside the app.
+what it is built with are in `THIRD-PARTY-NOTICES.txt`, beside the app on Windows and inside it on a Mac (Show Package
+Contents, then Contents › Resources). Every version, and what each brought, is in `CHANGELOG.md` and on the website's
+Releases page.

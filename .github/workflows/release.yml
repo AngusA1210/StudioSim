@@ -1,8 +1,9 @@
 # A release: StudioSim made into its installers on GitHub's own computers (a Mac disk image on an Apple silicon Mac, a
-# Windows installer on Windows), checked, and published as a GitHub release, the website's download buttons always
-# leading to the latest (docs/website.md). Started by pushing a tag of the version in game/project.godot:
+# Windows installer on Windows), checked, and published as a GitHub release, its notes its entry in CHANGELOG.md. A
+# version marked Preview there is published as a pre-release (the website's Latest), one marked Stable as the latest
+# release (its Stable). Started by pushing a tag of the version in game/project.godot (docs/building.md):
 #
-#   git tag v0.1.0 && git push origin v0.1.0
+#   git tag v0.2.0 && git push origin v0.2.0
 #
 # Run by hand (Actions › Release › Run workflow), it makes the installers without publishing them, to try.
 
@@ -36,6 +37,7 @@ jobs:
             echo "The tag $GITHUB_REF_NAME isn't v$version, the version in game/project.godot"
             exit 1
           fi
+          python3 tools/release_notes.py "$version" > /dev/null  # (its entry in CHANGELOG.md, there before anything is built)
 
   mac:
     needs: version
@@ -180,7 +182,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.version.outputs.version }}
         run: |
-          sed -e "s/{{version}}/$VERSION/g" tools/release_notes.md > notes.md
+          python3 tools/release_notes.py "$VERSION" > notes.md
           (cd out && sha256sum StudioSim-macOS.dmg StudioSim-Windows-Setup.exe > SHA256SUMS.txt && cat SHA256SUMS.txt)
+          if [ "$(python3 tools/release_notes.py "$VERSION" --channel)" = "Preview" ]; then
+            how=(--prerelease --latest=false)  # (GitHub's latest release, and the README's link to it, stay the Stable one)
+          else
+            how=(--latest)
+          fi
           gh release create "$GITHUB_REF_NAME" out/StudioSim-macOS.dmg out/StudioSim-Windows-Setup.exe out/SHA256SUMS.txt \
-            --title "StudioSim $VERSION" --notes-file notes.md --latest
+            --title "StudioSim $VERSION" --notes-file notes.md "${how[@]}"

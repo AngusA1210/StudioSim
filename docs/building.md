@@ -85,18 +85,31 @@ What to know about the app:
   programs folder, with a Start menu entry, a desktop shortcut, and an uninstaller in Settings › Apps (which leaves
   their rooms). The licence and the notices are installed beside it.
 
-Releases are made on GitHub's computers, by `.github/workflows/release.yml`. Change `config/version` in
-`game/project.godot`, commit, then push a tag of it:
+Releases are made on GitHub's computers, by `.github/workflows/release.yml`. For a new version:
 
-```bash
-git tag v0.1.1 && git push origin v0.1.1
-```
+1. Change `config/version` in `game/project.godot`.
+2. Add its entry at the top of `CHANGELOG.md`: `## 0.3.0`, a blank line, then `**Preview** · 30 November 2026` (or
+   `**Stable**`), then what it brought. A Preview is offered on the website as **Latest**, beside the Stable version;
+   a Stable one becomes the **Stable** download.
+3. Commit, and push the tag alone, not `main` yet:
 
-The workflow builds both apps from scratch (with Godot's own release, checked against its checksums), checks that
-the Mac one is for Apple silicon and signed and that the Windows one needs no runtime a PC mightn't have, packs them,
-and publishes a release with both files, their checksums, and the notes in `tools/release_notes.md`. The website's
-download buttons always lead to the latest. Run by hand from the Actions tab, it makes the files without publishing
-them, to try.
+   ```bash
+   git tag v0.3.0 && git push origin v0.3.0
+   ```
+
+4. When the release is published (Actions › Release, about half an hour), push `main`: the website then offers the
+   new version, its files already there.
+
+The workflow fails at once if `CHANGELOG.md` has no entry for the version. It builds both apps from scratch (with
+Godot's own release, checked against its checksums), checks that the Mac one is for Apple silicon and signed and that
+the Windows one needs no runtime a PC mightn't have, packs them, and publishes a release with both files, their
+checksums, and notes made by `tools/release_notes.py` (`tools/release_notes.md`, with the version's entry). A Preview is
+published as a pre-release, so GitHub's latest release stays the Stable one. Run by hand from the Actions tab, it
+makes the files without publishing them, to try.
+
+To make a Preview the Stable version once it has been played enough, change its `**Preview**` to `**Stable**` in
+`CHANGELOG.md` and push `main` (the website follows), and on GitHub edit its release: untick **Set as a pre-release**
+and tick **Set as the latest release**.
 
 Use **wired** headphones. Bluetooth headphones add 150–250 ms of delay that no software can remove; the
 "Output latency" readout shows what your current device adds.

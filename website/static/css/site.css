@@ -651,6 +651,137 @@ a.card:hover {
   padding-top: 12px;
 }
 
+/* ── The versions to download, and every release ────────────────────────────────────────────── */
+
+.channels-section {
+  padding-top: clamp(28px, 4vw, 44px);
+}
+
+.channels {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 20px;
+}
+
+.channels.two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.channel-card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 26px 28px 24px;
+}
+
+.channel-card.stable {
+  border-color: rgba(125, 227, 209, 0.4);
+}
+
+.channel-card h2 {
+  margin-bottom: 0.2em;
+}
+
+.channel-card .needs {
+  color: var(--dim);
+  font-size: 0.95rem;
+}
+
+.channel-tag {
+  display: inline-block;
+  margin: 0 0 0.9em;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.channel-card.latest .channel-tag {
+  color: var(--warm);
+}
+
+.channel-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 8px 0 18px;
+}
+
+.releases {
+  padding-block: clamp(36px, 5vw, 60px) clamp(48px, 7vw, 88px);
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.release {
+  background: var(--bg-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: clamp(22px, 3vw, 32px);
+  max-width: 52em;
+}
+
+.release-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 14px;
+  margin-bottom: 1em;
+}
+
+.release-head h2 {
+  margin: 0;
+}
+
+.release-marks {
+  display: flex;
+  gap: 6px;
+}
+
+.release-mark {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 2px 9px;
+  border-radius: 99px;
+  border: 1px solid var(--line-strong);
+  color: var(--dim);
+}
+
+.release-mark.stable {
+  color: var(--accent);
+  border-color: rgba(125, 227, 209, 0.45);
+  background: rgba(125, 227, 209, 0.08);
+}
+
+.release-mark.latest {
+  color: var(--warm);
+  border-color: rgba(255, 156, 122, 0.45);
+  background: rgba(255, 156, 122, 0.08);
+}
+
+.release-date {
+  color: var(--dim);
+  font-size: 0.92rem;
+  margin: 0;
+  flex-basis: 100%;
+}
+
+.release .prose h3 {
+  margin-top: 1.4em;
+}
+
+.release-files {
+  margin: 1.2em 0 0;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+  font-size: 0.92rem;
+  color: var(--dim);
+}
+
 /* ── Long text: the about page, and the guide ───────────────────────────────────────────────── */
 
 .narrow {
@@ -1125,6 +1256,7 @@ a.card:hover {
   .cards.small,
   .duo,
   .downloads,
+  .channels.two,
   .guide-list,
   .turn,
   .footer-grid {

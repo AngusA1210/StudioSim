@@ -25,11 +25,32 @@ OUT = HERE / "_site"
 # Where the site is published ("https://studiosim.example"), for the addresses a page gives of itself (its canonical
 # link, its picture when it is shared, the sitemap). Left empty, those are left out. Set it where the site is built.
 SITE_URL = os.environ.get("SITE_URL", "").rstrip("/")
-# The source, and the downloads: always the latest release's (made by .github/workflows/release.yml, under these names),
-# its version the one in the game's project file.
+# The source, and the downloads: each release's files (made by .github/workflows/release.yml, under these names), for
+# the versions CHANGELOG.md lists. Its newest is Latest; its newest marked Stable is Stable.
 SOURCE_URL = "https://github.com/AngusA1210/StudioSim"
-LATEST = SOURCE_URL + "/releases/latest/download/"
-VERSION = re.search(r'^config/version="([^"]*)"', (HERE.parent / "game" / "project.godot").read_text(encoding="utf-8"), re.M).group(1)
+CHANGELOG = HERE.parent / "CHANGELOG.md"
+
+
+def download(version, name):
+    return "%s/releases/download/v%s/%s" % (SOURCE_URL, version, name)
+
+
+def read_releases():
+    """CHANGELOG.md's versions, the newest first: each one's version, channel (Stable or Preview), date, and what it
+    brought (the Markdown under its heading, after the line saying its channel and date)."""
+    text = CHANGELOG.read_text(encoding="utf-8")
+    releases = []
+    for m in re.finditer(r"^## (\d+\.\d+\.\d+)\n\n\*\*(Stable|Preview)\*\* · ([^\n]+)\n(.*?)(?=^## |\Z)", text, re.M | re.S):
+        releases.append({"version": m.group(1), "channel": m.group(2), "date": m.group(3).strip(), "notes": m.group(4).strip()})
+    if not releases or not any(r["channel"] == "Stable" for r in releases):
+        sys.exit("CHANGELOG.md: no versions in it, or none marked Stable (see its first lines)")
+    return releases
+
+
+RELEASES = read_releases()
+NEWEST = RELEASES[0]
+STABLE = next(r for r in RELEASES if r["channel"] == "Stable")
+VERSION = STABLE["version"]
 
 # The guide: the docs it is made of, in order, in two groups. [file's name without .md, its name in the list, what it
 # covers (the page's description, for search engines and where it is shared)]
@@ -279,11 +300,71 @@ def page_html(base, relative, about, content):
                  '<meta name="twitter:card" content="summary_large_image">') % (
             SITE_URL, address, SITE_URL, address, SITE_URL, about.get("image", "room-overview.jpg"))
     values = {"title": html.escape(about["title"], quote=False), "description": html.escape(about["description"].replace("{{version}}", VERSION), quote=True), "nav": about.get("nav", ""), "root": root,
-              "version": VERSION, "source": SOURCE_URL, "mac_dmg": LATEST + "StudioSim-macOS.dmg",
-              "windows_setup": LATEST + "StudioSim-Windows-Setup.exe", "releases": SOURCE_URL + "/releases",
+              "version": VERSION, "latest_version": NEWEST["version"], "source": SOURCE_URL,
+              "versions": "Version %s" % VERSION if NEWEST is STABLE else "Stable %s and Latest %s" % (VERSION, NEWEST["version"]),
+              "mac_dmg": download(VERSION, "StudioSim-macOS.dmg"), "windows_setup": download(VERSION, "StudioSim-Windows-Setup.exe"),
+              "releases": SOURCE_URL + "/releases", "channels": channels_html(root), "history": history_html(root),
               "share": share, "content": content, "class": about.get("class", "page")}
     values["content"] = fill(content, values) if about.get("fill", "yes") == "yes" else content
     return fill(base, values)
+
+
+def release_id(version):
+    return "v" + version.replace(".", "-")
+
+
+def channels_html(root):
+    """The versions to download: Stable, and Latest beside it while a newer Preview is out (one card while they're one)."""
+    cards = [(STABLE, "Stable", "The one to use for playing and recording.")]
+    if NEWEST is not STABLE:
+        cards.append((NEWEST, "Latest", "The newest features first, before they have been played as long as Stable's."))
+    out = ['<div class="channels%s">' % (" two" if len(cards) > 1 else "")]
+    for release, name, about in cards:
+        version = release["version"]
+        out.append('''<div class="channel-card %s">
+  <p class="channel-tag">%s</p>
+  <h2>StudioSim %s</h2>
+  <p class="needs">%s · %s</p>
+  <div class="channel-buttons">
+    <a class="button%s" href="%s">Download for Mac</a>
+    <a class="button%s" href="%s">Download for Windows</a>
+  </div>
+  <a class="more" href="%sreleases.html#%s">What's in %s</a>
+</div>''' % (name.lower(), name, version, html.escape(release["date"]), about, "" if name == "Stable" else " ghost",
+                  download(version, "StudioSim-macOS.dmg"), "" if name == "Stable" else " ghost", download(version, "StudioSim-Windows-Setup.exe"),
+                  root, release_id(version), version))
+    out.append("</div>")
+    return "\n".join(out)
+
+
+def history_html(root):
+    """Every version, the newest first: its channel, its date, what it brought, and its files."""
+    reader = Markdown(lambda address: address)
+    out = []
+    for release in RELEASES:
+        version = release["version"]
+        marks = []
+        if release is NEWEST and NEWEST is not STABLE:
+            marks.append('<span class="release-mark latest">Latest</span>')
+        if release is STABLE:
+            marks.append('<span class="release-mark stable">Stable</span>')
+        elif release["channel"] == "Preview":
+            marks.append('<span class="release-mark preview">Preview</span>')
+        try:
+            notes = reader.render(release["notes"])
+        except ValueError as problem:
+            sys.exit("CHANGELOG.md, %s: %s" % (version, problem))
+        out.append('''<article class="release" id="%s">
+  <header class="release-head">
+    <h2>StudioSim %s</h2>
+    <div class="release-marks">%s</div>
+    <p class="release-date">%s</p>
+  </header>
+  <div class="prose">%s</div>
+  <p class="release-files"><a href="%s">macOS disk image</a> · <a href="%s">Windows installer</a> · <a href="%s/releases/tag/v%s" rel="noopener">On GitHub</a>, with its checksums</p>
+</article>''' % (release_id(version), version, "".join(marks), html.escape(release["date"]), notes, download(version, "StudioSim-macOS.dmg"),
+                  download(version, "StudioSim-Windows-Setup.exe"), SOURCE_URL, version))
+    return "\n".join(out)
 
 
 def build_guide(base):

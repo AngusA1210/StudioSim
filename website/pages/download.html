@@ -1,22 +1,25 @@
 title: Download · StudioSim
-description: Download StudioSim {{version}}, free, for macOS (Apple silicon) and Windows: a disk image for the Mac, an installer for Windows.
+description: Download StudioSim, free, for macOS (Apple silicon) and Windows: the Stable version, {{version}}, or the Latest, with the newest features first.
 nav: download
 class: page
 ---
 <section class="page-head">
   <div class="wrap">
-    <p class="eyebrow">Download · Version {{version}}</p>
+    <p class="eyebrow">Download</p>
     <h1>Free for macOS and Windows</h1>
-    <p class="lede">Everything StudioSim needs comes with it: there is nothing else to install. Earlier versions, and
-    what changed in each, are on the <a href="{{releases}}" rel="noopener">releases page</a>.</p>
+    <p class="lede">Everything StudioSim needs comes with it: there is nothing else to install. Every version, and
+    what each brought, is on the <a href="{{root}}releases.html">Releases</a> page.</p>
   </div>
+</section>
+
+<section class="wrap channels-section">
+{{channels}}
 </section>
 
 <section class="wrap downloads">
   <div class="download-card">
     <h2>macOS</h2>
     <p class="needs">A Mac with Apple silicon (M1 or later) · macOS 12 or later</p>
-    <a class="button" href="{{mac_dmg}}">Download for Mac</a>
     <ol class="steps">
       <li>Open <strong>StudioSim-macOS.dmg</strong> and drag StudioSim onto <strong>Applications</strong>.</li>
       <li>Open StudioSim from Applications. The first time, macOS says it can't check it: click <strong>Done</strong>.</li>
@@ -29,7 +32,6 @@ class: page
   <div class="download-card">
     <h2>Windows</h2>
     <p class="needs">A 64-bit PC · Windows 10 or 11</p>
-    <a class="button" href="{{windows_setup}}">Download for Windows</a>
     <ol class="steps">
       <li>Run <strong>StudioSim-Windows-Setup.exe</strong>.</li>
       <li>If Windows says it protected your PC, click <strong>More info</strong>, then <strong>Run anyway</strong>.</li>
@@ -58,8 +60,8 @@ class: page
 <section class="wrap prose narrow">
   <h2>Why the warnings</h2>
   <p>Apple and Microsoft warn about any app that isn't signed with a certificate bought from them. StudioSim isn't,
-  yet: the step above is needed once, the first time. Each release's checksums are on the
-  <a href="{{releases}}" rel="noopener">releases page</a>, to check a download against.</p>
+  yet: the step above is needed once, the first time. Each release's checksums are on
+  <a href="{{releases}}" rel="noopener">GitHub</a>, to check a download against.</p>
   <h2>New to it?</h2>
   <p>Start with <strong>Tutorial</strong> on the title screen: it takes you through a room of your own a step at a
   time. Then the <a href="{{root}}guide/index.html">guide</a> has the rest.</p>

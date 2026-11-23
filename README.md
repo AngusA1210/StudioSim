@@ -24,9 +24,11 @@ It is also a workstation: rooms can be recorded, edited and mixed the way a DAW 
 
 ## Download
 
-The latest version, for macOS (Apple silicon) and Windows, is on the
+The Stable version, for macOS (Apple silicon) and Windows, is on the
 [releases page](https://github.com/AngusA1210/StudioSim/releases/latest): a disk image for the Mac, an installer for
-Windows. Neither is signed yet, so each system warns once, the first time (the release notes say what to click).
+Windows. A newer Preview, when there is one, is listed there too, marked Pre-release. Neither is signed yet, so each
+system warns once, the first time (the release notes say what to click). What each version brought is in
+[CHANGELOG.md](CHANGELOG.md).
 
 ## Build and run
 
@@ -50,7 +52,7 @@ recording, mixing, room acoustics, playing together, making the app, and how the
 
 ## Roadmap
 
-StudioSim 0.1.0 is out. Next, in this order:
+StudioSim 0.1.0 is out, and 0.2.0 as a preview. Next, in this order:
 
 1. **Demonstration videos** of what it does, for the website and to show it.
 2. **ASIO in the Windows app**, once Steinberg's ASIO licence is signed.

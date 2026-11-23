@@ -79,11 +79,13 @@ build's **watch paths** (the same settings page) to `website/*`, `docs/*` and `w
 
 ## The downloads
 
-The download page's buttons lead to the latest GitHub release's files
-(`https://github.com/AngusA1210/StudioSim/releases/latest/download/StudioSim-macOS.dmg`, and
-`StudioSim-Windows-Setup.exe`), so they follow each new release without the site changing; the version it names is
-the one in `game/project.godot`. Releases are made by `.github/workflows/release.yml` (see
-[Making a release](building.md#making-a-release)).
+Every version is in `CHANGELOG.md`, at the top of the repository, the newest first, each marked **Stable** or
+**Preview** with its date and what it brought. The site is built from it: the **Releases** page lists them all, and
+the download page (and the Releases page's top) offers two versions, **Stable**, the newest marked Stable, and
+**Latest**, the newest of all, while that is a Preview (while they are one, there is the one card). Each button leads
+to that version's file on GitHub (`https://github.com/AngusA1210/StudioSim/releases/download/v0.2.0/StudioSim-macOS.dmg`,
+and `StudioSim-Windows-Setup.exe`). Releases are made by `.github/workflows/release.yml`, their notes on GitHub made
+from the same entry (see [Making a release](building.md#making-a-release)).
 
 ## Later
 
