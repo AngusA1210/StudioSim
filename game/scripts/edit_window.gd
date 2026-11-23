@@ -15,11 +15,12 @@ extends CanvasLayer
 ## (or Cmd-=) goes over to the mix window. It docks along the bottom of the screen, the room in view above it, and you
 ## can walk about while it is open.
 
+const UI := preload("res://scripts/ui.gd")
 const TimelineView := preload("res://scripts/timeline_view.gd")
 const MidiEditor := preload("res://scripts/midi_editor.gd")
 const Hints := preload("res://scripts/hints.gd")
-const DIM := Color(0.62, 0.65, 0.74)
-const RECORD_RED := Color(1.0, 0.3, 0.28)
+const DIM := UI.DIM
+const RECORD_RED := UI.RECORD
 
 var app
 var timeline
@@ -308,7 +309,7 @@ func _process(_delta: float) -> void:
 	_clock.text = clock_text(at)
 	_close.text = "Close"
 	_play.text = "■  Stop" if timeline.playing else "▶  Play"
-	_record.add_theme_color_override("font_color", RECORD_RED if timeline.recording else Color(0.9, 0.6, 0.58))
+	_record.add_theme_color_override("font_color", RECORD_RED if timeline.recording else Color(RECORD_RED, 0.8))
 	var counting: int = timeline.counting_in()
 	var loop_mark := "⟳" if app.settings.loop_record else ""
 	_record.text = "●%s  %s" % [loop_mark, {"count-in": "Count  %d" % counting, "pre-roll": "Pre-roll", "post-roll": "Post-roll",
@@ -332,24 +333,18 @@ func _build() -> void:
 	_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_root)
 	_panel = PanelContainer.new()
-	var style := StyleBoxFlat.new()
-	style.bg_color = Color(0.09, 0.095, 0.11, 0.97)
-	style.set_corner_radius_all(10)
-	style.set_border_width_all(1)
-	style.border_color = Color(1, 1, 1, 0.14)
-	style.set_content_margin_all(12)
-	_panel.add_theme_stylebox_override("panel", style)
+	_panel.add_theme_stylebox_override("panel", UI.window_style(16))
 	_root.add_child(_panel)
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", 8)
 	_panel.add_child(box)
 
 	var header := HBoxContainer.new()
-	header.add_theme_constant_override("separation", 8)
+	header.add_theme_constant_override("separation", 4)
 	box.add_child(header)
 	var title := Label.new()
 	title.text = "Edit"
-	title.add_theme_font_size_override("font_size", 20)
+	UI.title_label(title)
 	header.add_child(title)
 	_play = _button(header, "▶  Play", func() -> void: app.toggle_transport(), "Play from the playhead, or stop and go back to where it started (Space)")
 	_play.custom_minimum_size.x = 96
@@ -359,10 +354,12 @@ func _build() -> void:
 	_record.custom_minimum_size.x = 120
 	_loop = _button(header, "⟳  Loop", func() -> void: timeline.set_loop(not timeline.loop_on), "Loop playback round the range marked on the ruler (drag along the ruler to mark another, or press L to loop the chosen clip)")
 	_loop.toggle_mode = true
+	UI.lit_button(_loop, UI.ACCENT)
 	_follow = _button(header, "↦  Follow", func() -> void: app.toggle_follow(), func() -> String:
 		return "Insertion follows playback (%s): stopping leaves the playhead where the music stopped, rather than going back to where it started" % \
 			app.bindings.label("follow"))
 	_follow.toggle_mode = true
+	UI.lit_button(_follow, UI.ACCENT)
 	_options = MenuButton.new()
 	_options.text = "Options ▾"
 	_options.flat = false
@@ -390,6 +387,7 @@ func _build() -> void:
 	_automation = _button(header, "Auto", func() -> void: show_automation(not view.show_automation),
 		"Automation (A): a lane under each track for its volume, mute or sustain pedal, its points to draw and drag, and its mode")
 	_automation.toggle_mode = true
+	UI.lit_button(_automation, UI.ACCENT)
 	var grid_label := Label.new()
 	grid_label.text = "Grid"
 	grid_label.add_theme_color_override("font_color", DIM)
@@ -417,6 +415,7 @@ func _build() -> void:
 		close()
 		app.mixer.open(), "The mix window (Tab, or Cmd-=)")
 	_close = _button(header, "Close", close, func() -> String: return "Close the edit window (%s)" % app.bindings.label("edit_window"))
+	UI.ghost_button(_close)
 
 	_notes_bar = HBoxContainer.new()
 	_notes_bar.add_theme_constant_override("separation", 10)
@@ -445,6 +444,7 @@ func _button(parent: Control, text: String, on_pressed: Callable, hint) -> Butto
 	var button := Button.new()
 	button.text = text
 	button.focus_mode = Control.FOCUS_NONE
+	UI.quiet_button(button)  # (the bar's buttons quiet; its switches light when on)
 	button.pressed.connect(on_pressed)
 	if not (hint is String and hint == ""):
 		Hints.give(button, hint)

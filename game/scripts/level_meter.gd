@@ -11,9 +11,9 @@ const AMBER_DB := -12.0
 const RED_DB := -3.0
 const HOLD_SECONDS := 1.5
 const FALL_DB_PER_SECOND := 40.0
-const GREEN := Color(0.36, 0.83, 0.55)
-const AMBER := Color(0.95, 0.77, 0.3)
-const RED := Color(1.0, 0.4, 0.36)
+const GREEN := Color("40d6bf")  # (the website's: teal-green, amber near the top, red at full scale)
+const AMBER := Color("ffd14a")
+const RED := Color(1.0, 0.42, 0.36)
 const SCALE_WIDTH := 20.0
 const SCALE_MARKS := [0.0, -6.0, -12.0, -24.0, -40.0, -60.0]
 

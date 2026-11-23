@@ -23,6 +23,7 @@ extends Node3D
 ##   --relay                  joining by a code, by way of the session server's relay from the first (for the checks)
 
 const Instrument := preload("res://scripts/instrument.gd")
+const UI := preload("res://scripts/ui.gd")
 const Folder := preload("res://scripts/folder.gd")
 const DESKTOP_LEFT := 100  # desktop audio's inputs, past the interface's (the audio core's): its left, its right,
 const DESKTOP_RIGHT := 101  # and the two together
@@ -153,6 +154,7 @@ var delays := {}
 
 
 func _ready() -> void:
+	ThemeDB.get_default_theme().merge_with(UI.theme())  # every control's look, as the website's (ui.gd), menus and pop-ups too
 	_parse_options()
 	settings.persist = not options.has("silent")
 	if settings.persist:
@@ -301,6 +303,9 @@ func _ready() -> void:
 		instrument_menu.open()
 	if options.has("mixer"):
 		mixer.open()
+	if options.has("edit"):  # --edit: the room made a Record room and its edit window open (screenshots)
+		timeline.set_mode("record")
+		edit_window.open()
 	if options.has("view"):  # --view=kind,metres,degrees round from its front,height: the free camera on it (screenshots)
 		var v: PackedStringArray = options.view.split(",")
 		var seen = find_instrument(v[0])
@@ -316,11 +321,14 @@ func _ready() -> void:
 			player.fly_pitch = asin(clampf(look.y, -1.0, 1.0))
 			player.fly_camera.global_position = from
 			player._apply_look()
-	if options.has("amp"):  # --amp=guitar_stack: an amp's panel open (for screenshots)
-		var amp = find_instrument(options.amp)
+	if options.has("amp"):  # --amp=guitar_stack[,pedal,…,+pedal in its loop]: an amp's panel open (for screenshots)
+		var parts: PackedStringArray = options.amp.split(",")
+		var amp = find_instrument(parts[0])
 		if amp == null:
-			amp = add_instrument(options.amp, Vector3(0.0, 0.0, -2.0))
+			amp = add_instrument(parts[0], Vector3(0.0, 0.0, -2.0))
 		if amp != null:
+			for pedal in parts.slice(1):
+				add_pedal(amp, pedal.trim_prefix("+"), -1, pedal.begins_with("+"))
 			_sit_at(amp.kind)
 			amp_panel.open(amp)
 	if options.has("mic"):  # --mic=kind[,capsule]: a microphone's panel open, pointed at the first instrument (screenshots)

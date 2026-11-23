@@ -15,6 +15,7 @@ extends CanvasLayer
 ## stereo mic's sets up its pair (XY, ORTF, a spaced pair, Blumlein, mid-side: a spaced pair's spacing, a mid-side
 ## pair's width), placed and pointed as one. Its pan is the mix window's, with the rest of the mix.
 
+const UI := preload("res://scripts/ui.gd")
 const Hints := preload("res://scripts/hints.gd")
 const LevelMeter := preload("res://scripts/level_meter.gd")
 const MicGraph := preload("res://scripts/mic_graph.gd")
@@ -91,7 +92,7 @@ func is_open() -> bool:
 
 
 func open(mic, from_mixer := false) -> void:
-	_close_button.text = "Close  (%s)" % app.bindings.label("edit")
+	UI.keyed(_close_button, "Close", app.bindings.label("edit"))
 	inst = mic
 	_back_to_mixer = from_mixer
 	app.player.release_keys()
@@ -629,12 +630,7 @@ func _build() -> void:
 		else:
 			_capsule_button = button
 	_panel = PanelContainer.new()
-	var style := StyleBoxFlat.new()
-	style.bg_color = Color(0.07, 0.08, 0.11, 0.96)
-	style.set_corner_radius_all(10)
-	style.set_border_width_all(1)
-	style.border_color = Color(1, 1, 1, 0.14)
-	style.set_content_margin_all(14)
+	var style := UI.window_style(14)
 	_panel.add_theme_stylebox_override("panel", style)
 	_panel.set_anchors_preset(Control.PRESET_RIGHT_WIDE)
 	_panel.offset_left = -WIDTH - 12
@@ -648,12 +644,13 @@ func _build() -> void:
 	var header := HBoxContainer.new()
 	outer.add_child(header)
 	_title = Label.new()
-	_title.add_theme_font_size_override("font_size", 20)
+	UI.title_label(_title, 20)
 	_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_title.clip_text = true
 	_title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	header.add_child(_title)
 	_close_button = Button.new()
+	UI.ghost_button(_close_button)
 	_close_button.pressed.connect(close)
 	header.add_child(_close_button)
 	var scroll := ScrollContainer.new()

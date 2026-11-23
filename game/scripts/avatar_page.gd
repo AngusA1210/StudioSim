@@ -4,6 +4,7 @@ extends CanvasLayer
 ## them as it will stand in the room, the others seeing it so. Set here, before you go into a room, rather than in the
 ## room's menu, as a player joining others would be: nobody grows taller in the middle of a session.
 
+const UI := preload("res://scripts/ui.gd")
 const Hints := preload("res://scripts/hints.gd")
 const Avatar := preload("res://scripts/avatar.gd")
 const Player := preload("res://scripts/player.gd")
@@ -134,12 +135,7 @@ func _build() -> void:
 	center.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_root.add_child(center)
 	_panel = PanelContainer.new()
-	var style := StyleBoxFlat.new()
-	style.bg_color = Color(0.07, 0.08, 0.11, 0.98)
-	style.set_corner_radius_all(14)
-	style.set_border_width_all(1)
-	style.border_color = Color(1, 1, 1, 0.14)
-	style.set_content_margin_all(18)
+	var style := UI.window_style(18)
 	_panel.add_theme_stylebox_override("panel", style)
 	center.add_child(_panel)
 	var box := VBoxContainer.new()
@@ -150,7 +146,7 @@ func _build() -> void:
 	box.add_child(header)
 	var title := Label.new()
 	title.text = "Avatar customization"
-	title.add_theme_font_size_override("font_size", 22)
+	UI.title_label(title, 22)
 	header.add_child(title)
 	var spacer := Control.new()
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL

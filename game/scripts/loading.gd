@@ -4,6 +4,7 @@ extends CanvasLayer
 ## screen would only stand still. session.gd steps the room in a frame at a time and says how far it is; nothing else
 ## on the screen takes the mouse or the keys meanwhile.
 
+const UI := preload("res://scripts/ui.gd")
 const ACCENT := Color(0.49, 0.89, 0.82)
 const DIM := Color(0.62, 0.65, 0.74)
 
@@ -80,7 +81,7 @@ func _build() -> void:
 	column.add_theme_constant_override("separation", 12)
 	panel.add_child(column)
 	_title = Label.new()
-	_title.add_theme_font_size_override("font_size", 20)
+	UI.title_label(_title, 20)
 	_title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	column.add_child(_title)
 	_bar = ProgressBar.new()

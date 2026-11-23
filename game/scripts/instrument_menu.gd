@@ -6,6 +6,7 @@ extends CanvasLayer
 ## microphones. Each comes in as it is made; a preset saved of one (an amp with its pedals and plug-ins, say) is loaded
 ## from its own window's Presets menu, once it is in the room.
 
+const UI := preload("res://scripts/ui.gd")
 const Catalog := preload("res://scripts/catalog.gd")
 const Hints := preload("res://scripts/hints.gd")
 const Models := preload("res://scripts/instrument_models.gd")
@@ -45,7 +46,7 @@ func is_open() -> bool:
 
 
 func open() -> void:
-	_close_button.text = "Close  (%s)" % app.bindings.label("add")
+	UI.keyed(_close_button, "Close", app.bindings.label("add"))
 	app.player.release_keys()
 	_root.visible = true
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
@@ -105,12 +106,7 @@ func _build() -> void:
 	_root.add_child(center)
 
 	_panel = PanelContainer.new()
-	var style := StyleBoxFlat.new()
-	style.bg_color = Color(0.07, 0.08, 0.11, 0.97)
-	style.set_corner_radius_all(14)
-	style.set_border_width_all(1)
-	style.border_color = Color(1, 1, 1, 0.14)
-	style.set_content_margin_all(18)
+	var style := UI.window_style(18)
 	_panel.add_theme_stylebox_override("panel", style)
 	center.add_child(_panel)
 	var outer := VBoxContainer.new()
@@ -121,12 +117,13 @@ func _build() -> void:
 	outer.add_child(header)
 	var title := Label.new()
 	title.text = "Add an instrument"
-	title.add_theme_font_size_override("font_size", 22)
+	UI.title_label(title, 22)
 	header.add_child(title)
 	var spacer := Control.new()
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header.add_child(spacer)
 	var close_button := Button.new()
+	UI.ghost_button(close_button)
 	_close_button = close_button
 	close_button.pressed.connect(close)
 	header.add_child(close_button)

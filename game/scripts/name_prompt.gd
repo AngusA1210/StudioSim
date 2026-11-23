@@ -2,6 +2,7 @@ extends CanvasLayer
 ## Asks for a name, for saving a template or a preset under: a box over everything else with the name to type, Save
 ## and Cancel. Enter saves, Esc cancels. While it is open the keys are for typing: the windows under it leave them be.
 
+const UI := preload("res://scripts/ui.gd")
 const DIM := Color(0.62, 0.65, 0.74)
 const WARN := Color(1.0, 0.61, 0.48)
 
@@ -80,12 +81,7 @@ func _build() -> void:
 	center.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_root.add_child(center)
 	var panel := PanelContainer.new()
-	var style := StyleBoxFlat.new()
-	style.bg_color = Color(0.08, 0.09, 0.12, 0.99)
-	style.set_corner_radius_all(12)
-	style.set_border_width_all(1)
-	style.border_color = Color(1, 1, 1, 0.18)
-	style.set_content_margin_all(18)
+	var style := UI.window_style(18)
 	panel.add_theme_stylebox_override("panel", style)
 	panel.custom_minimum_size.x = 420
 	center.add_child(panel)

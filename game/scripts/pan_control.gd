@@ -9,7 +9,7 @@ signal value_changed(value: float)  # -1 left to 1 right
 const SWEEP := PI * 0.75  # how far round it turns either way from the top
 
 var value := 0.0
-var ink := Color(0.55, 0.78, 1.0)
+var ink := Color("7de3d1")  # its arc: teal, as every knob's (ui.gd)
 var _dragging := false
 var _from := Vector2.ZERO
 var _from_value := 0.0
@@ -39,15 +39,15 @@ func _draw() -> void:
 	var radius := minf(size.y - 16.0, size.x) / 2.0 - 1.0
 	var centre := Vector2(size.x / 2.0, radius + 1.0)
 	var top := -PI / 2.0
-	draw_arc(centre, radius, top - SWEEP, top + SWEEP, 32, Color(1, 1, 1, 0.14), 2.0, true)  # its range
+	draw_arc(centre, radius, top - SWEEP, top + SWEEP, 32, Color(1, 1, 1, 0.1), 2.5, true)  # its range
 	var at := top + value * SWEEP
 	if absf(value) > 0.005:  # lit from the middle to where it is
 		draw_arc(centre, radius, minf(top, at), maxf(top, at), 24, Color(ink, 0.95 if _dragging else 0.8), 2.5, true)
-	draw_circle(centre, radius - 3.5, Color(0.08, 0.085, 0.1))
-	draw_arc(centre, radius - 3.5, 0, TAU, 24, Color(1, 1, 1, 0.22), 1.0, true)
-	draw_line(centre, centre + Vector2(cos(at), sin(at)) * (radius - 4.5), Color(0.93, 0.94, 0.97), 2.0, true)
+	draw_circle(centre, radius - 3.5, Color("090a0f"))
+	draw_arc(centre, radius - 3.5, 0, TAU, 24, Color(1, 1, 1, 0.16), 1.0, true)
+	draw_line(centre, centre + Vector2(cos(at), sin(at)) * (radius - 4.5), Color("eceef4"), 2.0, true)
 	draw_line(centre + Vector2(0, -radius - 1.0), centre + Vector2(0, -radius + 2.0), Color(1, 1, 1, 0.45), 1.0)  # the middle
-	draw_string(font, Vector2(0, size.y - 2.0), readout(value), HORIZONTAL_ALIGNMENT_CENTER, size.x, 11, Color(0.93, 0.94, 0.97))
+	draw_string(font, Vector2(0, size.y - 2.0), readout(value), HORIZONTAL_ALIGNMENT_CENTER, size.x, 11, Color("eceef4"))
 
 
 func _gui_input(event: InputEvent) -> void:

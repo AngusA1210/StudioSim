@@ -3,6 +3,7 @@ extends CanvasLayer
 ## with the tempo and the metronome click along the top. The music keeps playing while it's open, so every change
 ## is heard on the next time round. While it's open, a MIDI controller plays the instrument being edited.
 
+const UI := preload("res://scripts/ui.gd")
 const PatternGrid := preload("res://scripts/pattern_grid.gd")
 
 const DIM := Color(0.62, 0.65, 0.74)
@@ -69,7 +70,7 @@ func is_open() -> bool:
 
 ## Opens the editor on an instrument's pattern, at the bar that is playing (or `at_bar`, counted from 0).
 func open(instrument, at_bar := -1, from_mixer := false) -> void:
-	_close_button.text = "Close  (%s)" % app.bindings.label("edit")
+	UI.keyed(_close_button, "Close", app.bindings.label("edit"))
 	if instrument == null or not instrument.playable:
 		return
 	_back_to_mixer = from_mixer
@@ -165,12 +166,7 @@ func _build() -> void:
 	_root.add_child(center)
 
 	_panel = PanelContainer.new()
-	var style := StyleBoxFlat.new()
-	style.bg_color = Color(0.07, 0.08, 0.11, 0.97)
-	style.set_corner_radius_all(14)
-	style.set_border_width_all(1)
-	style.border_color = Color(1, 1, 1, 0.14)
-	style.set_content_margin_all(18)
+	var style := UI.window_style(18)
 	_panel.add_theme_stylebox_override("panel", style)
 	center.add_child(_panel)
 	var box := VBoxContainer.new()
@@ -180,12 +176,13 @@ func _build() -> void:
 	var header := HBoxContainer.new()
 	box.add_child(header)
 	_title = Label.new()
-	_title.add_theme_font_size_override("font_size", 22)
+	UI.title_label(_title, 22)
 	header.add_child(_title)
 	var spacer := Control.new()
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header.add_child(spacer)
 	var close_button := Button.new()
+	UI.ghost_button(close_button)
 	_close_button = close_button
 	close_button.pressed.connect(close)
 	header.add_child(close_button)

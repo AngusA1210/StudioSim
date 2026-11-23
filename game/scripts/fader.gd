@@ -67,19 +67,25 @@ func _draw() -> void:
 	var slot_x := SCALE_WIDTH + CAP.x / 2 + 2
 	var top := CAP.y / 2
 	var travel := _travel_pixels()
-	draw_rect(Rect2(slot_x - 2, top, 4, travel), Color(0, 0, 0, 0.75))
+	draw_rect(Rect2(slot_x - 2, top, 4, travel), Color("090a0f"))
+	draw_rect(Rect2(slot_x - 2, top, 4, travel), Color(1, 1, 1, 0.09), false, 1.0)
 	for mark in MARKS:
 		if mark[0] > top_db:
 			continue
 		var y: float = top + (1.0 - _up(mark[0])) * travel
-		var ink := Color(1, 1, 1, 0.75 if mark[0] == 0.0 else 0.45)
+		var ink := Color("eceef4") if mark[0] == 0.0 else Color("9aa1b8")
 		draw_line(Vector2(SCALE_WIDTH - 2, y), Vector2(SCALE_WIDTH + 4, y), ink, 1.0)
 		draw_string(font, Vector2(0, y + 4), mark[1], HORIZONTAL_ALIGNMENT_RIGHT, SCALE_WIDTH - 4, 10, ink)
 	var cap_y := (1.0 - _up(value)) * travel
 	var cap := Rect2(Vector2(slot_x - CAP.x / 2, cap_y), CAP)
-	draw_rect(cap, Color(0.78, 0.8, 0.84) if not _dragging else Color(0.92, 0.94, 0.97))
-	draw_rect(Rect2(cap.position + Vector2(0, CAP.y / 2 - 1), Vector2(CAP.x, 2)), Color(0.1, 0.1, 0.12))
-	draw_rect(cap, Color(0, 0, 0, 0.6), false, 1.0)
+	var face := StyleBoxFlat.new()  # (a light cap, rounded, with a line across its middle)
+	face.bg_color = Color("d9dce6") if not _dragging else Color("ffffff")
+	face.set_corner_radius_all(4)
+	face.shadow_color = Color(0, 0, 0, 0.5)
+	face.shadow_size = 4
+	face.shadow_offset = Vector2(0, 2)
+	draw_style_box(face, cap)
+	draw_rect(Rect2(cap.position + Vector2(4, CAP.y / 2 - 1), Vector2(CAP.x - 8, 2)), Color("13161f"))
 
 
 func _gui_input(event: InputEvent) -> void:

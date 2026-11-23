@@ -18,15 +18,16 @@ extends CanvasLayer
 ## What each part does is said in the line at the foot of the panel, while the mouse is over it.
 
 const Knob := preload("res://scripts/knob.gd")
+const UI := preload("res://scripts/ui.gd")
 const Catalog := preload("res://scripts/catalog.gd")
 const Hints := preload("res://scripts/hints.gd")
 const PresetMenu := preload("res://scripts/preset_menu.gd")
 const LevelMeter := preload("res://scripts/level_meter.gd")
 const INPUT_LEVELS := ["instrument", "line"]  # (instrument.gd: AMP_INPUT_DB)
-const DIM := Color(0.62, 0.65, 0.74)
-const WARN := Color(1.0, 0.61, 0.48)
-const LED_ON := Color(1.0, 0.27, 0.22)
-const LED_OFF := Color(0.18, 0.08, 0.08)
+const DIM := UI.DIM
+const WARN := UI.WARM
+const LED_ON := Color(1.0, 0.42, 0.33)
+const LED_OFF := Color(0.16, 0.18, 0.24)
 const IN_TUNE := Color(0.4, 0.9, 0.5)
 const OUT_OF_TUNE := Color(1.0, 0.75, 0.3)
 const DROP_MARK := Color(0.55, 0.78, 1.0)
@@ -142,7 +143,7 @@ func is_open() -> bool:
 
 
 func open(amp, from_mixer := false) -> void:
-	_close_button.text = "Close  (%s)" % app.bindings.label("edit")
+	UI.keyed(_close_button, "Close", app.bindings.label("edit"))
 	_back_to_mixer = from_mixer
 	if inst != amp:
 		selected = 0 if not amp.pedals.is_empty() else -1
@@ -152,7 +153,7 @@ func open(amp, from_mixer := false) -> void:
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	_title.text = inst.display_name
 	_title.add_theme_color_override("font_color", inst.color.lightened(0.3))
-	_faceplate.border_color = inst.color
+	_faceplate.border_color = Color(inst.color, 0.45)
 	app.show_input_choice(_source, inst.input_channel)
 	_board_signature = "-"
 	_shown = ""
@@ -293,7 +294,10 @@ func _refresh_board() -> void:
 			tile.led.color = STATES.get(state, STATES.empty)[1] if state != "empty" else LED_OFF
 		else:
 			tile.led.color = LED_ON if pedal.on else LED_OFF
-		tile.style.border_color = Color.WHITE if i == selected else Color(0, 0, 0, 0.6)
+		var chosen: bool = i == selected  # (the one chosen: more of its colour, and edged in it)
+		tile.style.bg_color = Color(tile.color, 0.28 if chosen else 0.14)
+		tile.style.border_color = tile.color if chosen else Color(tile.color, 0.45)
+		tile.style.set_border_width_all(2 if chosen else 1)
 	if not get_viewport().gui_is_dragging() or not _board.get_global_rect().grow(8.0).has_point(_board.get_global_mouse_position()):
 		_drop_mark.visible = false
 	_add_button.visible = inst.pedals.size() < audio.get_max_pedals()
@@ -319,6 +323,7 @@ func _build_board() -> void:
 	_add_button = Button.new()
 	_add_button.text = "+ Pedal"
 	_add_button.custom_minimum_size = Vector2(80, 86)
+	_dashed(_add_button)
 	Hints.give(_add_button, "Add a pedal in front of the amp, at the end of the line: a tuner, drives, modulation, delay and reverb, a loop pedal, or one of your plug-ins")
 	_add_button.pressed.connect(_on_add_pressed.bind(false))
 	_add_button.set_drag_forwarding(Callable(), _pedal_can_drop, _pedal_drop)
@@ -332,13 +337,7 @@ func _build_board() -> void:
 	_board.add_child(_arrow())
 	# The effects loop: its pedals, and its own "+", in a box of their own.
 	_loop_box = PanelContainer.new()
-	var loop_style := StyleBoxFlat.new()
-	loop_style.bg_color = Color(0.15, 0.16, 0.19)
-	loop_style.set_corner_radius_all(6)
-	loop_style.set_border_width_all(1)
-	loop_style.border_color = Color(1, 1, 1, 0.12)
-	loop_style.set_content_margin_all(4)
-	_loop_box.add_theme_stylebox_override("panel", loop_style)
+	_loop_box.add_theme_stylebox_override("panel", UI.box(UI.WINDOW, UI.LINE_STRONG, 12, 6, 4))
 	_loop_box.set_drag_forwarding(Callable(), _pedal_can_drop, _pedal_drop)
 	Hints.give(_loop_box, "The amp's effects loop: sent out after the preamp, returned before the power amp. A delay or a reverb here repeats the amp's own sound, distortion and all")
 	_board.add_child(_loop_box)
@@ -355,6 +354,7 @@ func _build_board() -> void:
 	_loop_add = Button.new()
 	_loop_add.text = "+"
 	_loop_add.custom_minimum_size = Vector2(36, 78)
+	_dashed(_loop_add)
 	Hints.give(_loop_add, "Add a pedal to the effects loop, after the preamp")
 	_loop_add.pressed.connect(_on_add_pressed.bind(true))
 	_loop_add.set_drag_forwarding(Callable(), _pedal_can_drop, _pedal_drop)
@@ -387,24 +387,29 @@ func _pedal_tile(i: int) -> Control:
 	return tile.panel
 
 
-## A pedal on the board: its number (its key), its light, and its name, painted in its colour. `index` is where it
-## stands, or -1 for the picture of one being dragged.
+## A button for adding a pedal: a dashed outline, a place for one rather than one.
+func _dashed(button: Button) -> void:
+	for state in ["normal", "hover", "pressed", "disabled"]:
+		button.add_theme_stylebox_override(state, UI.box(Color(1, 1, 1, 0.06) if state == "hover" else Color(0, 0, 0, 0),
+			Color(1, 1, 1, 0.3 if state == "hover" else 0.18), UI.RADIUS, 6, 4))
+	button.add_theme_color_override("font_color", UI.TEXT)
+
+
+## A pedal on the board: its number (its key), its light, and its name, on a tint of its colour, edged in it. `index`
+## is where it stands, or -1 for the picture of one being dragged. Wide enough for the longest one-word name
+## (Compressor); two words wrap, and a plug-in's long name ends in "…".
 func _tile(number: String, name: String, color: Color, index: int) -> Dictionary:
 	var panel := PanelContainer.new()
-	var style := StyleBoxFlat.new()
-	style.bg_color = color.darkened(0.1)
-	style.set_corner_radius_all(6)
-	style.set_border_width_all(2)
-	style.set_content_margin_all(6)
+	var style := UI.box(Color(color, 0.14), Color(color, 0.45), UI.RADIUS, 8, 7)
 	panel.add_theme_stylebox_override("panel", style)
-	panel.custom_minimum_size = Vector2(82, 86)
+	panel.custom_minimum_size = Vector2(100, 86)
 	panel.mouse_filter = Control.MOUSE_FILTER_STOP
 	if index >= 0:  # not the picture of one being dragged
 		panel.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 		panel.gui_input.connect(_on_tile_input.bind(index))
 		panel.set_drag_forwarding(_pedal_drag.bind(index), _pedal_can_drop, _pedal_drop)
 		Hints.give(panel, _tile_hint.bind(index))
-	var ink := Color(0.08, 0.08, 0.1) if color.get_luminance() > 0.45 else Color(0.95, 0.95, 0.97)
+	var ink := UI.INK
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", 4)
 	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -416,31 +421,34 @@ func _tile(number: String, name: String, color: Color, index: int) -> Dictionary
 	key.text = number
 	key.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	key.add_theme_font_size_override("font_size", 11)
-	key.add_theme_color_override("font_color", Color(ink, 0.7))
+	key.add_theme_color_override("font_color", UI.DIM)
 	top.add_child(key)
 	var led := ColorRect.new()
-	led.custom_minimum_size = Vector2(10, 10)
+	led.custom_minimum_size = Vector2(9, 9)
 	led.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	led.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	top.add_child(led)
 	var label := Label.new()
 	label.text = name
-	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	label.autowrap_mode = TextServer.AUTOWRAP_WORD  # (at spaces alone: a word is never broken)
+	label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	label.max_lines_visible = 2
+	label.clip_text = true
+	label.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
 	label.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	label.custom_minimum_size.x = 70
-	label.add_theme_font_size_override("font_size", 11)
+	label.custom_minimum_size.x = 84
+	label.add_theme_font_size_override("font_size", 13)
+	label.add_theme_constant_override("line_spacing", -2)
 	label.add_theme_color_override("font_color", ink)
 	box.add_child(label)
-	return {"panel": panel, "style": style, "led": led, "label": label}
+	return {"panel": panel, "style": style, "led": led, "label": label, "color": color}
 
 
 func _arrow() -> Label:
 	var arrow := Label.new()
 	arrow.text = "›"
 	arrow.add_theme_color_override("font_color", DIM)
-	arrow.add_theme_font_size_override("font_size", 20)
+	arrow.add_theme_font_size_override("font_size", 18)
 	arrow.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	return arrow
 
@@ -459,9 +467,9 @@ func _gap(index: int, into_loop: bool) -> Button:
 	gap.add_theme_color_override("font_color", DIM)
 	gap.add_theme_color_override("font_hover_color", Color.WHITE)
 	gap.add_theme_color_override("font_disabled_color", DIM)
-	var lit := StyleBoxFlat.new()
-	lit.bg_color = Color(1, 1, 1, 0.12)
-	lit.set_corner_radius_all(5)
+	var lit := UI.box(Color(1, 1, 1, 0.08), Color(0, 0, 0, 0), 6, 0, 0)
+	gap.add_theme_stylebox_override("normal", StyleBoxEmpty.new())
+	gap.add_theme_stylebox_override("disabled", StyleBoxEmpty.new())
 	gap.add_theme_stylebox_override("hover", lit)
 	gap.add_theme_stylebox_override("pressed", lit)
 	Hints.give(gap, "Click to add a pedal here%s" % (", in the effects loop" if into_loop else ""))
@@ -628,7 +636,7 @@ func _refresh_pedal() -> void:
 func _refresh_footer() -> void:
 	var pedal: Dictionary = inst.pedals[selected]
 	_pedal_switch.visible = pedal.kind != "looper"
-	_pedal_switch.text = ("On   (%d)" if pedal.on else "Bypassed   (%d)") % (selected + 1)
+	UI.keyed(_pedal_switch, "On" if pedal.on else "Bypassed", str(selected + 1))
 	_pedal_switch.set_pressed_no_signal(pedal.on)
 	var armed := Time.get_ticks_msec() < _remove_armed_until
 	_remove.text = "Press again: the loop goes too" if armed else "Take off the board"
@@ -657,6 +665,7 @@ func _build_controls(kind: String) -> void:
 			knob.title = spec[0]
 			knob.resting = spec[2]  # where a double-click puts it back
 			knob.custom_minimum_size = Vector2(80, 82)
+			knob.arc = Catalog.PEDALS[kind].color.lightened(0.25)  # (a pedal's knobs lit in its colour)
 			knob.value_changed.connect(_on_pedal_knob_changed.bind(i))
 			_pedal_controls.add_child(knob)
 			_controls.append({"node": knob, "readout": spec[1]})
@@ -705,12 +714,12 @@ func _refresh_loop() -> void:
 		_progress.value = 0.0
 	var keys = app.bindings
 	_footswitch.text = "%s   (%s or %d)" % [look[2], keys.label("loop_switch"), selected + 1]
-	_stop.text = ("Play   (%s)" if state == "stopped" else "Stop   (%s)") % keys.label("loop_stop")
+	UI.keyed(_stop, "Play" if state == "stopped" else "Stop", keys.label("loop_stop"))
 	_stop.disabled = state in ["empty", "waiting"]
-	_undo.text = ("Redo   (%s)" if loop.get("can_redo", false) and not loop.get("can_undo", false) else "Undo   (%s)") % keys.label("loop_undo")
+	UI.keyed(_undo, "Redo" if loop.get("can_redo", false) and not loop.get("can_undo", false) else "Undo", keys.label("loop_undo"))
 	_undo.disabled = not (loop.get("can_undo", false) or loop.get("can_redo", false))
 	var armed := Time.get_ticks_msec() < _clear_armed_until
-	_clear.text = "Press again to clear" if armed else "Clear   (%s)" % keys.label("loop_clear")
+	UI.keyed(_clear, "Press again to clear" if armed else "Clear", "" if armed else keys.label("loop_clear"))
 	_clear.disabled = state in ["empty", "waiting"]
 	var controls: Array = inst.pedals[selected].controls
 	if not _level._dragging:
@@ -739,22 +748,16 @@ func _build() -> void:
 	center.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_root.add_child(center)
 	_panel = PanelContainer.new()
-	var style := StyleBoxFlat.new()
-	style.bg_color = Color(0.07, 0.08, 0.11, 0.97)
-	style.set_corner_radius_all(14)
-	style.set_border_width_all(1)
-	style.border_color = Color(1, 1, 1, 0.14)
-	style.set_content_margin_all(16)
-	_panel.add_theme_stylebox_override("panel", style)
+	_panel.add_theme_stylebox_override("panel", UI.window_style(20))
 	center.add_child(_panel)
 	var box := VBoxContainer.new()
-	box.add_theme_constant_override("separation", 10)
+	box.add_theme_constant_override("separation", 12)
 	_panel.add_child(box)
 
 	var header := HBoxContainer.new()
 	box.add_child(header)
 	_title = Label.new()
-	_title.add_theme_font_size_override("font_size", 22)
+	UI.title_label(_title)
 	_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header.add_child(_title)
 	_presets = Button.new()
@@ -768,6 +771,7 @@ func _build() -> void:
 	gap_before_close.custom_minimum_size.x = 8
 	header.add_child(gap_before_close)
 	var close_button := Button.new()
+	UI.ghost_button(close_button)
 	_close_button = close_button
 	close_button.pressed.connect(close)
 	header.add_child(close_button)
@@ -816,11 +820,7 @@ func _build() -> void:
 
 	# The amp's own panel: black, edged in its colour, with a row of knobs.
 	var plate := PanelContainer.new()
-	_faceplate = StyleBoxFlat.new()
-	_faceplate.bg_color = Color(0.05, 0.05, 0.06)
-	_faceplate.set_corner_radius_all(6)
-	_faceplate.set_border_width_all(2)
-	_faceplate.set_content_margin_all(8)
+	_faceplate = UI.box(UI.PANEL, UI.LINE_STRONG, UI.PANEL_RADIUS, 16, 12)
 	plate.add_theme_stylebox_override("panel", _faceplate)
 	box.add_child(plate)
 	var knobs := HBoxContainer.new()
@@ -884,7 +884,8 @@ func _build() -> void:
 	_board_toggle = Button.new()
 	_board_toggle.flat = true
 	_board_toggle.focus_mode = Control.FOCUS_NONE
-	_board_toggle.add_theme_font_size_override("font_size", 18)
+	_board_toggle.add_theme_font_size_override("font_size", 17)
+	_board_toggle.add_theme_font_override("font", UI.heading_font())
 	_board_toggle.pressed.connect(func() -> void: app.set_pedalboard_open(not app.settings.pedalboard_open))
 	Hints.give(_board_toggle, "Fold the pedalboard away, or bring it back. 1-8 stamp on the pedals either way")
 	board_heading.add_child(_board_toggle)
@@ -897,11 +898,7 @@ func _build() -> void:
 	_board_body.add_theme_constant_override("separation", 10)
 	box.add_child(_board_body)
 	var floor_panel := PanelContainer.new()
-	var floor_style := StyleBoxFlat.new()
-	floor_style.bg_color = Color(0.11, 0.115, 0.13)
-	floor_style.set_corner_radius_all(8)
-	floor_style.set_content_margin_all(8)
-	floor_panel.add_theme_stylebox_override("panel", floor_style)
+	floor_panel.add_theme_stylebox_override("panel", UI.panel_style(12))
 	_board_body.add_child(floor_panel)
 	var scroll := ScrollContainer.new()
 	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
@@ -919,13 +916,7 @@ func _build() -> void:
 
 	# What is selected on the board.
 	var page_panel := PanelContainer.new()
-	var page_style := StyleBoxFlat.new()
-	page_style.bg_color = Color(0.17, 0.18, 0.21)
-	page_style.set_corner_radius_all(10)
-	page_style.set_border_width_all(1)
-	page_style.border_color = Color(0, 0, 0, 0.6)
-	page_style.set_content_margin_all(14)
-	page_panel.add_theme_stylebox_override("panel", page_style)
+	page_panel.add_theme_stylebox_override("panel", UI.panel_style(18))
 	page_panel.custom_minimum_size.y = 236
 	_board_body.add_child(page_panel)
 	var pages := VBoxContainer.new()
@@ -963,7 +954,7 @@ func _build_pedal_page() -> VBoxContainer:
 	top.add_theme_constant_override("separation", 14)
 	page.add_child(top)
 	_pedal_title = Label.new()
-	_pedal_title.add_theme_font_size_override("font_size", 20)
+	UI.title_label(_pedal_title, 20)
 	top.add_child(_pedal_title)
 
 	var middle := HBoxContainer.new()
@@ -1047,12 +1038,14 @@ func _build_footer() -> HBoxContainer:
 	_pedal_switch.toggle_mode = true
 	_pedal_switch.custom_minimum_size = Vector2(180, 40)
 	_pedal_switch.add_theme_font_size_override("font_size", 16)
+	UI.lit_button(_pedal_switch, UI.ACCENT)
 	_pedal_switch.toggled.connect(_on_pedal_switch_pressed)
 	bottom.add_child(_pedal_switch)
 	var gap := Control.new()
 	gap.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	bottom.add_child(gap)
 	_remove = Button.new()
+	UI.ghost_button(_remove)
 	_remove.pressed.connect(_on_remove_pressed)
 	bottom.add_child(_remove)
 	return bottom
@@ -1134,11 +1127,7 @@ func _build_loop_page() -> HBoxContainer:
 
 ## A small caption, as the head's and the cabinet's have.
 func _caption(title: String) -> Label:
-	var label := Label.new()
-	label.text = title
-	label.add_theme_color_override("font_color", DIM)
-	label.add_theme_font_size_override("font_size", 12)
-	return label
+	return UI.section_label(Label.new(), title)
 
 
 func _voice_row(parent: Control, title: String, choices: Array) -> OptionButton:

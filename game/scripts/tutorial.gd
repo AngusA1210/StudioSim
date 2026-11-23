@@ -9,6 +9,7 @@ extends CanvasLayer
 ## smaller, at the very top, where their headings leave room (on the New room page, over the foot of its template list).
 ## Over the title screen, at its right.
 
+const UI := preload("res://scripts/ui.gd")
 const Hints := preload("res://scripts/hints.gd")
 const ACCENT := Color(0.49, 0.89, 0.82)
 const DIM := Color(0.62, 0.65, 0.74)
@@ -321,7 +322,7 @@ func _build() -> void:
 	heavy.variation_embolden = 0.6
 	_title = Label.new()
 	_title.add_theme_font_override("font", heavy)
-	_title.add_theme_font_size_override("font_size", 20)
+	UI.title_label(_title, 20)
 	_small_title.add_theme_font_override("font", heavy)
 	column.add_child(_title)
 	_text = Label.new()

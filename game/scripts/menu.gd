@@ -6,9 +6,10 @@ extends CanvasLayer
 ## carry, a MIDI page for enabling controllers, and general settings. The music keeps playing while it's open, so
 ## changes can be heard straight away.
 
-const ACCENT := Color(0.49, 0.89, 0.82)
-const DIM := Color(0.62, 0.65, 0.74)
-const WARN := Color(1.0, 0.61, 0.48)
+const UI := preload("res://scripts/ui.gd")
+const ACCENT := UI.ACCENT
+const DIM := UI.DIM
+const WARN := UI.WARM
 const MAX_GRID_CHANNELS := 16
 const FloorPlan := preload("res://scripts/floor_plan.gd")
 const Room := preload("res://scripts/room.gd")
@@ -166,7 +167,7 @@ func open(tab := -1) -> void:
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	app.player.release_keys()
 	var on_title: bool = app.title != null and app.title.is_open()
-	_resume.text = "Back  (Esc)" if on_title else "Resume  (Esc)"
+	UI.keyed(_resume, "Back" if on_title else "Resume", "Esc")
 	_to_title.visible = not on_title
 	# From the title screen, only what isn't the room's: the room behind it is the title's, not to be changed from there.
 	for page in [METRONOME_TAB, ROOM_TAB]:
@@ -232,13 +233,7 @@ func _build() -> void:
 	_root.add_child(center)
 
 	_panel = PanelContainer.new()
-	var style := StyleBoxFlat.new()
-	style.bg_color = Color(0.07, 0.08, 0.11, 0.97)
-	style.set_corner_radius_all(14)
-	style.set_border_width_all(1)
-	style.border_color = Color(1, 1, 1, 0.14)
-	style.set_content_margin_all(18)
-	_panel.add_theme_stylebox_override("panel", style)
+	_panel.add_theme_stylebox_override("panel", UI.window_style(20))
 	center.add_child(_panel)
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", 12)
@@ -246,18 +241,23 @@ func _build() -> void:
 
 	var header := HBoxContainer.new()
 	box.add_child(header)
-	header.add_theme_constant_override("separation", 6)
+	header.add_theme_constant_override("separation", 8)
+	var naming := VBoxContainer.new()  # the room's name, and under it whether it is saved
+	naming.add_theme_constant_override("separation", -2)
+	naming.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	header.add_child(naming)
 	_room_title = Label.new()
-	_room_title.add_theme_font_size_override("font_size", 22)
-	header.add_child(_room_title)
+	UI.title_label(_room_title)
+	naming.add_child(_room_title)
 	_room_status = Label.new()
 	_room_status.add_theme_color_override("font_color", DIM)
-	_room_status.add_theme_font_size_override("font_size", 13)
-	_room_status.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_room_status.add_theme_font_size_override("font_size", 12)
 	_room_status.clip_text = true
-	header.add_child(_room_status)
+	_room_status.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	naming.add_child(_room_status)
 	_save = Button.new()
-	_save.text = "Save  (%s)" % app.bindings.label("save")
+	UI.primary_button(_save)
+	UI.keyed(_save, "Save", app.bindings.label("save"))
 	_save.pressed.connect(func() -> void:
 		app.session.save_or_ask()
 		_show_status("Saved" if not app.session.has_unsaved_changes() else ""))
@@ -274,14 +274,17 @@ func _build() -> void:
 	_room_menu.get_popup().id_pressed.connect(_on_room_menu_chosen)
 	header.add_child(_room_menu)
 	_resume = Button.new()
-	_resume.text = "Resume  (Esc)"
+	UI.ghost_button(_resume)
+	UI.keyed(_resume, "Resume", "Esc")
 	_resume.pressed.connect(close)
 	header.add_child(_resume)
 	_to_title = Button.new()
+	UI.quiet_button(_to_title)
 	_to_title.text = "Title screen"
 	_to_title.pressed.connect(_on_title_pressed)
 	header.add_child(_to_title)
 	var quit := Button.new()
+	UI.quiet_button(quit)
 	quit.text = "Quit"
 	quit.pressed.connect(func() -> void: app.session.request_quit())
 	header.add_child(quit)
@@ -343,7 +346,7 @@ func _build_controls_page(page: VBoxContainer) -> void:
 
 
 func _show_keys() -> void:
-	_save.text = "Save  (%s)" % app.bindings.label("save")
+	UI.keyed(_save, "Save", app.bindings.label("save"))
 	for action in _key_buttons:
 		_key_buttons[action].text = "press a key…" if action == _waiting_for else app.bindings.label(action)
 

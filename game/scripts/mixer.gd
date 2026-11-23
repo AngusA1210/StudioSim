@@ -30,6 +30,7 @@ extends CanvasLayer
 ## It docks along the bottom of the screen so the room stays in view, you can walk about while it is open, and the
 ## music keeps playing.
 
+const UI := preload("res://scripts/ui.gd")
 const Fader := preload("res://scripts/fader.gd")
 const LevelMeter := preload("res://scripts/level_meter.gd")
 const ReductionMeter := preload("res://scripts/reduction_meter.gd")
@@ -42,12 +43,12 @@ const MiniFader := preload("res://scripts/mini_fader.gd")
 
 const STRIP_WIDTH := 96.0
 const SPACE_PAST_STRIPS := 120  # (empty, after the last strip: a right-click there makes a new aux track or folder)
-const STRIP_BG := Color(0.16, 0.17, 0.19, 0.98)
-const DIM := Color(0.62, 0.65, 0.74)
-const WARN := Color(1.0, 0.61, 0.48)
-const INPUT_GREEN := Color(0.36, 0.9, 0.5)
-const MUTE_ORANGE := Color(1.0, 0.62, 0.25)
-const SOLO_YELLOW := Color(0.98, 0.86, 0.3)
+const STRIP_BG := UI.PANEL
+const DIM := UI.DIM
+const WARN := UI.WARM
+const INPUT_GREEN := UI.INPUT  # (the track buttons' colours, as ui.gd has them: input blue, mute amber, solo teal)
+const MUTE_ORANGE := UI.MUTE
+const SOLO_YELLOW := UI.SOLO
 const FOOT_HEIGHT := 40.0  # a strip's foot: an instrument's level in the room, a master's HEAR
 const PAN_HEIGHT := 40.0
 
@@ -163,7 +164,7 @@ func _process(_delta: float) -> void:
 	_refresh()
 	_line_up()
 	_to_edit.visible = app.timeline.is_record()
-	_to_edit.text = "Edit window  (%s)" % app.bindings.label("edit_window")
+	UI.keyed(_to_edit, "Edit window", app.bindings.label("edit_window"))
 	_hint.text = Hints.under_mouse(_panel)
 
 
@@ -186,13 +187,7 @@ func _build() -> void:
 	_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_root)
 	_panel = PanelContainer.new()
-	var style := StyleBoxFlat.new()
-	style.bg_color = Color(0.09, 0.095, 0.11, 0.97)
-	style.set_corner_radius_all(10)
-	style.set_border_width_all(1)
-	style.border_color = Color(1, 1, 1, 0.14)
-	style.set_content_margin_all(12)
-	_panel.add_theme_stylebox_override("panel", style)
+	_panel.add_theme_stylebox_override("panel", UI.window_style(16))
 	_root.add_child(_panel)
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", 8)
@@ -203,7 +198,7 @@ func _build() -> void:
 	box.add_child(header)
 	var title := Label.new()
 	title.text = "Mix"
-	title.add_theme_font_size_override("font_size", 20)
+	UI.title_label(title)
 	header.add_child(title)
 	_status = Label.new()
 	_status.add_theme_font_size_override("font_size", 13)
@@ -211,14 +206,15 @@ func _build() -> void:
 	_status.clip_text = true
 	header.add_child(_status)
 	_to_edit = Button.new()
-	_to_edit.text = "Edit window  (R)"
+	UI.keyed(_to_edit, "Edit window", "R")
 	_to_edit.focus_mode = Control.FOCUS_NONE
 	_to_edit.pressed.connect(func() -> void:
 		close()
 		app.edit_window.open())
 	header.add_child(_to_edit)
 	var close_button := Button.new()
-	close_button.text = "Close  (Tab)"
+	UI.ghost_button(close_button)
+	UI.keyed(close_button, "Close", "Tab")
 	close_button.pressed.connect(close)
 	header.add_child(close_button)
 
@@ -348,7 +344,7 @@ func _build_master_strip(master) -> PanelContainer:
 	Hints.give(output, "Where %s goes: the main outputs play it while it's heard (%s), and it can go to a pair of outputs of its own as well, all the time (headphones of their own, a recorder)" % [
 		"the room" if which == "room" else "the mix", app.bindings.label("monitor")])
 	box.add_child(output)
-	var limiter := _toggle("LIMIT", Color(0.55, 0.78, 1.0))
+	var limiter := _toggle("LIMIT", UI.ACCENT)
 	Hints.give(limiter, func() -> String: return "Limiter, after the fader: on, %s can't go past %.1f dBFS (the ceiling, in Settings), and bringing the master down eases it; off, the plain sum. What the main outputs play over full scale is cut off either way." % [
 		"the room" if which == "room" else "the mix", app.settings.limiter_ceiling_db])
 	limiter.toggled.connect(func(on: bool) -> void: app.set_limiter(on, which))
@@ -491,7 +487,7 @@ func _pan_pot(box: Control, track) -> Control:
 	var pan := PanControl.new()
 	pan.custom_minimum_size = Vector2(STRIP_WIDTH - 24, PAN_HEIGHT)
 	pan.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	pan.ink = track.color.lightened(0.2)
+	pan.ink = UI.ACCENT
 	pan.value_changed.connect(func(v: float) -> void: app.set_pan(track, v))
 	if track.is_folder:
 		Hints.give(pan, "Pan: where its sound, summed to mono, sits in the mix (after its fader). Right-click its name for stereo." +
@@ -517,7 +513,7 @@ func _pan_pair(box: VBoxContainer, track) -> Dictionary:
 	for side in ["left", "right"]:
 		var pan := PanControl.new()
 		pan.custom_minimum_size = Vector2((STRIP_WIDTH - 24) / 2.0 - 1.0, PAN_HEIGHT)
-		pan.ink = track.color.lightened(0.2)
+		pan.ink = UI.ACCENT
 		pan.value_changed.connect(func(v: float) -> void:
 			app.set_pans(track, v if side == "left" else track.pan_left, v if side == "right" else track.pan_right))
 		Hints.give(pan, "Pan, its %s side: where it sits in the mix (after its fader), %s to begin with.%s" % [side,
@@ -648,11 +644,7 @@ func _build_inserts(box: VBoxContainer, inst, width := STRIP_WIDTH - 12) -> Arra
 		button.clip_text = true
 		button.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 		button.add_theme_font_size_override("font_size", 11)
-		var style := StyleBoxFlat.new()
-		style.set_corner_radius_all(3)
-		style.set_border_width_all(1)
-		style.content_margin_left = 4
-		style.content_margin_right = 4
+		var style := UI.box(UI.ROOM, Color(1, 1, 1, 0.05), 6, 6, 0)
 		for state in ["normal", "hover", "pressed", "hover_pressed"]:
 			button.add_theme_stylebox_override(state, style)
 		button.pressed.connect(func() -> void:
@@ -682,11 +674,7 @@ func _build_sends(box: VBoxContainer, inst) -> Array:
 		button.clip_text = true
 		button.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 		button.add_theme_font_size_override("font_size", 11)
-		var style := StyleBoxFlat.new()
-		style.set_corner_radius_all(3)
-		style.set_border_width_all(1)
-		style.content_margin_left = 4
-		style.content_margin_right = 4
+		var style := UI.box(UI.ROOM, Color(1, 1, 1, 0.05), 6, 6, 0)
 		for state in ["normal", "hover", "pressed", "hover_pressed"]:
 			button.add_theme_stylebox_override(state, style)
 		button.gui_input.connect(_on_send_input.bind(inst, slot, button))
@@ -707,14 +695,14 @@ func _show_sends(strip: Dictionary) -> void:
 		var send: Dictionary = inst.sends[slot]
 		if send.is_empty():
 			button.text = ""
-			style.bg_color = Color(0.1, 0.105, 0.12)
-			style.border_color = Color(0, 0, 0, 0.5)
+			style.bg_color = UI.ROOM
+			style.border_color = Color(1, 1, 1, 0.05)
 			continue
 		var db: float = app.automation.shown(inst, "send:%d" % slot)
 		button.text = "%s  %s%s" % [send.aux.display_name, _db_text(db), "  pre" if send.pre else ""]
-		style.bg_color = send.aux.color.darkened(0.55) if send.on else Color(0.18, 0.18, 0.2)
-		style.border_color = send.aux.color.darkened(0.2) if send.on else Color(0, 0, 0, 0.5)
-		var ink := Color(0.93, 0.94, 0.97) if send.on else Color(0.55, 0.57, 0.62)
+		style.bg_color = Color(send.aux.color, 0.16) if send.on else Color(1, 1, 1, 0.03)
+		style.border_color = Color(send.aux.color, 0.5) if send.on else UI.LINE
+		var ink := UI.INK if send.on else UI.DIM
 		for state in ["font_color", "font_hover_color", "font_pressed_color"]:
 			button.add_theme_color_override(state, ink)
 
@@ -941,16 +929,7 @@ func _show_delays() -> void:
 
 func _strip_panel(width: float) -> PanelContainer:
 	var strip := PanelContainer.new()
-	var style := StyleBoxFlat.new()
-	style.bg_color = STRIP_BG
-	style.set_corner_radius_all(4)
-	style.set_border_width_all(1)
-	style.border_color = Color(0, 0, 0, 0.6)
-	style.content_margin_left = 6
-	style.content_margin_right = 6
-	style.content_margin_top = 6
-	style.content_margin_bottom = 6
-	strip.add_theme_stylebox_override("panel", style)
+	strip.add_theme_stylebox_override("panel", UI.box(STRIP_BG, UI.LINE, 12, 6, 8))
 	strip.custom_minimum_size.x = width
 	strip.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	var box := VBoxContainer.new()
@@ -1023,11 +1002,7 @@ func _readouts(box: VBoxContainer, inst) -> Dictionary:
 	Hints.give(peak, func() -> String: return "The highest peak%s since this was clicked.  Click to clear it (Alt-click: every peak)" % (
 		"" if inst is String else (" before the fader" if app.settings.pre_fader_meters else " after the fader")))
 	for state in ["normal", "hover", "pressed", "hover_pressed"]:
-		var style := StyleBoxFlat.new()
-		style.bg_color = Color(0.03, 0.035, 0.04) if not state.begins_with("hover") else Color(0.08, 0.085, 0.1)
-		style.set_corner_radius_all(3)
-		style.set_content_margin_all(1)
-		peak.add_theme_stylebox_override(state, style)
+		peak.add_theme_stylebox_override(state, UI.box(UI.ROOM if not state.begins_with("hover") else UI.WINDOW, UI.LINE, 6, 1, 1))
 	peak.gui_input.connect(_on_peak_input.bind(inst))
 	row.add_child(peak)
 	return {"value": value, "peak": peak}
@@ -1060,16 +1035,15 @@ func _name_plate(text: String, color: Color, inst) -> Button:
 	return plate
 
 
-## A name plate in a colour.
+## A name plate in a colour: a tint of it, edged in it, with a dot of it before the name.
 func _paint_plate(plate: Button, color: Color) -> void:
 	for state in ["normal", "hover", "pressed", "hover_pressed", "disabled"]:
-		var style := StyleBoxFlat.new()
-		style.bg_color = color.darkened(0.45 if not state.begins_with("hover") else 0.3)
-		style.set_corner_radius_all(3)
-		style.set_content_margin_all(3)
-		plate.add_theme_stylebox_override(state, style)
+		plate.add_theme_stylebox_override(state, UI.box(Color(color, 0.22 if state.begins_with("hover") else 0.13),
+			Color(color, 0.55 if state.begins_with("hover") else 0.38), 8, 6, 4))
 	for state in ["font_color", "font_hover_color", "font_pressed_color", "font_disabled_color"]:
-		plate.add_theme_color_override(state, color.lightened(0.6))
+		plate.add_theme_color_override(state, UI.INK)
+	plate.icon = UI.dot_icon(color)
+	plate.add_theme_constant_override("h_separation", 5)
 	plate.set_meta("color", color)
 
 
@@ -1101,18 +1075,8 @@ func _toggle(text: String, lit: Color) -> Button:
 	button.toggle_mode = true
 	button.focus_mode = Control.FOCUS_NONE
 	button.custom_minimum_size = Vector2(26, 24)
-	button.add_theme_font_size_override("font_size", 13)
-	for state in ["normal", "hover", "pressed", "hover_pressed"]:
-		var style := StyleBoxFlat.new()
-		var on: bool = state.contains("pressed")
-		style.bg_color = lit if on else Color(0.3, 0.31, 0.34)
-		if state.begins_with("hover"):
-			style.bg_color = style.bg_color.lightened(0.12)
-		style.set_corner_radius_all(3)
-		style.set_content_margin_all(2)
-		button.add_theme_stylebox_override(state, style)
-		var ink := Color(0.08, 0.08, 0.09) if on else Color(0.85, 0.86, 0.9)
-		button.add_theme_color_override("font_color" if state == "normal" else "font_%s_color" % state, ink)
+	button.add_theme_font_size_override("font_size", 12)
+	UI.lit_button(button, lit, true)
 	return button
 
 
@@ -1149,7 +1113,7 @@ func _refresh() -> void:
 		strip.mute.set_pressed_no_signal(app.automation.shown_mute(inst))
 		strip.solo.set_pressed_no_signal(inst.soloed)
 		strip.plate.text = inst.display_name  # a plug-in instrument takes its plug-in's name
-		strip.frame.border_color = Color(1, 1, 1, 0.85) if app.chosen_tracks.has(inst) else Color(0, 0, 0, 0.6)  # chosen
+		strip.frame.border_color = UI.ACCENT if app.chosen_tracks.has(inst) else UI.LINE  # chosen
 		if inst.is_folder:  # (a folder's, an aux's: each of its channels, one if it is mono)
 			strip.meter.feed(inst.meter_peaks, inst.meter_levels)
 			strip.meter.custom_minimum_size.x = 8 * inst.meter_peaks.size() + 2 * (inst.meter_peaks.size() - 1)
@@ -1284,13 +1248,13 @@ func _show_inserts(slots: Array, inserts: Array) -> void:
 		var style: StyleBoxFlat = slots[slot].style
 		button.text = name
 		if name == "":
-			style.bg_color = Color(0.1, 0.105, 0.12)
+			style.bg_color = UI.ROOM
 		elif insert.get("on", true):
-			style.bg_color = Color(0.3, 0.32, 0.38)
+			style.bg_color = Color(1, 1, 1, 0.08)
 		else:
 			style.bg_color = Color(0.22, 0.36, 0.72)  # bypassed, in Pro Tools' blue
-		style.border_color = Color(1, 1, 1, 0.85) if insert.get("editor_open", false) else Color(0, 0, 0, 0.5)
-		var ink := Color(0.93, 0.94, 0.97) if name != "" else Color(0.5, 0.52, 0.58)
+		style.border_color = UI.ACCENT if insert.get("editor_open", false) else (UI.LINE_STRONG if name != "" else Color(1, 1, 1, 0.05))
+		var ink := UI.INK if name != "" else UI.DIM
 		for state in ["font_color", "font_hover_color", "font_pressed_color"]:
 			button.add_theme_color_override(state, ink)
 
@@ -1299,7 +1263,7 @@ func _show_inserts(slots: Array, inserts: Array) -> void:
 func _show_peak(button: Button, linear: float) -> void:
 	var db := linear_to_db(maxf(linear, 0.0000001))
 	button.text = "-inf" if db < -99.0 else "%.1f" % db
-	var ink := LevelMeter.RED if db >= -0.05 else (Color(0.85, 0.86, 0.9) if db > -99.0 else Color(0.5, 0.52, 0.58))
+	var ink := LevelMeter.RED if db >= -0.05 else (UI.INK if db > -99.0 else UI.DIM)
 	for state in ["font_color", "font_hover_color", "font_pressed_color"]:
 		button.add_theme_color_override(state, ink)
 

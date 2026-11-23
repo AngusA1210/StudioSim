@@ -7,6 +7,7 @@ extends CanvasLayer
 ## While together, the page shows the session in their place: who is in it, where others join (the host's), its rules
 ## (the host's to change, and to ask a player to leave), and Leave.
 
+const UI := preload("res://scripts/ui.gd")
 const Hints := preload("res://scripts/hints.gd")
 const Net := preload("res://scripts/net.gd")
 const DIM := Color(0.62, 0.65, 0.74)
@@ -430,12 +431,7 @@ func _build() -> void:
 	center.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_root.add_child(center)
 	_panel = PanelContainer.new()
-	var style := StyleBoxFlat.new()
-	style.bg_color = Color(0.07, 0.08, 0.11, 0.98)
-	style.set_corner_radius_all(14)
-	style.set_border_width_all(1)
-	style.border_color = Color(1, 1, 1, 0.14)
-	style.set_content_margin_all(18)
+	var style := UI.window_style(18)
 	_panel.add_theme_stylebox_override("panel", style)
 	_panel.custom_minimum_size.x = 760
 	center.add_child(_panel)
@@ -448,7 +444,7 @@ func _build() -> void:
 	box.add_child(top)
 	var title := Label.new()
 	title.text = "Play together"
-	title.add_theme_font_size_override("font_size", 22)
+	UI.title_label(title, 22)
 	top.add_child(title)
 	var gap := Control.new()
 	gap.custom_minimum_size.x = 18
@@ -464,7 +460,8 @@ func _build() -> void:
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	top.add_child(spacer)
 	var close_button := Button.new()
-	close_button.text = "Close  (Esc)"
+	UI.ghost_button(close_button)
+	UI.keyed(close_button, "Close", "Esc")
 	close_button.pressed.connect(close)
 	top.add_child(close_button)
 

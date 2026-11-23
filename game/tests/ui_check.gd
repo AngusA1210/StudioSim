@@ -2275,7 +2275,7 @@ func _run() -> void:
 		"%.1f, then %s" % [at_bar_five, edit._clock.text])
 	timeline.locate(0.0)
 	await tap(KEY_TAB)
-	check(main.mixer.is_open() and not edit.is_open() and main.mixer._to_edit.text == "Edit window  (R)", "Tab goes over to the mix window")
+	check(main.mixer.is_open() and not edit.is_open() and main.mixer._to_edit.text == "Edit window" and main.mixer._to_edit.get_meta("key") == "R", "Tab goes over to the mix window")
 	await tap(KEY_R)
 	check(edit.is_open() and not main.mixer.is_open(), "and R from the mix window back to the edit window")
 	var speaker_row: int = view.tracks().find(speaker_inst)

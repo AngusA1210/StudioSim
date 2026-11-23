@@ -15,18 +15,19 @@ extends Control
 ## buttons choose what it shows (volume, mute, an instrument's sustain pedal) and the track's automation mode; click
 ## in it to add a point, drag points to move them, Shift-click for more, Option-click to take one away.
 
+const UI := preload("res://scripts/ui.gd")
 const Hints := preload("res://scripts/hints.gd")
 const TrackMenu := preload("res://scripts/track_menu.gd")
 const Fader := preload("res://scripts/fader.gd")
 const HEADER := 190.0
 const RULER := 30.0
 const ROW := 54.0
-const DIM := Color(0.62, 0.65, 0.74)
-const LOOP_ON := Color(0.35, 0.6, 1.0)
-const RECORD_RED := Color(1.0, 0.3, 0.28)
-const INPUT_GREEN := Color(0.36, 0.9, 0.5)
-const MUTE_ORANGE := Color(1.0, 0.62, 0.25)
-const SOLO_YELLOW := Color(0.98, 0.86, 0.3)
+const DIM := UI.DIM
+const LOOP_ON := UI.ACCENT
+const RECORD_RED := UI.RECORD  # (the track buttons' colours, as ui.gd has them)
+const INPUT_GREEN := UI.INPUT
+const MUTE_ORANGE := UI.MUTE
+const SOLO_YELLOW := UI.SOLO
 const NAME_STRIP := 15.0  # a clip's top strip, with its name: its corners hold the fade handles
 const EDGE := 7.0         # how near an end of a clip a press trims it
 const LANE := 46.0        # an automation lane, under its track (A shows them)
@@ -657,7 +658,7 @@ func _draw_fades(clip: Dictionary, x0: float, x1: float, inner: Rect2, rect: Rec
 func _draw_header(inst, top: float, font: Font) -> void:
 	var chosen_track: bool = app.chosen_tracks.has(inst)
 	var indent := _indent(inst)  # a folder's tracks, under it
-	draw_rect(Rect2(0, top, HEADER, ROW - 1), Color(0.24, 0.26, 0.31) if chosen_track else Color(0.16, 0.17, 0.19))
+	draw_rect(Rect2(0, top, HEADER, ROW - 1), Color(UI.ACCENT, 0.12) if chosen_track else UI.PANEL)
 	var around: Array = app.folders_around(inst)  # each folder it is in: its colour carried down from its header, joining them
 	for j in mini(around.size(), 4):
 		draw_rect(Rect2(10.0 * (mini(around.size(), 4) - 1 - j), top, 5, ROW), Color(around[j].color, 0.75))
@@ -666,7 +667,7 @@ func _draw_header(inst, top: float, font: Font) -> void:
 	if _folds(inst):  # its arrow, to show or hide its tracks
 		draw_string(font, Vector2(10 + indent, top + 20), "▾" if inst.open else "▸", HORIZONTAL_ALIGNMENT_LEFT, -1, 13, inst.color.lightened(0.45))
 		name_x = 26.0 + indent
-	draw_string(font, Vector2(name_x, top + 20), inst.display_name, HORIZONTAL_ALIGNMENT_LEFT, HEADER - name_x - 8, 13, inst.color.lightened(0.45))
+	draw_string(font, Vector2(name_x, top + 20), inst.display_name, HORIZONTAL_ALIGNMENT_LEFT, HEADER - name_x - 8, 13, UI.INK)
 	var what: String
 	if inst.get("is_master"):
 		what = "master"
@@ -680,9 +681,11 @@ func _draw_header(inst, top: float, font: Font) -> void:
 	for b in _buttons(inst, top):
 		var lit: bool = b.on
 		var theirs: bool = b.get("theirs", false)  # (playing together: another player's, armed or played through)
-		draw_rect(b.rect, b.color if lit else (b.color.darkened(0.55) if theirs else Color(0.3, 0.31, 0.34)))
-		draw_string(font, b.rect.position + Vector2(5, 14), b.text, HORIZONTAL_ALIGNMENT_LEFT, -1, 12,
-			Color(0.08, 0.08, 0.09) if lit else Color(0.85, 0.86, 0.9))
+		var face := UI.box(Color(b.color, 0.22) if lit else (Color(b.color, 0.1) if theirs else UI.CONTROL),
+			Color(b.color, 0.65) if lit else (Color(b.color, 0.3) if theirs else UI.LINE), 5, 0, 0)
+		draw_style_box(face, b.rect)
+		draw_string(font, b.rect.position + Vector2(0, 14), b.text, HORIZONTAL_ALIGNMENT_CENTER, b.rect.size.x, 11,
+			b.color if lit else UI.DIM)
 
 
 ## A track's header buttons: R (armed), I (input), M (muted), S (soloed). Playing together, an R or an I that is another

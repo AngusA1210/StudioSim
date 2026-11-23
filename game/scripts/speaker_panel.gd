@@ -4,6 +4,7 @@ extends CanvasLayer
 ## can fill a big room as a big PA would; it comes after the Speaker's inserts (an amp simulator on one keeps its
 ## sound whatever the volume) and before its fader.
 
+const UI := preload("res://scripts/ui.gd")
 const Knob := preload("res://scripts/knob.gd")
 const Hints := preload("res://scripts/hints.gd")
 const PresetMenu := preload("res://scripts/preset_menu.gd")
@@ -52,7 +53,7 @@ func is_open() -> bool:
 
 
 func open(speaker, from_mixer := false) -> void:
-	_close_button.text = "Close  (%s)" % app.bindings.label("edit")
+	UI.keyed(_close_button, "Close", app.bindings.label("edit"))
 	inst = speaker
 	_back_to_mixer = from_mixer
 	app.player.release_keys()
@@ -120,12 +121,7 @@ func _build() -> void:
 	center.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_root.add_child(center)
 	_panel = PanelContainer.new()
-	var style := StyleBoxFlat.new()
-	style.bg_color = Color(0.07, 0.08, 0.11, 0.97)
-	style.set_corner_radius_all(14)
-	style.set_border_width_all(1)
-	style.border_color = Color(1, 1, 1, 0.14)
-	style.set_content_margin_all(18)
+	var style := UI.window_style(18)
 	_panel.add_theme_stylebox_override("panel", style)
 	_panel.custom_minimum_size.x = 560
 	center.add_child(_panel)
@@ -135,7 +131,7 @@ func _build() -> void:
 	var header := HBoxContainer.new()
 	box.add_child(header)
 	_title = Label.new()
-	_title.add_theme_font_size_override("font_size", 22)
+	UI.title_label(_title, 22)
 	_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header.add_child(_title)
 	_presets = Button.new()
@@ -149,6 +145,7 @@ func _build() -> void:
 	gap_before_close.custom_minimum_size.x = 8
 	header.add_child(gap_before_close)
 	var close_button := Button.new()
+	UI.ghost_button(close_button)
 	_close_button = close_button
 	close_button.pressed.connect(close)
 	header.add_child(close_button)

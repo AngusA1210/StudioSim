@@ -7,6 +7,7 @@ extends PopupPanel
 ## Most plug-ins don't say what kind of effect they are, so the kinds are worked out from their names in the audio core
 ## (plugin_category.cpp): a good guess rather than a certainty. By maker is always exact.
 
+const UI := preload("res://scripts/ui.gd")
 const DIM := Color(0.62, 0.65, 0.74)
 # The order the kinds are listed in, roughly the order they would sit on a channel.
 const TYPE_ORDER := ["Amps & cabinets", "EQ", "Dynamics", "Channel strips", "Saturation & distortion", "Filter", "Modulation",
@@ -26,12 +27,7 @@ var _count: Label
 
 
 func _init() -> void:
-	var style := StyleBoxFlat.new()
-	style.bg_color = Color(0.08, 0.09, 0.11, 0.99)
-	style.set_corner_radius_all(10)
-	style.set_border_width_all(1)
-	style.border_color = Color(1, 1, 1, 0.18)
-	style.set_content_margin_all(12)
+	var style := UI.window_style(12)
 	add_theme_stylebox_override("panel", style)
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", 8)
