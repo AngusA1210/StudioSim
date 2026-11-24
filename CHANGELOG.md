@@ -6,7 +6,7 @@ Releases page and each release's notes on GitHub are made from this file.
 
 ## 0.2.0
 
-**Preview** · 23 November 2026
+**Stable** · 23 November 2026
 
 A new look for the whole app, a view of a microphone from behind it, amps made for a guitar plugged straight into an
 interface, and cabinets with real speakers behind their grilles.
