@@ -32,11 +32,15 @@ public:
     // Opens the default output. silent = run the audio clock without a sound card (automated runs).
     bool start(bool silent);
     // Opens the devices described by `config`, closing whatever was open. Keys (all optional):
-    //   silent: bool, output_device: String ("" = system default), input_enabled: bool,
-    //   input_device: String ("" = system default), buffer_size: int, output_left: int, output_right: int
+    //   silent: bool, offline: bool (no device: rendered by render_offline), output_device: String ("" = system
+    //   default), input_enabled: bool, input_device: String ("" = system default), buffer_size: int,
+    //   output_left: int, output_right: int
     // Returns false and leaves nothing open if a device can't be opened; see get_error().
     bool open_device(const Dictionary& config);
     Dictionary get_device_config() const;  // what is open now, same keys as above
+    // Opened with "offline": the next `frames` of sound (interleaved stereo), with `input` (interleaved, on
+    // `input_channels` channels; or empty) as what the interface's inputs took in over them. For the demo videos.
+    PackedFloat32Array render_offline(int frames, const PackedFloat32Array& input = PackedFloat32Array(), int input_channels = 0);
     Array get_output_devices() const;      // [{name, is_default, channels}]
     Array get_input_devices() const;
     void set_output_channels(int left, int right);

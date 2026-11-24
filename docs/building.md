@@ -71,6 +71,23 @@ What to know about the app:
   are the same as Godot's runs too.
 - The title screen names its version and the commit it was built from (`tools/export.sh` writes it into the app).
 
+## Recording the demo videos
+
+The website's videos are recorded from the app itself rather than from the screen. Each one is a scene in
+`tools/video/scenes/`, played through the app's own functions: the camera moved, captions shown, windows opened. It is
+drawn off-screen at 1920x1080, a frame at a time, and the audio core renders the sound heard over each frame as it is
+drawn (the game's `--offline` option: no sound card, and no clock but the frames'). However long a frame takes to
+draw, picture and sound stay in step, and the room is heard from the video's camera.
+
+```bash
+tools/video/record.sh <scene>
+```
+
+makes `video/<scene>.mp4` (H.264 and AAC, under 20 MB, with macOS's own AVFoundation; `video/` is not kept in git).
+A guitar and a keyboard are played from files in `video/sources/`: a DI recording as an amp's input, played into it
+as an interface's input would be, and a MIDI file's notes on an instrument, each at its own sample, as a controller
+plays them.
+
 ## Making a release
 
 `tools/package.sh`, after `tools/export.sh`, packs the app as it is downloaded, with StudioSim's licence and

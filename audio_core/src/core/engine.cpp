@@ -658,6 +658,7 @@ bool AudioEngine::openDevice(const DeviceConfig& config, std::string* error) {
         return false;
     }
     stopDevice();
+    if (config.mode == DeviceMode::Offline) return openOffline(config, error);
     const bool null_mode = config.mode == DeviceMode::Null;
 #ifdef SR_ASIO
     if (!null_mode && isAsioDevice(config.output_device)) return openAsio(config, error);
@@ -823,8 +824,42 @@ bool AudioEngine::openAsio(const DeviceConfig& config, std::string* error) {
 }
 #endif
 
+// No device: the sound rendered by whoever calls render() (the demo videos' recorder, a video frame's share at a
+// time), as fast as it can rather than in time, with recorded audio read there and then rather than ahead by the disk
+// thread. A live input is the audio handed to render(), on kOfflineInputs inputs.
+bool AudioEngine::openOffline(const DeviceConfig& config, std::string* error) {
+    if (!configure(config.sample_rate > 0 ? config.sample_rate : 48000, std::clamp(config.buffer_size, 16, 4096), error)) return false;
+    EngineStats s;
+    s.backend = s.output_device = "Offline";
+    s.output_channels = 2;
+    s.sample_rate = s.device_rate = sr_;
+    s.block_size = s.device_period = block_;
+    s.buffer_ms = 1000.0 * block_ / sr_;
+    s.live_input = config.input_enabled;
+    if (config.input_enabled) {
+        s.input_device = "Offline";
+        s.input_channels = kOfflineInputs;
+    }
+    s.device_running = true;
+    device_config_ = config;
+    device_config_.buffer_size = block_;
+    device_config_.output_left = 0;
+    device_config_.output_right = 1;
+    setOutputChannels(0, 1);
+    offline_us_.store(offline_frames_ * 1000000 / sr_, std::memory_order_relaxed);  // (on from where it was, if reopened)
+    device_stats_ = s;
+    device_ = std::make_unique<Device>();  // (holding nothing: there to say that sound is running)
+    return true;
+}
+
+int64_t AudioEngine::nowMicros() const {
+    const int64_t offline = offline_us_.load(std::memory_order_relaxed);
+    return offline >= 0 ? offline : steadyMicros();
+}
+
 void AudioEngine::stopDevice() {
     device_.reset();
+    offline_us_.store(-1, std::memory_order_relaxed);
     realtime_.store(false, std::memory_order_release);
     device_stats_.device_running = false;
     device_stats_.live_input = false;
@@ -1013,7 +1048,7 @@ void AudioEngine::reapPedals() {
 void AudioEngine::playFrom(double step, double in_seconds) {
     const uint32_t cue = streamer_.prepare(std::max(step, 0.0) * 15.0 / transport_.bpm);  // (the first moments read in before it starts)
     Command c; c.type = Command::TimelinePlay; c.v[0] = float(std::max(step, 0.0)); c.v[1] = float(in_seconds); c.epoch = cue;
-    c.count = steadyMicros(); push(c);
+    c.count = nowMicros(); push(c);
     transport_.running = true;
 }
 
@@ -1156,7 +1191,7 @@ bool AudioEngine::startRecording(const std::vector<std::pair<int, std::string>>&
     c.v[3] = float(std::max(preroll_steps, 0.0));
     c.v[4] = float(punch_out_step);
     c.v[5] = float(in_seconds);
-    c.count = steadyMicros();
+    c.count = nowMicros();
     if (!commands_.push(c)) {
         if (error) *error = "the audio engine is busy: try again";
         return false;
@@ -2725,14 +2760,14 @@ void AudioEngine::setSequencerRunning(bool on) {
 void AudioEngine::startSequencerIn(double seconds, double from_step) {
     transport_.running = true;
     Command c; c.type = Command::SequencerStartIn; c.v[0] = float(seconds); c.v[1] = float(std::max(from_step, 0.0));
-    c.count = steadyMicros(); push(c);
+    c.count = nowMicros(); push(c);
 }
 void AudioEngine::nudgeSequencer(double seconds) {
     Command c; c.type = Command::SequencerNudge; c.v[0] = float(seconds); push(c);
 }
 double AudioEngine::sequencerStepNow() const {
     if (!sequencer_running_.load(std::memory_order_relaxed)) return -1.0;
-    const double since = double(steadyMicros() - rendered_at_us_.load(std::memory_order_relaxed)) / 1e6;
+    const double since = double(nowMicros() - rendered_at_us_.load(std::memory_order_relaxed)) / 1e6;
     return position_.load(std::memory_order_relaxed) + since * steps_per_second_.load(std::memory_order_relaxed);
 }
 bool AudioEngine::startNetAudio(bool host, const std::string& address, int port, int me, std::string* error) {
@@ -3084,7 +3119,7 @@ void AudioEngine::drainCommands() {
                 for (Source* each : sources_)
                     if (each) each->instrument->stopSequenced();
                 if (c.v[1] >= 0.0f)  // (at a set moment: less what it took to get here)
-                    sequencer_.startAt(double(clock_) + std::max(0.0, double(c.v[1]) - double(steadyMicros() - c.count) / 1e6) * sr_, double(c.v[0]));
+                    sequencer_.startAt(double(clock_) + std::max(0.0, double(c.v[1]) - double(nowMicros() - c.count) / 1e6) * sr_, double(c.v[0]));
                 else
                     sequencer_.start(clock_, double(c.v[0]));
                 chaseSustain(double(c.v[0]));
@@ -3153,7 +3188,7 @@ void AudioEngine::drainCommands() {
                     // asked for, and to the punch out.
                     const double play_from = std::max(punch_in - double(c.v[3]), 0.0);
                     if (c.v[5] >= 0.0f) {  // (at a set moment, as when playing together: less what it took to get here)
-                        const double late = double(steadyMicros() - c.count) / 1e6;
+                        const double late = double(nowMicros() - c.count) / 1e6;
                         sequencer_.startAt(double(clock_) + std::max(0.0, double(c.v[5]) - late) * sr_ + beats * beat_samples, play_from);
                     } else {
                         sequencer_.start(clock_ + int64_t(std::llround(beats * beat_samples)), play_from);
@@ -3283,7 +3318,7 @@ void AudioEngine::drainCommands() {
                         }
                     }
                     if (c.type == Command::SequencerStartIn) {
-                        const double late = double(steadyMicros() - c.count) / 1e6;  // (on its way here)
+                        const double late = double(nowMicros() - c.count) / 1e6;  // (on its way here)
                         sequencer_.startAt(double(clock_) + std::max(0.0, double(c.v[0]) - late) * sr_, double(c.v[1]));
                     }
                 }
@@ -3522,9 +3557,11 @@ void AudioEngine::render(const float* input, int input_channels, float* out, int
             else input_read_ = (input_read_ + 1) % kFifoFrames;  // full: drop the oldest frame
         }
     }
+    const bool offline = offline_us_.load(std::memory_order_relaxed) >= 0;
     int done = 0;
     while (done < frames) {
         if (block_pos_ >= block_) {
+            if (offline) offline_us_.store((offline_frames_ + done) * 1000000 / sr_, std::memory_order_relaxed);  // (the block's start)
             renderBlock();
             block_pos_ = 0;
         }
@@ -3544,6 +3581,10 @@ void AudioEngine::render(const float* input, int input_channels, float* out, int
         block_pos_ += n;
         done += n;
     }
+    if (offline) {
+        offline_frames_ += frames;
+        offline_us_.store(offline_frames_ * 1000000 / sr_, std::memory_order_relaxed);
+    }
 }
 
 // Where each sample of this block falls on the timeline; each track's recorded audio for the block, ready to be played
@@ -3553,7 +3594,7 @@ void AudioEngine::renderTimeline() {
     const bool playing = sequencer_.running();
     const double step_seconds = sequencer_.stepSamples() / sr_;
     position_.store(sequencer_.position(clock_), std::memory_order_relaxed);
-    rendered_at_us_.store(steadyMicros(), std::memory_order_relaxed);
+    rendered_at_us_.store(nowMicros(), std::memory_order_relaxed);
     steps_per_second_.store(step_seconds > 0.0 ? 1.0 / step_seconds : 0.0, std::memory_order_relaxed);
     sequencer_running_.store(playing, std::memory_order_relaxed);
     streamer_.follow(sequencer_.position(clock_) * step_seconds, playing, sequencer_.looping(), sequencer_.loopStart() * step_seconds,

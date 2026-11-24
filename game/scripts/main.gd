@@ -5,6 +5,8 @@ extends Node3D
 ##
 ## Command-line options, passed after `--`:
 ##   --silent                 run the audio clock without opening a sound card (also leaves saved settings alone)
+##   --offline                no sound card and no clock: the sound rendered by whoever asks for it, at 48 kHz, as
+##                            the demo videos' recorder does (tools/video/record.gd), a frame's share at a time
 ##   --skip-title             start in the room rather than on the title screen
 ##   --pose=x,z,yaw_degrees   start the player somewhere else
 ##   --live-input             switch the Speaker's input on at start
@@ -634,9 +636,10 @@ func open_audio() -> bool:
 	audio_error = ""
 	var config := {
 		"silent": options.has("silent"),
+		"offline": options.has("offline"),
 		"output_device": settings.output_device,
-		"buffer_size": settings.buffer_size,
-		"sample_rate": settings.sample_rate,
+		"buffer_size": 128 if options.has("offline") else settings.buffer_size,
+		"sample_rate": 48000 if options.has("offline") else settings.sample_rate,
 		"output_left": settings.output_left,
 		"output_right": settings.output_right,
 		"input_enabled": live_input,

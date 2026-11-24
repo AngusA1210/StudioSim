@@ -87,6 +87,8 @@ website/                   the website: its pages, its look, and the script that
                            (website.md)
 prototypes/studiosim/      the original browser prototype, for reference
 tools/                     build, export (the app) and dependency scripts, and the icon's drawing (make_icon.py)
+  video/                   the demo videos' recorder: each video a scene played in the real app, recorded a frame
+                           at a time with its sound rendered offline in step (building.md)
 ```
 
 Godot owns the world: rendering, input, physics, and where the walls and instruments are. It tells the audio core

@@ -82,7 +82,9 @@ bool StudioSimAudio::start(bool silent) {
 bool StudioSimAudio::open_device(const Dictionary& config) {
     if (!ensureEngine()) return false;
     sr::DeviceConfig c;
-    c.mode = bool(config.get("silent", false)) ? sr::DeviceMode::Null : sr::DeviceMode::Hardware;
+    c.mode = bool(config.get("offline", false))  ? sr::DeviceMode::Offline
+             : bool(config.get("silent", false)) ? sr::DeviceMode::Null
+                                                 : sr::DeviceMode::Hardware;
     c.output_device = str(String(config.get("output_device", "")));
     c.input_enabled = bool(config.get("input_enabled", false));
     c.input_device = str(String(config.get("input_device", "")));
@@ -104,6 +106,7 @@ Dictionary StudioSimAudio::get_device_config() const {
     if (!engine_) return d;
     const sr::DeviceConfig& c = engine_->deviceConfig();
     d["silent"] = c.mode == sr::DeviceMode::Null;
+    d["offline"] = c.mode == sr::DeviceMode::Offline;
     d["output_device"] = str(c.output_device);
     d["input_enabled"] = c.input_enabled;
     d["input_device"] = str(c.input_device);
@@ -112,6 +115,15 @@ Dictionary StudioSimAudio::get_device_config() const {
     d["output_right"] = c.output_right;
     d["sample_rate"] = c.sample_rate;
     return d;
+}
+
+PackedFloat32Array StudioSimAudio::render_offline(int frames, const PackedFloat32Array& input, int input_channels) {
+    PackedFloat32Array out;
+    if (!engine_ || frames <= 0 || engine_->deviceConfig().mode != sr::DeviceMode::Offline || !engine_->stats().device_running) return out;
+    out.resize(int64_t(frames) * 2);
+    const bool given = input_channels > 0 && input.size() >= int64_t(frames) * input_channels;
+    engine_->render(given ? input.ptr() : nullptr, given ? input_channels : 0, out.ptrw(), frames);
+    return out;
 }
 
 Array StudioSimAudio::get_output_devices() const { return deviceList(sr::AudioEngine::outputDevices()); }
@@ -1040,6 +1052,8 @@ void StudioSimAudio::_bind_methods() {
     ClassDB::bind_method(D_METHOD("start", "silent"), &StudioSimAudio::start, DEFVAL(false));
     ClassDB::bind_method(D_METHOD("open_device", "config"), &StudioSimAudio::open_device);
     ClassDB::bind_method(D_METHOD("get_device_config"), &StudioSimAudio::get_device_config);
+    ClassDB::bind_method(D_METHOD("render_offline", "frames", "input", "input_channels"), &StudioSimAudio::render_offline,
+                         DEFVAL(PackedFloat32Array()), DEFVAL(0));
     ClassDB::bind_method(D_METHOD("get_output_devices"), &StudioSimAudio::get_output_devices);
     ClassDB::bind_method(D_METHOD("get_input_devices"), &StudioSimAudio::get_input_devices);
     ClassDB::bind_method(D_METHOD("set_output_channels", "left", "right"), &StudioSimAudio::set_output_channels);

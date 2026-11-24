@@ -30,3 +30,6 @@ website/_shots/
 # Which build the app is, written by tools/export.sh while it makes it
 game/build_info.gd
 game/build_info.gd.uid
+
+# The demo videos: what they are recorded from (DI and MIDI files), and what is made (tools/video/record.sh)
+/video/

@@ -828,6 +828,25 @@ int main(int argc, char** argv) {
               fmt("%.2f ms with binaural (%.2f buffer + %.2f binaural), ", with.output_latency_ms, with.buffer_ms, with.binaural_ms) +
                   fmt("%.2f ms without", without.output_latency_ms));
 
+        // Offline (the demo videos): no device, and the clock the sound rendered, not the time it took.
+        Room offline;
+        DeviceConfig none;
+        none.mode = DeviceMode::Offline;
+        const bool opened_offline = offline.engine.openDevice(none, &err);
+        const EngineStats stats_offline = offline.engine.stats();
+        std::vector<float> rendered(2 * 48000);
+        offline.engine.render(rendered.data(), 48000);
+        const double step_a = offline.engine.sequencerStepNow();
+        std::this_thread::sleep_for(std::chrono::milliseconds(150));
+        const double step_b = offline.engine.sequencerStepNow();
+        offline.engine.render(rendered.data(), 24000);
+        const double step_c = offline.engine.sequencerStepNow();
+        const double half_second = offline.engine.transport().bpm / 15.0 / 2.0;  // (in steps)
+        check(opened_offline && stats_offline.device_running && stats_offline.backend == "Offline" && step_a > 0.0 && step_b == step_a &&
+                  std::fabs(step_c - step_b - half_second) < 0.01,
+              "offline, the patterns' place follows the sound rendered rather than the time it took",
+              fmt("%.3f steps after 150 ms with nothing rendered, %.3f after half a second rendered", step_b - step_a, step_c - step_b));
+
         Room room;
         renderSeconds(room.engine, 2.0);
         const bool reconfigured = room.engine.configure(44100, 64, &err);

@@ -47,7 +47,9 @@ struct EngineConfig {
 enum class DeviceMode {
     Hardware,  // real audio devices
     Null,      // real-time pacing with no sound, for automated runs
+    Offline,   // no device and no pacing: rendered by whoever calls render(), as fast as it can (the demo videos)
 };
+constexpr int kOfflineInputs = 2;  // the inputs a live input has, offline (what render() is handed)
 
 struct AudioDeviceInfo {
     std::string name;
@@ -664,6 +666,11 @@ private:
     struct Source;
     struct Device;
     bool openAsio(const DeviceConfig& config, std::string* error);  // (Windows, with the ASIO SDK)
+    bool openOffline(const DeviceConfig& config, std::string* error);
+    // Now, in microseconds: the steady clock's, or, rendering offline, how much sound has been rendered (the time it
+    // stands for), so that what is timed against the clock (the patterns' place between blocks, a start set for a
+    // moment) keeps to the sound rather than to however long it took to render.
+    int64_t nowMicros() const;
     struct Command {
         enum Type : uint8_t {
             AddSource, RemoveSource, SourcePosition, SourceDirectPath, SourceMuted, SourceInputChannel, Listener,
@@ -794,6 +801,8 @@ private:
     std::vector<std::pair<std::string, std::shared_ptr<StreamedFile>>> audio_files_;  // each opened once (again, if it changes)
     DiskStreamer streamer_;  // reads the tracks' recorded audio from disk ahead of the music
     std::atomic<bool> realtime_{false};  // a device is playing: the audio thread can't wait for the disk
+    std::atomic<int64_t> offline_us_{-1};  // rendering offline: the time rendered so far (else -1)
+    int64_t offline_frames_ = 0;           // and the frames, that it is worked out from
     // Recording, this block (the audio thread's): from which sample to which, and whether it records at all.
     int record_from_ = 0, record_to_ = 0;
     bool punching_ = false;
